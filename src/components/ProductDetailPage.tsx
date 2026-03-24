@@ -19,7 +19,7 @@ import { getProductImage, getProductUnitPriceInHaler, isPrintProduct, parseSubje
 import { buildBundleCartLines, type ProductBundleRecord } from '../utils/bundlePricing';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { useMatchMedia } from '../hooks/useMatchMedia';
-import { BOOK_COVER_FLOOR_SHADOW_SRC } from '../utils/bookCoverFloorShadow';
+import { BookCoverFloorShadow } from './BookCoverFloorShadow';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -617,7 +617,7 @@ export function ProductDetailPage({
   /** Náhled v levé „dlaždici“: tiskoviny −30 %, digitální licence +10 % (vůči původním max-height) */
   const isDigitalHero = product.type === 'online' || product.type === 'license';
   const mdUp = useMatchMedia('(min-width: 768px)', false);
-  /** Jen digitály — tiskoviny používají sdílený obrázek stínu (viz BOOK_COVER_FLOOR_SHADOW_SRC). */
+  /** Jen digitály — tiskoviny mají inline SVG stín + drop-shadow na obálce. */
   const heroDigitalImageFilter = useMemo(() => {
     if (product.type === 'workbook') return undefined as string | undefined;
     return mdUp
@@ -928,13 +928,7 @@ export function ProductDetailPage({
                   style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
                 >
                   {product.image && product.type === 'workbook' ? (
-                    <img
-                      src={BOOK_COVER_FLOOR_SHADOW_SRC}
-                      alt=""
-                      aria-hidden
-                      decoding="async"
-                      className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(28vh,160px)] -translate-x-1/2 translate-y-[12%] object-contain object-bottom select-none sm:translate-y-[10%] md:w-[min(88%,380px)] md:max-h-[min(26vh,180px)]"
-                    />
+                    <BookCoverFloorShadow className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(26vh,140px)] -translate-x-1/2 translate-y-[16%] select-none sm:translate-y-[12%] md:w-[min(88%,380px)]" />
                   ) : null}
                   {product.image
                     ? <ImageWithFallback
@@ -948,7 +942,7 @@ export function ProductDetailPage({
                             : isDigitalHero
                               ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
                               : 'max-h-[140px] sm:max-h-[182px] lg:max-h-[238px]'
-                        }`}
+                        } ${product.type === 'workbook' ? 'drop-shadow-[0_14px_28px_rgba(0,17,97,0.3)] max-md:drop-shadow-[0_10px_22px_rgba(0,17,97,0.26)]' : ''}`}
                         onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
                           setImageLoaded(true);
                           const img = e.currentTarget;

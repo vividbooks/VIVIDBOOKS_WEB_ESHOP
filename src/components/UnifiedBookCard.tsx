@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { BookOpen } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { BOOK_COVER_FLOOR_SHADOW_SRC } from '../utils/bookCoverFloorShadow';
+import { BookCoverFloorShadow } from './BookCoverFloorShadow';
 
 /* ─── helpers ───────────────────────────────────────────── */
 const formatTypography = (text: string) => {
@@ -133,19 +133,12 @@ export function UnifiedBookCard({
             />
           ) : (
             <>
-              {/* Jeden sdílený soubor místo CSS drop-shadow na každé obálce */}
-              <img
-                src={BOOK_COVER_FLOOR_SHADOW_SRC}
-                alt=""
-                aria-hidden
-                decoding="async"
-                className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(88%,280px)] max-h-[36%] -translate-x-1/2 translate-y-[4%] object-contain object-bottom select-none sm:w-[min(82%,260px)] sm:max-h-[34%] sm:translate-y-[2%]"
-              />
+              <BookCoverFloorShadow className="pointer-events-none absolute bottom-[0.5%] left-1/2 z-0 w-[72%] max-h-[32%] -translate-x-1/2 select-none sm:bottom-[1%] sm:w-[68%]" />
               {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
               <img
                 src={book.image}
                 alt={book.name}
-                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
+                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom drop-shadow-[0_10px_22px_rgba(0,17,97,0.28)] max-md:drop-shadow-[0_8px_18px_rgba(0,17,97,0.22)]`}
                 onLoad={(e) => {
                   const img = e.currentTarget;
                   setIsLandscape(img.naturalWidth >= img.naturalHeight);

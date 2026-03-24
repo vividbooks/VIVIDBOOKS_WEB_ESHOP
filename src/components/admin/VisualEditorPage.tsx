@@ -42,6 +42,7 @@ import {
   HERO_CENTER_BELOW_TITLE_SCALE,
   HERO_SLIDER_HEIGHT_PX,
   HERO_TITLE_FONT_OPTIONS,
+  heroBookCoverShadowFilter,
   heroLeftImageImgStyle,
   heroSlideShouldShowCta,
   mergeHeroUnderlineRanges,
@@ -1135,6 +1136,7 @@ function SliderPreviewCanvas({
   const previewBooks = showTextProducts
     ? resolveHeroFanBooks(products, parseHeroBookProductIds(doc.bookProductIds))
     : [];
+  const coverBgHex = doc.bg.startsWith('#') ? doc.bg : '#e8d5f2';
   const showFullImage = doc.layoutVisual === 'full-image' && Boolean(doc.image.trim());
   const showLeftImage = doc.layoutVisual === 'left-image' && Boolean(doc.image.trim());
   const heroAlignStart = doc.layoutVisual === 'left-text';
@@ -1209,6 +1211,7 @@ function SliderPreviewCanvas({
                     arrangement={doc.booksFanArrangement}
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
+                    coverShadow={heroBookCoverShadowFilter(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}
@@ -1262,6 +1265,7 @@ function SliderPreviewCanvas({
                     arrangement={doc.booksFanArrangement}
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
+                    coverShadow={heroBookCoverShadowFilter(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}
@@ -1300,6 +1304,7 @@ function SliderPreviewCanvas({
                   arrangement={doc.booksFanArrangement}
                   gapPx={doc.booksFanGapPx}
                   scalePct={doc.booksFanScalePct}
+                  coverShadow={heroBookCoverShadowFilter(coverBgHex)}
                   variant="catalog"
                   navigate={navigate}
                   fanZOrder={doc.booksFanZOrder}
@@ -1317,6 +1322,7 @@ function SliderPreviewCanvas({
                     arrangement={doc.booksFanArrangement}
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
+                    coverShadow={heroBookCoverShadowFilter(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}
