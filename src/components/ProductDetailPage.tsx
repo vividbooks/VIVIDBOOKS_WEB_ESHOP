@@ -898,7 +898,7 @@ export function ProductDetailPage({
           <div className="flex flex-col gap-4 lg:sticky lg:top-[80px] self-start">
             <div
               className="relative rounded-[32px] flex flex-col overflow-hidden"
-              style={{ background: catColors.bg, minHeight: 'clamp(280px, 45vw, 540px)' }}
+              style={{ background: catColors.bg, minHeight: 'clamp(320px, 58vw, 540px)' }}
             >
               {/* RVP + doložka (nad výřezem produktu) */}
               <div className="relative z-20 flex flex-wrap items-center justify-center gap-2 px-5 pt-5 pb-1 shrink-0">
@@ -917,31 +917,36 @@ export function ProductDetailPage({
                 </div>
               )}
 
-              {/* Book image */}
-              <div className="relative flex-1 flex flex-col min-h-0">
-              <div className="p-6 sm:p-10 lg:p-12 pb-6 flex items-center justify-center w-full flex-1" style={{ minHeight: 0 }}>
-                <motion.div
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  transition={{ duration: 0.5, delay: 0.1 }}
-                  className="relative flex items-center justify-center"
-                  style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
+              {/* Book image — tlačítka v toku pod obálkou (ne absolute), ať obálka nepřekrývá CTA */}
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                <div
+                  className={`flex w-full flex-1 items-center justify-center px-6 pt-2 sm:px-10 lg:px-12 lg:pt-4 ${
+                    showImagePanelActions ? 'pb-3 sm:pb-4' : 'pb-6 sm:pb-10 lg:pb-12'
+                  }`}
+                  style={{ minHeight: 'min(52vw, 260px)' }}
                 >
-                  {product.image && product.type === 'workbook' ? (
-                    <BookCoverFloorShadow className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(26vh,140px)] -translate-x-1/2 translate-y-[16%] select-none sm:translate-y-[12%] md:w-[min(88%,380px)]" />
-                  ) : null}
-                  {product.image
-                    ? <ImageWithFallback
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.5, delay: 0.1 }}
+                    className="relative flex max-h-full w-full items-center justify-center"
+                    style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
+                  >
+                    {product.image && product.type === 'workbook' ? (
+                      <BookCoverFloorShadow className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(22vh,120px)] -translate-x-1/2 translate-y-[10%] select-none sm:translate-y-[8%] md:w-[min(88%,380px)]" />
+                    ) : null}
+                    {product.image ? (
+                      <ImageWithFallback
                         src={product.image}
                         alt={product.name}
-                        className={`relative z-10 w-auto object-contain ${
+                        className={`relative z-10 w-auto max-h-full object-contain ${
                           isLandscape
                             ? isDigitalHero
                               ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                              : 'max-h-[91px] sm:max-h-[112px] lg:max-h-[140px]'
+                              : 'max-h-[100px] sm:max-h-[124px] lg:max-h-[156px]'
                             : isDigitalHero
                               ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                              : 'max-h-[140px] sm:max-h-[182px] lg:max-h-[238px]'
+                              : 'max-h-[128px] sm:max-h-[168px] lg:max-h-[220px]'
                         } ${product.type === 'workbook' ? 'drop-shadow-[0_14px_28px_rgba(0,17,97,0.3)] max-md:drop-shadow-[0_10px_22px_rgba(0,17,97,0.26)]' : ''}`}
                         onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
                           setImageLoaded(true);
@@ -949,39 +954,40 @@ export function ProductDetailPage({
                           setIsLandscape(img.naturalWidth >= img.naturalHeight);
                         }}
                       />
-                    : <div className="w-[160px] h-[220px] sm:w-[200px] sm:h-[280px] rounded-2xl flex items-center justify-center" style={{ background: catColors.bg }}>
-                        <BookOpen className="w-16 h-16 sm:w-20 sm:h-20 text-[#001161]/20" />
+                    ) : (
+                      <div
+                        className="flex h-[220px] w-[160px] items-center justify-center rounded-2xl sm:h-[280px] sm:w-[200px]"
+                        style={{ background: catColors.bg }}
+                      >
+                        <BookOpen className="h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20" />
                       </div>
-                  }
-                </motion.div>
-              </div>
-
-              {/* Prolistovat + Otevřít v aplikaci — bottom of image card (app i bez flipbooku, pokud je v produktu appLink) */}
-              {showImagePanelActions && (
-                <div className="absolute bottom-0 left-0 right-0 px-5 pb-5 flex gap-2">
-                  {hasFlipbook && (
-                    <button
-                      onClick={() => setFlipbookOpen(true)}
-                      className="flex items-center justify-center gap-2 flex-1 py-2.5 px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold transition-all bg-white/70 hover:bg-white backdrop-blur-sm active:scale-[0.98] cursor-pointer text-[#001161]/70 hover:text-[#001161] border border-white/60 shadow-sm"
-                    >
-                      <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                      {'Prolistovat uk\u00e1zku'}
-                    </button>
-                  )}
-                  <a
-                    href={product.appLink || 'https://app.vividbooks.cz'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`flex items-center justify-center gap-2 py-2.5 px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold transition-all bg-white/70 hover:bg-white backdrop-blur-sm active:scale-[0.98] cursor-pointer text-[#001161]/70 hover:text-[#001161] border border-white/60 shadow-sm no-underline ${hasFlipbook ? 'flex-1' : 'w-full'}`}
-                  >
-                    <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                    {'Otev\u0159\u00edt v aplikaci'}
-                  </a>
+                    )}
+                  </motion.div>
                 </div>
-              )}
 
-              {/* Preview CTA inside image panel */}
-              {/* removed — button exists below the image */}
+                {showImagePanelActions && (
+                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 border-t border-[#001161]/10 bg-white/45 px-5 pb-5 pt-3 backdrop-blur-[2px] sm:pt-4">
+                    {hasFlipbook && (
+                      <button
+                        type="button"
+                        onClick={() => setFlipbookOpen(true)}
+                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/85 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm backdrop-blur-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98]"
+                      >
+                        <BookOpen className="h-3.5 w-3.5 shrink-0" />
+                        {'Prolistovat uk\u00e1zku'}
+                      </button>
+                    )}
+                    <a
+                      href={product.appLink || 'https://app.vividbooks.cz'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/85 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm backdrop-blur-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline ${hasFlipbook ? 'flex-1' : 'w-full'}`}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                      {'Otev\u0159\u00edt v aplikaci'}
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
 

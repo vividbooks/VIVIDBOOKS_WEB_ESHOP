@@ -1,26 +1,19 @@
-import React, { useId } from 'react';
+import React from 'react';
 
-/** Společný „podlahový“ elipsoid pod tiskovinou — inline SVG = bez HTTP requestu, funguje i s GitHub Pages base. */
-export function BookCoverFloorShadow({ className }: { className?: string }) {
-  const uid = useId().replace(/:/g, '');
-  const gid = `bookFloorShadow-${uid}`;
+/**
+ * „Podlahový“ elipsoid pod tiskovinou — CSS radial-gradient (bez SVG `url(#id)`,
+ * které na některých mobilech/WebKitech padá a vykreslí se jako černý čtverec).
+ */
+export function BookCoverFloorShadow({ className = '' }: { className?: string }) {
   return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 320 100"
-      fill="none"
+    <div
       aria-hidden
       className={className}
-    >
-      <ellipse cx="160" cy="52" rx="145" ry="44" fill={`url(#${gid})`} />
-      <defs>
-        <radialGradient id={gid} cx="50%" cy="50%" r="50%" fx="50%" fy="50%">
-          <stop offset="0%" stopColor="#001161" stopOpacity="0.5" />
-          <stop offset="38%" stopColor="#001161" stopOpacity="0.24" />
-          <stop offset="72%" stopColor="#001161" stopOpacity="0.08" />
-          <stop offset="100%" stopColor="#001161" stopOpacity="0" />
-        </radialGradient>
-      </defs>
-    </svg>
+      style={{
+        pointerEvents: 'none',
+        background:
+          'radial-gradient(ellipse 78% 62% at 50% 44%, rgba(0,17,97,0.48) 0%, rgba(0,17,97,0.22) 40%, rgba(0,17,97,0.07) 66%, transparent 74%)',
+      }}
+    />
   );
 }
