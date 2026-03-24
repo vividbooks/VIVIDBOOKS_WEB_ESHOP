@@ -1,0 +1,119 @@
+import React, { useEffect, useState } from 'react';
+import { ResponsiveLayout, type AssistantTabId } from '@/app/components/Layout';
+import { DictationTab } from '@/app/components/tabs/DictationTab';
+import { TasksTab } from '@/app/components/tabs/TasksTab';
+import { AgentTab } from '@/app/components/tabs/AgentTab';
+import { OutreachTab } from '@/app/components/tabs/OutreachTab';
+import { ScrapingTab } from '@/app/components/tabs/ScrapingTab';
+import { SettingsTab } from '@/app/components/tabs/SettingsTab';
+import { MapTab } from '@/app/components/tabs/MapTab';
+import { Onboarding } from '@/app/components/Onboarding';
+import { WebOperatorTab } from '@/app/components/tabs/WebOperatorTab';
+
+type PendingMessage = { text: string; nonce: string } | null;
+
+export const InnerApp: React.FC = () => {
+  const [currentTab, setCurrentTab] = useState<AssistantTabId>('dictation');
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [crmInitialMessage, setCrmInitialMessage] = useState<PendingMessage>(null);
+  const [webInitialMessage, setWebInitialMessage] = useState<PendingMessage>(null);
+
+  useEffect(() => {
+    const captureToken = async () => {
+      const hash = window.location.hash;
+      if (hash && hash.includes('provider_token=')) {
+        const params = new URLSearchParams(hash.substring(1));
+        const providerToken = params.get('provider_token');
+        const providerRefreshToken = params.get('provider_refresh_token');
+
+        if (providerToken) localStorage.setItem('google_provider_token', providerToken);
+        if (providerRefreshToken) localStorage.setItem('google_provider_refresh_token', providerRefreshToken);
+
+        window.history.replaceState({}, document.title, window.location.pathname);
+        return;
+      }
+
+      try {
+        const { createClient } = await import('@supabase/supabase-js');
+        const { projectId, publicAnonKey } = await import('/utils/supabase/info');
+        const supabase = createClient(`https://${projectId}.supabase.co`, publicAnonKey);
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.provider_token) localStorage.setItem('google_provider_token', session.provider_token);
+        if (session?.provider_refresh_token) localStorage.setItem('google_provider_refresh_token', session.provider_refresh_token);
+      } catch (e) {
+        console.log('Session check skipped:', e);
+      }
+    };
+
+    captureToken();
+  }, []);
+
+  useEffect(() => {
+    const hasOnboarded = localStorage.getItem('dictation_app_onboarded');
+    if (!hasOnboarded) setShowOnboarding(true);
+
+    const metaCapable = document.createElement('meta');
+    metaCapable.name = 'apple-mobile-web-app-capable';
+    metaCapable.content = 'yes';
+    document.head.appendChild(metaCapable);
+
+    const metaStatus = document.createElement('meta');
+    metaStatus.name = 'apple-mobile-web-app-status-bar-style';
+    metaStatus.content = 'black';
+    document.head.appendChild(metaStatus);
+
+    const linkIcon = document.createElement('link');
+    linkIcon.rel = 'apple-touch-icon';
+    linkIcon.href = 'icon.png';
+    document.head.appendChild(linkIcon);
+
+    return () => {
+      if (document.head.contains(metaCapable)) document.head.removeChild(metaCapable);
+      if (document.head.contains(metaStatus)) document.head.removeChild(metaStatus);
+      if (document.head.contains(linkIcon)) document.head.removeChild(linkIcon);
+    };
+  }, []);
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('dictation_app_onboarded', 'true');
+    setShowOnboarding(false);
+  };
+
+  const routeTranscript = (target: 'web-operator' | 'agent', text: string) => {
+    const payload = { text, nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
+    if (target === 'web-operator') {
+      setWebInitialMessage(payload);
+      setCurrentTab('web-operator');
+    } else {
+      setCrmInitialMessage(payload);
+      setCurrentTab('agent');
+    }
+  };
+
+  if (showOnboarding) return <Onboarding onComplete={handleOnboardingComplete} />;
+
+  return (
+    <ResponsiveLayout currentTab={currentTab} onTabChange={setCurrentTab}>
+      {currentTab === 'dictation' ? (
+        <DictationTab onRouteTranscript={routeTranscript} />
+      ) : currentTab === 'web-operator' ? (
+        <WebOperatorTab key={webInitialMessage?.nonce || 'web-operator'} initialMessage={webInitialMessage?.text} />
+      ) : currentTab === 'agent' ? (
+        <AgentTab key={crmInitialMessage?.nonce || 'crm-agent'} initialMessage={crmInitialMessage?.text} />
+      ) : currentTab === 'tasks' ? (
+        <TasksTab />
+      ) : currentTab === 'outreach' ? (
+        <OutreachTab />
+      ) : currentTab === 'scraping' ? (
+        <ScrapingTab />
+      ) : currentTab === 'map' ? (
+        <MapTab />
+      ) : (
+        <SettingsTab />
+      )}
+    </ResponsiveLayout>
+  );
+};

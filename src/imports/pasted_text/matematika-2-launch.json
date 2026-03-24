@@ -1,0 +1,105 @@
+Kampaň je navázána na již plánovaný webinář k Matematice pro 2. ročník (20. května 2026). Následný prodejní push ideálně zachytí jarní uzávěrky školních rozpočtů.
+
+`json:sequence
+
+{
+
+"title": "Launch Matematika 2. ročník",
+
+"anchorDate": "2026-05-20",
+
+"steps": [
+
+{
+
+"offset": -30,
+
+"type": "newsletter",
+
+"title": "Teaser Matika 2",
+
+"description": "První odhalení připravované Matiky pro 2. ročník."
+
+},
+
+{
+
+"offset": -14,
+
+"type": "campaign",
+
+"title": "Pozvánka na webinář",
+
+"description": "FB a e-mail kampaň na webinář s autorkami."
+
+},
+
+{
+
+"offset": -7,
+
+"type": "social",
+
+"title": "Ukázky z učebnice",
+
+"description": "Sdílení interaktivních úloh a sebehodnocení žáků na sítích."
+
+},
+
+{
+
+"offset": -1,
+
+"type": "email",
+
+"title": "Reminder webináře",
+
+"description": "Připomenutí zítřejšího velkého představení učebnice."
+
+},
+
+{
+
+"offset": 0,
+
+"type": "product_launch",
+
+"title": "Představení a Launch",
+
+"description": "Webinář s prof. Vondrovou a dr. Havlíčkovou."
+
+},
+
+{
+
+"offset": 1,
+
+"type": "email",
+
+"title": "Záznam a objednávky",
+
+"description": "Odeslání záznamu a spuštění přijímání objednávek."
+
+},
+
+{
+
+"offset": 14,
+
+"type": "email",
+
+"title": "Prodejní push",
+
+"description": "Připomenutí objednávek před červnovými uzávěrkami škol."
+
+}
+
+]
+
+}
+
+`
+
+Pozor na státní svátky 1. a 8. května – kroky v sekvenci se jim úspěšně vyhýbají.
+V komunikaci zdůrazněte sebehodnocení žáků a plný soulad s novým RVP.
+T+14 (3. června) je ideální čas pro prodej, školy začínají uzavírat rozpočty.

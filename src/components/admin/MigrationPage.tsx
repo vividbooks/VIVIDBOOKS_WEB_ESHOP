@@ -1,0 +1,1478 @@
+import { useState } from 'react';
+import { Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper, ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft } from 'lucide-react';
+import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { seedCollection } from '../../utils/adminApi';
+import { BLOG_POSTS } from '../../data/blogPosts';
+import { NOVINKA_POSTS } from '../../data/novinkaPosts';
+import { WEBINARS } from '../../data/webinars';
+import { toast } from 'sonner@2.0.3';
+
+const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
+const AUTH = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
+
+export default function MigrationPage() {
+  const [isMigrating, setIsMigrating] = useState(false);
+  const [customIds, setCustomIds] = useState({
+    digital: '68fcbc58bae5a1ec053b1c40',
+    print: '64135780db7f1b2187727635',
+  });
+
+  // Blog Webflow import state
+  const [blogStatus, setBlogStatus] = useState<'idle' | 'previewing' | 'importing'>('idle');
+  const [blogPreview, setBlogPreview] = useState<any>(null);
+
+  // Webinář Webflow import state
+  const [webinarId, setWebinarId] = useState('64135780db7f1bdff5727631');
+  const [webinarStatus, setWebinarStatus] = useState<'idle' | 'previewing' | 'importing'>('idle');
+  const [webinarPreview, setWebinarPreview] = useState<any>(null);
+  const [webinarResult, setWebinarResult] = useState<any>(null);
+
+  // Novinky Webflow import state
+  const [novinkyId] = useState('67c5f807aba1fc4614283bfe');
+  const [novinkyStatus, setNovinkyStatus] = useState<'idle' | 'previewing' | 'importing'>('idle');
+  const [novinkyPreview, setNovinkyPreview] = useState<any>(null);
+  const [novinkyResult, setNovinkyResult] = useState<any>(null);
+
+  // Debug raw Webflow JSON
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugData, setDebugData] = useState<any>(null);
+
+  // Debug webinářů
+  const [debugWebinarLoading, setDebugWebinarLoading] = useState(false);
+  const [debugWebinarData, setDebugWebinarData] = useState<any>(null);
+
+  // Image migration state
+  const [imgCollections, setImgCollections] = useState({
+    products: true,
+    blog: true,
+    novinky: true,
+    webinars: true,
+  });
+  const [imgMigrating, setImgMigrating] = useState(false);
+  const [imgResult, setImgResult] = useState<any>(null);
+
+  // DVPP Videa sync state
+  const [dvppStatus, setDvppStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
+  const [dvppResult, setDvppResult] = useState<any>(null);
+  const [dvppDebugLoading, setDvppDebugLoading] = useState(false);
+  const [dvppDebugData, setDvppDebugData] = useState<any>(null);
+  const [dvppDebugCollectionId, setDvppDebugCollectionId] = useState('66b119eaa0271061207bdd18');
+
+  // ── Taby z Webflow state ──────────────────────────────────────
+  const [tabsId, setTabsId] = useState('67efdf2e531b09c85dc3132e');
+  const [tabsStatus, setTabsStatus] = useState<'idle' | 'previewing' | 'importing'>('idle');
+  const [tabsPreview, setTabsPreview] = useState<any>(null);
+  const [tabsResult, setTabsResult] = useState<any>(null);
+  const [tabsMapping, setTabsMapping] = useState<Record<string,string>>({});
+  const [tabsForceSubject, setTabsForceSubject] = useState('');
+  const [subjectList, setSubjectList] = useState<string[]>([]);
+  const [tabsDiagLoading, setTabsDiagLoading] = useState(false);
+  const [tabsDiag, setTabsDiag] = useState<any>(null);
+
+  // ── Generický JSON import state ──────────────────────────────
+  const [jsonText, setJsonText] = useState('');
+  const [jsonCollection, setJsonCollection] = useState('tabs');
+  const [jsonAppend, setJsonAppend] = useState(true);
+  const [jsonStatus, setJsonStatus] = useState<'idle' | 'importing'>('idle');
+  const [jsonParsed, setJsonParsed] = useState<any[] | null>(null);
+  const [jsonError, setJsonError] = useState('');
+  const [jsonMapping, setJsonMapping] = useState<Record<string,string>>({});
+  const [jsonResult, setJsonResult] = useState<any>(null);
+
+  const handleWebflowMigrate = async () => {
+    if (!confirm('Tímto přemažete všechna produktová data v Supabase daty z Webflow. Pokračovat?')) return;
+    setIsMigrating(true);
+    try {
+      const response = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: AUTH(publicAnonKey),
+        body: JSON.stringify({ digitalId: customIds.digital, printId: customIds.print }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        toast.success(`Migrace úspěšná! ${data.count} produktů naimportováno.`);
+      } else {
+        toast.error(`Chyba migrace: ${data.details || data.error}`);
+      }
+    } catch (e) {
+      toast.error('Migrace selhala: síťová chyba');
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const handleSeedAll = async () => {
+    if (!confirm('Tímto naimportujete statická data (blog, novinky, webináře) do Supabase. Pokračovat?')) return;
+    setIsMigrating(true);
+    try {
+      await Promise.all([
+        seedCollection('blog', BLOG_POSTS),
+        seedCollection('novinky', NOVINKA_POSTS),
+        seedCollection('webinare', WEBINARS),
+      ]);
+      toast.success('Všechna statická data naimportována!');
+    } catch (e: any) {
+      toast.error(`Seed selhal: ${e.message}`);
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  // Safe JSON parser — vždy zobrazí raw text při chybě
+  const safeJson = async (res: Response) => {
+    const text = await res.text();
+    try {
+      return JSON.parse(text);
+    } catch (_e) {
+      throw new Error(`Server nevrátil JSON (status ${res.status}): ${text.slice(0, 300)}`);
+    }
+  };
+
+  const handleBlogPreview = async () => {
+    setBlogStatus('previewing');
+    setBlogPreview(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'preview-blog' }),
+      });
+      const data = await safeJson(res);
+      if (data.error) { toast.error(`Preview chyba: ${data.error}`); setBlogStatus('idle'); return; }
+      setBlogPreview(data);
+      toast.success(`Preview OK — ${data.count} příspěvků v kolekci.`);
+    } catch (e: any) {
+      toast.error(`Preview selhal: ${e.message}`);
+    } finally {
+      setBlogStatus('idle');
+    }
+  };
+
+  const handleBlogImport = async () => {
+    if (!confirm('Přepíše stávající blog příspěvky v Supabase daty z Webflow. Pokračovat?')) return;
+    setBlogStatus('importing');
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'import-blog' }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        toast.success(`Blog naimportován! ${data.count} příspěvků uloženo.`);
+        setBlogPreview(null);
+      } else {
+        toast.error(`Chyba importu: ${data.details || data.error}`);
+      }
+    } catch (e: any) {
+      toast.error(`Import selhal: ${e.message}`);
+    } finally {
+      setBlogStatus('idle');
+    }
+  };
+
+  // ── Webinář handlers ───────────────────────────────────────────
+  const handleWebinarPreview = async () => {
+    setWebinarStatus('previewing');
+    setWebinarPreview(null);
+    setWebinarResult(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'preview-webinare', webinarId }),
+      });
+      const data = await safeJson(res);
+      if (data.error) { toast.error(`Preview chyba: ${data.error}`); setWebinarStatus('idle'); return; }
+      setWebinarPreview(data);
+      toast.success(`Preview OK — ${data.count} webinářů v kolekci.`);
+    } catch (e: any) {
+      toast.error(`Preview selhal: ${e.message}`);
+    } finally {
+      setWebinarStatus('idle');
+    }
+  };
+
+  const handleWebinarImport = async () => {
+    if (!confirm('Přepíše stávající webináře v Supabase daty z Webflow. Pokračovat?')) return;
+    setWebinarStatus('importing');
+    setWebinarResult(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'import-webinare', webinarId }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        toast.success(`Webináře naimportovány! ${data.count} webinářů uloženo.`);
+        setWebinarPreview(null);
+        setWebinarResult(data);
+      } else {
+        toast.error(`Chyba importu: ${data.details || data.error}`);
+      }
+    } catch (e: any) {
+      toast.error(`Import selhal: ${e.message}`);
+    } finally {
+      setWebinarStatus('idle');
+    }
+  };
+
+  const handleNovinkyPreview = async () => {
+    setNovinkyStatus('previewing');
+    setNovinkyPreview(null);
+    setNovinkyResult(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'preview-novinky', novinkyId }),
+      });
+      const data = await safeJson(res);
+      if (data.error) { toast.error(`Preview chyba: ${data.error}`); setNovinkyStatus('idle'); return; }
+      setNovinkyPreview(data);
+      toast.success(`Preview OK — ${data.count} novinek v kolekci.`);
+    } catch (e: any) {
+      toast.error(`Preview selhal: ${e.message}`);
+    } finally {
+      setNovinkyStatus('idle');
+    }
+  };
+
+  const handleNovinkyImport = async () => {
+    if (!confirm('Přepíše stávající novinky v Supabase daty z Webflow. Pokračovat?')) return;
+    setNovinkyStatus('importing');
+    setNovinkyResult(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'import-novinky', novinkyId }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        toast.success(`Novinky naimportovány! ${data.count} novinek uloženo.`);
+        setNovinkyPreview(null);
+        setNovinkyResult(data);
+      } else {
+        toast.error(`Chyba importu: ${data.details || data.error}`);
+      }
+    } catch (e: any) {
+      toast.error(`Import selhal: ${e.message}`);
+    } finally {
+      setNovinkyStatus('idle');
+    }
+  };
+
+  const handleImageMigration = async () => {
+    const selected = Object.entries(imgCollections)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+    if (selected.length === 0) {
+      toast.error('Vyber alespon jednu kolekci.');
+      return;
+    }
+    if (!confirm(`Spustit migraci obrázků pro: ${selected.join(', ')}?\n\nObrázky budou staženy z Webflow a uloženy do Supabase Storage. Existující URL budou přepsány novými.`)) return;
+
+    setImgMigrating(true);
+    setImgResult(null);
+    try {
+      const res = await fetch(`${SERVER}/migrate-images`, {
+        method: 'POST',
+        headers: AUTH(publicAnonKey),
+        body: JSON.stringify({ collections: selected }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        setImgResult(data);
+        toast.success(`Migrace obrázků hotova! Celkem migrováno: ${data.totalMigrated} obrázků.`);
+      } else {
+        toast.error(`Chyba migrace obrázků: ${data.error || data.details}`);
+      }
+    } catch (e: any) {
+      toast.error(`Migrace obrázků selhala: ${e.message}`);
+    } finally {
+      setImgMigrating(false);
+    }
+  };
+
+  const handleDebugWebflow = async () => {
+    setDebugLoading(true);
+    setDebugData(null);
+    try {
+      const res = await fetch(`${SERVER}/debug-webflow/651f03e0bca47206a22d436d`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        setDebugData(json);
+        toast.success(`Webflow odpověděl (API ${json.api}, status ${json.status}, ${json.itemCount ?? '?'} items)`);
+      } catch {
+        setDebugData({ raw: text.slice(0, 5000) });
+        toast.error('Webflow nevrátil platný JSON');
+      }
+    } catch (e: any) {
+      toast.error(`Debug selhal: ${e.message}`);
+      setDebugData({ error: e.message });
+    } finally {
+      setDebugLoading(false);
+    }
+  };
+
+  const handleDebugWebinar = async () => {
+    setDebugWebinarLoading(true);
+    setDebugWebinarData(null);
+    try {
+      const res = await fetch(`${SERVER}/debug-webflow/${webinarId}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        setDebugWebinarData(json);
+        toast.success(`Webflow webináře (API ${json.api}, ${json.itemCount ?? '?'} items)`);
+      } catch {
+        setDebugWebinarData({ raw: text.slice(0, 8000) });
+        toast.error('Webflow nevrátil platný JSON');
+      }
+    } catch (e: any) {
+      toast.error(`Debug selhal: ${e.message}`);
+      setDebugWebinarData({ error: e.message });
+    } finally {
+      setDebugWebinarLoading(false);
+    }
+  };
+
+  const handleDvppSync = async () => {
+    if (!confirm('Synchronizuje DVPP záznamy z Webflow (videa + témata). Pokračovat?')) return;
+    setDvppStatus('syncing');
+    setDvppResult(null);
+    try {
+      const res = await fetch(`${SERVER}/dvpp-videos/sync`, {
+        method: 'POST',
+        headers: AUTH(publicAnonKey),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        setDvppResult(data);
+        setDvppStatus('done');
+        toast.success(`DVPP videa synchronizována! ${data.videosCount} videí, ${data.topicsCount} témat.`);
+      } else {
+        setDvppStatus('error');
+        toast.error(`Sync selhal: ${data.error}`);
+      }
+    } catch (e: any) {
+      setDvppStatus('error');
+      toast.error(`Sync selhal: ${e.message}`);
+    }
+  };
+
+  const handleDvppDebug = async () => {
+    setDvppDebugLoading(true);
+    setDvppDebugData(null);
+    try {
+      const res = await fetch(`${SERVER}/debug-webflow/${dvppDebugCollectionId}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      const text = await res.text();
+      try {
+        const json = JSON.parse(text);
+        setDvppDebugData(json);
+        toast.success(`Webflow odpověděl — ${json.itemCount ?? '?'} položek`);
+      } catch {
+        setDvppDebugData({ raw: text.slice(0, 8000) });
+        toast.error('Webflow nevrátil platný JSON');
+      }
+    } catch (e: any) {
+      toast.error(`Debug selhal: ${e.message}`);
+      setDvppDebugData({ error: e.message });
+    } finally {
+      setDvppDebugLoading(false);
+    }
+  };
+
+  // ── Taby handlers ─────────────────────────────────────────────
+  const handleTabsPreview = async () => {
+    setTabsStatus('previewing');
+    setTabsPreview(null);
+    setTabsResult(null);
+    setTabsMapping({});
+    // Načti seznam předmětů pro dropdown
+    try {
+      const res = await fetch(`${SERVER}/admin/predmety`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+      const data = await res.json();
+      const names = (data.items || []).map((s: any) => s.displayName).filter(Boolean).sort();
+      setSubjectList(names);
+    } catch { /* tiché selhání */ }
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'preview-tabs', tabsId }),
+      });
+      const data = await safeJson(res);
+      if (data.error) { toast.error(`Preview chyba: ${data.error}`); setTabsStatus('idle'); return; }
+      setTabsPreview(data);
+      if (data.preview?.[0]?.fieldData) {
+        const keys = Object.keys(data.preview[0].fieldData);
+        const autoMap: Record<string,string> = {};
+        const guesses: Record<string, string[]> = {
+          tabText: ['tab-text','nazev','name','title','label','tab'],
+          contentHeadline: ['content-headline','headline','nadpis','heading'],
+          contentRichText: ['content-rich-text','obsah','content','text','rich-text','body','popis'],
+          contentImage: ['content-image','image','obrazek','foto'],
+          // subject: auto-resolved serverem z Webflow ref ID — nepřiřazovat z mapování
+          // subpage: Webflow reference ID — nepřiřazovat automaticky
+          order: ['order','poradi','sort'],
+          bgColor: ['bg-color','background-color','barva','color'],
+        };
+        for (const [target, hints] of Object.entries(guesses)) {
+          for (const hint of hints) { if (keys.includes(hint)) { autoMap[hint] = target; break; } }
+        }
+        setTabsMapping(autoMap);
+      }
+      toast.success(`Preview OK — ${data.count} tabů v kolekci.`);
+    } catch (e: any) { toast.error(`Preview selhal: ${e.message}`); }
+    finally { setTabsStatus('idle'); }
+  };
+
+  const handleTabsImport = async () => {
+    if (!confirm('Importovat taby z Webflow do Supabase? Existující záznamy se sloučí.')) return;
+    setTabsStatus('importing');
+    setTabsResult(null);
+    try {
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'import-tabs', tabsId, fieldMapping: tabsMapping, forceSubject: tabsForceSubject || undefined }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        toast.success(`Taby naimportovány! ${data.count} tabů uloženo (celkem ${data.total} v DB).`);
+        setTabsPreview(null);
+        setTabsResult(data);
+      } else { toast.error(`Chyba importu: ${data.details || data.error}`); }
+    } catch (e: any) { toast.error(`Import selhal: ${e.message}`); }
+    finally { setTabsStatus('idle'); }
+  };
+
+  // ── Diagnostika tabů ──────────────────────────────────────────
+  const handleTabsDiag = async () => {
+    setTabsDiagLoading(true);
+    setTabsDiag(null);
+    try {
+      const res = await fetch(`${SERVER}/admin/tabs`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+      const data = await res.json();
+      const items: any[] = data.items || [];
+      const bySubject: Record<string, number> = {};
+      for (const t of items) {
+        const k = t.subject || '(prázdný)';
+        bySubject[k] = (bySubject[k] || 0) + 1;
+      }
+      setTabsDiag({ total: items.length, bySubject, sample: items.slice(0, 5) });
+    } catch (e: any) { toast.error(`Diag chyba: ${e.message}`); }
+    finally { setTabsDiagLoading(false); }
+  };
+
+  // ── Generický JSON import handlers ───────────────────────────
+  const handleJsonParse = () => {
+    setJsonError('');
+    setJsonParsed(null);
+    setJsonResult(null);
+    try {
+      const raw = jsonText.trim();
+      let parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        const arr = parsed.items || parsed.data || parsed.records || parsed.results;
+        if (Array.isArray(arr)) { parsed = arr; } else { parsed = [parsed]; }
+      }
+      setJsonParsed(parsed);
+      if (parsed.length > 0) {
+        const initMap: Record<string,string> = {};
+        for (const k of Object.keys(parsed[0])) { initMap[k] = k; }
+        setJsonMapping(initMap);
+      }
+      toast.success(`Parsováno OK — ${parsed.length} záznamů.`);
+    } catch (e: any) { setJsonError(`JSON chyba: ${e.message}`); }
+  };
+
+  const handleJsonImport = async () => {
+    if (!jsonParsed || jsonParsed.length === 0) { toast.error('Nejprve parseuj JSON.'); return; }
+    if (!confirm(`Importovat ${jsonParsed.length} záznamů do kolekce „${jsonCollection}"? ${jsonAppend ? 'Záznamy se sloučí.' : 'PŘEPÍŠE existující data!'}`)) return;
+    setJsonStatus('importing');
+    setJsonResult(null);
+    try {
+      const activeMapping: Record<string,string> = {};
+      for (const [src, tgt] of Object.entries(jsonMapping)) {
+        if (tgt && tgt !== src) { activeMapping[src] = tgt; }
+      }
+      const res = await fetch(`${SERVER}/import-webflow`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'import-json', collection: jsonCollection, items: jsonParsed, fieldMapping: activeMapping, appendMode: jsonAppend }),
+      });
+      const data = await safeJson(res);
+      if (data.success) {
+        toast.success(`Import hotov! ${data.count} záznamů uloženo.`);
+        setJsonResult(data);
+        setJsonParsed(null);
+        setJsonText('');
+      } else { toast.error(`Import selhal: ${data.details || data.error}`); }
+    } catch (e: any) { toast.error(`Import selhal: ${e.message}`); }
+    finally { setJsonStatus('idle'); }
+  };
+
+  return (
+    <div className="h-full overflow-y-auto p-8">
+      <div className="max-w-3xl">
+        <h1 className="text-2xl font-bold text-[#001161] mb-1 font-['Fenomen_Sans']">{'Migrace obsahu'}</h1>
+        <p className="text-[14px] text-gray-500 mb-8">
+          {'Import dat z Webflow a statických souborů do Supabase databáze.'}
+        </p>
+
+        {/* Webflow Produkty Migration */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
+              <Upload className="w-6 h-6 text-blue-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-[#001161]">{'Migrace produktů z Webflow'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Stáhne produkty z Webflow CMS kolekcí (Digitální učebnice + Tiskoviny) a uloží je do Supabase.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-blue-50 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-2 mb-3">
+              <AlertCircle className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+              <p className="text-[12px] text-blue-700">
+                {'Zadejte správná ID kolekcí z Webflow. Najdete je v URL, když otevřete CMS kolekci ve Webflow.'}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-blue-800 mb-1">{'Digitální učebnice ID'}</label>
+                <input
+                  value={customIds.digital}
+                  onChange={(e) => setCustomIds({ ...customIds, digital: e.target.value })}
+                  className="w-full px-3 py-2 text-[12px] bg-white border border-blue-200 rounded-lg focus:border-blue-500 outline-none font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-blue-800 mb-1">{'Tiskoviny ID'}</label>
+                <input
+                  value={customIds.print}
+                  onChange={(e) => setCustomIds({ ...customIds, print: e.target.value })}
+                  className="w-full px-3 py-2 text-[12px] bg-white border border-blue-200 rounded-lg focus:border-blue-500 outline-none font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleWebflowMigrate}
+            disabled={isMigrating}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {isMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+            {'Spustit migraci z Webflow'}
+          </button>
+        </div>
+
+        {/* ── Blog z Webflow ─────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center shrink-0">
+              <FileText className="w-6 h-6 text-orange-500" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-[#001161]">{'Blog příspěvky z Webflow'}</h2>
+                <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[11px] font-bold font-mono">
+                  {'651f03e0bca47206a22d436d'}
+                </span>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Stáhne blog příspěvky z Webflow CMS a uloží je do Supabase. Nejdřív proveď Preview pro kontrolu polí.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3 mb-4">
+            <button
+              onClick={handleBlogPreview}
+              disabled={blogStatus !== 'idle'}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {blogStatus === 'previewing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              {'Preview (3 položky)'}
+            </button>
+            <button
+              onClick={handleBlogImport}
+              disabled={blogStatus !== 'idle'}
+              className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {blogStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {'Importovat do Supabase'}
+            </button>
+          </div>
+
+          {blogPreview && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+              <p className="text-[12px] font-bold text-gray-600 mb-3">
+                {`Kolekce obsahuje ${blogPreview.count} příspěvků. Ukázka polí prvního záznamu:`}
+              </p>
+              {blogPreview.preview?.slice(0, 1).map((item: any) => (
+                <div key={item.id} className="mb-3">
+                  <p className="text-[11px] font-mono text-gray-400 mb-1">{`ID: ${item.id}`}</p>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3 max-h-[280px] overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <tbody>
+                        {Object.entries(item.fieldData).map(([key, val]) => (
+                          <tr key={key} className="border-b border-gray-100 last:border-none">
+                            <td className="py-1 pr-3 font-mono font-bold text-[#001161]/60 whitespace-nowrap align-top">{key}</td>
+                            <td className="py-1 text-gray-600 break-all">
+                              {typeof val === 'object' ? JSON.stringify(val).slice(0, 120) : String(val).slice(0, 120)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 mt-2 italic">
+                {'Zkontroluj klíče polí výše — pokud je mapování správné, klikni na Import.'}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* ── Webináře z Webflow ─────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center shrink-0">
+              <Radio className="w-6 h-6 text-purple-600" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-[#001161]">{'Webináře z Webflow'}</h2>
+                <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 text-[11px] font-bold font-mono">
+                  {webinarId}
+                </span>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Stáhne webináře z Webflow CMS kolekce a uloží je do Supabase. Datum se mapuje automaticky z ISO stringu nebo z polí den/měsíc/rok.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Collection ID input */}
+          <div className="bg-purple-50 rounded-xl p-3 mb-4">
+            <label className="block text-[11px] font-bold text-purple-800 mb-1">{'Webflow Collection ID'}</label>
+            <input
+              value={webinarId}
+              onChange={e => setWebinarId(e.target.value)}
+              className="w-full px-3 py-2 text-[12px] bg-white border border-purple-200 rounded-lg focus:border-purple-500 outline-none font-mono"
+            />
+          </div>
+
+          <div className="flex gap-3 mb-4">
+            <button
+              onClick={handleWebinarPreview}
+              disabled={webinarStatus !== 'idle'}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {webinarStatus === 'previewing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              {'Preview (3 položky)'}
+            </button>
+            <button
+              onClick={handleWebinarImport}
+              disabled={webinarStatus !== 'idle'}
+              className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {webinarStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {'Importovat webináře do Supabase'}
+            </button>
+          </div>
+
+          {/* Preview tabulka */}
+          {webinarPreview && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-3">
+              <p className="text-[12px] font-bold text-gray-600 mb-3">
+                {`Kolekce obsahuje ${webinarPreview.count} webinářů. Ukázka polí prvního záznamu:`}
+              </p>
+              {webinarPreview.preview?.slice(0, 1).map((item: any) => (
+                <div key={item.id}>
+                  <p className="text-[11px] font-mono text-gray-400 mb-1">{`ID: ${item.id}`}</p>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3 max-h-[280px] overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <tbody>
+                        {Object.entries(item.fieldData).map(([key, val]) => (
+                          <tr key={key} className="border-b border-gray-100 last:border-none">
+                            <td className="py-1 pr-3 font-mono font-bold text-[#001161]/60 whitespace-nowrap align-top">{key}</td>
+                            <td className="py-1 text-gray-600 break-all">
+                              {typeof val === 'object' ? JSON.stringify(val).slice(0, 120) : String(val).slice(0, 120)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 mt-2 italic">
+                {'Zkontroluj mapování polí — klíče jako "datum", "cas", "lektor" se mapují automaticky.'}
+              </p>
+            </div>
+          )}
+
+          {/* Import výsledek */}
+          {webinarResult && (
+            <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4 text-purple-600" />
+                <p className="text-[12px] font-bold text-purple-800">
+                  {`Importováno ${webinarResult.count} webinářů. Ukázka:`}
+                </p>
+              </div>
+              <div className="space-y-1">
+                {webinarResult.sample?.map((w: any, i: number) => (
+                  <div key={i} className="text-[11px] text-purple-700 flex items-center gap-2">
+                    <span className="font-bold">{w.day}. {w.monthName} {w.year}</span>
+                    <span className="text-purple-400">·</span>
+                    <span className="truncate">{w.title}</span>
+                    {w.isPast && <span className="ml-auto text-[10px] bg-purple-200 px-1.5 py-0.5 rounded-full shrink-0">{'minulý'}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Debug tlačítko */}
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <button
+              onClick={handleDebugWebinar}
+              disabled={debugWebinarLoading}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-xl text-[12px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {debugWebinarLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bug className="w-3.5 h-3.5" />}
+              {'Raw debug — zobrazit JSON pole z Webflow'}
+            </button>
+            {debugWebinarData && (
+              <div className="mt-3 bg-gray-900 rounded-xl p-4 max-h-[500px] overflow-y-auto">
+                <p className="text-[10px] text-gray-400 mb-2 font-mono">
+                  {`// Webflow collection: ${webinarId} — zkopíruj a sdílej pro opravu mapování`}
+                </p>
+                <pre className="text-[11px] font-mono text-green-300 whitespace-pre-wrap break-all">
+                  {JSON.stringify(debugWebinarData?.data?.items?.[0] ?? debugWebinarData?.data?.[0] ?? debugWebinarData, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Novinky z Webflow ──────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-teal-50 rounded-xl flex items-center justify-center shrink-0">
+              <Newspaper className="w-6 h-6 text-teal-600" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-[#001161]">{'Novinky z Webflow'}</h2>
+                <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 text-[11px] font-bold font-mono">
+                  {novinkyId}
+                </span>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Stáhne novinky z Webflow CMS kolekce a uloží je do Supabase. Nejdřív proveď Preview pro kontrolu polí.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3 mb-4">
+            <button
+              onClick={handleNovinkyPreview}
+              disabled={novinkyStatus !== 'idle'}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {novinkyStatus === 'previewing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              {'Preview (3 položky)'}
+            </button>
+            <button
+              onClick={handleNovinkyImport}
+              disabled={novinkyStatus !== 'idle'}
+              className="flex items-center gap-2 bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {novinkyStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {'Importovat novinky do Supabase'}
+            </button>
+          </div>
+
+          {novinkyPreview && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-3">
+              <p className="text-[12px] font-bold text-gray-600 mb-3">
+                {`Kolekce obsahuje ${novinkyPreview.count} novinek. Ukázka polí prvního záznamu:`}
+              </p>
+              {novinkyPreview.preview?.slice(0, 1).map((item: any) => (
+                <div key={item.id}>
+                  <p className="text-[11px] font-mono text-gray-400 mb-1">{`ID: ${item.id}`}</p>
+                  <div className="bg-white rounded-lg border border-gray-200 p-3 max-h-[280px] overflow-y-auto">
+                    <table className="w-full text-[11px]">
+                      <tbody>
+                        {Object.entries(item.fieldData).map(([key, val]) => (
+                          <tr key={key} className="border-b border-gray-100 last:border-none">
+                            <td className="py-1 pr-3 font-mono font-bold text-[#001161]/60 whitespace-nowrap align-top">{key}</td>
+                            <td className="py-1 text-gray-600 break-all">
+                              {typeof val === 'object' ? JSON.stringify(val).slice(0, 120) : String(val).slice(0, 120)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+              <p className="text-[11px] text-gray-400 mt-2 italic">
+                {'Zkontroluj klíče polí výše — pokud je mapování správné, klikni na Import.'}
+              </p>
+            </div>
+          )}
+
+          {novinkyResult && (
+            <div className="bg-teal-50 rounded-xl p-4 border border-teal-200">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4 text-teal-600" />
+                <p className="text-[12px] font-bold text-teal-800">
+                  {`Importováno ${novinkyResult.count} novinek. Ukázka:`}
+                </p>
+              </div>
+              <div className="space-y-1">
+                {novinkyResult.sample?.map((n: any, i: number) => (
+                  <div key={i} className="text-[11px] text-teal-700 flex items-center gap-2">
+                    <span className="font-bold truncate">{n.title}</span>
+                    <span className="text-teal-400">·</span>
+                    <span className="shrink-0">{n.date}</span>
+                    {n.hasImage && <span className="ml-auto text-[10px] bg-teal-200 px-1.5 py-0.5 rounded-full shrink-0">{'foto'}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── DVPP Videa z Webflow ───────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center shrink-0">
+              <Video className="w-6 h-6 text-red-500" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-[#001161]">{'DVPP Záznamy webinářů'}</h2>
+                <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[11px] font-bold font-mono">
+                  {'videa: 66b119eaa0271061207bdd18'}
+                </span>
+                <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[11px] font-bold font-mono">
+                  {'témata: 67c5e17f4844f5f538279158'}
+                </span>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Synchronizuje záznamy DVPP webinářů a jejich témata z Webflow. Mapuje pole: nadpis-videa, video-link, grey-button-link (certifikát), image.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex gap-3 mb-4">
+            <button
+              onClick={handleDvppSync}
+              disabled={dvppStatus === 'syncing'}
+              className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {dvppStatus === 'syncing'
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <RefreshCw className="w-4 h-4" />}
+              {dvppStatus === 'syncing' ? 'Synchronizuji...' : 'Synchronizovat z Webflow'}
+            </button>
+          </div>
+
+          {dvppResult && dvppStatus === 'done' && (
+            <div className="bg-red-50 rounded-xl p-4 border border-red-200 mb-4">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle className="w-4 h-4 text-red-500" />
+                <p className="text-[12px] font-bold text-red-800">
+                  {`Hotovo! ${dvppResult.videosCount} videí, ${dvppResult.topicsCount} témat uloženo do Supabase.`}
+                </p>
+              </div>
+              <p className="text-[11px] text-red-600">
+                {'Videa jsou nyní dostupná na stránce /webinare pod záložkou Záznamy.'}
+              </p>
+            </div>
+          )}
+
+          {/* Debug sekce */}
+          <div className="mt-4 pt-4 border-t border-gray-100">
+            <p className="text-[11px] font-bold text-gray-500 mb-2">{'Debug — zobrazit raw JSON z Webflow:'}</p>
+            <div className="flex gap-2 mb-3 flex-wrap items-center">
+              <select
+                value={dvppDebugCollectionId}
+                onChange={e => setDvppDebugCollectionId(e.target.value)}
+                className="px-3 py-2 text-[12px] bg-white border border-gray-200 rounded-xl font-mono outline-none focus:border-red-400 cursor-pointer"
+              >
+                <option value="66b119eaa0271061207bdd18">Videa (záznamy)</option>
+                <option value="67c5e17f4844f5f538279158">{'DVPP Témata'}</option>
+              </select>
+              <button
+                onClick={handleDvppDebug}
+                disabled={dvppDebugLoading}
+                className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-600 px-4 py-2 rounded-xl text-[12px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {dvppDebugLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bug className="w-3.5 h-3.5" />}
+                {'Raw debug JSON'}
+              </button>
+            </div>
+            {dvppDebugData && (
+              <div className="bg-gray-900 rounded-xl p-4 max-h-[500px] overflow-y-auto">
+                <p className="text-[10px] text-gray-400 mb-2 font-mono">
+                  {`// Collection: ${dvppDebugCollectionId} — 1. položka`}
+                </p>
+                <pre className="text-[11px] font-mono text-green-300 whitespace-pre-wrap break-all">
+                  {JSON.stringify(dvppDebugData?.data?.items?.[0] ?? dvppDebugData?.data?.[0] ?? dvppDebugData, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Migrace obrázků do Supabase Storage ─────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-violet-50 rounded-xl flex items-center justify-center shrink-0">
+              <FolderSync className="w-6 h-6 text-violet-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-[#001161]">{'Migrace obrázků → Supabase Storage'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Stáhne všechny obrázky z Webflow URL a nahraje je do Supabase Storage. URL v databázi budou automaticky aktualizovány. Pokud je obrázek již v Supabase, přeskočí se.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Kolekce checkboxy */}
+          <div className="bg-violet-50 rounded-xl p-4 mb-4">
+            <p className="text-[11px] font-bold text-violet-800 mb-3">{'Vyberte kolekce ke zpracování:'}</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {([
+                { key: 'products', label: 'Produkty', icon: '📦' },
+                { key: 'blog', label: 'Blog', icon: '📝' },
+                { key: 'novinky', label: 'Novinky', icon: '📰' },
+                { key: 'webinars', label: 'Webináře', icon: '🎥' },
+              ] as { key: keyof typeof imgCollections; label: string; icon: string }[]).map(({ key, label, icon }) => (
+                <label key={key} className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border-2 cursor-pointer transition-all ${imgCollections[key] ? 'border-violet-500 bg-white shadow-sm' : 'border-violet-200 bg-violet-50/50'}`}>
+                  <input
+                    type="checkbox"
+                    checked={imgCollections[key]}
+                    onChange={(e) => setImgCollections(prev => ({ ...prev, [key]: e.target.checked }))}
+                    className="w-3.5 h-3.5 accent-violet-600"
+                  />
+                  <span className="text-[13px]">{icon}</span>
+                  <span className="text-[12px] font-bold text-violet-800">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Info box */}
+          <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
+            <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <p className="text-[12px] text-amber-700">
+              {'Migrace probíhá sekvenčně — u větších kolekcí může trvat několik minut. Stránku nezavírejte.'}
+            </p>
+          </div>
+
+          <button
+            onClick={handleImageMigration}
+            disabled={imgMigrating || !Object.values(imgCollections).some(Boolean)}
+            className="flex items-center gap-2 bg-violet-600 hover:bg-violet-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {imgMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />}
+            {imgMigrating ? 'Probíhá migrace obrázků...' : 'Spustit migraci obrázků'}
+          </button>
+
+          {/* Výsledky */}
+          {imgResult && (
+            <div className="mt-4 bg-violet-50 rounded-xl p-4 border border-violet-200">
+              <div className="flex items-center gap-2 mb-3">
+                <CheckCircle className="w-4 h-4 text-violet-600" />
+                <p className="text-[13px] font-bold text-violet-800">
+                  {`Hotovo! Celkem migrováno ${imgResult.totalMigrated} obrázků${imgResult.totalErrors > 0 ? `, ${imgResult.totalErrors} chyb` : ''}.`}
+                </p>
+              </div>
+              <div className="text-[11px] text-violet-600 mb-3 font-mono">
+                {'Bucket: '}<span className="font-bold">{imgResult.bucket}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {Object.entries(imgResult.results || {}).map(([col, stats]: [string, any]) => (
+                  <div key={col} className="bg-white rounded-lg border border-violet-200 p-3">
+                    <p className="text-[11px] font-bold text-violet-700 mb-2 capitalize">{col}</p>
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-gray-500">{'Celkem'}</span>
+                        <span className="font-bold text-gray-700">{stats.total}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-green-600">{'Migrováno'}</span>
+                        <span className="font-bold text-green-700">{stats.migrated}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-gray-400">{'Přeskočeno'}</span>
+                        <span className="font-bold text-gray-500">{stats.skipped}</span>
+                      </div>
+                      {stats.errors > 0 && (
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-red-500">{'Chyby'}</span>
+                          <span className="font-bold text-red-600">{stats.errors}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Static Data Seed */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center shrink-0">
+              <ArrowRight className="w-6 h-6 text-emerald-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-[#001161]">{'Import statických dat'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Naimportuje blog příspěvky, novinky a webináře z lokálních statických souborů do Supabase.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-emerald-50 rounded-xl p-4 mb-4">
+            <div className="flex items-center gap-4 text-[12px] text-emerald-700">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5" />
+                {`Blog: ${BLOG_POSTS.length} příspěvků`}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5" />
+                {`Novinky: ${NOVINKA_POSTS.length} položek`}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <CheckCircle className="w-3.5 h-3.5" />
+                {`Webináře: ${WEBINARS.length} webinářů`}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSeedAll}
+            disabled={isMigrating}
+            className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {isMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+            {'Naimportovat vše do Supabase'}
+          </button>
+        </div>
+
+        {/* ── Taby z Webflow ────────────────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center shrink-0">
+              <LayoutGrid className="w-6 h-6 text-[#ff8c66]" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-lg font-bold text-[#001161]">Taby (prodejní argumenty) z Webflow</h2>
+                <span className="px-2 py-0.5 rounded-full bg-orange-100 text-[#ff8c66] text-[11px] font-bold font-mono">{tabsId}</span>
+              </div>
+              <p className="text-[13px] text-gray-500 mt-1">
+                Stáhne taby z Webflow kolekce, zobrazí všechna pole, umožní je namapovat na naše schéma a importuje do Supabase (sloučení — existující záznamy se nepřepíší).
+              </p>
+            </div>
+          </div>
+
+          {/* Info box */}
+          <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
+            <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <p className="text-[12px] text-amber-700">
+              Taby jsou vždy spjaté s konkrétním předmětem — viditelné <strong>pouze v sekci Předměty → [Předmět] → Taby</strong>. Při importu vyber, ke kterému předmětu taby patří.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label className="block text-[11px] font-bold text-orange-800 mb-1">Webflow Collection ID</label>
+              <input
+                value={tabsId}
+                onChange={e => setTabsId(e.target.value)}
+                className="w-full px-3 py-2 text-[12px] bg-white border border-orange-200 rounded-lg focus:border-orange-400 outline-none font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-orange-800 mb-1">
+                Přiřadit k předmětu <span className="text-orange-400 font-normal text-[10px]">(volitelné — server přiřadí automaticky z Webflow ref ID)</span>
+              </label>
+              {subjectList.length > 0 ? (
+                <select
+                  value={tabsForceSubject}
+                  onChange={e => setTabsForceSubject(e.target.value)}
+                  className="w-full px-3 py-2 text-[12px] bg-white border border-orange-200 rounded-lg focus:border-[#ff8c66] outline-none"
+                >
+                  <option value="">-- Auto (z Webflow reference ID) --</option>
+                  {subjectList.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={tabsForceSubject}
+                  onChange={e => setTabsForceSubject(e.target.value)}
+                  placeholder="Nechat prázdné = auto-přiřazení"
+                  className="w-full px-3 py-2 text-[12px] bg-white border border-orange-200 rounded-lg focus:border-[#ff8c66] outline-none"
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-3 mb-4 flex-wrap">
+            <button
+              onClick={handleTabsPreview}
+              disabled={tabsStatus !== 'idle'}
+              className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {tabsStatus === 'previewing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />}
+              Preview + auto-mapování polí
+            </button>
+            <button
+              onClick={handleTabsImport}
+              disabled={tabsStatus !== 'idle' || !tabsPreview}
+              className="flex items-center gap-2 bg-[#ff8c66] hover:bg-[#ff7a4d] text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {tabsStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {tabsForceSubject ? `Importovat → ${tabsForceSubject}` : 'Importovat taby do Supabase'}
+            </button>
+            <button
+              onClick={handleTabsDiag}
+              disabled={tabsDiagLoading}
+              className="flex items-center gap-2 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {tabsDiagLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bug className="w-4 h-4" />}
+              Diagnostika DB
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm('Pokusí se opravit prázdné subject hodnoty u existujících tabů z metadata.name. Pokračovat?')) return;
+                setTabsDiagLoading(true);
+                try {
+                  const res = await fetch(`${SERVER}/admin/tabs/reassign-subjects`, { method: 'POST', headers: AUTH(publicAnonKey) });
+                  const d = await safeJson(res);
+                  if (d.success) { toast.success(`Opraveno ${d.fixed} tabů z ${d.total}.`); handleTabsDiag(); }
+                  else toast.error(`Chyba: ${d.error}`);
+                } catch (e: any) { toast.error(e.message); }
+                finally { setTabsDiagLoading(false); }
+              }}
+              disabled={tabsDiagLoading}
+              className="flex items-center gap-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Opravit subject (z metadata.name)
+            </button>
+            <button
+              onClick={async () => {
+                if (!confirm('Rozdělí předmět "Matematika" na dva záznamy: "Matematika-1" (1. stupeň) a "Matematika 2" (2. stupeň). Původní "Matematika" bude odstraněna. Pokračovat?')) return;
+                setTabsDiagLoading(true);
+                try {
+                  const res = await fetch(`${SERVER}/admin/predmety/split-matematika`, { method: 'POST', headers: AUTH(publicAnonKey) });
+                  const d = await safeJson(res);
+                  if (d.success) {
+                    const msg = d.created.length > 0
+                      ? `Vytvořeno: ${d.created.join(', ')}. Odstraněno: "${d.removed}". Celkem ${d.total} předmětů.`
+                      : `Již existovalo: ${d.alreadyExisted.join(', ')}`;
+                    toast.success(msg);
+                  } else {
+                    toast.error(`Chyba: ${d.error}`);
+                  }
+                } catch (e: any) { toast.error(e.message); }
+                finally { setTabsDiagLoading(false); }
+              }}
+              disabled={tabsDiagLoading}
+              className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              ✂️ Rozdělit Matematiku (1. + 2. stupeň)
+            </button>
+          </div>
+
+          {tabsDiag && (
+            <div className="bg-blue-50 rounded-xl p-4 border border-blue-200 mb-4">
+              <p className="text-[12px] font-bold text-blue-800 mb-2">🔍 V DB: {tabsDiag.total} tabů — rozložení dle subject:</p>
+              <div className="space-y-1 mb-3">
+                {Object.entries(tabsDiag.bySubject).sort((a: any, b: any) => b[1] - a[1]).map(([subj, cnt]: any) => (
+                  <div key={subj} className="flex items-center gap-2">
+                    <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${subj === '(prázdný)' ? 'bg-red-400' : 'bg-blue-400'}`} />
+                    <span className="text-[11px] font-mono text-blue-900">{subj}</span>
+                    <span className="text-[10px] text-blue-500 ml-auto">{cnt}×</span>
+                  </div>
+                ))}
+              </div>
+              {tabsDiag.sample?.[0] && (
+                <details className="text-[10px] text-blue-600">
+                  <summary className="cursor-pointer font-bold">Ukázka prvního tabu (raw)</summary>
+                  <pre className="mt-1 bg-white p-2 rounded text-[9px] overflow-x-auto border border-blue-100">
+                    {JSON.stringify({ tabText: tabsDiag.sample[0].tabText, subject: tabsDiag.sample[0].subject, order: tabsDiag.sample[0].order }, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+          )}
+
+          {tabsPreview && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-4">
+              <p className="text-[12px] font-bold text-gray-600 mb-1">
+                {`${tabsPreview.count} tabů v kolekci. Webflow pole → naše pole (uprav dle potřeby):`}
+              </p>
+              <p className="text-[11px] text-gray-400 mb-3 italic">
+                Cílová pole: <span className="font-mono text-[#ff8c66] not-italic">tabText, contentHeadline, contentRichText, contentImage, subject, subpage, order, bgColor</span>
+              </p>
+              <div className="space-y-1.5 max-h-[320px] overflow-y-auto">
+                {tabsPreview.preview?.[0]?.fieldData && Object.keys(tabsPreview.preview[0].fieldData).map((wfKey: string) => {
+                  const exampleVal = tabsPreview.preview[0].fieldData[wfKey];
+                  return (
+                    <div key={wfKey} className="flex items-center gap-2">
+                      <div className="w-[190px] shrink-0 px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg font-mono text-[#001161]/60 text-[11px] truncate" title={wfKey}>
+                        {wfKey}
+                      </div>
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                      <input
+                        value={tabsMapping[wfKey] ?? ''}
+                        onChange={e => setTabsMapping(m => ({ ...m, [wfKey]: e.target.value }))}
+                        placeholder="cílové pole (prázdné = přeskočit)"
+                        className="w-[190px] shrink-0 px-2.5 py-1.5 bg-white border border-orange-200 rounded-lg text-[11px] font-mono focus:border-[#ff8c66] outline-none"
+                      />
+                      <div className="flex-1 text-[10px] text-gray-400 truncate pl-1">
+                        {typeof exampleVal === 'object' ? JSON.stringify(exampleVal).slice(0, 60) : String(exampleVal ?? '').slice(0, 60)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {tabsResult && (
+            <div className="bg-orange-50 rounded-xl p-4 border border-orange-200">
+              <div className="flex items-center gap-2 mb-1">
+                <CheckCircle className="w-4 h-4 text-[#ff8c66]" />
+                <p className="text-[12px] font-bold text-orange-800">
+                  {`Importováno ${tabsResult.count} tabů (celkem ${tabsResult.total} v databázi).`}
+                </p>
+              </div>
+              <p className="text-[11px] text-orange-500 mb-2 pl-6">
+                {tabsForceSubject
+                  ? <>Přiřazeno k předmětu: <strong>{tabsForceSubject}</strong> — zobrazte je v <strong>Předměty → {tabsForceSubject} → Taby</strong></>
+                  : <>Subject přeložen automaticky z Webflow reference ID. Zkontrolujte v Předměty → Taby.</>
+                }
+              </p>
+              <div className="space-y-1">
+                {tabsResult.sample?.map((t: any, i: number) => (
+                  <div key={i} className="text-[11px] text-orange-700 flex items-center gap-2">
+                    <span className="font-bold w-4 shrink-0">{t.order}.</span>
+                    <span className="font-semibold truncate">{t.tabText || '—'}</span>
+                    {t.subject && <><span className="text-orange-300">·</span><span className="text-orange-500 shrink-0">{t.subject}</span></>}
+                    {t.contentHeadline && <><span className="text-orange-300">·</span><span className="truncate text-orange-600">{t.contentHeadline}</span></>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Generický JSON importer ───────────────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center shrink-0">
+              <Code2 className="w-6 h-6 text-indigo-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-[#001161]">Generický JSON import</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                Vlož libovolný JSON (pole objektů nebo <code className="text-[11px] bg-gray-100 px-1 rounded">{"{ items: [...] }"}</code>), vyber cílovou kolekci, nastav mapování polí a importuj do Supabase.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Cílová kolekce</label>
+              <select
+                value={jsonCollection}
+                onChange={e => setJsonCollection(e.target.value)}
+                className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl bg-white focus:border-indigo-400 outline-none"
+              >
+                <option value="tabs">Taby</option>
+                <option value="predmety">Předměty</option>
+                <option value="blog">Blog</option>
+                <option value="novinky">Novinky</option>
+                <option value="webinare">Webináře</option>
+                <option value="notifikace">Notifikace</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Režim importu</label>
+              <div className="flex gap-2 h-[38px]">
+                <button
+                  onClick={() => setJsonAppend(true)}
+                  className={`flex-1 text-[12px] font-bold rounded-xl border-2 transition-colors ${jsonAppend ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+                >Sloučit</button>
+                <button
+                  onClick={() => setJsonAppend(false)}
+                  className={`flex-1 text-[12px] font-bold rounded-xl border-2 transition-colors ${!jsonAppend ? 'border-red-400 bg-red-50 text-red-600' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+                >Přepsat</button>
+              </div>
+            </div>
+          </div>
+
+          <div className="mb-3">
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">JSON data</label>
+            <textarea
+              value={jsonText}
+              onChange={e => { setJsonText(e.target.value); setJsonParsed(null); setJsonError(''); setJsonResult(null); }}
+              placeholder={'[\n  {\n    "tab-text": "Učební text",\n    "content-headline": "Interaktivní lekce",\n    "subject": "Fyzika",\n    "order": 1\n  }\n]'}
+              rows={8}
+              className="w-full px-3 py-2.5 text-[12px] font-mono border border-gray-200 rounded-xl bg-gray-50 focus:bg-white focus:border-indigo-400 outline-none resize-y transition-all"
+            />
+            {jsonError && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-red-600">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />{jsonError}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleJsonParse}
+            disabled={!jsonText.trim()}
+            className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2.5 rounded-xl text-[13px] font-bold mb-4 transition-colors disabled:opacity-40"
+          >
+            <Eye className="w-4 h-4" />
+            Parsovat JSON + nastavit mapování
+          </button>
+
+          {jsonParsed && jsonParsed.length > 0 && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mb-4">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[12px] font-bold text-gray-600">{`${jsonParsed.length} záznamů, ${Object.keys(jsonParsed[0]).length} polí. Nastav mapování (zdrojové pole → cílové pole):`}</p>
+              </div>
+              <p className="text-[11px] text-gray-400 mb-3 italic">
+                Uprav cílové názvy polí. Pokud je zdroj = cíl, pole se přenese beze změny. Prefix <code className="bg-white px-1 rounded">_</code> = přeskočit.
+              </p>
+              <div className="space-y-1.5 max-h-[300px] overflow-y-auto">
+                {Object.keys(jsonParsed[0]).map((srcKey) => {
+                  const exampleVal = jsonParsed[0][srcKey];
+                  return (
+                    <div key={srcKey} className="flex items-center gap-2">
+                      <div className="w-[170px] shrink-0 px-2.5 py-1.5 bg-white border border-gray-200 rounded-lg font-mono text-[#001161]/60 text-[11px] truncate" title={srcKey}>
+                        {srcKey}
+                      </div>
+                      <ArrowRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                      <input
+                        value={jsonMapping[srcKey] ?? srcKey}
+                        onChange={e => setJsonMapping(m => ({ ...m, [srcKey]: e.target.value }))}
+                        className="w-[170px] shrink-0 px-2.5 py-1.5 bg-white border border-indigo-200 rounded-lg text-[11px] font-mono focus:border-indigo-500 outline-none"
+                      />
+                      <div className="flex-1 text-[10px] text-gray-400 truncate pl-1">
+                        {typeof exampleVal === 'object' ? JSON.stringify(exampleVal).slice(0, 60) : String(exampleVal ?? '').slice(0, 60)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {jsonParsed && (
+            <button
+              onClick={handleJsonImport}
+              disabled={jsonStatus === 'importing'}
+              className={`flex items-center gap-2 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 ${jsonAppend ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-red-500 hover:bg-red-600'}`}
+            >
+              {jsonStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {jsonAppend ? `Sloučit ${jsonParsed.length} záznamů → „${jsonCollection}"` : `PŘEPSAT „${jsonCollection}" (${jsonParsed.length} záznamů)`}
+            </button>
+          )}
+
+          {jsonResult && (
+            <div className="mt-4 bg-indigo-50 rounded-xl p-4 border border-indigo-200">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle className="w-4 h-4 text-indigo-600" />
+                <p className="text-[12px] font-bold text-indigo-800">
+                  {`Import hotov! ${jsonResult.count} záznamů importováno, ${jsonResult.total} celkem v databázi.`}
+                </p>
+              </div>
+              {jsonResult.sample?.[0] && (
+                <div className="bg-white rounded-lg p-3 border border-indigo-100">
+                  <pre className="text-[10px] font-mono text-gray-600 whitespace-pre-wrap overflow-x-auto max-h-[200px]">
+                    {JSON.stringify(jsonResult.sample[0], null, 2).slice(0, 600)}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Future: AI & RAG note */}
+        <div className="bg-gradient-to-br from-gray-50 to-gray-100 rounded-2xl border border-gray-200 p-6">
+          <h3 className="text-[14px] font-bold text-gray-600 mb-2">{'Připravujeme: RAG Databáze & AI Agent'}</h3>
+          <p className="text-[12px] text-gray-500 leading-relaxed">
+            {'V budoucnu zde bude možnost automaticky indexovat veškerý firemní obsah do RAG databáze. AI agent bude moci automaticky vytvářet nové produkty, generovat popisy, psát blogové příspěvky a novinky.'}
+          </p>
+        </div>
+
+        {/* Debug Webflow */}
+        <div className="bg-gray-50 rounded-2xl border border-gray-200 p-6 mt-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center shrink-0">
+              <Bug className="w-6 h-6 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-[#001161]">{'Debug Webflow'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Získáte raw JSON odpověď z Webflow API pro ladění a kontrolu dat.'}
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={handleDebugWebflow}
+            disabled={debugLoading}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            {debugLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+            {'Spustit debug Webflow'}
+          </button>
+
+          {debugData && (
+            <div className="bg-gray-50 rounded-xl p-4 border border-gray-200 mt-4">
+              <p className="text-[12px] font-bold text-gray-600 mb-3">{'Debug odpověď z Webflow:'}</p>
+              <div className="bg-white rounded-lg border border-gray-200 p-3 max-h-[600px] overflow-y-auto">
+                <pre className="text-[11px] font-mono text-gray-600 whitespace-pre-wrap break-all">
+                  {JSON.stringify(debugData, null, 2)}
+                </pre>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
