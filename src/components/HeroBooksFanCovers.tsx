@@ -45,6 +45,8 @@ function CoverTile({
   w,
   h,
   coverShadow,
+  coverShadowLite,
+  useLiteCoverShadow,
   arrangement,
   gapPx,
   total,
@@ -61,6 +63,9 @@ function CoverTile({
   w: number;
   h: number;
   coverShadow: string;
+  coverShadowLite?: string;
+  /** Úzký hero — lehčí stín (viz rodič `HeroBooksFanCovers`). */
+  useLiteCoverShadow: boolean;
   arrangement: HeroBooksFanArrangement;
   gapPx: number;
   total: number;
