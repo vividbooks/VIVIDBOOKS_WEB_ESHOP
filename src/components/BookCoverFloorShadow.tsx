@@ -12,7 +12,7 @@ export function BookCoverFloorShadow({ className = '' }: { className?: string })
       style={{
         pointerEvents: 'none',
         background:
-          'radial-gradient(ellipse 78% 62% at 50% 44%, rgba(0,17,97,0.48) 0%, rgba(0,17,97,0.22) 40%, rgba(0,17,97,0.07) 66%, transparent 74%)',
+          'radial-gradient(ellipse 39% 31% at 50% 44%, rgba(0,17,97,0.48) 0%, rgba(0,17,97,0.22) 28%, rgba(0,17,97,0.07) 48%, transparent 56%)',
       }}
     />
   );
