@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ChevronLeft, ShoppingCart } from 'lucide-react';
+import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ShoppingCart } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { TopNav } from './TopNav';
@@ -424,7 +424,7 @@ export default function CatalogLayout() {
             )}
           </AnimatePresence>
 
-          {/* ── Mobile sticky top nav ────────────────────────── */}
+          {/* ── Mobile top nav (checkout / objednávka / katalog) — u katalogu bez sticky ── */}
           {isCheckoutView ? (
             <div className="md:hidden relative z-40 bg-white border-b border-gray-100 px-4 pt-[max(1.5rem,env(safe-area-inset-top))] pb-4">
               <div className="cursor-pointer w-fit" onClick={() => navigate('/')}>
@@ -469,30 +469,63 @@ export default function CatalogLayout() {
                 }`}
               />
             </div>
-          ) : null}
-
-          {/* Mobil: žádná sticky horní lišta — jen FAB menu + volitelně Zpět */}
-          {!isCheckoutLikeSidebar && (
-            <>
-              {location.pathname !== '/' && (
-                <button
-                  type="button"
-                  onClick={() => navigate(-1)}
-                  className="md:hidden fixed z-[52] top-[max(0.75rem,env(safe-area-inset-top))] left-[max(0.75rem,env(safe-area-inset-left))] w-11 h-11 rounded-full bg-white border border-[#001161]/12 shadow-md flex items-center justify-center text-[#001161] active:scale-95 transition-transform"
-                  aria-label="Zpět"
-                >
-                  <ChevronLeft className="size-6" strokeWidth={2.25} />
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setMobileSidebarOpen((v) => !v)}
-                className="md:hidden fixed z-[52] bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] size-14 rounded-full bg-[#001161] text-white shadow-xl shadow-[#001161]/25 flex items-center justify-center active:scale-95 transition-transform"
-                aria-label="Otevřít menu"
-              >
-                <Menu className="size-7" strokeWidth={2} />
-              </button>
-            </>
+          ) : (
+            /* Mobilní horní lišta — v toku dokumentu (ne sticky/fixed), logo + CTA + menu */
+            <div className="md:hidden relative z-40 shrink-0 bg-white border-b border-gray-100 px-4 py-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
+              <div className="flex items-center justify-between gap-2">
+                {location.pathname === '/' ? (
+                  <div className="scale-75 origin-left -my-1 cursor-pointer" onClick={() => navigate('/')}>
+                    <VividbooksLogo />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => navigate(-1)}
+                    className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] flex items-center gap-1 shrink-0 py-1 text-left"
+                  >
+                    {'\u2190 Zp\u011bt'}
+                  </button>
+                )}
+                <div className="flex items-center gap-2 shrink-0">
+                  {isDistributorMode ? (
+                    <button
+                      type="button"
+                      onClick={handleDownloadPack}
+                      disabled={isDownloadingPack}
+                      className="bg-[#001161] text-white px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[13px] font-bold flex items-center gap-1.5"
+                    >
+                      {isDownloadingPack ? (
+                        <div className="size-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Download className="size-3.5" />
+                      )}
+                      ZIP
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={onOrder}
+                      className="bg-[#001161] text-white px-3 py-2 rounded-[999px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold flex items-center gap-2 max-[380px]:px-2.5"
+                    >
+                      <span className="whitespace-nowrap">{'Objednat pro školu'}</span>
+                      {schoolOrderCount > 0 && (
+                        <span className="w-5 h-5 rounded-full bg-white text-[#001161] text-[11px] font-bold flex items-center justify-center shrink-0">
+                          {schoolOrderCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setMobileSidebarOpen((v) => !v)}
+                    className="p-2 rounded-xl bg-gray-100 text-[#001161] shrink-0"
+                    aria-label="Otevřít menu"
+                  >
+                    <Menu className="size-5" />
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* ── Desktop sidebar ────────────────────────────────── */}
@@ -636,12 +669,12 @@ export default function CatalogLayout() {
 
           {/* ── Main content area ───────────────────────────────── */}
           <main
-            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen ${
-              isCheckoutLikeSidebar ? 'pb-20 md:pb-20' : 'pb-32 md:pb-20'
-            } ${isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'}`}
+            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 ${
+              isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
+            }`}
           >
             {location.pathname === '/' && !isCheckoutLikeSidebar && (
-              <div className="md:hidden px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 border-b border-gray-100/90 bg-white">
+              <div className="md:hidden px-4 pt-2 pb-2 border-b border-gray-100/90 bg-white">
                 <div className="relative group/nav">
                   <div
                     ref={navRef}
