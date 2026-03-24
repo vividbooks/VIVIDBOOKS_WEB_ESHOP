@@ -933,7 +933,7 @@ export function ProductDetailPage({
                     style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
                   >
                     {product.image && product.type === 'workbook' ? (
-                      <BookCoverFloorShadow className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(22vh,120px)] -translate-x-1/2 translate-y-[10%] select-none sm:translate-y-[8%] md:w-[min(88%,380px)]" />
+                      <BookCoverFloorShadow className="pointer-events-none absolute bottom-0 left-1/2 z-0 h-[36px] w-[min(42%,200px)] max-w-[200px] -translate-x-1/2 translate-y-[35%] select-none sm:h-[40px] sm:w-[min(38%,220px)] md:h-[44px]" />
                     ) : null}
                     {product.image ? (
                       <ImageWithFallback

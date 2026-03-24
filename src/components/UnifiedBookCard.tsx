@@ -133,7 +133,7 @@ export function UnifiedBookCard({
             />
           ) : (
             <>
-              <BookCoverFloorShadow className="pointer-events-none absolute bottom-[0.5%] left-1/2 z-0 w-[72%] max-h-[32%] -translate-x-1/2 select-none sm:bottom-[1%] sm:w-[68%]" />
+              <BookCoverFloorShadow className="pointer-events-none absolute bottom-[1%] left-1/2 z-0 h-[10%] min-h-[28px] max-h-[40px] w-[42%] max-w-[130px] -translate-x-1/2 translate-y-[20%] select-none sm:bottom-[1.5%] sm:h-[9%] sm:max-h-[36px] sm:w-[40%] sm:max-w-[118px]" />
               {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
               <img
                 src={book.image}
