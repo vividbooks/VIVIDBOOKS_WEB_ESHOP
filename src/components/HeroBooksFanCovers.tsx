@@ -6,6 +6,7 @@ import {
   type HeroBooksFanArrangement,
   type HeroBooksFanZOrder,
 } from '../data/heroSlides';
+import { BOOK_COVER_FLOOR_SHADOW_SRC } from '../utils/bookCoverFloorShadow';
 
 export type HeroBooksFanCover = { id: string; name: string; image: string };
 
@@ -14,9 +15,6 @@ type Props = {
   arrangement: HeroBooksFanArrangement;
   gapPx: number;
   scalePct: number;
-  coverShadow: string;
-  /** Úzký layout katalogu (hero) — jeden levnější drop-shadow místo tří vrstev. */
-  coverShadowLite?: string;
   variant: 'catalog' | 'preview';
   navigate: (path: string) => void;
   showEmptyHint?: boolean;
@@ -44,9 +42,6 @@ function CoverTile({
   bi,
   w,
   h,
-  coverShadow,
-  coverShadowLite,
-  useLiteCoverShadow,
   arrangement,
   gapPx,
   total,
@@ -62,10 +57,6 @@ function CoverTile({
   bi: number;
   w: number;
   h: number;
-  coverShadow: string;
-  coverShadowLite?: string;
-  /** Úzký hero — lehčí stín (viz rodič `HeroBooksFanCovers`). */
-  useLiteCoverShadow: boolean;
   arrangement: HeroBooksFanArrangement;
   gapPx: number;
   total: number;
@@ -123,8 +114,6 @@ function CoverTile({
   const rw = Math.round(w);
   const rh = Math.round(h);
   const bobanekLabel = variant === 'catalog' ? heroFanCoverBobanekLabel(book.name) : null;
-  const imgFilter =
-    useLiteCoverShadow && coverShadowLite ? coverShadowLite : coverShadow;
 
   return (
     <div
@@ -147,14 +136,20 @@ function CoverTile({
       <div className={liftLayerClass}>
         <div className={`relative ${liftOriginClass}`} style={tiltLayerStyle}>
         <div
-          className="flex items-center justify-center overflow-visible bg-transparent"
+          className="relative flex items-center justify-center overflow-visible bg-transparent"
           style={{ width: rw, height: rh }}
         >
           <img
+            src={BOOK_COVER_FLOOR_SHADOW_SRC}
+            alt=""
+            aria-hidden
+            decoding="async"
+            className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(115%,200px)] max-h-[min(48%,88px)] -translate-x-1/2 translate-y-[6%] object-contain object-bottom select-none sm:max-h-[min(44%,100px)] sm:translate-y-[4%]"
+          />
+          <img
             src={book.image}
             alt={book.name}
-            className="max-h-full max-w-full object-contain"
-            style={{ filter: imgFilter }}
+            className="relative z-10 max-h-full max-w-full object-contain"
             loading={priorityImageLoading ? (bi < 4 ? 'eager' : 'lazy') : 'lazy'}
             fetchPriority={priorityImageLoading ? (bi < 4 ? 'high' : 'low') : 'low'}
           />
@@ -186,8 +181,6 @@ export function HeroBooksFanCovers({
   arrangement,
   gapPx,
   scalePct,
-  coverShadow,
-  coverShadowLite,
   variant,
   navigate,
   showEmptyHint,
@@ -255,8 +248,6 @@ export function HeroBooksFanCovers({
   }
 
   const gridUseCssGap = arrangement === 'grid' && gapPx >= 0;
-  const useLiteCoverShadow =
-    variant === 'catalog' && narrowBand !== 'wide' && Boolean(coverShadowLite);
 
   const tiles = slice.map((book, bi) => (
     <CoverTile
@@ -265,9 +256,6 @@ export function HeroBooksFanCovers({
       bi={bi}
       w={w}
       h={h}
-      coverShadow={coverShadow}
-      coverShadowLite={coverShadowLite}
-      useLiteCoverShadow={useLiteCoverShadow}
       arrangement={arrangement}
       gapPx={effGap}
       total={slice.length}

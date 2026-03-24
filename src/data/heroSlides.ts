@@ -339,55 +339,6 @@ export function heroFanWordStyle(wordIndex: number, totalWords: number, seed: nu
   };
 }
 
-/** HEX pozadí slidu z `bgStyle` nebo z třídy `bg-[#rrggbb]`. */
-export function heroSurfaceHexFromSlide(slide: { bg?: string; bgStyle?: string }): string {
-  const s = typeof slide.bgStyle === 'string' ? slide.bgStyle.trim() : '';
-  if (s.startsWith('#') && s.length >= 4) return s.slice(0, 7);
-  const m = typeof slide.bg === 'string' ? slide.bg.match(/#[0-9a-fA-F]{6}/i) : null;
-  return m ? m[0] : '#e8d5f2';
-}
-
-function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
-  let h = hex.replace('#', '').trim();
-  if (h.length === 3 && /^[0-9a-fA-F]{3}$/.test(h)) {
-    h = h.split('').map((c) => c + c).join('');
-  }
-  if (h.length !== 6 || !/^[0-9a-fA-F]+$/.test(h)) return null;
-  return {
-    r: parseInt(h.slice(0, 2), 16),
-    g: parseInt(h.slice(2, 4), 16),
-    b: parseInt(h.slice(4, 6), 16),
-  };
-}
-
-/**
- * Drop-shadow vrstvy pro obálky v hero (bez zaoblení) — tón stínu se míchá s barvou pozadí slidu,
- * podobně jako digitální tituly na homepage (UnifiedBookCard).
- */
-function heroCoverShadowRgb(bgHex: string) {
-  const rgb = parseHexRgb(bgHex) ?? parseHexRgb('#e8d5f2')!;
-  return {
-    r: Math.round(rgb.r * 0.38 + 0 * 0.62),
-    g: Math.round(rgb.g * 0.38 + 17 * 0.62),
-    b: Math.round(rgb.b * 0.38 + 97 * 0.62),
-  };
-}
-
-/** Jeden stín — výrazně levnější na mobilu než trojitý filter. */
-export function heroBookCoverShadowFilterLite(bgHex: string): string {
-  const { r, g, b } = heroCoverShadowRgb(bgHex);
-  return `drop-shadow(2px 6px 12px rgba(${r},${g},${b},0.22))`;
-}
-
-export function heroBookCoverShadowFilter(bgHex: string): string {
-  const { r, g, b } = heroCoverShadowRgb(bgHex);
-  return [
-    `drop-shadow(1px 2px 2px rgba(${r},${g},${b},0.34))`,
-    `drop-shadow(3px 8px 12px rgba(${r},${g},${b},0.24))`,
-    `drop-shadow(5px 18px 28px rgba(${r},${g},${b},0.14))`,
-  ].join(' ');
-}
-
 /** Pozadí pill v nadpisu (stejné na webu i v náhledu editoru). Bez alfa / transparent — plně krycí výplň. */
 export function heroPillHighlightStyle(
   pillHex?: string,

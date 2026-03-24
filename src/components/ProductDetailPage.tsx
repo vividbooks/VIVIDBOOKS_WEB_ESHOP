@@ -933,7 +933,7 @@ export function ProductDetailPage({
                       alt=""
                       aria-hidden
                       decoding="async"
-                      className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(88%,320px)] max-h-[min(22vh,120px)] -translate-x-1/2 translate-y-[18%] object-contain object-bottom select-none sm:translate-y-[14%] md:w-[min(82%,360px)]"
+                      className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(92%,340px)] max-h-[min(28vh,160px)] -translate-x-1/2 translate-y-[12%] object-contain object-bottom select-none sm:translate-y-[10%] md:w-[min(88%,380px)] md:max-h-[min(26vh,180px)]"
                     />
                   ) : null}
                   {product.image

@@ -139,7 +139,7 @@ export function UnifiedBookCard({
                 alt=""
                 aria-hidden
                 decoding="async"
-                className="pointer-events-none absolute bottom-[0.5%] left-1/2 z-0 w-[64%] max-h-[28%] -translate-x-1/2 object-contain object-bottom select-none sm:bottom-[1%] sm:w-[60%]"
+                className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(88%,280px)] max-h-[36%] -translate-x-1/2 translate-y-[4%] object-contain object-bottom select-none sm:w-[min(82%,260px)] sm:max-h-[34%] sm:translate-y-[2%]"
               />
               {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
               <img
