@@ -2,7 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { BookOpen } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { BookCoverFloorShadow } from './BookCoverFloorShadow';
+import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
 
 /* ─── helpers ───────────────────────────────────────────── */
 const formatTypography = (text: string) => {
@@ -133,12 +133,12 @@ export function UnifiedBookCard({
             />
           ) : (
             <>
-              <BookCoverFloorShadow className="pointer-events-none absolute bottom-[1%] left-1/2 z-0 h-[10%] min-h-[28px] max-h-[40px] w-[42%] max-w-[130px] -translate-x-1/2 translate-y-[20%] select-none sm:bottom-[1.5%] sm:h-[9%] sm:max-h-[36px] sm:w-[40%] sm:max-w-[118px]" />
               {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
               <img
                 src={book.image}
                 alt={book.name}
-                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom drop-shadow-[0_10px_22px_rgba(0,17,97,0.28)] max-md:drop-shadow-[0_8px_18px_rgba(0,17,97,0.22)]`}
+                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
+                style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
                   setIsLandscape(img.naturalWidth >= img.naturalHeight);

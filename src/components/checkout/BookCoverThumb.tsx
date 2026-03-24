@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { Package } from 'lucide-react';
+import { PRINT_BOOK_COVER_DROP_SHADOW } from '../../utils/printBookCoverShadow';
 
-/** Stejné vrstvené stíny jako tiskoviny v UnifiedBookCard — sdílené i upsell dlaždicemi */
-export const BOOK_COVER_DROP_SHADOW = [
-  'drop-shadow(2px 4px 3px rgba(0,17,97,0.22))',
-  'drop-shadow(5px 14px 18px rgba(0,17,97,0.22))',
-  'drop-shadow(8px 32px 25px rgba(0,17,97,0.12))',
-].join(' ');
+/** Stejný stín jako tiskoviny v katalogu / PDP (Figma spec). */
+export const BOOK_COVER_DROP_SHADOW = PRINT_BOOK_COVER_DROP_SHADOW;
 
 export function BookCoverThumb({
   imageUrl,
