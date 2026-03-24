@@ -224,7 +224,7 @@ export function DigitalAccessComparison({ subject, workbooks, onOrder, compact =
                 <img
                   src={book.image}
                   alt={book.name}
-                  className="w-full h-full object-contain drop-shadow-[0_8px_20px_rgba(0,0,0,0.35)]"
+                  className="w-full h-full object-contain max-md:drop-shadow-[0_4px_12px_rgba(0,0,0,0.22)] md:drop-shadow-[0_8px_20px_rgba(0,0,0,0.35)]"
                 />
               </div>
             ))

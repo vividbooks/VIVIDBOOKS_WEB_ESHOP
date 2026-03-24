@@ -18,6 +18,8 @@ import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductC
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct, parseSubject } from './cartUpsellUtils';
 import { buildBundleCartLines, type ProductBundleRecord } from '../utils/bundlePricing';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
+import { useMatchMedia } from '../hooks/useMatchMedia';
+import { BOOK_COVER_FLOOR_SHADOW_SRC } from '../utils/bookCoverFloorShadow';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -614,6 +616,14 @@ export function ProductDetailPage({
     !!product.dolozka && subjectShowsMsmtDolozkaBadge(categoryBaseForMsmt);
   /** Náhled v levé „dlaždici“: tiskoviny −30 %, digitální licence +10 % (vůči původním max-height) */
   const isDigitalHero = product.type === 'online' || product.type === 'license';
+  const mdUp = useMatchMedia('(min-width: 768px)', false);
+  /** Jen digitály — tiskoviny používají sdílený obrázek stínu (viz BOOK_COVER_FLOOR_SHADOW_SRC). */
+  const heroDigitalImageFilter = useMemo(() => {
+    if (product.type === 'workbook') return undefined as string | undefined;
+    return mdUp
+      ? 'drop-shadow(0 30px 50px rgba(0,17,97,0.22))'
+      : 'drop-shadow(0 12px 24px rgba(0,17,97,0.16))';
+  }, [mdUp, product.type]);
 
   useEffect(() => {
     let cancelled = false;
@@ -915,21 +925,22 @@ export function ProductDetailPage({
                   animate={{ scale: 1, opacity: 1 }}
                   transition={{ duration: 0.5, delay: 0.1 }}
                   className="relative flex items-center justify-center"
-                  style={{
-                    filter: product.type === 'workbook'
-                      ? [
-                          'drop-shadow(2px 4px 3px rgba(0,17,97,0.22))',
-                          'drop-shadow(5px 14px 18px rgba(0,17,97,0.22))',
-                          'drop-shadow(8px 32px 50px rgba(0,17,97,0.12))',
-                        ].join(' ')
-                      : 'drop-shadow(0 30px 50px rgba(0,17,97,0.22))',
-                  }}
+                  style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
                 >
+                  {product.image && product.type === 'workbook' ? (
+                    <img
+                      src={BOOK_COVER_FLOOR_SHADOW_SRC}
+                      alt=""
+                      aria-hidden
+                      decoding="async"
+                      className="pointer-events-none absolute bottom-0 left-1/2 z-0 w-[min(88%,320px)] max-h-[min(22vh,120px)] -translate-x-1/2 translate-y-[18%] object-contain object-bottom select-none sm:translate-y-[14%] md:w-[min(82%,360px)]"
+                    />
+                  ) : null}
                   {product.image
                     ? <ImageWithFallback
                         src={product.image}
                         alt={product.name}
-                        className={`w-auto object-contain ${
+                        className={`relative z-10 w-auto object-contain ${
                           isLandscape
                             ? isDigitalHero
                               ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'

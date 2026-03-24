@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { BookOpen } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { BOOK_COVER_FLOOR_SHADOW_SRC } from '../utils/bookCoverFloorShadow';
 
 /* ─── helpers ───────────────────────────────────────────── */
 const formatTypography = (text: string) => {
@@ -128,26 +129,29 @@ export function UnifiedBookCard({
             <ImageWithFallback
               src={book.image}
               alt={book.name}
-              className="w-[95%] h-[95%] mx-auto object-contain object-bottom drop-shadow-[0_12px_24px_rgba(0,0,0,0.13)] transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
+              className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_4px_12px_rgba(0,0,0,0.1)] md:drop-shadow-[0_12px_24px_rgba(0,0,0,0.13)]"
             />
           ) : (
-            /* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */
-            <img
-              src={book.image}
-              alt={book.name}
-              className={`${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
-              onLoad={(e) => {
-                const img = e.currentTarget;
-                setIsLandscape(img.naturalWidth >= img.naturalHeight);
-              }}
-              style={{
-                filter: [
-                  'drop-shadow(2px 4px 3px rgba(0,17,97,0.22))',   // 1) těsný kontaktní stín — ostrý okraj
-                  'drop-shadow(5px 14px 18px rgba(0,17,97,0.22))', // 2) střední tělo stínu — hlavní hloubka
-                  'drop-shadow(8px 32px 25px rgba(0,17,97,0.12))', // 3) wide ambient — vzdálené rozptýlené světlo
-                ].join(' '),
-              }}
-            />
+            <>
+              {/* Jeden sdílený soubor místo CSS drop-shadow na každé obálce */}
+              <img
+                src={BOOK_COVER_FLOOR_SHADOW_SRC}
+                alt=""
+                aria-hidden
+                decoding="async"
+                className="pointer-events-none absolute bottom-[0.5%] left-1/2 z-0 w-[64%] max-h-[28%] -translate-x-1/2 object-contain object-bottom select-none sm:bottom-[1%] sm:w-[60%]"
+              />
+              {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
+              <img
+                src={book.image}
+                alt={book.name}
+                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
+                onLoad={(e) => {
+                  const img = e.currentTarget;
+                  setIsLandscape(img.naturalWidth >= img.naturalHeight);
+                }}
+              />
+            </>
           )
         ) : (
           <div className="w-full h-full rounded-2xl bg-[#eef2fb] flex items-center justify-center">

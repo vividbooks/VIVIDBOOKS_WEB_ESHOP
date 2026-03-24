@@ -199,13 +199,14 @@ export function SubjectMethodPrinciplesSection({
           style={{
             scrollbarWidth: 'thin',
             WebkitOverflowScrolling: 'touch',
+            WebkitFontSmoothing: 'antialiased',
           }}
         >
           {principles.map((p, i) => (
             <article
               key={`${p.title}-${i}`}
               data-principle-card
-              className="shrink-0 w-[272px] sm:w-[300px] lg:w-auto lg:flex-[0_0_calc((100%-2.5rem)/3)] lg:max-w-none rounded-[22px] border border-[#001161]/10 bg-[#E8EBF3]/90 shadow-[0_4px_20px_rgba(0,17,97,0.06)] flex flex-col overflow-hidden"
+              className="shrink-0 w-[272px] sm:w-[300px] lg:w-auto lg:flex-[0_0_calc((100%-2.5rem)/3)] lg:max-w-none rounded-[22px] border border-[#001161]/10 bg-[#E8EBF3]/90 shadow-sm lg:shadow-[0_4px_20px_rgba(0,17,97,0.06)] flex flex-col overflow-hidden"
             >
               <div className="px-4 pt-5 pb-2">
                 <h3

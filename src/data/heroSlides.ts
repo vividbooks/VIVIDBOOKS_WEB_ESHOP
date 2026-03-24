@@ -104,10 +104,11 @@ export function heroTitleFontCss(id: HeroSlideTitleFontId): {
     case 'fenomenSemiBold':
       return { fontFamily: "'Fenomen Sans', sans-serif", fontWeight: 600 };
     case 'visbyRound':
-      return { fontFamily: "'Visby Round CF', sans-serif", fontWeight: 600 };
+      /* Když Visby není v bucketu ani v /fonts/, alespoň Fenomen Semi Bold (licenční náhrada). */
+      return { fontFamily: "'Visby Round CF', 'Fenomen Sans', sans-serif", fontWeight: 600 };
     case 'vividbooksScript':
       return {
-        fontFamily: "'Vividbooks Script One', cursive",
+        fontFamily: "'Vividbooks Script One', 'Cooper Light', cursive",
         fontWeight: 400,
         /* Kontextové alternativy + ligatury = „alternativní navazování“ u skriptu */
         fontFeatureSettings: '"calt" 1, "liga" 1, "clig" 1',
@@ -363,11 +364,23 @@ function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
  * Drop-shadow vrstvy pro obálky v hero (bez zaoblení) — tón stínu se míchá s barvou pozadí slidu,
  * podobně jako digitální tituly na homepage (UnifiedBookCard).
  */
-export function heroBookCoverShadowFilter(bgHex: string): string {
+function heroCoverShadowRgb(bgHex: string) {
   const rgb = parseHexRgb(bgHex) ?? parseHexRgb('#e8d5f2')!;
-  const r = Math.round(rgb.r * 0.38 + 0 * 0.62);
-  const g = Math.round(rgb.g * 0.38 + 17 * 0.62);
-  const b = Math.round(rgb.b * 0.38 + 97 * 0.62);
+  return {
+    r: Math.round(rgb.r * 0.38 + 0 * 0.62),
+    g: Math.round(rgb.g * 0.38 + 17 * 0.62),
+    b: Math.round(rgb.b * 0.38 + 97 * 0.62),
+  };
+}
+
+/** Jeden stín — výrazně levnější na mobilu než trojitý filter. */
+export function heroBookCoverShadowFilterLite(bgHex: string): string {
+  const { r, g, b } = heroCoverShadowRgb(bgHex);
+  return `drop-shadow(2px 6px 12px rgba(${r},${g},${b},0.22))`;
+}
+
+export function heroBookCoverShadowFilter(bgHex: string): string {
+  const { r, g, b } = heroCoverShadowRgb(bgHex);
   return [
     `drop-shadow(1px 2px 2px rgba(${r},${g},${b},0.34))`,
     `drop-shadow(3px 8px 12px rgba(${r},${g},${b},0.24))`,

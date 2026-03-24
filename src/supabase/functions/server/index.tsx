@@ -2137,7 +2137,7 @@ ${outlookUrl ? `<table cellpadding="0" cellspacing="0" width="100%" style="margi
 <tr><td style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
 Tento email byl odeslan automaticky po registraci na webinar.<br>
-&copy; ${new Date().getFullYear()} Vividbooks &mdash; Nakladatelstvi Grada Publishing
+&copy; ${new Date().getFullYear()} Vividbooks
 </p>
 </td></tr>
 </table>
@@ -2341,7 +2341,7 @@ Zaznamy vsech webinaru najdes take na <a href="https://www.vividbooks.com/webina
 <tr><td style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
 Tento email byl odeslan automaticky po registraci ke sledovani zaznamu DVPP.<br>
-&copy; ${new Date().getFullYear()} Vividbooks &mdash; Nakladatelstvi Grada Publishing
+&copy; ${new Date().getFullYear()} Vividbooks
 </p>
 </td></tr>
 </table>
@@ -2700,7 +2700,7 @@ Sitemap: https://www.vividbooks.com/api/sitemap.xml
 app.get('/make-server-93a20b6f/llms.txt', (c) => {
   const llmsTxt = `# Vividbooks
 
-> Vividbooks je česká platforma interaktivních digitálních učebnic pro základní školy (1. i 2. stupeň). Součást vydavatelství Grada Publishing. Učebnice obsahují animace, interaktivní prvky, 3D modely, badatelské listy a testy. Všechny materiály jsou v souladu s RVP a mají doložky MŠMT.
+> Vividbooks je česká platforma interaktivních digitálních učebnic pro základní školy (1. i 2. stupeň). Učebnice obsahují animace, interaktivní prvky, 3D modely, badatelské listy a testy. Všechny materiály jsou v souladu s RVP a mají doložky MŠMT.
 
 ## Předměty
 
@@ -2733,7 +2733,6 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 ## Kontakt
 - Telefon: +420 602 227 674
 - Web: https://www.vividbooks.com
-- Vydavatel: Grada Publishing, a.s.
 `;
   return c.body(llmsTxt, 200, {
     'Content-Type': 'text/plain; charset=utf-8',
@@ -3246,7 +3245,7 @@ app.post('/make-server-93a20b6f/migrate-images', async (c) => {
    MARKETING AGENT — Gemini 2.0 Flash
    ═════════════════════════════════════════════════════════════���═════ */
 
-const MARKETING_AGENT_SYSTEM_PROMPT = `Jsi marketingový agent pro Vividbooks — českou platformu interaktivních digitálních učebnic pro základní školy. Pracuješ pro marketingový tým vydavatelství Grada Publishing.
+const MARKETING_AGENT_SYSTEM_PROMPT = `Jsi marketingový agent pro Vividbooks — českou platformu interaktivních digitálních učebnic pro základní školy. Pracuješ pro marketingový tým značky Vividbooks.
 
 ## O Vividbooks
 - **Co to je**: Interaktivní digitální učebnice a pracovní sešity pro ZŠ (1. i 2. stupeň)
@@ -3255,7 +3254,6 @@ const MARKETING_AGENT_SYSTEM_PROMPT = `Jsi marketingový agent pro Vividbooks �
 - **Klíčové USP**: Animace a interaktivní lekce, 3D modely, badatelské listy, okamžitá zpětná vazba, Vividboard (interaktivní tabule), soulad s RVP 2025, doložky MŠMT, bezplatný 14denní trial
 - **Web**: www.vividbooks.com | **Trial**: vividbooks.com/vyzkousejte
 - **Webináře**: Pravidelné DVPP webináře zdarma s certifikátem pro učitele
-- **Vydavatel**: Grada Publishing, a.s.
 
 ## Brand voice & tone
 - **Jazyk**: Vždy česky
@@ -8460,7 +8458,7 @@ ${items.length ? `<table width="100%" style="border-collapse:collapse;margin-bot
 ${totalPrice ? `<p style="font-size:15px;font-weight:800;color:#001161;text-align:right;">Celkem (orientačně): ${esc(String(totalPrice))}</p>` : ''}
 </td></tr>
 <tr><td style="background:#f8f9fc;padding:20px 40px;border-radius:0 0 16px 16px;">
-<p style="margin:0;font-size:12px;color:#94a3b8;">© ${new Date().getFullYear()} Vividbooks — Grada Publishing, a.s.</p>
+<p style="margin:0;font-size:12px;color:#94a3b8;">© ${new Date().getFullYear()} Vividbooks</p>
 </td></tr>
 </table></body></html>`;
 
@@ -8804,7 +8802,7 @@ function vividbooksEmailTemplate(params: {
         ${ctaText}
       </a>
     </td></tr>` : '';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:#f4f5f9;font-family:'Fenomen Sans',Arial,Helvetica,sans-serif;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f9;"><tr><td align="center" style="padding:20px 10px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);"><tr><td style="background-color:#001161;padding:28px 40px;text-align:center;"><span style="font-family:'Fenomen Sans',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td style="padding:36px 40px 12px 40px;"><h1 style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:24px;font-weight:800;color:#001161;line-height:1.3;">${headline}</h1></td></tr><tr><td style="padding:8px 40px 20px 40px;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;line-height:1.6;color:#333333;">${body}</td></tr>${ctaBlock}<tr><td style="padding:24px 0;"></td></tr><tr><td style="background-color:#f4f5f9;padding:24px 40px;text-align:center;border-top:1px solid #e5e7eb;"><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:13px;color:#888888;">Vividbooks &middot; Grada Publishing, a.s.</p><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:12px;color:#aaaaaa;"><a href="https://www.vividbooks.com" style="color:#7C3AED;text-decoration:none;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#7C3AED;text-decoration:none;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:11px;color:#cccccc;"><a href="*|UNSUB|*" style="color:#999999;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:#f4f5f9;font-family:'Fenomen Sans',Arial,Helvetica,sans-serif;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f9;"><tr><td align="center" style="padding:20px 10px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);"><tr><td style="background-color:#001161;padding:28px 40px;text-align:center;"><span style="font-family:'Fenomen Sans',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td style="padding:36px 40px 12px 40px;"><h1 style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:24px;font-weight:800;color:#001161;line-height:1.3;">${headline}</h1></td></tr><tr><td style="padding:8px 40px 20px 40px;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;line-height:1.6;color:#333333;">${body}</td></tr>${ctaBlock}<tr><td style="padding:24px 0;"></td></tr><tr><td style="background-color:#f4f5f9;padding:24px 40px;text-align:center;border-top:1px solid #e5e7eb;"><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:13px;color:#888888;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:12px;color:#aaaaaa;"><a href="https://www.vividbooks.com" style="color:#7C3AED;text-decoration:none;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#7C3AED;text-decoration:none;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:11px;color:#cccccc;"><a href="*|UNSUB|*" style="color:#999999;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* GET /admin/mailchimp/campaigns */

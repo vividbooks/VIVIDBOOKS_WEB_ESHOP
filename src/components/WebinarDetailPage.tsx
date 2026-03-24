@@ -221,8 +221,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         })}
       />
 
-      {/* Sticky breadcrumb */}
-      <div className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-[#001161]/6">
+      {/* Breadcrumb — na mobilu v toku stránky, na desktopu pod horní lištou */}
+      <div className="relative z-30 border-b border-[#001161]/6 bg-white md:sticky md:top-14 md:bg-white/90 md:backdrop-blur-md">
         <div className="max-w-[900px] mx-auto px-6 h-14 flex items-center gap-2">
           <button
             onClick={() => navigate('/webinare')}

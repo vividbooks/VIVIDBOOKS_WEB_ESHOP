@@ -579,7 +579,7 @@ export function SubjectPage({
               height: '140px',
             }}
           >
-            <img src={book.image} alt={book.name} className="w-full h-full object-contain drop-shadow-[0_8px_22px_rgba(0,0,0,0.22)]" />
+            <img src={book.image} alt={book.name} className="w-full h-full object-contain max-md:drop-shadow-[0_4px_12px_rgba(0,0,0,0.14)] md:drop-shadow-[0_8px_22px_rgba(0,0,0,0.22)]" />
           </div>
         )) : (
           <div className="w-[100px] h-[140px] rounded-xl flex items-center justify-center" style={{ background: bg }}>

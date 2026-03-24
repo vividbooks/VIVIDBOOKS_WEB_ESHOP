@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
-import { Download, Share2, ChevronRight, ChevronDown, Menu, X, Phone } from 'lucide-react';
+import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ChevronLeft, ShoppingCart } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { TopNav } from './TopNav';
@@ -34,7 +34,6 @@ function VividbooksLogo() {
         <path d={logoPaths.p34d64300} fill="#001161" />
         <path d={logoPaths.p396dedf0} fill="#001161" />
       </svg>
-      {/* BY: GRADA — odstraněno */}
     </div>
   );
 }
@@ -187,7 +186,7 @@ export default function CatalogLayout() {
   const location  = useLocation();
   const navigate  = useNavigate();
   const { products } = useProducts();
-  const { itemCount } = useCart();
+  const { itemCount, openCart } = useCart();
   const { extraCount } = useSchoolOrderDraftMeta();
 
   const [groupingMode,      setGroupingMode]      = useState<'grade' | 'subject'>('subject');
@@ -218,8 +217,8 @@ export default function CatalogLayout() {
     }
     const el = document.getElementById(id);
     if (el) {
-      const offset = 80;
-      window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: 'smooth' });
+    const offset = typeof window !== 'undefined' && window.innerWidth < 768 ? 20 : 80;
+    window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: 'smooth' });
       setActiveSection(id);
     }
   };
@@ -260,7 +259,7 @@ export default function CatalogLayout() {
     setTimeout(check, 100);
     window.addEventListener('resize', check);
     return () => { el.removeEventListener('scroll', check); window.removeEventListener('resize', check); };
-  }, [groupingMode, isSchoolOrderView, isCheckoutView]);
+  }, [groupingMode, isSchoolOrderView, isCheckoutView, location.pathname]);
 
   const scrollMobileNext = () => {
     const el = navRef.current;
@@ -335,6 +334,34 @@ export default function CatalogLayout() {
                       </span>
                     )}
                   </button>
+                  {itemCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => { openCart(); setMobileSidebarOpen(false); }}
+                      className="w-full py-3 rounded-[999px] border-2 border-[#001161] text-[#001161] font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2"
+                    >
+                      <ShoppingCart className="size-5 shrink-0" />
+                      <span>Košík</span>
+                      <span className="min-w-[22px] h-[22px] px-1 rounded-full bg-[#ff6a35] text-white text-[11px] font-bold flex items-center justify-center leading-none">
+                        {itemCount > 99 ? '99+' : itemCount}
+                      </span>
+                    </button>
+                  )}
+                  {isDistributorMode && (
+                    <button
+                      type="button"
+                      onClick={() => { handleDownloadPack(); setMobileSidebarOpen(false); }}
+                      disabled={isDownloadingPack}
+                      className="w-full py-3 rounded-[999px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      {isDownloadingPack ? (
+                        <div className="size-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
+                      ) : (
+                        <Download className="size-5 shrink-0" />
+                      )}
+                      Stáhnout podklady (ZIP)
+                    </button>
+                  )}
                 </div>
 
                 {/* Subject nav */}
@@ -399,7 +426,7 @@ export default function CatalogLayout() {
 
           {/* ── Mobile sticky top nav ────────────────────────── */}
           {isCheckoutView ? (
-            <div className="md:hidden sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 px-4 pt-8 pb-4">
+            <div className="md:hidden relative z-40 bg-white border-b border-gray-100 px-4 pt-[max(1.5rem,env(safe-area-inset-top))] pb-4">
               <div className="cursor-pointer w-fit" onClick={() => navigate('/')}>
                 <VividbooksLogo />
               </div>
@@ -417,8 +444,8 @@ export default function CatalogLayout() {
             </div>
           ) : isSchoolOrderView ? (
             <div
-              className={`md:hidden sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 px-4 ${
-                isSchoolCountsStep ? 'pt-3 pb-3' : 'pt-8 pb-4'
+              className={`md:hidden relative z-40 bg-white border-b border-gray-100 px-4 ${
+                isSchoolCountsStep ? 'pt-3 pb-3' : 'pt-[max(1.5rem,env(safe-area-inset-top))] pb-4'
               }`}
             >
               {!isSchoolCountsStep && (
@@ -442,97 +469,30 @@ export default function CatalogLayout() {
                 }`}
               />
             </div>
-          ) : (
-          <div className="md:hidden sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-gray-100 px-4 py-3">
-            <div className="flex items-center justify-between">
-              {isSchoolOrderView || location.pathname !== '/' ? (
-                <button
-                  onClick={() => navigate(-1)}
-                  className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] flex items-center gap-1"
-                >
-                  {'\u2190 Zp\u011bt'}
-                </button>
-              ) : (
-                <div className="scale-75 origin-left -my-1"><VividbooksLogo /></div>
-              )}
-              <div className="flex items-center gap-2">
-                {isDistributorMode ? (
-                  <button
-                    onClick={handleDownloadPack}
-                    disabled={isDownloadingPack}
-                    className="bg-[#001161] text-white px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[13px] font-bold flex items-center gap-1.5"
-                  >
-                    {isDownloadingPack
-                      ? <div className="size-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      : <Download className="size-3.5" />}
-                    ZIP
-                  </button>
-                ) : (
-                  <button
-                    onClick={onOrder}
-                    className="bg-[#001161] text-white px-4 py-2 rounded-[999px] font-['Fenomen_Sans',sans-serif] text-[13px] font-bold flex items-center gap-2"
-                  >
-                    <span>{'Objednat pro školu'}</span>
-                    {schoolOrderCount > 0 && (
-                      <span className="w-5 h-5 rounded-full bg-white text-[#001161] text-[11px] font-bold flex items-center justify-center">
-                        {schoolOrderCount}
-                      </span>
-                    )}
-                  </button>
-                )}
-                <button
-                  onClick={() => setMobileSidebarOpen(v => !v)}
-                  className="p-2 rounded-xl bg-gray-100 text-[#001161]"
-                >
-                  <Menu className="size-5" />
-                </button>
-              </div>
-            </div>
+          ) : null}
 
-            {/* Section pills — only on catalog home */}
-            {location.pathname === '/' && (
-              <div className="relative group/nav mt-3">
-                <div
-                  ref={navRef}
-                  className="flex gap-2 overflow-x-auto pb-2 no-scrollbar scroll-smooth px-1"
+          {/* Mobil: žádná sticky horní lišta — jen FAB menu + volitelně Zpět */}
+          {!isCheckoutLikeSidebar && (
+            <>
+              {location.pathname !== '/' && (
+                <button
+                  type="button"
+                  onClick={() => navigate(-1)}
+                  className="md:hidden fixed z-[52] top-[max(0.75rem,env(safe-area-inset-top))] left-[max(0.75rem,env(safe-area-inset-left))] w-11 h-11 rounded-full bg-white border border-[#001161]/12 shadow-md flex items-center justify-center text-[#001161] active:scale-95 transition-transform"
+                  aria-label="Zpět"
                 >
-                  {(groupingMode === 'subject'
-                    ? [...secondGradeSubjects, ...firstGradeSubjects]
-                    : [...secondGradeLevels, ...firstGradeLevels]
-                  ).map(item => {
-                    const id = item.replace(/\s+/g, '-').toLowerCase();
-                    return (
-                      <button
-                        key={item}
-                        onClick={() => scrollToSection(id)}
-                        className={`whitespace-nowrap px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] transition-all shrink-0 ${
-                          activeSection === id ? 'bg-[#c8d7f7] text-[#001161] font-bold shadow-sm' : 'bg-gray-50 text-[#001161]'
-                        }`}
-                      >
-                        {stripStupen(item)}
-                      </button>
-                    );
-                  })}
-                  <div className="w-12 shrink-0 h-1" />
-                </div>
-                <AnimatePresence>
-                  {canScrollRight && (
-                    <motion.div
-                      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                      className="absolute top-0 right-0 bottom-2 w-16 bg-gradient-to-l from-white via-white/80 to-transparent pointer-events-none z-10 flex items-center justify-end"
-                    >
-                      <button
-                        onClick={scrollMobileNext}
-                        className="size-[37px] flex items-center justify-center bg-[#001161] rounded-full shadow-lg mr-1 pointer-events-auto cursor-pointer active:scale-90 transition-transform"
-                      >
-                        <ChevronRight className="w-5 h-5 text-white" />
-                      </button>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            )}
-          </div>
+                  <ChevronLeft className="size-6" strokeWidth={2.25} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setMobileSidebarOpen((v) => !v)}
+                className="md:hidden fixed z-[52] bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] size-14 rounded-full bg-[#001161] text-white shadow-xl shadow-[#001161]/25 flex items-center justify-center active:scale-95 transition-transform"
+                aria-label="Otevřít menu"
+              >
+                <Menu className="size-7" strokeWidth={2} />
+              </button>
+            </>
           )}
 
           {/* ── Desktop sidebar ────────────────────────────────── */}
@@ -676,10 +636,58 @@ export default function CatalogLayout() {
 
           {/* ── Main content area ───────────────────────────────── */}
           <main
-            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 ${
-              isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
-            }`}
+            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen ${
+              isCheckoutLikeSidebar ? 'pb-20 md:pb-20' : 'pb-32 md:pb-20'
+            } ${isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'}`}
           >
+            {location.pathname === '/' && !isCheckoutLikeSidebar && (
+              <div className="md:hidden px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 border-b border-gray-100/90 bg-white">
+                <div className="relative group/nav">
+                  <div
+                    ref={navRef}
+                    className="flex gap-2 overflow-x-auto pb-2 no-scrollbar scroll-smooth px-1"
+                  >
+                    {(groupingMode === 'subject'
+                      ? [...secondGradeSubjects, ...firstGradeSubjects]
+                      : [...secondGradeLevels, ...firstGradeLevels]
+                    ).map((item) => {
+                      const id = item.replace(/\s+/g, '-').toLowerCase();
+                      return (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => scrollToSection(id)}
+                          className={`whitespace-nowrap px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] transition-all shrink-0 ${
+                            activeSection === id ? 'bg-[#c8d7f7] text-[#001161] font-bold shadow-sm' : 'bg-gray-50 text-[#001161]'
+                          }`}
+                        >
+                          {stripStupen(item)}
+                        </button>
+                      );
+                    })}
+                    <div className="w-12 shrink-0 h-1" />
+                  </div>
+                  <AnimatePresence>
+                    {canScrollRight && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute top-0 right-0 bottom-2 w-16 bg-gradient-to-l from-white via-white/80 to-transparent pointer-events-none z-10 flex items-center justify-end"
+                      >
+                        <button
+                          type="button"
+                          onClick={scrollMobileNext}
+                          className="size-[37px] flex items-center justify-center bg-[#001161] rounded-full shadow-lg mr-1 pointer-events-auto cursor-pointer active:scale-90 transition-transform"
+                        >
+                          <ChevronRight className="w-5 h-5 text-white" />
+                        </button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+              </div>
+            )}
             <Outlet />
           </main>
         </div>

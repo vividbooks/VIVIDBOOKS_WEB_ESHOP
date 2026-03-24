@@ -36,6 +36,7 @@ import {
   normalizeHeroTitleTiltMode,
   normalizeTitlePlayfulSeed,
   heroBookCoverShadowFilter,
+  heroBookCoverShadowFilterLite,
   heroSurfaceHexFromSlide,
   parseHeroBookProductIds,
   parseHeroTitleUnderlines,
@@ -1157,6 +1158,9 @@ export default function CatalogGrid() {
               const collageTransformAbove = `translate(${collageOx}px, ${collageOy}px)`;
               /** extSlides[0] = klon posledního; [1],[2] = první dva viditelné slidery nahoře. */
               const heroSlideImagePriority = idx === 1 || idx === 2;
+              const heroCoverHex = heroSurfaceHexFromSlide(slideView as any);
+              const heroCoverShadowFull = heroBookCoverShadowFilter(heroCoverHex);
+              const heroCoverShadowLite = heroBookCoverShadowFilterLite(heroCoverHex);
               return (
               <div
                 key={idx}
@@ -1197,11 +1201,17 @@ export default function CatalogGrid() {
                   }`}
                   initial={false}
                   animate={
-                    idx === heroSlide
-                      ? { opacity: 1, y: 0 }
-                      : heroAnimate
-                        ? { opacity: 0, y: 12 }
-                        : { opacity: 1, y: 0 }
+                    heroNarrowViewport
+                      ? idx === heroSlide
+                        ? { opacity: 1 }
+                        : heroAnimate
+                          ? { opacity: 0 }
+                          : { opacity: 1 }
+                      : idx === heroSlide
+                        ? { opacity: 1, y: 0 }
+                        : heroAnimate
+                          ? { opacity: 0, y: 12 }
+                          : { opacity: 1, y: 0 }
                   }
                   transition={{ duration: HERO_CONTENT_FADE_MS / 1000, ease: [0.45, 0, 0.2, 1] }}
                 >
@@ -1222,7 +1232,11 @@ export default function CatalogGrid() {
                       {/* Nadpis (menší) */}
                       <h1
                         className="font-['Cooper_Light',serif] leading-[1.05] mb-1 tracking-tight break-words whitespace-pre-line"
-                        style={{ fontSize: heroHeadingFontSizeClamp(slideView.title, 'webinar') }}
+                        style={{
+                          fontSize: heroHeadingFontSizeClamp(slideView.title, 'webinar'),
+                          WebkitFontSmoothing: 'antialiased',
+                          transform: 'translateZ(0.02px)',
+                        }}
                         title={slideView.title}
                       >
                         {slideView.title}
@@ -1327,7 +1341,8 @@ export default function CatalogGrid() {
                           arrangement={(slideView as any).booksFanArrangement}
                           gapPx={(slideView as any).booksFanGapPx}
                           scalePct={(slideView as any).booksFanScalePct}
-                          coverShadow={heroBookCoverShadowFilter(heroSurfaceHexFromSlide(slideView as any))}
+                          coverShadow={heroCoverShadowFull}
+                          coverShadowLite={heroCoverShadowLite}
                           variant="catalog"
                           navigate={navigate}
                           priorityImageLoading={heroSlideImagePriority}
@@ -1376,7 +1391,8 @@ export default function CatalogGrid() {
                             arrangement={(slideView as any).booksFanArrangement}
                             gapPx={(slideView as any).booksFanGapPx}
                             scalePct={(slideView as any).booksFanScalePct}
-                            coverShadow={heroBookCoverShadowFilter(heroSurfaceHexFromSlide(slideView as any))}
+                            coverShadow={heroCoverShadowFull}
+                            coverShadowLite={heroCoverShadowLite}
                             variant="catalog"
                             navigate={navigate}
                             priorityImageLoading={heroSlideImagePriority}
@@ -1437,7 +1453,8 @@ export default function CatalogGrid() {
                           arrangement={(slideView as any).booksFanArrangement}
                           gapPx={(slideView as any).booksFanGapPx}
                           scalePct={(slideView as any).booksFanScalePct}
-                          coverShadow={heroBookCoverShadowFilter(heroSurfaceHexFromSlide(slideView as any))}
+                          coverShadow={heroCoverShadowFull}
+                          coverShadowLite={heroCoverShadowLite}
                           variant="catalog"
                           navigate={navigate}
                           priorityImageLoading={heroSlideImagePriority}
@@ -1486,7 +1503,8 @@ export default function CatalogGrid() {
                             arrangement={(slideView as any).booksFanArrangement}
                             gapPx={(slideView as any).booksFanGapPx}
                             scalePct={(slideView as any).booksFanScalePct}
-                            coverShadow={heroBookCoverShadowFilter(heroSurfaceHexFromSlide(slideView as any))}
+                            coverShadow={heroCoverShadowFull}
+                            coverShadowLite={heroCoverShadowLite}
                             variant="catalog"
                             navigate={navigate}
                             priorityImageLoading={heroSlideImagePriority}
@@ -1535,7 +1553,8 @@ export default function CatalogGrid() {
                           arrangement={(slideView as any).booksFanArrangement}
                           gapPx={(slideView as any).booksFanGapPx}
                           scalePct={(slideView as any).booksFanScalePct}
-                          coverShadow={heroBookCoverShadowFilter(heroSurfaceHexFromSlide(slideView as any))}
+                          coverShadow={heroCoverShadowFull}
+                          coverShadowLite={heroCoverShadowLite}
                           variant="catalog"
                           navigate={navigate}
                           priorityImageLoading={heroSlideImagePriority}

@@ -15,6 +15,8 @@ type Props = {
   gapPx: number;
   scalePct: number;
   coverShadow: string;
+  /** Úzký layout katalogu (hero) — jeden levnější drop-shadow místo tří vrstev. */
+  coverShadowLite?: string;
   variant: 'catalog' | 'preview';
   navigate: (path: string) => void;
   showEmptyHint?: boolean;
@@ -116,6 +118,8 @@ function CoverTile({
   const rw = Math.round(w);
   const rh = Math.round(h);
   const bobanekLabel = variant === 'catalog' ? heroFanCoverBobanekLabel(book.name) : null;
+  const imgFilter =
+    useLiteCoverShadow && coverShadowLite ? coverShadowLite : coverShadow;
 
   return (
     <div
@@ -145,14 +149,14 @@ function CoverTile({
             src={book.image}
             alt={book.name}
             className="max-h-full max-w-full object-contain"
-            style={{ filter: coverShadow }}
+            style={{ filter: imgFilter }}
             loading={priorityImageLoading ? (bi < 4 ? 'eager' : 'lazy') : 'lazy'}
             fetchPriority={priorityImageLoading ? (bi < 4 ? 'high' : 'low') : 'low'}
           />
         </div>
         {bobanekLabel != null && bobanekLabel !== '' && (
           <div
-            className="pointer-events-none absolute left-1/2 z-[45] whitespace-nowrap rounded-full border border-white/95 bg-white px-2.5 py-1.5 shadow-[0_6px_20px_rgba(0,17,97,0.18),0_2px_8px_rgba(0,0,0,0.08)] backdrop-blur-sm transition-opacity duration-200 md:px-3 md:py-2 [@media(hover:none)]:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-focus-within:opacity-100"
+            className="pointer-events-none absolute left-1/2 z-[45] whitespace-nowrap rounded-full border border-white/95 bg-white px-2.5 py-1.5 shadow-md transition-opacity duration-200 md:px-3 md:py-2 md:shadow-[0_6px_20px_rgba(0,17,97,0.14)] [@media(hover:none)]:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:opacity-0 [@media(hover:hover)_and_(pointer:fine)]:group-hover:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:group-focus-within:opacity-100"
             style={{
               bottom: '100%',
               marginBottom: Math.max(6, Math.round(rh * 0.04)),
@@ -178,6 +182,7 @@ export function HeroBooksFanCovers({
   gapPx,
   scalePct,
   coverShadow,
+  coverShadowLite,
   variant,
   navigate,
   showEmptyHint,
@@ -245,6 +250,8 @@ export function HeroBooksFanCovers({
   }
 
   const gridUseCssGap = arrangement === 'grid' && gapPx >= 0;
+  const useLiteCoverShadow =
+    variant === 'catalog' && narrowBand !== 'wide' && Boolean(coverShadowLite);
 
   const tiles = slice.map((book, bi) => (
     <CoverTile
@@ -254,6 +261,8 @@ export function HeroBooksFanCovers({
       w={w}
       h={h}
       coverShadow={coverShadow}
+      coverShadowLite={coverShadowLite}
+      useLiteCoverShadow={useLiteCoverShadow}
       arrangement={arrangement}
       gapPx={effGap}
       total={slice.length}

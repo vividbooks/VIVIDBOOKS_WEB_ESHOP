@@ -290,10 +290,10 @@ export function SubjectWebinarsSlider({
         ) : null}
 
         {!webinarsLoading && upcoming.length > 0 ? (
-          <div className="bg-white rounded-[24px] border border-[#001161]/8 shadow-[0_4px_24px_rgba(0,17,97,0.06)] px-5 py-6 md:px-8 md:py-8 mb-8">
+          <div className="bg-white rounded-[24px] border border-[#001161]/8 shadow-sm md:shadow-[0_4px_24px_rgba(0,17,97,0.06)] px-5 py-6 md:px-8 md:py-8 mb-8">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
               <div className="flex items-center gap-3 min-w-0">
-                <span className="w-2.5 h-2.5 rounded-full bg-[#E8942A] shrink-0 shadow-[0_1px_4px_rgba(232,148,42,0.45)]" />
+                <span className="w-2.5 h-2.5 rounded-full bg-[#E8942A] shrink-0 md:shadow-[0_1px_4px_rgba(232,148,42,0.35)]" />
                 <h3
                   className="text-[#001161] text-[22px] md:text-[28px] leading-tight"
                   style={{ fontFamily: COOPER }}

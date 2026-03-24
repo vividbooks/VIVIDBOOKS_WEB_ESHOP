@@ -2,7 +2,7 @@ import { Helmet } from 'react-helmet-async';
 
 const SITE_NAME = 'Vividbooks';
 const SITE_URL = 'https://www.vividbooks.com';
-const DEFAULT_DESCRIPTION = 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed p\u0159edm\u011bty o\u017eivuj\u00ed d\u00edky animac\u00edm a interaktivn\u00edm prvk\u016fm. Sou\u010d\u00e1st vydavatelstv\u00ed Grada.';
+const DEFAULT_DESCRIPTION = 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed p\u0159edm\u011bty o\u017eivuj\u00ed d\u00edky animac\u00edm a interaktivn\u00edm prvk\u016fm.';
 const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
 
 interface SEOHeadProps {
@@ -42,11 +42,6 @@ export function SEOHead({
     url: SITE_URL,
     logo: `${SITE_URL}/logo.svg`,
     description: 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly.',
-    parentOrganization: {
-      '@type': 'Organization',
-      name: 'Grada Publishing',
-      url: 'https://www.grada.cz',
-    },
     contactPoint: {
       '@type': 'ContactPoint',
       telephone: '+420-602-227-674',

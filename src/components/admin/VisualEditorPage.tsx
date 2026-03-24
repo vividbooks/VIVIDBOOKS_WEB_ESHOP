@@ -43,6 +43,7 @@ import {
   HERO_SLIDER_HEIGHT_PX,
   HERO_TITLE_FONT_OPTIONS,
   heroBookCoverShadowFilter,
+  heroBookCoverShadowFilterLite,
   heroLeftImageImgStyle,
   heroSlideShouldShowCta,
   mergeHeroUnderlineRanges,
@@ -1212,6 +1213,7 @@ function SliderPreviewCanvas({
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
                     coverShadow={heroBookCoverShadowFilter(coverBgHex)}
+                    coverShadowLite={heroBookCoverShadowFilterLite(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}
@@ -1266,6 +1268,7 @@ function SliderPreviewCanvas({
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
                     coverShadow={heroBookCoverShadowFilter(coverBgHex)}
+                    coverShadowLite={heroBookCoverShadowFilterLite(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}
@@ -1305,6 +1308,7 @@ function SliderPreviewCanvas({
                   gapPx={doc.booksFanGapPx}
                   scalePct={doc.booksFanScalePct}
                   coverShadow={heroBookCoverShadowFilter(coverBgHex)}
+                  coverShadowLite={heroBookCoverShadowFilterLite(coverBgHex)}
                   variant="catalog"
                   navigate={navigate}
                   fanZOrder={doc.booksFanZOrder}
@@ -1323,6 +1327,7 @@ function SliderPreviewCanvas({
                     gapPx={doc.booksFanGapPx}
                     scalePct={doc.booksFanScalePct}
                     coverShadow={heroBookCoverShadowFilter(coverBgHex)}
+                    coverShadowLite={heroBookCoverShadowFilterLite(coverBgHex)}
                     variant="catalog"
                     navigate={navigate}
                     fanZOrder={doc.booksFanZOrder}

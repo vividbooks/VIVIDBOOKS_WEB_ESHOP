@@ -40,7 +40,6 @@ function Group2() {
 function Group1() {
   return (
     <div className="absolute contents left-[534.86px] top-[1019.13px]">
-      <p className="absolute font-['Fenomen_Sans:Regular',sans-serif] leading-[normal] left-[809.69px] not-italic text-[#0b3036] text-[237.529px] top-[1019.13px]">GRADA</p>
       <div className="absolute inset-[79.3%_56.61%_2.62%_29.94%]" data-name="Vector">
         <svg className="absolute block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 240.382 235.82">
           <path d={svgPaths.p2e17f300} fill="var(--fill-0, #0B3036)" id="Vector" />

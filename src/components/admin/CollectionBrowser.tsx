@@ -174,7 +174,7 @@ const HERO_SLIDE_FIELDS: FieldDef[] = [
     label: 'Font nadpisu',
     type: 'select',
     options: HERO_TITLE_FONT_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-    hint: 'U „Vividbooks Script One“ se na webu zapínají kontextové alternativy a ligatury (navazující znaky). Soubory fontů musí být v public/fonts — viz README v té složce.',
+    hint: 'Skript a Visby: viz `globals.css` a Supabase bucket Admin math / `public/fonts/README.md`. Skript (TTF) je na Supabase; Visby nahrajte jako VisbyRoundCF-DemiBold.otf nebo lokálně do public/fonts.',
   },
   {
     key: 'layout',

@@ -147,10 +147,21 @@ export function HeroSlideTitleText({
   const titleSizePct = clampHeroTitleSizePct(slide.heroTitleSizePct);
   const layoutScale = headingFontScale ?? 1;
   const combinedFontScale = layoutScale * (titleSizePct / 100);
+  /** Mobilní WebKit: vlastní fonty uvnitř rodičů s `transform` (slider) — vlastní vrstva + antialiasing. */
+  const fontLayerFix: CSSProperties = {
+    WebkitFontSmoothing: 'antialiased',
+    transform: uniformTilt.transform
+      ? `${uniformTilt.transform} translateZ(0.02px)`
+      : 'translateZ(0.02px)',
+    WebkitTransform: uniformTilt.transform
+      ? `${uniformTilt.transform} translateZ(0.02px)`
+      : 'translateZ(0.02px)',
+  };
   const style: CSSProperties = {
     ...heroMainHeadingStyle(slide, preset, combinedFontScale),
     lineHeight: lh,
     ...uniformTilt,
+    ...fontLayerFix,
   };
 
   const seed = normalizeTitlePlayfulSeed(titlePlayfulSeed);

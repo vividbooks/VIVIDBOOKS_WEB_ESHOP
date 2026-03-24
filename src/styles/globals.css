@@ -25,10 +25,11 @@
   font-display: swap;
 }
 
-/* Hero CMS: Visby Round CF Demi Bold — soubor dejte do /public/fonts/ (viz public/fonts/README.md). */
+/* Hero CMS: Visby Round CF Demi Bold — stejný bucket jako Cooper/Fenomen; záloha /public/fonts/ (viz README). */
 @font-face {
   font-family: 'Visby Round CF';
   src:
+    url('https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/Admin%20math/VisbyRoundCF-DemiBold.otf') format('opentype'),
     url('/fonts/VisbyRoundCF-DemiBold.woff2') format('woff2'),
     url('/fonts/VisbyRoundCF-DemiBold.otf') format('opentype'),
     url('/fonts/Visby-Round-CF-Demi-Bold.otf') format('opentype');
@@ -37,10 +38,11 @@
   font-display: swap;
 }
 
-/* Hero CMS: Vividbooks Script One — zapnutí navazování přes .vb-hero-script / heroTitleFontCss (calt, liga). */
+/* Hero CMS: Vividbooks Script One — TTF je na Supabase (bucket Admin math); woff2 volitelně lokálně. */
 @font-face {
   font-family: 'Vividbooks Script One';
   src:
+    url('https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/Admin%20math/VividbooksScriptOne-Regular.ttf') format('truetype'),
     url('/fonts/VividbooksScriptOne-Regular.woff2') format('woff2'),
     url('/fonts/VividbooksScriptOne-Regular.ttf') format('truetype');
   font-weight: 400;
