@@ -831,7 +831,7 @@ export function CheckoutPage() {
                     <div className="space-y-3 mt-2">
                       {items.map((item) => (
                         <div
-                          key={`${item.productId}:${item.variantId ?? ''}`}
+                          key={getCartLineKey(item.productId, item.variantId, item.bundleInstanceId)}
                           className="flex items-start gap-3 sm:gap-4 rounded-[18px] border border-[#001161]/8 p-3 sm:p-4"
                         >
                           <BookCoverThumb imageUrl={item.imageUrl} alt={item.productName} size="md" />

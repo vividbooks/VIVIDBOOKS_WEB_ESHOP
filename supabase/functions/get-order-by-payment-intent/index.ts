@@ -38,6 +38,44 @@ type OrderItemRow = {
   total_price: number;
 };
 
+type OrderHeadRow = {
+  id: string;
+  order_number: string;
+  total: number;
+  shipping_method: string;
+  pickup_point_name: string | null;
+  customer_email: string;
+  status: string;
+  payment_status: string | null;
+};
+
+async function buildOrderSummaryResponse(
+  sql: ReturnType<typeof postgres>,
+  order: OrderHeadRow,
+) {
+  const items = await sql<OrderItemRow[]>`
+    select
+      product_name,
+      variant,
+      quantity,
+      unit_price,
+      total_price
+    from public.order_items
+    where order_id = ${order.id}::uuid
+    order by id asc
+  `;
+
+  return jsonResponse({
+    order_number: order.order_number,
+    total: order.total,
+    shipping_method: order.shipping_method,
+    pickup_point_name: order.pickup_point_name,
+    customer_email: maskEmail(order.customer_email),
+    status: order.status,
+    items,
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -53,10 +91,23 @@ Deno.serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const paymentIntentId = url.searchParams.get('payment_intent_id');
+  const paymentIntentId = (url.searchParams.get('payment_intent_id') || '').trim();
+  const orderNumber = (
+    url.searchParams.get('order')?.trim()
+    || url.searchParams.get('order_number')?.trim()
+    || ''
+  );
 
-  if (!paymentIntentId?.trim()) {
-    return jsonResponse({ error: 'Missing payment_intent_id.' }, 400);
+  if (!paymentIntentId && !orderNumber) {
+    return jsonResponse({ error: 'Missing payment_intent_id or order (order_number).' }, 400);
+  }
+
+  if (paymentIntentId && orderNumber) {
+    return jsonResponse({ error: 'Provide only one of payment_intent_id or order.' }, 400);
+  }
+
+  if (orderNumber.length > 80) {
+    return jsonResponse({ error: 'Invalid order reference.' }, 400);
   }
 
   // TODO: Add real per-IP rate limiting here (max 10 req/min), e.g. using Upstash Redis or another shared store.
@@ -71,56 +122,46 @@ Deno.serve(async (req) => {
   });
 
   try {
-    const rows = await sql<{
-      id: string;
-      order_number: string;
-      total: number;
-      shipping_method: string;
-      pickup_point_name: string | null;
-      customer_email: string;
-      status: string;
-      payment_status: string | null;
-    }[]>`
-      select
-        id,
-        order_number,
-        total,
-        shipping_method,
-        pickup_point_name,
-        customer_email,
-        status,
-        payment_status
-      from public.orders
-      where stripe_payment_intent_id = ${paymentIntentId}
-      limit 1
-    `;
+    let rows: OrderHeadRow[];
+
+    if (paymentIntentId) {
+      rows = await sql<OrderHeadRow[]>`
+        select
+          id,
+          order_number,
+          total,
+          shipping_method,
+          pickup_point_name,
+          customer_email,
+          status,
+          payment_status
+        from public.orders
+        where stripe_payment_intent_id = ${paymentIntentId}
+        limit 1
+      `;
+    } else {
+      rows = await sql<OrderHeadRow[]>`
+        select
+          id,
+          order_number,
+          total,
+          shipping_method,
+          pickup_point_name,
+          customer_email,
+          status,
+          payment_status
+        from public.orders
+        where order_number = ${orderNumber}
+        limit 1
+      `;
+    }
 
     const order = rows[0];
     if (!order || order.payment_status !== 'paid') {
       return jsonResponse({ error: 'Order not found.' }, 404);
     }
 
-    const items = await sql<OrderItemRow[]>`
-      select
-        product_name,
-        variant,
-        quantity,
-        unit_price,
-        total_price
-      from public.order_items
-      where order_id = ${order.id}::uuid
-      order by id asc
-    `;
-
-    return jsonResponse({
-      order_number: order.order_number,
-      total: order.total,
-      shipping_method: order.shipping_method,
-      pickup_point_name: order.pickup_point_name,
-      customer_email: maskEmail(order.customer_email),
-      status: order.status,
-      items,
-    });
+    return await buildOrderSummaryResponse(sql, order);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Order lookup failed.';
     return jsonResponse({ error: message }, 500);

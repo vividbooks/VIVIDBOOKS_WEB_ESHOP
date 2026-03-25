@@ -1,9 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, Loader2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { useSearchParams } from 'react-router';
 import { SEOHead } from '../SEOHead';
 import { useCart } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+
+const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
+const PAYMENT_INTENT_MAX_POLLS = 10;
+const PAYMENT_INTENT_POLL_MS = 3000;
 
 interface OrderSummary {
   order_number: string;
@@ -33,70 +37,141 @@ function formatPrice(amountInHaler: number): string {
 export function OrderConfirmationPage() {
   const [searchParams] = useSearchParams();
   const paymentIntent = searchParams.get('payment_intent');
+  const orderFromUrl = searchParams.get('order');
   const { clearCart } = useCart();
   const clearedRef = useRef(false);
   const [order, setOrder] = useState<OrderSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [pollExhausted, setPollExhausted] = useState(false);
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  const endpoint = useMemo(
-    () => `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent?payment_intent_id=${encodeURIComponent(paymentIntent ?? '')}`,
-    [paymentIntent],
+  const paymentIntentTrimmed = paymentIntent?.trim() ?? '';
+  const orderTrimmed = orderFromUrl?.trim() ?? '';
+
+  const lookupUrl = useMemo(() => {
+    if (paymentIntentTrimmed) {
+      return `${GET_ORDER_FN}?payment_intent_id=${encodeURIComponent(paymentIntentTrimmed)}`;
+    }
+    if (orderTrimmed) {
+      return `${GET_ORDER_FN}?order=${encodeURIComponent(orderTrimmed)}`;
+    }
+    return null;
+  }, [paymentIntentTrimmed, orderTrimmed]);
+
+  const isPaymentIntentMode = Boolean(paymentIntentTrimmed);
+
+  const applyOrderSuccess = useCallback(
+    (data: OrderSummary) => {
+      setOrder(data);
+      setLoading(false);
+      setPollExhausted(false);
+      setError('');
+      if (!clearedRef.current) {
+        clearCart();
+        clearedRef.current = true;
+      }
+    },
+    [clearCart],
   );
 
   useEffect(() => {
-    if (!paymentIntent) {
+    clearedRef.current = false;
+    setOrder(null);
+    setPollExhausted(false);
+    setError('');
+
+    if (!lookupUrl) {
       setLoading(false);
-      setError('Chybí payment_intent v URL.');
+      setError('Chybí platební údaj nebo číslo objednávky v URL.');
       return;
     }
 
     let cancelled = false;
     let intervalId: number | undefined;
+    let attempt = 0;
 
-    const fetchOrder = async () => {
-      const response = await fetch(endpoint, {
+    const stopPolling = () => {
+      if (intervalId !== undefined) {
+        window.clearInterval(intervalId);
+        intervalId = undefined;
+      }
+    };
+
+    const fetchOnce = async (): Promise<'done' | 'continue' | 'fatal'> => {
+      const response = await fetch(lookupUrl, {
         headers: {
           Authorization: `Bearer ${publicAnonKey}`,
         },
       });
-      const data = await response.json().catch(() => ({}));
+      const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 
-      if (cancelled) return;
+      if (cancelled) return 'done';
+
+      if (response.ok) {
+        if (typeof data.order_number === 'string') {
+          applyOrderSuccess(data as unknown as OrderSummary);
+          stopPolling();
+          return 'done';
+        }
+        setError('Neplatná odpověď serveru.');
+        setLoading(false);
+        stopPolling();
+        return 'fatal';
+      }
 
       if (response.status === 404) {
-        setLoading(false);
-        return;
-      }
-
-      if (!response.ok) {
-        setError(data.error || 'Nepodařilo se načíst objednávku.');
-        setLoading(false);
-        return;
-      }
-
-      if (data.order_number) {
-        setOrder(data);
-        setLoading(false);
-        if (!clearedRef.current) {
-          clearCart();
-          clearedRef.current = true;
+        attempt += 1;
+        if (isPaymentIntentMode) {
+          if (attempt >= PAYMENT_INTENT_MAX_POLLS) {
+            setPollExhausted(true);
+            setLoading(false);
+            stopPolling();
+            return 'done';
+          }
+          return 'continue';
         }
-        if (intervalId) window.clearInterval(intervalId);
-        return;
+        setPollExhausted(true);
+        setLoading(false);
+        stopPolling();
+        return 'done';
       }
 
+      setError(typeof data.error === 'string' ? data.error : 'Nepodařilo se načíst objednávku.');
       setLoading(false);
+      stopPolling();
+      return 'fatal';
     };
 
-    void fetchOrder();
-    intervalId = window.setInterval(fetchOrder, 3000);
+    setLoading(true);
+
+    void (async () => {
+      const first = await fetchOnce();
+      if (cancelled || first !== 'continue' || !isPaymentIntentMode) return;
+
+      intervalId = window.setInterval(() => {
+        void (async () => {
+          const r = await fetchOnce();
+          if (r !== 'continue' || cancelled) stopPolling();
+        })();
+      }, PAYMENT_INTENT_POLL_MS);
+    })();
 
     return () => {
       cancelled = true;
-      if (intervalId) window.clearInterval(intervalId);
+      stopPolling();
     };
-  }, [paymentIntent, endpoint, clearCart]);
+  }, [lookupUrl, isPaymentIntentMode, applyOrderSuccess, retryNonce]);
+
+  const handleRetry = () => {
+    setPollExhausted(false);
+    setError('');
+    setOrder(null);
+    setLoading(true);
+    setRetryNonce((n) => n + 1);
+  };
+
+  const showLoader = loading && !order && !pollExhausted && !error;
 
   return (
     <div className="min-h-screen bg-[#f8f9fc]">
@@ -178,6 +253,45 @@ export function OrderConfirmationPage() {
                 </div>
               )}
             </>
+          ) : pollExhausted ? (
+            <>
+              <div className="w-16 h-16 rounded-full bg-[#fef2f2] flex items-center justify-center mx-auto mb-5">
+                <AlertCircle className="w-8 h-8 text-[#dc2626]" />
+              </div>
+              <p className="font-['Fenomen_Sans',sans-serif] text-[12px] uppercase tracking-[0.15em] text-[#001161]/40 mb-2">
+                {'Potvrzení objednávky'}
+              </p>
+              <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[32px] md:text-[44px] leading-tight mb-4">
+                {'Objednávku se nepodařilo načíst'}
+              </h1>
+              <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/60 leading-relaxed max-w-[440px] mx-auto mb-6">
+                {isPaymentIntentMode
+                  ? 'Platba možná ještě nedorazila do systému, nebo došlo k chybě. Zkuste načtení znovu.'
+                  : 'Zkontrolujte prosím odkaz nebo nás kontaktujte s číslem objednávky.'}
+              </p>
+              <button
+                type="button"
+                onClick={handleRetry}
+                className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#001161]/90 transition-colors cursor-pointer"
+              >
+                {'Zkusit znovu'}
+              </button>
+            </>
+          ) : error ? (
+            <>
+              <div className="w-16 h-16 rounded-full bg-[#f1f3f8] flex items-center justify-center mx-auto mb-5">
+                <Loader2 className="w-8 h-8 text-[#001161]/30" />
+              </div>
+              <p className="font-['Fenomen_Sans',sans-serif] text-[12px] uppercase tracking-[0.15em] text-[#001161]/40 mb-2">
+                {'Potvrzení objednávky'}
+              </p>
+              <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[38px] md:text-[52px] leading-none mb-4">
+                {'Nelze zobrazit objednávku'}
+              </h1>
+              <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/60 leading-relaxed">
+                {error}
+              </p>
+            </>
           ) : (
             <>
               <div className="w-16 h-16 rounded-full bg-[#f1f3f8] flex items-center justify-center mx-auto mb-5">
@@ -190,14 +304,19 @@ export function OrderConfirmationPage() {
                 {'Zpracováváme vaši platbu...'}
               </h1>
               <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/60 leading-relaxed">
-                {error || 'Objednávka se ještě zapisuje do systému. Stránka se automaticky obnovuje každé 3 sekundy.'}
+                {'Objednávka se ještě zapisuje do systému. Stránka se automaticky obnovuje každé 3 sekundy.'}
               </p>
             </>
           )}
 
-          {paymentIntent && (
+          {paymentIntentTrimmed && (
             <div className="mt-6 inline-flex items-center rounded-full bg-[#f1f3f8] px-4 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/65">
-              {loading && !order ? 'čekáme na webhook' : `payment_intent: ${paymentIntent}`}
+              {showLoader ? 'čekáme na webhook' : `payment_intent: ${paymentIntentTrimmed}`}
+            </div>
+          )}
+          {orderTrimmed && !paymentIntentTrimmed && order && (
+            <div className="mt-6 inline-flex items-center rounded-full bg-[#f1f3f8] px-4 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/65">
+              {`objednávka: ${orderTrimmed}`}
             </div>
           )}
         </div>

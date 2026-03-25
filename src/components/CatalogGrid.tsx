@@ -511,6 +511,10 @@ export default function CatalogGrid() {
   const [heroSlide,   setHeroSlide]   = useState(1);
   /** Po přechodu musí zase být false — jinak v peek režimu zůstanou „vedlejší“ slidery na opacity 0 → velké bílé plochy. */
   const [heroAnimate, setHeroAnimate] = useState(false);
+  /** Index slidu, který právě opouští střed (peek) — během heroAnimate u něj nechat plný obsah kvůli útlumu opacity. */
+  const [heroSlideOutgoing, setHeroSlideOutgoing] = useState<number | null>(null);
+  const heroSlideRef = useRef(heroSlide);
+  heroSlideRef.current = heroSlide;
   const heroTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isHoveredRef = useRef(false);
   const [windowWidth, setWindowWidth] = useState(
@@ -892,7 +896,9 @@ export default function CatalogGrid() {
     if (isHoveredRef.current) return;
     heroTimerRef.current = setInterval(() => {
       setHeroAnimate(true);
-      setHeroSlide(s => Math.min(s + 1, heroExtMaxIdx));
+      const from = heroSlideRef.current;
+      setHeroSlideOutgoing(from);
+      setHeroSlide(Math.min(from + 1, heroExtMaxIdx));
     }, 4500);
   };
 
@@ -915,6 +921,7 @@ export default function CatalogGrid() {
   useEffect(() => {
     if (prevRealN.current !== 0 && prevRealN.current !== REAL_N) {
       setHeroAnimate(false);
+      setHeroSlideOutgoing(null);
       setHeroSlide(1);
       startHeroTimer();
     }
@@ -926,6 +933,7 @@ export default function CatalogGrid() {
     if (heroSlide === 0 || heroSlide === extSlides.length - 1) {
       const t = setTimeout(() => {
         setHeroAnimate(false);
+        setHeroSlideOutgoing(null);
         setHeroSlide(heroSlide === 0 ? REAL_N : 1);
       }, HERO_TRANSFORM_MS + 24);
       return () => clearTimeout(t);
@@ -935,12 +943,16 @@ export default function CatalogGrid() {
   /** Ukončit přechod po animaci karuselu — bez toho zůstane heroAnimate=true a neaktivní slidery (viditelné v peek) jsou neviditelné. */
   useEffect(() => {
     if (REAL_N <= 0) return;
-    const t = window.setTimeout(() => setHeroAnimate(false), HERO_TRANSFORM_MS + 48);
+    const t = window.setTimeout(() => {
+      setHeroAnimate(false);
+      setHeroSlideOutgoing(null);
+    }, HERO_TRANSFORM_MS + 48);
     return () => window.clearTimeout(t);
   }, [heroSlide, REAL_N]);
 
   const goToSlide = (idx: number) => {
     if (REAL_N <= 0) return;
+    setHeroSlideOutgoing(heroSlideRef.current);
     setHeroAnimate(true);
     setHeroSlide(Math.max(0, Math.min(heroExtMaxIdx, idx)));
     startHeroTimer();
@@ -1176,8 +1188,12 @@ export default function CatalogGrid() {
               const heroCoverShadowFull = heroBookCoverShadowFilter(heroCoverHex);
               /** Boční peek: bez kliku. */
               const heroPeekSideCard = isPeekMode && idx !== heroSlide;
-              /** Boční peek: nikdy plný obsah (i během přechodu) — jinak problikává viditelný text/obrázky na pravém/levém pruhu. */
-              const heroPeekPlaceholderOnly = heroPeekSideCard;
+              /**
+               * Boční peek = jen barevná plocha, kromě slidu který právě odjíždí ze středu — u něj nechat obsah,
+               * ať motion stihne opacity fade (jinak okamžitý placeholder = „skok“).
+               */
+              const heroPeekPlaceholderOnly =
+                heroPeekSideCard && !(heroAnimate && heroSlideOutgoing === idx);
               const heroSlideContentAnimate =
                 heroNarrowViewport
                   ? idx === heroSlide
@@ -1877,7 +1893,7 @@ export default function CatalogGrid() {
                       {subGroup !== '_all' && (
                         <p className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[22px] xl:text-[26px] text-center mb-1.5">{subGroup}</p>
                       )}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-[0.5rem] justify-items-center">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-[0.5rem] justify-items-center">
                         {[...(index === 0 ? [getDigitalLicenseForGroup(mainGroup)] : []), ...(books as any[])].map(b => renderCard(b, false))}
                       </div>
                     </div>

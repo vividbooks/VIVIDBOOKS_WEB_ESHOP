@@ -163,16 +163,16 @@ function OrderStepper({ value, onChange, min = 0, max = 9999, step = 1, unit = '
   value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number; unit?: string;
 }) {
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex w-full max-w-[220px] items-center justify-center gap-2 sm:w-auto sm:max-w-none sm:justify-end sm:gap-1">
       <button type="button" onClick={() => onChange(Math.max(min, value - step))}
-        className="w-9 h-9 bg-[#26356B] hover:bg-[#001161] rounded-lg flex items-center justify-center text-white cursor-pointer transition-colors shrink-0">
+        className="size-10 bg-[#26356B] hover:bg-[#001161] rounded-lg flex items-center justify-center text-white cursor-pointer transition-colors shrink-0 sm:size-9 touch-manipulation">
         <Minus className="w-4 h-4" />
       </button>
-      <div className="min-w-[80px] text-center font-['Fenomen_Sans',sans-serif] font-bold text-[15px] text-[#001161]">
+      <div className="min-w-[4.5rem] flex-1 text-center font-['Fenomen_Sans',sans-serif] font-bold text-[15px] text-[#001161] sm:min-w-[80px] sm:flex-none">
         {value}{unit ? `\u00a0${unit}` : ''}
       </div>
       <button type="button" onClick={() => onChange(Math.min(max, value + step))}
-        className="w-9 h-9 bg-[#26356B] hover:bg-[#001161] rounded-lg flex items-center justify-center text-white cursor-pointer transition-colors shrink-0">
+        className="size-10 bg-[#26356B] hover:bg-[#001161] rounded-lg flex items-center justify-center text-white cursor-pointer transition-colors shrink-0 sm:size-9 touch-manipulation">
         <Plus className="w-4 h-4" />
       </button>
     </div>
@@ -1597,8 +1597,8 @@ export function OrderPage() {
               className="space-y-6"
             >
               <div className="rounded-[24px] border border-[#001161]/10 bg-white overflow-hidden">
-                <div className="px-6 md:px-8 pt-5 pb-6 md:pt-6 md:pb-8">
-                  <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] leading-tight mb-1.5">
+                <div className="px-4 sm:px-6 md:px-8 pt-5 pb-6 md:pt-6 md:pb-8">
+                  <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] sm:text-[30px] leading-tight mb-1.5">
                     {'Počty'}
                   </h2>
                   <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/60 leading-relaxed mb-4">
@@ -1616,10 +1616,10 @@ export function OrderPage() {
                     <AnimatePresence initial={false}>
                       {selTypes.includes('digital') && (
                         <motion.div key="digital" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="overflow-hidden">
-                          <div className="bg-[#FEF9C3] rounded-[20px] p-6">
+                          <div className="bg-[#FEF9C3] rounded-[20px] p-4 sm:p-6">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="text-[#001161] text-[20px]">ℹ️</span>
-                              <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[22px]">{'Digitální učebnice'}</h2>
+                              <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[18px] sm:text-[22px]">{'Digitální učebnice'}</h2>
                             </div>
                             <p style={FF} className="text-[#001161]/60 text-[13px] mb-4">
                               {'Vyberte předměty licence, orientační počet žáků na 2. stupni a délku licence.'}
@@ -1640,12 +1640,12 @@ export function OrderPage() {
                               </div>
                             </div>
                             <div className="flex flex-col gap-3">
-                              <div className="flex items-center justify-between bg-white/70 rounded-[12px] px-5 py-3">
-                                <span style={FF} className="text-[#001161] text-[14px] font-semibold">{'Počet žáků na 2. stupni'}</span>
+                              <div className="flex flex-col gap-3 rounded-[12px] bg-white/70 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-3">
+                                <span style={FF} className="text-[#001161] text-[14px] font-semibold min-w-0 pr-2">{'Počet žáků na 2. stupni'}</span>
                                 <OrderStepper value={students2} onChange={setStudents2} step={10} />
                               </div>
-                              <div className="flex items-center justify-between bg-white/70 rounded-[12px] px-5 py-3">
-                                <span style={FF} className="text-[#001161] text-[14px] font-semibold">{'Preferovaná délka licence'}</span>
+                              <div className="flex flex-col gap-3 rounded-[12px] bg-white/70 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-3">
+                                <span style={FF} className="text-[#001161] text-[14px] font-semibold min-w-0 pr-2">{'Preferovaná délka licence'}</span>
                                 <OrderStepper value={licYears} onChange={setLicYears} min={1} max={3} unit={licYears === 1 ? 'rok' : licYears < 5 ? 'roky' : 'let'} />
                               </div>
                             </div>
@@ -1662,8 +1662,8 @@ export function OrderPage() {
                     <AnimatePresence initial={false}>
                       {selTypes.includes('workbook') && (
                         <motion.div key="workbook" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="overflow-hidden">
-                          <div id="order-field-step2-workbooks" className="bg-[#F0F2F8] rounded-[20px] p-6">
-                            <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[22px] mb-4">{'Pracovní sešity'}</h2>
+                          <div id="order-field-step2-workbooks" className="bg-[#F0F2F8] rounded-[20px] p-4 sm:p-6">
+                            <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[18px] sm:text-[22px] mb-4">{'Pracovní sešity'}</h2>
 
                             {isLoading && products.length === 0 ? (
                               <div className="flex justify-center py-8">
@@ -1702,8 +1702,8 @@ export function OrderPage() {
                                         const lineTotalFmt = String(lineTotalKc).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
                                         return (
                                           <div key={bundleId} className="flex flex-col">
-                                            <div className="flex gap-2 items-stretch">
-                                              <div className={`flex-1 rounded-[8px] px-3 py-3 transition-colors ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                            <div className="flex flex-col gap-3 sm:flex-row sm:gap-2 sm:items-stretch">
+                                              <div className={`min-w-0 flex-1 rounded-[8px] px-3 py-3 transition-colors ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
                                                 <p style={FF} className="text-[#001161] text-[15.5px] font-bold leading-snug">{title}</p>
                                                 <p style={FF} className="text-[#001161]/45 text-[11px] font-bold uppercase tracking-widest mt-2 mb-1">
                                                   {'Obsah balíčku'}
@@ -1720,7 +1720,8 @@ export function OrderPage() {
                                                   </p>
                                                 )}
                                               </div>
-                                              <div className={`w-[80px] rounded-[8px] px-2 py-3 flex flex-col items-center justify-center shrink-0 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                              <div className="flex w-full min-w-0 gap-2 sm:w-auto sm:shrink-0">
+                                              <div className={`w-[min(104px,32%)] shrink-0 rounded-[8px] px-2 py-3 flex flex-col items-center justify-center sm:w-[80px] ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
                                                 <p style={FF} className="text-[#001161] text-[15.5px] font-semibold leading-none whitespace-nowrap">
                                                   {unitKc > 0 ? `${String(unitKc).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')},−` : '—'}
                                                 </p>
@@ -1728,24 +1729,25 @@ export function OrderPage() {
                                                   {'za bal.'}
                                                 </span>
                                               </div>
-                                              <div className={`w-[164px] rounded-[10px] px-1.5 py-2 flex items-center justify-between gap-1.5 shrink-0 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
-                                                <button type="button" onClick={() => updateSchoolBundleQty(bundleId, -1)} className="w-8 h-9 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px]">{'−'}</button>
-                                                <div className={`flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-9`}>
+                                              <div className={`min-w-0 flex-1 rounded-[10px] px-1.5 py-2 flex items-center justify-between gap-2 sm:w-[164px] sm:flex-none sm:shrink-0 sm:gap-1.5 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                                <button type="button" onClick={() => updateSchoolBundleQty(bundleId, -1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">{'−'}</button>
+                                                <div className={`min-w-0 flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-10 sm:h-9`}>
                                                   <input
                                                     type="text"
                                                     inputMode="numeric"
                                                     placeholder="0"
                                                     value={qty || ''}
                                                     onChange={(e) => setSchoolBundleQtyInput(bundleId, e.target.value)}
-                                                    className="w-full bg-transparent text-center text-[#001161] text-[15px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25"
+                                                    className="w-full min-w-0 bg-transparent text-center text-[#001161] text-[16px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25"
                                                   />
                                                 </div>
-                                                <button type="button" onClick={() => updateSchoolBundleQty(bundleId, 1)} className="w-8 h-9 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px]">+</button>
+                                                <button type="button" onClick={() => updateSchoolBundleQty(bundleId, 1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">+</button>
+                                              </div>
                                               </div>
                                             </div>
                                             {qty > 0 && (
-                                              <div className="flex justify-between items-center bg-[#c8d7f7]/40 rounded-[8px] px-4 py-2 mt-2">
-                                                <div className="flex items-center gap-3 min-w-0">
+                                              <div className="mt-2 flex flex-col gap-2 rounded-[8px] bg-[#c8d7f7]/40 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                                <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3">
                                                   <p style={FF} className="text-[#001161] text-[13px] font-semibold truncate">
                                                     {'Celkem '}{title}{':'}
                                                   </p>
@@ -1763,7 +1765,7 @@ export function OrderPage() {
                                                     {'Smazat'}
                                                   </button>
                                                 </div>
-                                                <div className="flex gap-4 shrink-0">
+                                                <div className="flex shrink-0 flex-wrap items-baseline gap-3 sm:gap-4">
                                                   <p style={FF} className="text-[#001161] text-[13px] font-bold">{lineTotalFmt}{',−'}</p>
                                                   <p style={FF} className="text-[#001161] text-[13px]">{lineKs}{' ks'}</p>
                                                 </div>
@@ -1804,10 +1806,10 @@ export function OrderPage() {
                                             </div>
                                           );
                                           rowItems.push(
-                                            <div key={p.id} className="flex gap-2 items-stretch">
+                                            <div key={p.id} className="flex flex-col gap-3 sm:flex-row sm:gap-2 sm:items-stretch">
                                               <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                  <div className={`flex-1 rounded-[8px] px-3 py-3 cursor-default transition-colors ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                                  <div className={`min-w-0 flex-1 rounded-[8px] px-3 py-3 cursor-default transition-colors ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
                                                     <p style={FF} className="text-[#001161] text-[15.5px] leading-snug">{p.name}</p>
                                                   </div>
                                                 </TooltipTrigger>
@@ -1815,10 +1817,11 @@ export function OrderPage() {
                                                   {p.image && <ImageWithFallback src={p.image} alt={p.name} className="w-[100px] h-auto object-contain drop-shadow-xl" />}
                                                 </TooltipContent>
                                               </Tooltip>
+                                              <div className="flex w-full min-w-0 gap-2 sm:w-auto sm:shrink-0">
                                               <div
-                                                className={`min-w-[104px] max-w-[148px] rounded-[8px] px-2.5 py-2.5 flex flex-col items-center justify-center gap-1.5 shrink-0 self-stretch ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}
+                                                className={`w-[min(112px,34%)] shrink-0 rounded-[8px] px-2 py-2.5 flex flex-col items-center justify-center gap-1.5 self-stretch sm:min-w-[104px] sm:max-w-[148px] sm:w-auto ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}
                                               >
-                                                <p style={FF} className="text-[#001161] text-[15.5px] font-semibold leading-none text-center whitespace-nowrap">
+                                                <p style={FF} className="text-[#001161] text-[15px] sm:text-[15.5px] font-semibold leading-none text-center whitespace-nowrap">
                                                   {p.price.replace(',-', '')}
                                                   {',−'}
                                                 </p>
@@ -1831,15 +1834,16 @@ export function OrderPage() {
                                                   </span>
                                                 )}
                                               </div>
-                                              <div className={`w-[164px] rounded-[10px] px-1.5 py-2 flex items-center justify-between gap-1.5 shrink-0 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
-                                                <button onClick={() => updateQty(p.id, -1)} className="w-8 h-9 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px]">{'−'}</button>
-                                                <div className={`flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-9`}>
+                                              <div className={`min-w-0 flex-1 rounded-[10px] px-1.5 py-2 flex items-center justify-between gap-2 sm:w-[164px] sm:flex-none sm:shrink-0 sm:gap-1.5 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                                <button type="button" onClick={() => updateQty(p.id, -1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">{'−'}</button>
+                                                <div className={`min-w-0 flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-10 sm:h-9`}>
                                                   <input type="text" inputMode="numeric" placeholder="0"
                                                     value={quantities[p.id] || ''}
                                                     onChange={e => setQtyInput(p.id, e.target.value)}
-                                                    className="w-full bg-transparent text-center text-[#001161] text-[15px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25" />
+                                                    className="w-full min-w-0 bg-transparent text-center text-[#001161] text-[16px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25" />
                                                 </div>
-                                                <button onClick={() => updateQty(p.id, 1)} className="w-8 h-9 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px]">+</button>
+                                                <button type="button" onClick={() => updateQty(p.id, 1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">+</button>
+                                              </div>
                                               </div>
                                             </div>
                                           );
@@ -1847,8 +1851,8 @@ export function OrderPage() {
                                         })}
                                       </div>
                                       {catItems > 0 && (
-                                        <div className="flex justify-between items-center bg-[#c8d7f7]/40 rounded-[8px] px-4 py-2 mt-2">
-                                          <div className="flex items-center gap-3">
+                                        <div className="mt-2 flex flex-col gap-2 rounded-[8px] bg-[#c8d7f7]/40 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                                          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                                             <p style={FF} className="text-[#001161] text-[13px] font-semibold">{'Celkem ' + cat.split(' ')[0] + ':'}</p>
                                             <button
                                               type="button"
@@ -1867,7 +1871,7 @@ export function OrderPage() {
                                               {'Smazat'}
                                             </button>
                                           </div>
-                                          <div className="flex gap-4">
+                                          <div className="flex flex-wrap items-baseline gap-3 sm:gap-4">
                                             <p style={FF} className="text-[#001161] text-[13px] font-bold">{catTotal}{',−'}</p>
                                             <p style={FF} className="text-[#001161] text-[13px]">{catItems} ks</p>
                                           </div>
@@ -1878,9 +1882,9 @@ export function OrderPage() {
                                   );
                                 })}
                                 {workbookItems > 0 && (
-                                  <div className="flex justify-between items-center border-t-2 border-[#001161] pt-3">
+                                  <div className="flex flex-col gap-1 border-t-2 border-[#001161] pt-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                     <p style={FF} className="text-[#001161] text-[15px] font-bold">{'Celkem sešity'}</p>
-                                    <p style={FF} className="text-[#001161] text-[15px] font-bold">{workbookTotal}{',− Kč'} ({workbookItems} ks)</p>
+                                    <p style={FF} className="text-[#001161] text-[14px] font-bold sm:text-[15px]">{workbookTotal}{',− Kč'} ({workbookItems} ks)</p>
                                   </div>
                                 )}
                               </TooltipProvider>
@@ -1893,11 +1897,11 @@ export function OrderPage() {
                     <AnimatePresence initial={false}>
                       {selTypes.includes('vividboard') && (
                         <motion.div key="vividboard" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="overflow-hidden">
-                          <div id="order-field-step2-vividboard" className="bg-[#FEE2E2] rounded-[20px] p-6">
-                            <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#991B1B] text-[22px] mb-2">{'Nástroj Vividboard'}</h2>
+                          <div id="order-field-step2-vividboard" className="bg-[#FEE2E2] rounded-[20px] p-4 sm:p-6">
+                            <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#991B1B] text-[18px] sm:text-[22px] mb-2">{'Nástroj Vividboard'}</h2>
                             <p style={FF} className="text-[#991B1B]/70 text-[13px] mb-5">{'Interaktivní tabule pro učitele — počet tříd nebo učitelského účtu.'}</p>
-                            <div className="flex items-center justify-between bg-white/60 rounded-[12px] px-5 py-3">
-                              <span style={FF} className="text-[#991B1B] text-[14px] font-semibold">{'Počet licencí'}</span>
+                            <div className="flex flex-col gap-3 rounded-[12px] bg-white/60 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5 sm:py-3">
+                              <span style={FF} className="text-[#991B1B] text-[14px] font-semibold min-w-0 pr-2">{'Počet licencí'}</span>
                               <OrderStepper value={vividboardCount} onChange={setVividboardCount} min={1} />
                             </div>
                           </div>
@@ -1908,12 +1912,12 @@ export function OrderPage() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <button
                   type="button"
                   onClick={goBack}
                   disabled={!canGoBack}
-                  className="inline-flex items-center gap-2 px-4 py-3 rounded-[14px] border border-[#001161]/10 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  className="inline-flex w-full items-center justify-center gap-2 px-4 py-3.5 rounded-[14px] border border-[#001161]/10 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer touch-manipulation sm:w-auto"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   {'Zpět'}
@@ -1921,7 +1925,7 @@ export function OrderPage() {
                 <button
                   type="button"
                   onClick={goForward}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer"
+                  className="inline-flex w-full items-center justify-center gap-2 px-5 py-3.5 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer touch-manipulation sm:w-auto"
                 >
                   {'Pokračovat'}
                   <ChevronRight className="w-4 h-4" />

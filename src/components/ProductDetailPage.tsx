@@ -615,6 +615,7 @@ export function ProductDetailPage({
     !!product.dolozka && subjectShowsMsmtDolozkaBadge(categoryBaseForMsmt);
   /** Náhled v levé „dlaždici“: tiskoviny −30 %, digitální licence +10 % (vůči původním max-height) */
   const isDigitalHero = product.type === 'online' || product.type === 'license';
+  const isWorkbookHero = product.type === 'workbook';
   const mdUp = useMatchMedia('(min-width: 768px)', false);
   /** Jen digitály — tiskoviny používají PRINT_BOOK_COVER_DROP_SHADOW na obálce. */
   const heroDigitalImageFilter = useMemo(() => {
@@ -895,10 +896,7 @@ export function ProductDetailPage({
 
           {/* LEFT — image panel */}
           <div className="flex flex-col gap-4 lg:sticky lg:top-[80px] self-start">
-            <div
-              className="relative isolate rounded-[32px] flex flex-col"
-              style={{ minHeight: 'clamp(280px, 52vw, 540px)' }}
-            >
+            <div className="relative isolate flex max-sm:min-h-0 flex-col overflow-hidden rounded-[32px] sm:min-h-[min(260px,52vw)] lg:min-h-[clamp(280px,52vw,540px)]">
               <div
                 className="absolute inset-0 rounded-[32px]"
                 style={{ background: catColors.bg }}
@@ -924,31 +922,42 @@ export function ProductDetailPage({
               {/* Book image — tlačítka v toku pod obálkou (ne absolute), ať obálka nepřekrývá CTA */}
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div
-                  className={`flex w-full flex-1 items-center justify-center px-7 pt-3 sm:px-10 lg:px-12 lg:pt-4 ${
-                    showImagePanelActions ? 'pb-3 sm:pb-4' : 'pb-6 sm:pb-10 lg:pb-12'
+                  className={`flex w-full items-center justify-center px-5 pt-2 sm:px-10 sm:pt-3 lg:px-12 lg:pt-4 ${
+                    showImagePanelActions
+                      ? 'max-sm:pb-0 pb-3 sm:pb-4'
+                      : 'pb-6 sm:pb-10 lg:pb-12'
+                  } ${
+                    isWorkbookHero
+                      ? 'max-sm:min-h-0 max-sm:max-h-[min(56vw,200px)] max-sm:flex-none flex-1 sm:min-h-[min(28vw,120px)]'
+                      : 'flex-1 max-sm:min-h-[min(48px,14vw)] sm:min-h-[min(28vw,120px)]'
                   }`}
-                  style={{ minHeight: 'min(32vw, 150px)' }}
                 >
                   <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ duration: 0.5, delay: 0.1 }}
-                    className="relative flex max-h-full w-full items-center justify-center"
+                    className={`relative flex w-full items-center justify-center ${
+                      isWorkbookHero ? 'max-sm:max-h-full' : 'max-h-full'
+                    }`}
                     style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
                   >
                     {product.image ? (
                       <ImageWithFallback
                         src={product.image}
                         alt={product.name}
-                        className={`relative z-10 w-auto max-h-full origin-center object-contain ${
-                          isLandscape
-                            ? isDigitalHero
-                              ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                              : 'max-h-[52px] scale-[0.74] sm:max-h-[124px] sm:scale-100 lg:max-h-[156px]'
-                            : isDigitalHero
-                              ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                              : 'max-h-[70px] scale-[0.76] sm:max-h-[168px] sm:scale-100 lg:max-h-[220px]'
-                        }`}
+                        className={
+                          isWorkbookHero
+                            ? 'relative z-10 w-auto max-w-[min(88vw,200px)] origin-center object-contain max-h-[min(42vw,168px)] sm:max-w-[min(240px,48vw)] sm:max-h-[176px] md:max-h-[196px] lg:max-h-[220px]'
+                            : `relative z-10 w-auto max-h-full origin-center object-contain ${
+                                isLandscape
+                                  ? isDigitalHero
+                                    ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
+                                    : 'max-h-[20px] scale-[0.62] sm:max-h-[124px] sm:scale-100 lg:max-h-[156px]'
+                                  : isDigitalHero
+                                    ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
+                                    : 'max-h-[20px] scale-[0.64] sm:max-h-[168px] sm:scale-100 lg:max-h-[220px]'
+                              }`
+                        }
                         style={
                           product.type === 'workbook'
                             ? { filter: PRINT_BOOK_COVER_DROP_SHADOW }
@@ -961,22 +970,32 @@ export function ProductDetailPage({
                       />
                     ) : (
                       <div
-                        className="flex h-[220px] w-[160px] items-center justify-center rounded-2xl sm:h-[280px] sm:w-[200px]"
+                        className={
+                          isWorkbookHero
+                            ? 'flex h-[min(40vw,156px)] w-[min(30vw,118px)] items-center justify-center rounded-2xl sm:h-[220px] sm:w-[160px] md:h-[280px] md:w-[200px]'
+                            : 'flex h-[220px] w-[160px] items-center justify-center rounded-2xl sm:h-[280px] sm:w-[200px]'
+                        }
                         style={{ background: catColors.bg }}
                       >
-                        <BookOpen className="h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20" />
+                        <BookOpen
+                          className={
+                            isWorkbookHero
+                              ? 'h-12 w-12 text-[#001161]/20 sm:h-16 sm:w-16 md:h-20 md:w-20'
+                              : 'h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20'
+                          }
+                        />
                       </div>
                     )}
                   </motion.div>
                 </div>
 
                 {showImagePanelActions && (
-                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 rounded-b-[32px] border border-[#001161]/10 bg-white px-5 pb-5 pt-3 sm:bg-white/45 sm:pt-4 sm:backdrop-blur-[2px]">
+                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 px-5 pb-5 pt-2 sm:pt-3">
                     {hasFlipbook && (
                       <button
                         type="button"
                         onClick={() => setFlipbookOpen(true)}
-                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/95 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] sm:bg-white/85 sm:backdrop-blur-sm"
+                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98]"
                       >
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />
                         {'Prolistovat uk\u00e1zku'}
@@ -986,7 +1005,7 @@ export function ProductDetailPage({
                       href={product.appLink || 'https://app.vividbooks.cz'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/95 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline sm:bg-white/85 sm:backdrop-blur-sm ${hasFlipbook ? 'flex-1' : 'w-full'}`}
+                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline ${hasFlipbook ? 'flex-1' : 'w-full'}`}
                     >
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                       {'Otev\u0159\u00edt v aplikaci'}
@@ -1598,7 +1617,7 @@ export function ProductDetailPage({
       {allRelated.length > 0 && (
         <div className="mt-20 pb-24">
           {/* Section header */}
-          <div className="max-w-[1200px] mx-auto px-6 mb-6 flex items-start justify-between gap-4 flex-wrap">
+          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 mb-6 flex items-start justify-between gap-4 flex-wrap">
             <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[32px] md:text-[38px]">
               Další tituly z{'\u00a0'}předmětu
             </h2>
@@ -1608,7 +1627,7 @@ export function ProductDetailPage({
           </div>
 
           {showRelatedFilterPills && (
-            <div className="max-w-[1200px] mx-auto px-6 mb-5 flex flex-col gap-3">
+            <div className="max-w-[1200px] mx-auto px-4 sm:px-6 mb-5 flex flex-col gap-3">
               {(isMath || relatedRocnikOptions.length > 1) && (
                 <div className="flex flex-wrap items-baseline gap-x-[14px] gap-y-2.5">
                   <span className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40 shrink-0 pt-0.5">
@@ -1692,7 +1711,7 @@ export function ProductDetailPage({
           )}
 
           {/* Mřížka titulů (jako katalog) */}
-          <div className="max-w-[1200px] mx-auto px-6 pb-6">
+          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-6">
             {relatedFinal.length === 0 ? (
               <div className="w-full py-10 px-4 text-center">
                 <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/55 mb-3">
@@ -1712,7 +1731,7 @@ export function ProductDetailPage({
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-10 justify-items-stretch">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-10 justify-items-stretch">
                 {relatedFinal.map((p) => (
                   <UnifiedBookCard
                     key={p.id}
