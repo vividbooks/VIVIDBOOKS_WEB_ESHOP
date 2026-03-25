@@ -36,6 +36,7 @@ import { StripePaymentSubmitForm } from './checkout/StripePaymentSubmitForm';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import type { ProductBundleRecord } from '../utils/bundlePricing';
 import { flashInvalidField } from '../utils/formFieldHighlight';
+import { publicAssetUrl } from '../utils/publicAssetUrl';
 import { clearSchoolOrderDraft, hasSchoolOrderDraft, readSchoolOrderDraft, writeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -1969,7 +1970,7 @@ export function OrderPage() {
                     </div>
                     <div className="absolute right-5 bottom-0 shrink-0 transition-all duration-200 origin-bottom scale-110">
                       <img
-                        src="/checkout/customer-school.png"
+                        src={publicAssetUrl('checkout/customer-school.png')}
                         alt="Škola"
                         className="block object-contain object-bottom w-[106px] h-[106px]"
                       />

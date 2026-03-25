@@ -1,15 +1,21 @@
 import { Helmet } from 'react-helmet-async';
+import { DEFAULT_OG_IMAGE, SITE_URL } from '../utils/ogImage';
 
 const SITE_NAME = 'Vividbooks';
-const SITE_URL = 'https://www.vividbooks.com';
 const DEFAULT_DESCRIPTION = 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed p\u0159edm\u011bty o\u017eivuj\u00ed d\u00edky animac\u00edm a interaktivn\u00edm prvk\u016fm.';
-const DEFAULT_IMAGE = `${SITE_URL}/og-image.png`;
 
 interface SEOHeadProps {
   title?: string;
   description?: string;
   path?: string;
   image?: string;
+  /** Alt text pro og:image / Twitter (doporučeno pro přístupnost a konzistentní náhledy). */
+  imageAlt?: string;
+  /** Volitelně pro šablony 1200×630 (Meta doporučuje uvádět u statických OG). */
+  imageWidth?: number;
+  imageHeight?: number;
+  /** Twitter @handle bez @, např. vividbooks — lze nastavit i VITE_TWITTER_SITE v .env */
+  twitterSite?: string;
   type?: 'website' | 'article' | 'product';
   article?: {
     publishedTime?: string;
@@ -21,11 +27,24 @@ interface SEOHeadProps {
   noIndex?: boolean;
 }
 
+function envTwitterSite(): string | undefined {
+  try {
+    const v = import.meta.env?.VITE_TWITTER_SITE as string | undefined;
+    return v?.replace(/^@/, '').trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function SEOHead({
   title,
   description = DEFAULT_DESCRIPTION,
   path = '',
-  image = DEFAULT_IMAGE,
+  image = DEFAULT_OG_IMAGE,
+  imageAlt,
+  imageWidth,
+  imageHeight,
+  twitterSite: twitterSiteProp,
   type = 'website',
   article,
   jsonLd,
@@ -33,6 +52,9 @@ export function SEOHead({
 }: SEOHeadProps) {
   const fullTitle = title ? `${title} | ${SITE_NAME}` : `${SITE_NAME} \u2013 Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice`;
   const canonicalUrl = `${SITE_URL}${path}`;
+  const resolvedImageAlt =
+    (imageAlt?.trim() || (title ? `Náhled: ${title} — ${SITE_NAME}` : `${SITE_NAME} — digitální učebnice pro ZŠ`)).slice(0, 420);
+  const twitterSite = (twitterSiteProp?.replace(/^@/, '').trim() || envTwitterSite()) ?? '';
 
   // Organization JSON-LD (always present)
   const organizationLd = {
@@ -74,6 +96,13 @@ export function SEOHead({
       <meta property="og:description" content={description} />
       <meta property="og:url" content={canonicalUrl} />
       <meta property="og:image" content={image} />
+      <meta property="og:image:alt" content={resolvedImageAlt} />
+      {typeof imageWidth === 'number' && imageWidth > 0 && (
+        <meta property="og:image:width" content={String(Math.round(imageWidth))} />
+      )}
+      {typeof imageHeight === 'number' && imageHeight > 0 && (
+        <meta property="og:image:height" content={String(Math.round(imageHeight))} />
+      )}
       <meta property="og:type" content={type} />
       <meta property="og:site_name" content={SITE_NAME} />
       <meta property="og:locale" content="cs_CZ" />
@@ -89,6 +118,8 @@ export function SEOHead({
       <meta name="twitter:title" content={fullTitle} />
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={image} />
+      <meta name="twitter:image:alt" content={resolvedImageAlt} />
+      {twitterSite ? <meta name="twitter:site" content={`@${twitterSite}`} /> : null}
 
       {/* JSON-LD */}
       {allJsonLd.map((ld, i) => (

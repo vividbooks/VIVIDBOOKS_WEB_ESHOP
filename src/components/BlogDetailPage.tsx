@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import type { BlogPost, BlogBlock } from '../data/blogPosts';
 import { BlogCard } from './BlogCard';
 import { SEOHead, articleJsonLd } from './SEOHead';
+import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { useBlogPosts } from '../contexts/BlogContext';
 import { NewsletterInlineBlock } from './NewsletterInlineBlock';
 
@@ -280,7 +281,8 @@ export function BlogDetailPage({ post }: BlogDetailPageProps) {
         title={post.title}
         path={`/blog/${post.slug}`}
         description={post.excerpt || post.title}
-        image={post.coverImage}
+        image={resolveShareImageUrl({ explicitImage: post.coverImage, category: post.category })}
+        imageAlt={buildOgImageAlt({ title: post.title, categoryLabel: post.category })}
         type="article"
         article={{ publishedTime: post.date, author: post.author, section: post.category }}
         jsonLd={articleJsonLd({

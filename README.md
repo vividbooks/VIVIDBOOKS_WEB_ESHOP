@@ -8,4 +8,8 @@
   Run `npm i` to install the dependencies.
 
   Run `npm run dev` to start the development server.
+
+  ## Deployment & Stripe
+
+  See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for GitHub Pages secrets, Supabase functions, and Stripe webhook setup.
   

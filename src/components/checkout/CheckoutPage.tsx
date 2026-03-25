@@ -31,11 +31,15 @@ import { getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import { flashInvalidField } from '../../utils/formFieldHighlight';
 import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
+import { publicAssetUrl } from '../../utils/publicAssetUrl';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
 type PaymentMethodOption = 'apple_pay' | 'google_pay' | 'card' | 'transfer';
 type CustomerType = 'school' | 'individual';
+
+const CHECKOUT_IMG_SCHOOL = publicAssetUrl('checkout/customer-school.png');
+const CHECKOUT_IMG_INDIVIDUAL = publicAssetUrl('checkout/customer-individual.png');
 
 interface SchoolSearchResult {
   ico: string;
@@ -930,14 +934,14 @@ export function CheckoutPage() {
                       id: 'school',
                       label: 'Nakupuji jako škola',
                       description: 'IČO, škola a fakturační údaje organizace',
-                      imageSrc: '/checkout/customer-school.png',
+                      imageSrc: CHECKOUT_IMG_SCHOOL,
                       imageAlt: 'Škola',
                     },
                     {
                       id: 'individual',
                       label: 'Nakupuji jako jednotlivec',
                       description: 'Osobní nákup bez školních údajů',
-                      imageSrc: '/checkout/customer-individual.png',
+                      imageSrc: CHECKOUT_IMG_INDIVIDUAL,
                       imageAlt: 'Rodič a dítě',
                     },
                   ].map((option) => {

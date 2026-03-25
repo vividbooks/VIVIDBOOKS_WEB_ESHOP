@@ -8,6 +8,7 @@ import { buildBundleCartLines, type ProductBundleRecord } from '../utils/bundleP
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import { BookCoverThumb } from './checkout/BookCoverThumb';
 import { SEOHead } from './SEOHead';
+import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/product-bundles`;
 
@@ -65,6 +66,8 @@ export function BundlePage() {
     resolvedProducts.reduce((s, p) => s + getProductUnitPriceInHaler(p), 0)
   ), [resolvedProducts]);
 
+  const bundleShareCategory = resolvedProducts[0]?.category as string | undefined;
+
   const handleAddBundle = () => {
     if (!bundle || productsLoading || !products.length) return;
     setAdding(true);
@@ -97,6 +100,14 @@ export function BundlePage() {
         title={bundle ? bundle.title : 'Balíček'}
         description={bundle?.description || 'Výhodný balíček produktů Vividbooks.'}
         path={bundleId ? `/balicek/${bundleId}` : ''}
+        image={resolveShareImageUrl({ category: bundleShareCategory })}
+        imageAlt={
+          bundle
+            ? buildOgImageAlt({ title: bundle.title, categoryLabel: bundleShareCategory })
+            : buildOgImageAlt({ title: 'Balíček produktů' })
+        }
+        imageWidth={1200}
+        imageHeight={630}
       />
 
       <button

@@ -1121,6 +1121,9 @@ export default function CatalogGrid() {
       <SEOHead
         path="/"
         description="Kompletn\u00ed katalog interaktivn\u00edch digit\u00e1ln\u00edch u\u010debnic a pracovn\u00edch se\u0161it\u016f Vividbooks pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed."
+        imageAlt="Katalog interaktivních učebnic a pracovních sešitů Vividbooks pro základní školy"
+        imageWidth={1200}
+        imageHeight={630}
       />
       {/* Hero Slider — šipky přes okrajové peek slidery (bez mezery); bez teček; jen pokud jsou slidery (CMS / webinář / notifikace) */}
       {REAL_N > 0 ? (

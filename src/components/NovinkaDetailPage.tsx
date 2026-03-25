@@ -6,6 +6,7 @@ import type { NovinkaPost, NovinkaBlock } from '../data/novinkaPosts';
 import { useNovinky } from '../contexts/NovinkyContext';
 import { NovinkaCard } from './NovinkaCard';
 import { SEOHead, articleJsonLd } from './SEOHead';
+import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { NewsletterInlineBlock } from './NewsletterInlineBlock';
 
 /* ── Sidebar CTA card ──────────────────────────────────────────── */
@@ -117,7 +118,8 @@ export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
         title={post.title}
         path={`/novinky/${post.slug}`}
         description={post.excerpt || post.title}
-        image={coverImage}
+        image={resolveShareImageUrl({ explicitImage: coverImage, category: post.category })}
+        imageAlt={buildOgImageAlt({ title: post.title, categoryLabel: post.category })}
         type="article"
         article={{ publishedTime: post.date, author: post.author, section: post.category }}
         jsonLd={articleJsonLd({

@@ -7,6 +7,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { SUBJECT_CONFIGS } from './subjectConfigs';
 import { SEOHead, productJsonLd, breadcrumbJsonLd } from './SEOHead';
+import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { useCart } from '../contexts/CartContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchProductStockItem, type ProductStockItem } from '../utils/productStock';
@@ -873,7 +874,8 @@ export function ProductDetailPage({
         title={product.name}
         path={`/produkt/${encodeURIComponent(product.id)}`}
         description={desc || `${product.name} \u2014 ${product.category}. Interaktivn\u00ed u\u010debn\u00ed materi\u00e1l od Vividbooks.`}
-        image={product.image}
+        image={resolveShareImageUrl({ explicitImage: product.image, category: product.category })}
+        imageAlt={buildOgImageAlt({ productName: product.name, categoryLabel: product.category })}
         type="product"
         jsonLd={[
           productJsonLd({
