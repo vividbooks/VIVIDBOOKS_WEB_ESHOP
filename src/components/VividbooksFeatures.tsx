@@ -173,18 +173,43 @@ export function VividbooksFeatures({ className = '', grade }: VividbooksFeatures
     <div className={`mt-6 mb-2 -mx-4 md:-mx-8 ${className}`}>
       <div className="bg-[#f0f2f8] px-4 md:px-8 py-7">
         {/* Heading */}
-        <div className="flex items-center gap-3 mb-1">
-          <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[22px] md:text-[26px] leading-tight whitespace-nowrap">
-            {`Co umí Vividbooks`}
-            {gradeLabel && (
-              <span className="ml-2 font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#FF6B1A]">
-                {`na ${gradeLabel}`}
-              </span>
-            )}
-          </h2>
-          <div className="h-px flex-1 bg-[#001161]/10" />
-          {/* Šipky — stejná pozice jako u předmětů */}
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="mb-1">
+          <div className="flex items-center gap-3">
+            <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[22px] md:text-[26px] leading-tight">
+              {`Co umí Vividbooks`}
+              {gradeLabel && (
+                <span className="ml-2 font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#FF6B1A]">
+                  {`na ${gradeLabel}`}
+                </span>
+              )}
+            </h2>
+            <div className="hidden sm:block h-px flex-1 bg-[#001161]/10" />
+            {/* Desktop šipky */}
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              {canScrollLeft && (
+                <button
+                  onClick={() => scroll('left')}
+                  className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
+                  aria-label="Posunout doleva"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              )}
+              <button
+                onClick={() => scroll('right')}
+                className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
+                aria-label="Posunout doprava"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          {/* Mobilní šipky o řádek níž */}
+          <div className="mt-2 flex items-center justify-end gap-2 sm:hidden">
             {canScrollLeft && (
               <button
                 onClick={() => scroll('left')}
