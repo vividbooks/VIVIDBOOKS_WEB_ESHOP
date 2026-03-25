@@ -509,7 +509,8 @@ export default function CatalogGrid() {
 
   /* ── hero slider ─────────────────────────────────────────── */
   const [heroSlide,   setHeroSlide]   = useState(1);
-  const [heroAnimate, setHeroAnimate] = useState(true);
+  /** Po přechodu musí zase být false — jinak v peek režimu zůstanou „vedlejší“ slidery na opacity 0 → velké bílé plochy. */
+  const [heroAnimate, setHeroAnimate] = useState(false);
   const heroTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isHoveredRef = useRef(false);
   const [windowWidth, setWindowWidth] = useState(
@@ -862,6 +863,8 @@ export default function CatalogGrid() {
   const REAL_N = heroSlides.length;
   const extSlides =
     REAL_N > 0 ? [heroSlides[heroSlides.length - 1], ...heroSlides, heroSlides[0]] : [];
+  /** Poslední platný index v extSlides (ochrana proti intervalu/klikům mimo rozsah → bílý hero). */
+  const heroExtMaxIdx = extSlides.length > 0 ? extSlides.length - 1 : 0;
 
   /* Přednostně stáhnout vizuály prvních dvou reálných slidů (indexy 1 a 2 v extSlides). */
   useEffect(() => {
@@ -889,7 +892,7 @@ export default function CatalogGrid() {
     if (isHoveredRef.current) return;
     heroTimerRef.current = setInterval(() => {
       setHeroAnimate(true);
-      setHeroSlide(s => s + 1);
+      setHeroSlide(s => Math.min(s + 1, heroExtMaxIdx));
     }, 4500);
   };
 
@@ -929,7 +932,19 @@ export default function CatalogGrid() {
     }
   }, [heroSlide, extSlides.length, REAL_N]);
 
-  const goToSlide = (idx: number) => { setHeroAnimate(true); setHeroSlide(idx); startHeroTimer(); };
+  /** Ukončit přechod po animaci karuselu — bez toho zůstane heroAnimate=true a neaktivní slidery (viditelné v peek) jsou neviditelné. */
+  useEffect(() => {
+    if (REAL_N <= 0) return;
+    const t = window.setTimeout(() => setHeroAnimate(false), HERO_TRANSFORM_MS + 48);
+    return () => window.clearTimeout(t);
+  }, [heroSlide, REAL_N]);
+
+  const goToSlide = (idx: number) => {
+    if (REAL_N <= 0) return;
+    setHeroAnimate(true);
+    setHeroSlide(Math.max(0, Math.min(heroExtMaxIdx, idx)));
+    startHeroTimer();
+  };
 
   /* ── expanded groups ─────────────────────────────────────── */
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -1159,12 +1174,28 @@ export default function CatalogGrid() {
               const heroSlideImagePriority = idx === 1 || idx === 2;
               const heroCoverHex = heroSurfaceHexFromSlide(slideView as any);
               const heroCoverShadowFull = heroBookCoverShadowFilter(heroCoverHex);
+              /** Boční peek: bez kliku. */
+              const heroPeekSideCard = isPeekMode && idx !== heroSlide;
+              /** Prázdná karta až po dojetí animace — během heroAnimate nechat plný obsah, jinak zmizí skokem místo útlumu opacity. */
+              const heroPeekPlaceholderOnly = heroPeekSideCard && !heroAnimate;
+              const heroSlideContentAnimate =
+                heroNarrowViewport
+                  ? idx === heroSlide
+                    ? { opacity: 1 }
+                    : heroAnimate
+                      ? { opacity: 0 }
+                      : { opacity: 1 }
+                  : idx === heroSlide
+                    ? { opacity: 1, y: 0 }
+                    : heroAnimate
+                      ? { opacity: 0, y: 12 }
+                      : { opacity: 1, y: 0 };
               return (
               <div
                 key={idx}
                 className={`@container ${slideView.bg} relative flex h-full min-h-0 max-h-full flex-shrink-0 flex-col ${
                   slideIsBooksFan || slideIsBooksFanStacked ? 'overflow-visible' : 'overflow-hidden'
-                } cursor-pointer ${isLight ? 'text-white' : 'text-[#001161]'} ${
+                } ${heroPeekSideCard ? 'cursor-default' : 'cursor-pointer'} ${isLight ? 'text-white' : 'text-[#001161]'} ${
                   heroFullImageLayout
                     ? 'p-0'
                     : leftImageBleed
@@ -1187,6 +1218,7 @@ export default function CatalogGrid() {
                   ...((slideView as any).bgStyle ? { backgroundColor: (slideView as any).bgStyle } : {}),
                 }}
                 onClick={() => {
+                  if (heroPeekSideCard) return;
                   const href = String((slideView as any).link || '').trim();
                   if (!href) return;
                   if (/^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener,noreferrer');
@@ -1199,21 +1231,13 @@ export default function CatalogGrid() {
                     slideIsBooksFan || slideIsBooksFanStacked ? 'overflow-visible' : ''
                   }`}
                   initial={false}
-                  animate={
-                    heroNarrowViewport
-                      ? idx === heroSlide
-                        ? { opacity: 1 }
-                        : heroAnimate
-                          ? { opacity: 0 }
-                          : { opacity: 1 }
-                      : idx === heroSlide
-                        ? { opacity: 1, y: 0 }
-                        : heroAnimate
-                          ? { opacity: 0, y: 12 }
-                          : { opacity: 1, y: 0 }
-                  }
+                  animate={heroSlideContentAnimate}
                   transition={{ duration: HERO_CONTENT_FADE_MS / 1000, ease: [0.45, 0, 0.2, 1] }}
                 >
+                {heroPeekPlaceholderOnly ? (
+                  <div className="min-h-0 flex-1 shrink-0 select-none" aria-hidden />
+                ) : (
+                <>
                 {slideView.layout === 'webinar' ? (
                   /* ── Webinář layout: pulsující kolečko + countdown + thumbnail ── */
                   <div className="flex min-h-0 min-w-0 flex-1 items-center gap-4 z-10">
@@ -1699,6 +1723,8 @@ export default function CatalogGrid() {
                       />
                     </div>
                   </div>
+                )}
+                </>
                 )}
                 </motion.div>
               </div>
