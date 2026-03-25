@@ -160,28 +160,28 @@ export function UnifiedBookCard({
         {/* Bobánek jen předmětu — ročník filtrujte na stránce předmětu (Dostupné tituly). */}
         {badgeSubject && (
           <span
-            className="self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-normal leading-[1.2] mb-1.5 whitespace-nowrap"
+            className="self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-1.5 whitespace-nowrap"
             style={{ background: catBg, color: catColor }}
           >
             {badgeSubject}
           </span>
         )}
 
-        <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[14px] font-normal leading-[1.2] mb-0.5 line-clamp-3">
+        <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-0.5 line-clamp-3">
           {formatTypography(subject ? titleRest : book.name)}
         </p>
 
         {isDistributorMode ? (
           <>
             {book.specialText && (
-              <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/40 text-[11px] uppercase tracking-wider font-normal mb-1">
+              <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/40 text-[12px] sm:text-[11px] uppercase tracking-wider font-normal mb-1">
                 {book.specialText}
               </p>
             )}
             {book.type === 'workbook' && onDownload && (
               <button
                 onClick={(e) => { e.stopPropagation(); onDownload(e, book); }}
-                className="mt-2 flex items-center justify-center gap-2 w-full py-2.5 bg-[#001161] text-white rounded-xl font-bold text-[12px] hover:bg-[#6b58ff] transition-all shadow-sm cursor-pointer"
+                className="mt-2 flex items-center justify-center gap-2 w-full py-2.5 bg-[#001161] text-white rounded-xl font-bold text-[13px] sm:text-[12px] hover:bg-[#6b58ff] transition-all shadow-sm cursor-pointer"
               >
                 <svg className="size-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -193,7 +193,7 @@ export function UnifiedBookCard({
         ) : (
           <div className="flex items-center gap-2 flex-wrap mt-0">
             <p
-              className="font-['Fenomen_Sans',sans-serif] text-[14px] font-normal"
+              className="font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal"
               style={{ color: catColor }}
             >
               {price &&
@@ -204,7 +204,7 @@ export function UnifiedBookCard({
                     : `${price}\u00a0K\u010d`)}
             </p>
             {availNote && (
-              <span className="inline-flex items-center px-2.5 py-[3px] rounded-xl bg-[#FFF3E0] text-[#E06800] font-['Fenomen_Sans',sans-serif] text-[10px] font-normal uppercase tracking-wide whitespace-nowrap border border-[#FF9900]/25">
+              <span className="inline-flex items-center px-2.5 py-[3px] rounded-xl bg-[#FFF3E0] text-[#E06800] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[10px] font-normal uppercase tracking-wide whitespace-nowrap border border-[#FF9900]/25">
                 {availNote}
               </span>
             )}

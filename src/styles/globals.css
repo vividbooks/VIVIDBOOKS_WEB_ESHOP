@@ -242,6 +242,17 @@ html {
   font-size: var(--font-size);
 }
 
+@media (max-width: 767px) {
+  :root {
+    --font-size: 17.6px;
+  }
+
+  html {
+    -webkit-text-size-adjust: 110%;
+    text-size-adjust: 110%;
+  }
+}
+
 /* ── Webinar richtext — HTML z Webflow ────────────────────────── */
 .webinar-richtext p {
   margin-bottom: 0.85em;

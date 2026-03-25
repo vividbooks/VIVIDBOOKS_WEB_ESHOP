@@ -18,7 +18,7 @@ export function ProductComplianceBadge({ children }: { children: React.ReactNode
       >
         <Check className="w-2.5 h-2.5 text-white" strokeWidth={2.25} />
       </span>
-      <span className="font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-normal leading-tight tracking-tight">
+      <span className="font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[12px] font-normal leading-tight tracking-tight">
         {children}
       </span>
     </div>

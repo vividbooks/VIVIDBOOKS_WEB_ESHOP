@@ -585,7 +585,6 @@ export function ProductDetailPage({
   onProductSelect,
 }: ProductDetailPageProps) {
   const [flipbookOpen, setFlipbookOpen] = useState(false);
-  const [imageLoaded, setImageLoaded] = useState(false);
   /** Jednovýběrové bobánky (jako přepínač); znovu kliknutí na aktivní = zrušit. */
   const [relatedRocnikFilter, setRelatedRocnikFilter] = useState<string | null>(null);
   const [relatedRadaFilter, setRelatedRadaFilter] = useState<RelatedRadaKey | null>(null);
@@ -897,8 +896,8 @@ export function ProductDetailPage({
           {/* LEFT — image panel */}
           <div className="flex flex-col gap-4 lg:sticky lg:top-[80px] self-start">
             <div
-              className="relative rounded-[32px] flex flex-col overflow-hidden"
-              style={{ background: catColors.bg, minHeight: 'clamp(320px, 58vw, 540px)' }}
+              className="relative isolate rounded-[32px] flex flex-col overflow-hidden"
+              style={{ background: catColors.bg, minHeight: 'clamp(300px, 56vw, 540px)' }}
             >
               {/* RVP + doložka (nad výřezem produktu) */}
               <div className="relative z-20 flex flex-wrap items-center justify-center gap-2 px-5 pt-5 pb-1 shrink-0">
@@ -923,7 +922,7 @@ export function ProductDetailPage({
                   className={`flex w-full flex-1 items-center justify-center px-6 pt-2 sm:px-10 lg:px-12 lg:pt-4 ${
                     showImagePanelActions ? 'pb-3 sm:pb-4' : 'pb-6 sm:pb-10 lg:pb-12'
                   }`}
-                  style={{ minHeight: 'min(52vw, 260px)' }}
+                  style={{ minHeight: 'min(48vw, 240px)' }}
                 >
                   <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -940,10 +939,10 @@ export function ProductDetailPage({
                           isLandscape
                             ? isDigitalHero
                               ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                              : 'max-h-[100px] sm:max-h-[124px] lg:max-h-[156px]'
+                              : 'max-h-[88px] sm:max-h-[124px] lg:max-h-[156px]'
                             : isDigitalHero
                               ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                              : 'max-h-[128px] sm:max-h-[168px] lg:max-h-[220px]'
+                              : 'max-h-[112px] sm:max-h-[168px] lg:max-h-[220px]'
                         }`}
                         style={
                           product.type === 'workbook'
@@ -951,7 +950,6 @@ export function ProductDetailPage({
                             : undefined
                         }
                         onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                          setImageLoaded(true);
                           const img = e.currentTarget;
                           setIsLandscape(img.naturalWidth >= img.naturalHeight);
                         }}
@@ -968,12 +966,12 @@ export function ProductDetailPage({
                 </div>
 
                 {showImagePanelActions && (
-                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 border-t border-[#001161]/10 bg-white/45 px-5 pb-5 pt-3 backdrop-blur-[2px] sm:pt-4">
+                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 border-t border-[#001161]/10 bg-white/72 px-5 pb-5 pt-3 sm:bg-white/45 sm:pt-4 sm:backdrop-blur-[2px]">
                     {hasFlipbook && (
                       <button
                         type="button"
                         onClick={() => setFlipbookOpen(true)}
-                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/85 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm backdrop-blur-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98]"
+                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/95 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] sm:bg-white/85 sm:backdrop-blur-sm"
                       >
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />
                         {'Prolistovat uk\u00e1zku'}
@@ -983,7 +981,7 @@ export function ProductDetailPage({
                       href={product.appLink || 'https://app.vividbooks.cz'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/85 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm backdrop-blur-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline ${hasFlipbook ? 'flex-1' : 'w-full'}`}
+                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-white/60 bg-white/95 px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline sm:bg-white/85 sm:backdrop-blur-sm ${hasFlipbook ? 'flex-1' : 'w-full'}`}
                     >
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                       {'Otev\u0159\u00edt v aplikaci'}
