@@ -927,7 +927,7 @@ export function ProductDetailPage({
                   className={`flex w-full flex-1 items-center justify-center px-7 pt-3 sm:px-10 lg:px-12 lg:pt-4 ${
                     showImagePanelActions ? 'pb-3 sm:pb-4' : 'pb-6 sm:pb-10 lg:pb-12'
                   }`}
-                  style={{ minHeight: 'min(38vw, 180px)' }}
+                  style={{ minHeight: 'min(32vw, 150px)' }}
                 >
                   <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -940,14 +940,14 @@ export function ProductDetailPage({
                       <ImageWithFallback
                         src={product.image}
                         alt={product.name}
-                        className={`relative z-10 w-auto max-h-full object-contain ${
+                        className={`relative z-10 w-auto max-h-full origin-center object-contain ${
                           isLandscape
                             ? isDigitalHero
                               ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                              : 'max-h-[58px] sm:max-h-[124px] lg:max-h-[156px]'
+                              : 'max-h-[52px] scale-[0.74] sm:max-h-[124px] sm:scale-100 lg:max-h-[156px]'
                             : isDigitalHero
                               ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                              : 'max-h-[78px] sm:max-h-[168px] lg:max-h-[220px]'
+                              : 'max-h-[70px] scale-[0.76] sm:max-h-[168px] sm:scale-100 lg:max-h-[220px]'
                         }`}
                         style={
                           product.type === 'workbook'

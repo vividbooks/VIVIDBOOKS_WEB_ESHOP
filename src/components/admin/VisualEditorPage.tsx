@@ -1178,7 +1178,7 @@ function SliderPreviewCanvas({
   const heroSlideOverflowClass = showFullImage
     ? 'overflow-hidden'
     : phoneLeftImageStack && !flushBooksStacked && !flushBooksSide
-      ? 'overflow-x-visible overflow-y-hidden'
+      ? 'overflow-hidden'
       : flushBooksSide || flushBooksStacked
         ? 'overflow-visible'
         : 'overflow-hidden';
@@ -1360,10 +1360,10 @@ function SliderPreviewCanvas({
         ) : showLeftImage ? (
           /* Telefon vs desktop řídíme podle `device`, ne `md:` — jinak na širokém monitoru „Telefon“ 390px stejně matchne md: a rozložení/rodič absolutního obrázku je rozbité. */
           device === 'phone' ? (
-            <div className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-2 overflow-x-visible overflow-y-hidden">
+            <div className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
               <div
-                className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-y-auto overscroll-y-contain py-2 pb-1 ${
-                  leftBleed ? 'pl-6 pr-4' : 'px-5'
+                className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-y-auto overscroll-y-contain px-5 py-3 ${
+                  doc.heroImageColumnAlign === 'center' ? 'items-center text-center' : 'items-start text-left'
                 }`}
                 style={textWrapStyle}
               >
@@ -1376,12 +1376,12 @@ function SliderPreviewCanvas({
                   highlightBlockId={highlightBlockId}
                 />
               </div>
-              <div className="relative min-h-0 w-full min-w-0 flex-1 basis-0 shrink-0 self-stretch overflow-hidden rounded-none">
+              <div className="relative min-h-0 min-w-0 flex-1 basis-0 overflow-hidden">
                 <img
                   src={doc.image}
                   alt=""
-                  className="absolute inset-0 size-full"
-                  style={heroLeftImageImgStyle(doc.heroImageScalePct, doc.heroImagePosXPct, doc.heroImagePosYPct)}
+                  className="absolute inset-0 size-full object-cover"
+                  style={heroLeftImageImgStyle(doc.heroImageScalePct, doc.heroImagePosXPct, 50)}
                 />
               </div>
             </div>

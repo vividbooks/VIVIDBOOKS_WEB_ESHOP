@@ -1168,7 +1168,8 @@ export default function CatalogGrid() {
                   heroFullImageLayout
                     ? 'p-0'
                     : leftImageBleed
-                      ? 'py-0 pl-8 pr-0'
+                      ? /* Bleed desktop: pl-8; na úzkém viewportu žádný horizontální padding — jinak „červený pruh“ vlevo u fotky. */
+                        '@max-[767px]:px-0 @max-[767px]:pt-6 @max-[767px]:pb-0 @min-[768px]:py-0 @min-[768px]:pl-8 @min-[768px]:pr-0'
                       : slideIsBooksFan
                         ? 'py-0 pl-8 pr-0'
                         : slideIsBooksFanBelow
@@ -1597,44 +1598,82 @@ export default function CatalogGrid() {
                     </div>
                   </div>
                 ) : slideView.layout === 'left-image' && (slideView as any).image ? (
-                  /* ── Text + obrázek: úzký kontejner = text nahoře + fotka dole; od šířky kontejneru slidu (viz HERO_LEFT_IMAGE_SIDE_BY_SIDE_MIN_CONTAINER_PX) text vlevo | obrázek vpravo. */
-                  <div
-                    className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-2 overflow-x-visible overflow-y-visible @min-[520px]:grid @min-[520px]:grid-rows-1 @min-[520px]:gap-0 @min-[520px]:overflow-hidden"
-                    style={{ gridTemplateColumns: `minmax(0, 1fr) ${leftImageColPct}%` }}
-                  >
-                    <div
-                      className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-hidden px-5 pt-3 pb-1 @min-[520px]:basis-auto @min-[520px]:px-6 @min-[520px]:pl-4 @min-[520px]:pr-6 ${leftImageBleed ? '@min-[520px]:py-8' : '@min-[520px]:pb-3'}`}
-                      style={textWrapStyle}
-                    >
-                      <CmsHeroOrderedBlocks
-                        slide={slideView as any}
-                        variant="leftImage"
-                        heroAlignStart={false}
-                        leftImageTextCenter={(slideView as any).heroImageColumnAlign === 'center'}
-                        isLight={isLight}
-                        accentForUi={accentForUi}
-                        navigate={navigate}
-                      />
+                  heroNarrowViewport ? (
+                    /* Úzký viewport: přesně ½ text (plná barva slidu) + ½ fotka na šířku; ve spodní zóně cover se středem ve svislé ose → ořez nahoře i dole. */
+                    <div className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
+                      <div
+                        className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-y-auto overscroll-y-contain px-5 py-3 ${
+                          (slideView as any).heroImageColumnAlign === 'center'
+                            ? 'items-center text-center'
+                            : 'items-start text-left'
+                        }`}
+                        style={textWrapStyle}
+                      >
+                        <CmsHeroOrderedBlocks
+                          slide={slideView as any}
+                          variant="leftImage"
+                          heroAlignStart={false}
+                          leftImageTextCenter={(slideView as any).heroImageColumnAlign === 'center'}
+                          isLight={isLight}
+                          accentForUi={accentForUi}
+                          navigate={navigate}
+                        />
+                      </div>
+                      <div className="relative min-h-0 min-w-0 flex-1 basis-0 overflow-hidden">
+                        <img
+                          src={slideView.image}
+                          alt={slideView.title}
+                          className="absolute inset-0 size-full object-cover"
+                          loading={heroSlideImagePriority ? 'eager' : 'lazy'}
+                          fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                          style={heroLeftImageImgStyle(
+                            (slideView as any).heroImageScalePct,
+                            (slideView as any).heroImagePosXPct,
+                            50,
+                          )}
+                        />
+                      </div>
                     </div>
+                  ) : (
+                    /* ── Text + obrázek: úzký kontejner = text nahoře + fotka dole; od šířky kontejneru slidu (viz HERO_LEFT_IMAGE_SIDE_BY_SIDE_MIN_CONTAINER_PX) text vlevo | obrázek vpravo. */
                     <div
-                      className={`relative min-h-0 w-full min-w-0 flex-1 basis-0 shrink-0 self-stretch overflow-hidden @max-[519px]:rounded-none @min-[520px]:flex-none @min-[520px]:h-full @min-[520px]:min-h-0 @min-[520px]:min-w-0 @min-[520px]:w-full @min-[520px]:self-stretch @min-[520px]:rounded-2xl @min-[520px]:m-0 ${
-                        leftImageBleed ? '@min-[520px]:rounded-none' : ''
-                      }`}
+                      className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-2 overflow-x-visible overflow-y-visible @min-[520px]:grid @min-[520px]:grid-rows-1 @min-[520px]:gap-0 @min-[520px]:overflow-hidden"
+                      style={{ gridTemplateColumns: `minmax(0, 1fr) ${leftImageColPct}%` }}
                     >
-                      <img
-                        src={slideView.image}
-                        alt={slideView.title}
-                        className="absolute inset-0 size-full"
-                        loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                        fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
-                        style={heroLeftImageImgStyle(
-                          (slideView as any).heroImageScalePct,
-                          (slideView as any).heroImagePosXPct,
-                          (slideView as any).heroImagePosYPct,
-                        )}
-                      />
+                      <div
+                        className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-hidden px-5 pt-3 pb-1 @min-[520px]:basis-auto @min-[520px]:px-6 @min-[520px]:pl-4 @min-[520px]:pr-6 ${leftImageBleed ? '@min-[520px]:py-8' : '@min-[520px]:pb-3'}`}
+                        style={textWrapStyle}
+                      >
+                        <CmsHeroOrderedBlocks
+                          slide={slideView as any}
+                          variant="leftImage"
+                          heroAlignStart={false}
+                          leftImageTextCenter={(slideView as any).heroImageColumnAlign === 'center'}
+                          isLight={isLight}
+                          accentForUi={accentForUi}
+                          navigate={navigate}
+                        />
+                      </div>
+                      <div
+                        className={`relative min-h-0 w-full min-w-0 flex-1 basis-0 shrink-0 self-stretch overflow-hidden @max-[519px]:rounded-none @min-[520px]:flex-none @min-[520px]:h-full @min-[520px]:min-h-0 @min-[520px]:min-w-0 @min-[520px]:w-full @min-[520px]:self-stretch @min-[520px]:rounded-2xl @min-[520px]:m-0 ${
+                          leftImageBleed ? '@min-[520px]:rounded-none' : ''
+                        }`}
+                      >
+                        <img
+                          src={slideView.image}
+                          alt={slideView.title}
+                          className="absolute inset-0 size-full"
+                          loading={heroSlideImagePriority ? 'eager' : 'lazy'}
+                          fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                          style={heroLeftImageImgStyle(
+                            (slideView as any).heroImageScalePct,
+                            (slideView as any).heroImagePosXPct,
+                            (slideView as any).heroImagePosYPct,
+                          )}
+                        />
+                      </div>
                     </div>
-                  </div>
+                  )
                 ) : (
                   /* ─ Centered text layout (default) ──
                      Vnější řádek centruje blok svisle; uvnitř max-h-full bez interního scrollu.
