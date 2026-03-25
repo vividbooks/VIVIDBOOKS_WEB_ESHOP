@@ -32,6 +32,7 @@ import { flashInvalidField } from '../../utils/formFieldHighlight';
 import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
+import { appPath } from '../../utils/appBaseUrl';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
@@ -270,11 +271,9 @@ export function CheckoutPage() {
         }
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          window.location.replace(
-            num
-              ? `/objednavka/dekujeme?order=${encodeURIComponent(num)}`
-              : '/objednavka/dekujeme',
-          );
+          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
+          if (num) thankYou.searchParams.set('order', num);
+          window.location.replace(thankYou.toString());
           return;
         }
         if (data.status === 'payment_cancelled') {

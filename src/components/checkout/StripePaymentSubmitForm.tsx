@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { formatPrice } from './formatPrice';
+import { absoluteAppUrl } from '../../utils/appBaseUrl';
 
 export function StripePaymentSubmitForm({
   total,
@@ -27,7 +28,7 @@ export function StripePaymentSubmitForm({
     const result = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: `${window.location.origin}${returnPath.startsWith('/') ? returnPath : `/${returnPath}`}`,
+        return_url: absoluteAppUrl(returnPath.startsWith('/') ? returnPath : `/${returnPath}`),
       },
     });
 
