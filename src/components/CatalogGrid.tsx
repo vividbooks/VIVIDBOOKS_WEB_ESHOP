@@ -1176,8 +1176,8 @@ export default function CatalogGrid() {
               const heroCoverShadowFull = heroBookCoverShadowFilter(heroCoverHex);
               /** Boční peek: bez kliku. */
               const heroPeekSideCard = isPeekMode && idx !== heroSlide;
-              /** Prázdná karta až po dojetí animace — během heroAnimate nechat plný obsah, jinak zmizí skokem místo útlumu opacity. */
-              const heroPeekPlaceholderOnly = heroPeekSideCard && !heroAnimate;
+              /** Boční peek: nikdy plný obsah (i během přechodu) — jinak problikává viditelný text/obrázky na pravém/levém pruhu. */
+              const heroPeekPlaceholderOnly = heroPeekSideCard;
               const heroSlideContentAnimate =
                 heroNarrowViewport
                   ? idx === heroSlide
