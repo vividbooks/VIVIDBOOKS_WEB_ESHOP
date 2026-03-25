@@ -1084,7 +1084,6 @@ export default function CatalogGrid() {
       variant={compact ? 'related' : 'catalog'}
       isDistributorMode={isDistributorMode}
       onDownload={handleDownloadSingle}
-      hideSubjectBadgeOnMobile={compact}
     />
   );
 
@@ -1217,7 +1216,7 @@ export default function CatalogGrid() {
                 {slideView.layout === 'webinar' ? (
                   /* ── Webinář layout: pulsující kolečko + countdown + thumbnail ── */
                   <div className="flex min-h-0 min-w-0 flex-1 items-center gap-4 z-10">
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-y-auto overscroll-y-contain pl-8 pr-8 md:pl-14 md:pr-10">
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-hidden pl-8 pr-8 md:pl-14 md:pr-10">
                       {/* Pulsující kolečko + label */}
                       <div className="flex items-center gap-2.5 mb-3">
                         <span className="relative flex h-3.5 w-3.5 shrink-0">
@@ -1357,7 +1356,7 @@ export default function CatalogGrid() {
                         />
                       </div>
                       <div
-                        className={`relative z-0 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-2 pb-3 ${
+                        className={`relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-3 ${
                           booksFanTextColCenter ? 'items-center text-center' : 'items-start text-left'
                         }`}
                         style={textWrapStyle}
@@ -1427,7 +1426,7 @@ export default function CatalogGrid() {
                   <div className="relative z-10 h-full min-h-0 w-full flex-1 overflow-visible">
                     <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden px-3 pt-2 @min-[680px]:hidden">
                       <div
-                        className={`relative z-0 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-y-contain px-2 pb-1 ${
+                        className={`relative z-0 flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-1 ${
                           booksFanTextColCenter ? 'items-center text-center' : 'items-start text-left'
                         }`}
                         style={textWrapStyle}
@@ -1526,7 +1525,7 @@ export default function CatalogGrid() {
                     }}
                   >
                     <div
-                      className={`relative z-0 flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-y-auto overscroll-y-contain @min-[720px]:justify-center @min-[720px]:py-8 @min-[720px]:pb-3 @min-[720px]:pl-0 @min-[720px]:pr-5 ${
+                      className={`relative z-0 flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-hidden @min-[720px]:justify-center @min-[720px]:py-8 @min-[720px]:pb-3 @min-[720px]:pl-0 @min-[720px]:pr-5 ${
                         booksFanTextColCenter ? 'items-center' : 'items-start'
                       }`}
                       style={textWrapStyle}
@@ -1582,7 +1581,7 @@ export default function CatalogGrid() {
                       )}
                     />
                     <div
-                      className={`relative z-10 flex h-full min-h-0 w-full flex-col justify-center overflow-y-auto overscroll-y-contain px-4 py-3 md:px-7 md:py-5 ${
+                      className={`relative z-10 flex h-full min-h-0 w-full flex-col justify-center overflow-hidden px-4 py-3 md:px-7 md:py-5 ${
                         (slideView as any).heroImageColumnAlign === 'center' ? 'items-center' : 'items-start'
                       }`}
                       style={textWrapStyle}
@@ -1604,7 +1603,7 @@ export default function CatalogGrid() {
                     style={{ gridTemplateColumns: `minmax(0, 1fr) ${leftImageColPct}%` }}
                   >
                     <div
-                      className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-y-auto overscroll-y-contain px-5 pt-3 pb-1 @min-[520px]:basis-auto @min-[520px]:px-6 @min-[520px]:pl-4 @min-[520px]:pr-6 ${leftImageBleed ? '@min-[520px]:py-8' : '@min-[520px]:pb-3'}`}
+                      className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-hidden px-5 pt-3 pb-1 @min-[520px]:basis-auto @min-[520px]:px-6 @min-[520px]:pl-4 @min-[520px]:pr-6 ${leftImageBleed ? '@min-[520px]:py-8' : '@min-[520px]:pb-3'}`}
                       style={textWrapStyle}
                     >
                       <CmsHeroOrderedBlocks
@@ -1638,7 +1637,7 @@ export default function CatalogGrid() {
                   </div>
                 ) : (
                   /* ─ Centered text layout (default) ──
-                     Vnější řádek centruje blok svisle; uvnitř max-h-full + scroll pro dlouhé texty.
+                     Vnější řádek centruje blok svisle; uvnitř max-h-full bez interního scrollu.
                      `heroTextAlign === 'start'` = text vlevo bez obrázku (vizuální editor). */
                   <div
                     className={`z-10 flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden px-2 py-1 ${
@@ -1646,7 +1645,7 @@ export default function CatalogGrid() {
                     }`}
                   >
                     <div
-                      className={`flex max-h-full min-h-0 w-full flex-col overflow-y-auto overscroll-y-contain py-1 ${
+                      className={`flex max-h-full min-h-0 w-full flex-col overflow-hidden py-1 ${
                         heroAlignStart ? 'max-w-4xl items-start text-left' : 'items-center text-center'
                       }`}
                       style={textWrapStyle}
@@ -1830,8 +1829,8 @@ export default function CatalogGrid() {
                 <div
                   ref={el => { scrollRefs.current[mainGroup] = el; }}
                   onScroll={() => handleGroupScroll(mainGroup)}
-                  className="flex gap-2.5 items-start pb-5 overflow-x-hidden -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
-                  style={{ scrollbarWidth: 'none', touchAction: 'pan-y' }}
+                  className="flex gap-2.5 items-start pb-5 overflow-x-auto -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
+                  style={{ scrollbarWidth: 'none' }}
                 >
                   {allRowBooks.map(b => renderCard(b, true))}
                 </div>
