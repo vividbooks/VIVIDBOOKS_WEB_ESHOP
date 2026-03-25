@@ -73,6 +73,7 @@ export interface UnifiedBookCardProps {
   variant?: 'catalog' | 'related';
   isDistributorMode?: boolean;
   onDownload?: (e: React.MouseEvent, book: any) => void;
+  hideSubjectBadgeOnMobile?: boolean;
 }
 
 export function UnifiedBookCard({
@@ -81,6 +82,7 @@ export function UnifiedBookCard({
   variant = 'catalog',
   isDistributorMode = false,
   onDownload,
+  hideSubjectBadgeOnMobile = false,
 }: UnifiedBookCardProps) {
   const [isLandscape, setIsLandscape] = React.useState(false);
 
@@ -105,6 +107,14 @@ export function UnifiedBookCard({
 
   const isRelated = variant === 'related';
   const isDigitalTile = book.type === 'online' || book.type === 'license';
+  const rawTitle = String(subject ? titleRest : (book.name || ''));
+  const titleText = formatTypography(rawTitle);
+  const titleClass =
+    rawTitle.length > 44
+      ? 'text-[13px] sm:text-[13px]'
+      : rawTitle.length > 32
+        ? 'text-[14px] sm:text-[14px]'
+        : 'text-[15px] sm:text-[14px]';
 
   return (
     <motion.div
@@ -129,7 +139,7 @@ export function UnifiedBookCard({
             <ImageWithFallback
               src={book.image}
               alt={book.name}
-              className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_4px_12px_rgba(0,0,0,0.1)] md:drop-shadow-[0_12px_24px_rgba(0,0,0,0.13)]"
+              className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
             />
           ) : (
             <>
@@ -160,15 +170,15 @@ export function UnifiedBookCard({
         {/* Bobánek jen předmětu — ročník filtrujte na stránce předmětu (Dostupné tituly). */}
         {badgeSubject && (
           <span
-            className="self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-1.5 whitespace-nowrap"
+            className={`self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-1.5 whitespace-nowrap ${hideSubjectBadgeOnMobile ? 'hidden sm:inline-flex' : ''}`}
             style={{ background: catBg, color: catColor }}
           >
             {badgeSubject}
           </span>
         )}
 
-        <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-0.5 line-clamp-3">
-          {formatTypography(subject ? titleRest : book.name)}
+        <p className={`font-['Fenomen_Sans',sans-serif] text-[#001161] ${titleClass} font-normal leading-[1.2] mb-0.5 line-clamp-3`}>
+          {titleText}
         </p>
 
         {isDistributorMode ? (

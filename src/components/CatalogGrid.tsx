@@ -1084,6 +1084,7 @@ export default function CatalogGrid() {
       variant={compact ? 'related' : 'catalog'}
       isDistributorMode={isDistributorMode}
       onDownload={handleDownloadSingle}
+      hideSubjectBadgeOnMobile={compact}
     />
   );
 
@@ -1755,48 +1756,50 @@ export default function CatalogGrid() {
               id={groupingMode === 'subject' ? mainGroup.replace(/\s+/g, '-').toLowerCase() : undefined}
               className={`mb-4 ${groupingMode === 'subject' ? 'catalog-section scroll-mt-24' : ''}`}
             >
-              <div className="flex items-center gap-3 mb-1 flex-wrap relative z-10">
+              <div className="relative z-10 mb-1 flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center md:gap-3">
                 <h2
-                  className="text-[#001161] font-['Cooper_Light',serif] text-[26px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 cursor-pointer hover:opacity-75 transition-opacity"
+                  className="text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 cursor-pointer hover:opacity-75 transition-opacity whitespace-nowrap"
                   onClick={() => navigate(`/predmet/${subjectToSlug(mainGroup)}`)}
                 >
                   {mainGroup}
                 </h2>
-                <button
-                  onClick={() => navigate(`/predmet/${subjectToSlug(mainGroup)}`)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white font-['Fenomen_Sans',sans-serif] text-[13px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97] cursor-pointer group/openbtn"
-                >
-                  {'Otev\u0159\u00edt cel\u00fd p\u0159edm\u011bt'}
-                  <svg className="w-3.5 h-3.5 shrink-0 transition-transform group-hover/openbtn:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
-                </button>
-                {!isExpanded && (
-                  <div className="ml-auto flex items-center gap-2 shrink-0">
-                    {/* Šipka zpět — zobrazí se až po odscrollování */}
-                    {(scrollPositions[mainGroup] ?? 0) > 10 && (
+                <div className="flex w-full items-center justify-between gap-3 md:ml-auto md:w-auto md:justify-start">
+                  <button
+                    onClick={() => navigate(`/predmet/${subjectToSlug(mainGroup)}`)}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white font-['Fenomen_Sans',sans-serif] text-[13px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97] cursor-pointer group/openbtn"
+                  >
+                    {'Otev\u0159\u00edt cel\u00fd p\u0159edm\u011bt'}
+                    <svg className="w-3.5 h-3.5 shrink-0 transition-transform group-hover/openbtn:translate-x-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                    </svg>
+                  </button>
+                  {!isExpanded && (
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Šipka zpět — zobrazí se až po odscrollování */}
+                      {(scrollPositions[mainGroup] ?? 0) > 10 && (
+                        <button
+                          onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: -CARD_SCROLL, behavior: 'smooth' })}
+                          className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
+                          aria-label="Posunout doleva"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                          </svg>
+                        </button>
+                      )}
+                      {/* Šipka doprava */}
                       <button
-                        onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: -CARD_SCROLL, behavior: 'smooth' })}
+                        onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: CARD_SCROLL, behavior: 'smooth' })}
                         className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
-                        aria-label="Posunout doleva"
+                        aria-label="Posunout doprava"
                       >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                         </svg>
                       </button>
-                    )}
-                    {/* Šipka doprava */}
-                    <button
-                      onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: CARD_SCROLL, behavior: 'smooth' })}
-                      className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
-                      aria-label="Posunout doprava"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
-                      </svg>
-                    </button>
-                  </div>
-                )}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {isExpanded ? (
@@ -1827,7 +1830,8 @@ export default function CatalogGrid() {
                 <div
                   ref={el => { scrollRefs.current[mainGroup] = el; }}
                   onScroll={() => handleGroupScroll(mainGroup)}
-                  className="flex gap-2.5 items-start pb-5 overflow-x-auto -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8" style={{ scrollbarWidth: 'none' }}
+                  className="flex gap-2.5 items-start pb-5 overflow-x-hidden -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
+                  style={{ scrollbarWidth: 'none', touchAction: 'pan-y' }}
                 >
                   {allRowBooks.map(b => renderCard(b, true))}
                 </div>

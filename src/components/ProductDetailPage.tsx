@@ -620,8 +620,8 @@ export function ProductDetailPage({
   const heroDigitalImageFilter = useMemo(() => {
     if (product.type === 'workbook') return undefined as string | undefined;
     return mdUp
-      ? 'drop-shadow(0 30px 50px rgba(0,17,97,0.22))'
-      : 'drop-shadow(0 12px 24px rgba(0,17,97,0.16))';
+      ? 'drop-shadow(0 16px 28px rgba(0,17,97,0.14))'
+      : 'drop-shadow(0 6px 12px rgba(0,17,97,0.1))';
   }, [mdUp, product.type]);
 
   useEffect(() => {
@@ -896,9 +896,14 @@ export function ProductDetailPage({
           {/* LEFT — image panel */}
           <div className="flex flex-col gap-4 lg:sticky lg:top-[80px] self-start">
             <div
-              className="relative isolate rounded-[32px] flex flex-col overflow-hidden"
-              style={{ background: catColors.bg, minHeight: 'clamp(300px, 56vw, 540px)' }}
+              className="relative isolate rounded-[32px] flex flex-col"
+              style={{ minHeight: 'clamp(280px, 52vw, 540px)' }}
             >
+              <div
+                className="absolute inset-0 rounded-[32px]"
+                style={{ background: catColors.bg }}
+                aria-hidden
+              />
               {/* RVP + doložka (nad výřezem produktu) */}
               <div className="relative z-20 flex flex-wrap items-center justify-center gap-2 px-5 pt-5 pb-1 shrink-0">
                 <ProductComplianceBadge>{'Podle RVP'}</ProductComplianceBadge>
@@ -919,10 +924,10 @@ export function ProductDetailPage({
               {/* Book image — tlačítka v toku pod obálkou (ne absolute), ať obálka nepřekrývá CTA */}
               <div className="relative flex min-h-0 flex-1 flex-col">
                 <div
-                  className={`flex w-full flex-1 items-center justify-center px-6 pt-2 sm:px-10 lg:px-12 lg:pt-4 ${
+                  className={`flex w-full flex-1 items-center justify-center px-7 pt-3 sm:px-10 lg:px-12 lg:pt-4 ${
                     showImagePanelActions ? 'pb-3 sm:pb-4' : 'pb-6 sm:pb-10 lg:pb-12'
                   }`}
-                  style={{ minHeight: 'min(48vw, 240px)' }}
+                  style={{ minHeight: 'min(44vw, 210px)' }}
                 >
                   <motion.div
                     initial={{ scale: 0.9, opacity: 0 }}
@@ -939,10 +944,10 @@ export function ProductDetailPage({
                           isLandscape
                             ? isDigitalHero
                               ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                              : 'max-h-[88px] sm:max-h-[124px] lg:max-h-[156px]'
+                              : 'max-h-[72px] sm:max-h-[124px] lg:max-h-[156px]'
                             : isDigitalHero
                               ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                              : 'max-h-[112px] sm:max-h-[168px] lg:max-h-[220px]'
+                              : 'max-h-[94px] sm:max-h-[168px] lg:max-h-[220px]'
                         }`}
                         style={
                           product.type === 'workbook'
@@ -966,7 +971,7 @@ export function ProductDetailPage({
                 </div>
 
                 {showImagePanelActions && (
-                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 border-t border-[#001161]/10 bg-white/72 px-5 pb-5 pt-3 sm:bg-white/45 sm:pt-4 sm:backdrop-blur-[2px]">
+                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 rounded-b-[32px] border border-[#001161]/10 bg-white px-5 pb-5 pt-3 sm:bg-white/45 sm:pt-4 sm:backdrop-blur-[2px]">
                     {hasFlipbook && (
                       <button
                         type="button"
