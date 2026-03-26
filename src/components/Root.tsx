@@ -13,6 +13,7 @@ import { CartDrawer } from './checkout/CartDrawer';
 import { AdminPanel } from './AdminPanel';
 import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
+import { CookieConsentBar } from './CookieConsentBar';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -51,6 +52,7 @@ function RootInner() {
       <CartDrawer />
       {/* Popup Manager renderer */}
       <PopupRenderer />
+      <CookieConsentBar />
       <Outlet />
     </>
   );

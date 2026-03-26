@@ -29,6 +29,87 @@ const TEAM_PHOTOS: Record<string, string> = {
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
+/** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
+const FREE_TRIAL_AJAX_URL = 'https://api.vividbooks.com/web/free-trial-ajax';
+
+type FreeTrialFields = {
+  name: string;
+  email: string;
+  phone: string;
+  position: string;
+  schoolName: string;
+  vat: string;
+  gdpr: boolean;
+  newsletter: boolean;
+  teacherSubjects: string[];
+  schoolStages: string[];
+  pipedriveStatus: string | null;
+};
+
+function buildFreeTrialFormBody(fields: FreeTrialFields): URLSearchParams {
+  const p = new URLSearchParams();
+  p.append('name', fields.name);
+  p.append('email', fields.email);
+  p.append('phone', fields.phone);
+  p.append('position', fields.position);
+  p.append('schoolName', fields.schoolName);
+  p.append('Vat', fields.vat);
+  p.append('Checkbox-PP', fields.gdpr ? '1' : '0');
+  p.append('Checkbox-NL', fields.newsletter ? '1' : '0');
+  p.append('source', 'vividbooks-eshop-trial');
+  if (fields.pipedriveStatus) p.append('pipedriveStatus', fields.pipedriveStatus);
+  fields.teacherSubjects.forEach((v) => p.append('TeacherSubjects[]', v));
+  fields.schoolStages.forEach((v) => p.append('SchoolStages[]', v));
+  return p;
+}
+
+async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Record<string, unknown>> {
+  const body = buildFreeTrialFormBody(fields);
+  const res = await fetch(FREE_TRIAL_AJAX_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      Accept: 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+    body: body.toString(),
+    mode: 'cors',
+    /** Následovat redirect na jinou doménu (starý web) nechceme — poděkování zůstane v e-shopu. */
+    redirect: 'manual',
+  });
+
+  const pickMessage = (data: Record<string, unknown> | null): string | undefined => {
+    if (!data) return undefined;
+    const m = data.message ?? data.error ?? data.detail ?? data.title;
+    return typeof m === 'string' ? m : undefined;
+  };
+
+  // Redirect na děkovací URL (často starý web) — necháme uživatele na e-shopu, stejně zobrazíme lokální „Děkujeme“.
+  if (res.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(res.status)) {
+    return {};
+  }
+
+  const rawText = await res.text();
+  let data: Record<string, unknown> | null = null;
+  if (rawText.trim()) {
+    try {
+      data = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!res.ok) {
+    throw new Error(pickMessage(data) || `Chyba serveru (${res.status}).`);
+  }
+
+  if (data && data.success === false) {
+    throw new Error(pickMessage(data) || 'Požadavek se nezdařil.');
+  }
+
+  return data ?? {};
+}
+
 const POSITIONS = [
   'U\u010ditel/ka',
   '\u0158editel/ka',
@@ -38,8 +119,26 @@ const POSITIONS = [
   'Jin\u00e9',
 ];
 
-const SUBJECTS_2ND = ['Fyzika', 'Chemie', 'Matematika', 'P\u0159\u00edrodopis', '\u010cesk\u00fd jazyk', 'Jin\u00e9'];
-const SUBJECTS_1ST = ['Matematika', 'Prvouka', '\u010cesk\u00fd jazyk', 'Jin\u00e9'];
+/** Hodnoty jako ve Webflow (Mailchimp / integrace) */
+const TEACHER_SUBJECTS_1ST: Array<{ value: string; label: string }> = [
+  { value: 'Mathematics-1', label: 'Matematika' },
+  { value: 'PrimaryScience', label: 'Prvouka' },
+  { value: 'CzechLang-1', label: '\u010cesk\u00fd jazyk' },
+  { value: 'Other-1', label: 'Jin\u00e9' },
+];
+const TEACHER_SUBJECTS_2ND: Array<{ value: string; label: string }> = [
+  { value: 'Physics', label: 'Fyzika' },
+  { value: 'Chemistry', label: 'Chemie' },
+  { value: 'Mathematics-2', label: 'Matematika' },
+  { value: 'NaturalHistory', label: 'P\u0159\u00edrodopis' },
+  { value: 'CzechLang-2', label: '\u010cesk\u00fd jazyk' },
+  { value: 'Other-2', label: 'Jin\u00e9' },
+];
+
+const DEPUTY_SCHOOL_STAGES: Array<{ value: string; label: string }> = [
+  { value: 'SchoolStage-1', label: '1. stupe\u0148' },
+  { value: 'SchoolStage-2', label: '2. stupe\u0148' },
+];
 
 const INPUT_CLASS =
   "w-full text-[15px] text-[#001161] bg-white border border-[#001161]/12 rounded-xl px-5 py-3.5 outline-none focus:border-[#7C3AED] focus:ring-2 focus:ring-[#7C3AED]/20 transition-all placeholder:text-[#001161]/35";
@@ -185,16 +284,27 @@ function SchoolSearch({
       </div>
 
       {/* IČO */}
-      <div className="relative">
-        <input type="text" inputMode="numeric" value={icoInput}
-          onChange={e => handleIcoChange(e.target.value)}
-          placeholder={'I\u010cO \u0161koly *'} maxLength={10}
-          className={`${INPUT_CLASS} pr-10`} style={FF} />
-        <div className="absolute right-4 top-1/2 -translate-y-1/2">
-          {pdLoading
-            ? <Loader2 className="w-4 h-4 animate-spin text-[#001161]/30" />
-            : cfg ? <span style={{ color: cfg.color }}>{cfg.icon}</span> : null}
+      <div className="space-y-2">
+        <div className="relative">
+          <input type="text" inputMode="numeric" value={icoInput}
+            onChange={e => handleIcoChange(e.target.value)}
+            placeholder={'I\u010cO \u0161koly *'} maxLength={10}
+            className={`${INPUT_CLASS} pr-10`} style={FF} />
+          <div className="absolute right-4 top-1/2 -translate-y-1/2">
+            {pdLoading
+              ? <Loader2 className="w-4 h-4 animate-spin text-[#001161]/30" />
+              : cfg ? <span style={{ color: cfg.color }}>{cfg.icon}</span> : null}
+          </div>
         </div>
+        <a
+          href="https://ares.gov.cz/ekonomicke-subjekty"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={FF}
+          className="inline-block text-[13px] text-[#7C3AED] underline underline-offset-2 hover:opacity-80"
+        >
+          {'Nezn\u00e1te va\u0161e I\u010c? Zde ho m\u016f\u017eete naj\u00edt'}
+        </a>
       </div>
 
       {/* Pipedrive status card */}
@@ -353,8 +463,11 @@ export function TrialPage() {
 
   // Form
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '' });
+  /** Kódy předmětů (Webflow data-value), např. Mathematics-1 */
   const [subjects2nd, setSubjects2nd] = useState<string[]>([]);
   const [subjects1st, setSubjects1st] = useState<string[]>([]);
+  /** Zástupce ředitele: SchoolStage-1 | SchoolStage-2 */
+  const [schoolStages, setSchoolStages] = useState<string[]>([]);
   const [gdprConsent, setGdprConsent] = useState(false);
   const [newsletterConsent, setNewsletterConsent] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -366,6 +479,7 @@ export function TrialPage() {
   const [emailChecking, setEmailChecking] = useState(false);
 
   const isTeacher = form.position === 'U\u010ditel/ka';
+  const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
 
   useEffect(() => {
     const saved = localStorage.getItem('vvb_identity');
@@ -434,11 +548,15 @@ export function TrialPage() {
     setForm(prev => ({ ...prev, [name]: value }));
     setFormError('');
     if (name === 'email') checkEmail(value);
-    if (name === 'position') { setSubjects2nd([]); setSubjects1st([]); }
+    if (name === 'position') {
+      setSubjects2nd([]);
+      setSubjects1st([]);
+      setSchoolStages([]);
+    }
   };
 
-  const toggleSubject = (list: string[], setList: (v: string[]) => void, subject: string) =>
-    setList(list.includes(subject) ? list.filter(s => s !== subject) : [...list, subject]);
+  const toggleSubject = (list: string[], setList: (v: string[]) => void, code: string) =>
+    setList(list.includes(code) ? list.filter(s => s !== code) : [...list, code]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -468,17 +586,36 @@ export function TrialPage() {
       flash('trial-field-subjects');
       return;
     }
-    setSubmitting(true); setFormError('');
+    if (isDeputy && schoolStages.length === 0) {
+      setFormError('Vyberte pros\u00edm alespo\u0148 jeden stupe\u0148 \u0161koly.');
+      flash('trial-field-deputy-stages');
+      return;
+    }
+    setSubmitting(true);
+    setFormError('');
+    const payload: FreeTrialFields = {
+      name: form.name.trim(),
+      email: form.email.trim(),
+      phone: form.phone.trim(),
+      position: form.position,
+      schoolName: schoolName.trim(),
+      vat: ico.trim(),
+      gdpr: gdprConsent,
+      newsletter: newsletterConsent,
+      teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
+      schoolStages: isDeputy ? schoolStages : [],
+      pipedriveStatus: pdStatus,
+    };
     try {
-      const res = await fetch(`${SERVER}/newsletter-subscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({ name: form.name, email: form.email, phone: form.phone, position: form.position, schoolName: schoolName.trim(), ico: ico.trim(), subjects2nd: isTeacher ? subjects2nd : [], subjects1st: isTeacher ? subjects1st : [], newsletter: newsletterConsent, gdpr: gdprConsent, source: 'trial-form', pipedriveStatus: pdStatus }),
-      });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); console.error('[TrialPage] Submit error:', d); }
+      await submitFreeTrialAjax(payload);
       setSubmitted(true);
-    } catch (err: any) { console.error('[TrialPage] Submit exception:', err); setSubmitted(true); }
-    finally { setSubmitting(false); }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Nepodařilo se odeslat formulář.';
+      setFormError(msg);
+      console.error('[TrialPage] free-trial-ajax:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (tokenParam && tokenLoading) {
@@ -664,24 +801,53 @@ export function TrialPage() {
                 <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden">
                   <div id="trial-field-subjects" className="bg-white/60 rounded-2xl p-5 space-y-5 border border-[#001161]/8">
-                    <p style={FF} className="text-[14px] font-bold text-[#001161] text-center">{'Jak\u00fd p\u0159edm\u011bt u\u010d\u00edte? *'}</p>
+                    <p style={FF} className="text-[14px] font-bold text-[#001161]">{'U\u010d\u00edte? *'}</p>
                     <div>
-                      <p style={FF} className="text-[11px] font-bold text-[#7C3AED] uppercase tracking-widest mb-3 text-center">{'2. STUPE\u0147'}</p>
+                      <p style={FF} className="text-[12px] font-semibold text-[#001161]/70 mb-3">{'1. stupe\u0148'}</p>
                       <div className="grid grid-cols-2 gap-2">
-                        {SUBJECTS_2ND.map(s => (
-                          <SubjectCheckbox key={`2-${s}`} label={s} checked={subjects2nd.includes(s)}
-                            onChange={() => toggleSubject(subjects2nd, setSubjects2nd, s)} />
+                        {TEACHER_SUBJECTS_1ST.map(({ value, label }) => (
+                          <SubjectCheckbox
+                            key={`1-${value}`}
+                            label={label}
+                            checked={subjects1st.includes(value)}
+                            onChange={() => toggleSubject(subjects1st, setSubjects1st, value)}
+                          />
                         ))}
                       </div>
                     </div>
                     <div>
-                      <p style={FF} className="text-[11px] font-bold text-[#7C3AED] uppercase tracking-widest mb-3 text-center">{'1. STUPE\u0147'}</p>
+                      <p style={FF} className="text-[12px] font-semibold text-[#001161]/70 mb-3">{'2. stupe\u0148'}</p>
                       <div className="grid grid-cols-2 gap-2">
-                        {SUBJECTS_1ST.map(s => (
-                          <SubjectCheckbox key={`1-${s}`} label={s} checked={subjects1st.includes(s)}
-                            onChange={() => toggleSubject(subjects1st, setSubjects1st, s)} />
+                        {TEACHER_SUBJECTS_2ND.map(({ value, label }) => (
+                          <SubjectCheckbox
+                            key={`2-${value}`}
+                            label={label}
+                            checked={subjects2nd.includes(value)}
+                            onChange={() => toggleSubject(subjects2nd, setSubjects2nd, value)}
+                          />
                         ))}
                       </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {isDeputy && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }} className="overflow-hidden">
+                  <div id="trial-field-deputy-stages" className="bg-white/60 rounded-2xl p-5 space-y-3 border border-[#001161]/8">
+                    <p style={FF} className="text-[14px] font-bold text-[#001161]">{'Na jak\u00e9m stupni? *'}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {DEPUTY_SCHOOL_STAGES.map(({ value, label }) => (
+                        <SubjectCheckbox
+                          key={value}
+                          label={label}
+                          checked={schoolStages.includes(value)}
+                          onChange={() => toggleSubject(schoolStages, setSchoolStages, value)}
+                        />
+                      ))}
                     </div>
                   </div>
                 </motion.div>
@@ -696,7 +862,7 @@ export function TrialPage() {
               </span>
               <span style={FF} className="text-[13px] text-[#001161]/80 leading-[1.5]">
                 {'Souhlas\u00edm se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f podle '}
-                <a href="#" className="underline text-[#001161] hover:text-[#E8942A] transition-colors">{'Z\u00e1sad ochrany osobn\u00edch \u00fadaj\u016f.'}</a>
+                <Link to="/kontakt" className="underline text-[#001161] hover:text-[#E8942A] transition-colors">{'Z\u00e1sad ochrany osobn\u00edch \u00fadaj\u016f.'}</Link>
                 {' *'}
               </span>
             </label>
