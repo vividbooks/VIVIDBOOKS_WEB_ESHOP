@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle } from 'lucide-react';
+import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink, Play } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
 import { SEOHead } from './SEOHead';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -32,6 +32,13 @@ const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
 const FREE_TRIAL_AJAX_URL = 'https://api.vividbooks.com/web/free-trial-ajax';
 
+/** Miniškolení (YouTube) — po odeslání trial formuláře */
+const TRIAL_TRAINING_VIDEOS = [
+  'https://www.youtube.com/watch?v=H_L7V4iu228&t=66s',
+  'https://www.youtube.com/watch?v=sMXor8VBlE8&t=2s',
+  'https://www.youtube.com/watch?v=8qruYt57TC8&t=3s',
+] as const;
+
 type FreeTrialFields = {
   name: string;
   email: string;
@@ -43,27 +50,86 @@ type FreeTrialFields = {
   newsletter: boolean;
   teacherSubjects: string[];
   schoolStages: string[];
-  pipedriveStatus: string | null;
 };
 
+/** Rozdělení „Jméno Příjmení“ pro API (FirstName / LastName / FullName). */
+function splitFullNameForTrial(full: string): { firstName: string; lastName: string; fullName: string } {
+  const t = full.trim();
+  if (!t) return { firstName: '', lastName: '', fullName: '' };
+  const parts = t.split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: '', fullName: t };
+  return { firstName: parts[0] ?? '', lastName: parts.slice(1).join(' '), fullName: t };
+}
+
+/**
+ * Parametry přesně podle API (velikost písmen).
+ * Checkbox-NL: při souhlasu s newsletterem hodnota `yes`.
+ */
 function buildFreeTrialFormBody(fields: FreeTrialFields): URLSearchParams {
   const p = new URLSearchParams();
-  p.append('name', fields.name);
-  p.append('email', fields.email);
-  p.append('phone', fields.phone);
-  p.append('position', fields.position);
-  p.append('schoolName', fields.schoolName);
+  const { firstName, lastName, fullName } = splitFullNameForTrial(fields.name);
+
+  p.append('FirstName', firstName);
+  p.append('LastName', lastName);
+  p.append('FullName', fullName);
+  p.append('Email', fields.email);
+  p.append('Phone', fields.phone);
+  p.append('flexdatalist-School', fields.schoolName);
+  p.append('School', fields.schoolName);
+  p.append('Position', fields.position);
+  p.append('Whence', '');
+  p.append('Region', '');
+  if (fields.newsletter) {
+    p.append('Checkbox-NL', 'yes');
+  }
+  p.append('CountryCode', 'cz');
+  p.append('CountryCodeSelect', '');
+  p.append('Version', '');
+  p.append('Dealer', '');
   p.append('Vat', fields.vat);
-  p.append('Checkbox-PP', fields.gdpr ? '1' : '0');
-  p.append('Checkbox-NL', fields.newsletter ? '1' : '0');
-  p.append('source', 'vividbooks-eshop-trial');
-  if (fields.pipedriveStatus) p.append('pipedriveStatus', fields.pipedriveStatus);
-  fields.teacherSubjects.forEach((v) => p.append('TeacherSubjects[]', v));
-  fields.schoolStages.forEach((v) => p.append('SchoolStages[]', v));
+
+  fields.teacherSubjects.forEach((v) => p.append('TeacherSubjects', v));
+  fields.schoolStages.forEach((v) => p.append('SchoolStages', v));
+
   return p;
 }
 
-async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Record<string, unknown>> {
+/** Výsledek odeslání — kódy i u `success: false` při aktivním trialu školy. */
+type FreeTrialSubmitResult =
+  | {
+      status: 'codes';
+      studentCode: string;
+      teacherCode: string;
+      /** Nově vytvořený trial vs. škola už trial má — stejné zobrazení kódů, jiná poznámka */
+      kind: 'created' | 'existing_trial';
+    }
+  | { status: 'thank_only' }
+  | { status: 'error'; message: string };
+
+function parseTrialCodes(data: Record<string, unknown> | null): { student: string; teacher: string } | null {
+  if (!data) return null;
+  const s = data.studentCode;
+  const t = data.teacherCode;
+  if (typeof s === 'string' && s.trim() && typeof t === 'string' && t.trim()) {
+    return { student: s.trim(), teacher: t.trim() };
+  }
+  return null;
+}
+
+function freeTrialErrorMessage(data: Record<string, unknown> | null): string {
+  const reason = typeof data?.reason === 'string' ? data.reason : '';
+  if (reason === 'Email is used yet.') {
+    return 'Tento e-mail je už evidovaný u školy v databázi.';
+  }
+  if (reason === 'You have active subscription trial yet.') {
+    return 'Vaše škola už má aktivní předplatné.';
+  }
+  if (reason) return reason;
+  const m = data?.message ?? data?.error ?? data?.detail ?? data?.title;
+  return typeof m === 'string' ? m : 'Požadavek se nezdařil.';
+}
+
+async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
   const body = buildFreeTrialFormBody(fields);
   const res = await fetch(FREE_TRIAL_AJAX_URL, {
     method: 'POST',
@@ -74,19 +140,11 @@ async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Record<stri
     },
     body: body.toString(),
     mode: 'cors',
-    /** Následovat redirect na jinou doménu (starý web) nechceme — poděkování zůstane v e-shopu. */
     redirect: 'manual',
   });
 
-  const pickMessage = (data: Record<string, unknown> | null): string | undefined => {
-    if (!data) return undefined;
-    const m = data.message ?? data.error ?? data.detail ?? data.title;
-    return typeof m === 'string' ? m : undefined;
-  };
-
-  // Redirect na děkovací URL (často starý web) — necháme uživatele na e-shopu, stejně zobrazíme lokální „Děkujeme“.
   if (res.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(res.status)) {
-    return {};
+    return { status: 'thank_only' };
   }
 
   const rawText = await res.text();
@@ -99,15 +157,30 @@ async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Record<stri
     }
   }
 
+  if (res.ok && !data) {
+    return { status: 'thank_only' };
+  }
+
   if (!res.ok) {
-    throw new Error(pickMessage(data) || `Chyba serveru (${res.status}).`);
+    return { status: 'error', message: freeTrialErrorMessage(data) || `Chyba serveru (${res.status}).` };
   }
 
-  if (data && data.success === false) {
-    throw new Error(pickMessage(data) || 'Požadavek se nezdařil.');
+  const codes = parseTrialCodes(data);
+  const success = data?.success === true;
+
+  if (success && codes) {
+    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'created' };
+  }
+  if (success && !codes) {
+    return { status: 'thank_only' };
   }
 
-  return data ?? {};
+  // success === false
+  if (codes) {
+    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'existing_trial' };
+  }
+
+  return { status: 'error', message: freeTrialErrorMessage(data) };
 }
 
 const POSITIONS = [
@@ -471,6 +544,8 @@ export function TrialPage() {
   const [gdprConsent, setGdprConsent] = useState(false);
   const [newsletterConsent, setNewsletterConsent] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  /** Po úspěchu z API: přístupové kódy (žák / učitel) */
+  const [trialResult, setTrialResult] = useState<FreeTrialSubmitResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -604,10 +679,14 @@ export function TrialPage() {
       newsletter: newsletterConsent,
       teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
       schoolStages: isDeputy ? schoolStages : [],
-      pipedriveStatus: pdStatus,
     };
     try {
-      await submitFreeTrialAjax(payload);
+      const result = await submitFreeTrialAjax(payload);
+      if (result.status === 'error') {
+        setFormError(result.message);
+        return;
+      }
+      setTrialResult(result);
       setSubmitted(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Nepodařilo se odeslat formulář.';
@@ -715,7 +794,69 @@ export function TrialPage() {
             className="bg-[#F0FDF4] border border-green-200 rounded-[20px] p-8 text-center">
             <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-4" />
             <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[24px] mb-2">{'D\u011bkujeme!'}</h2>
-            <p style={FF} className="text-[#001161]/60 text-[15px]">{'Ozveme se v\u00e1m co nejd\u0159\u00edve s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}</p>
+            {trialResult?.status === 'codes' ? (
+              <>
+                <p style={FF} className="text-[#001161]/70 text-[14px] mb-6 leading-snug">
+                  {trialResult.kind === 'existing_trial'
+                    ? 'Va\u0161e \u0161kola u\u017e m\u00e1 aktivn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup. Pro p\u0159ihl\u00e1\u0161en\u00ed pou\u017eijte tyto k\u00f3dy:'
+                    : 'Va\u0161e p\u0159\u00edstupov\u00e9 k\u00f3dy pro zku\u0161ebn\u00ed verzi:'}
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left max-w-md mx-auto">
+                  <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
+                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">
+                      {'K\u00f3d pro \u017e\u00e1ka'}
+                    </p>
+                    <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">
+                      {trialResult.studentCode}
+                    </p>
+                  </div>
+                  <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
+                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">
+                      {'K\u00f3d pro u\u010ditele'}
+                    </p>
+                    <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">
+                      {trialResult.teacherCode}
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p style={FF} className="text-[#001161]/60 text-[15px]">
+                {'Ozveme se v\u00e1m co nejd\u0159\u00edve s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}
+              </p>
+            )}
+            <a
+              href="https://app.vividbooks.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 font-bold text-[16px] text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9]"
+              style={FF}>
+              <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
+              {'Otev\u0159\u00edt aplikaci'}
+            </a>
+            <div className="mt-6 border-t border-green-200/70 pt-6 text-left">
+              <p style={FF} className="mb-3 text-center text-[12px] font-bold uppercase tracking-wide text-[#001161]/45">
+                {'Mini\u0161kolen\u00ed'}
+              </p>
+              <ul className="space-y-2">
+                {TRIAL_TRAINING_VIDEOS.map((href, i) => (
+                  <li key={href}>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-3 rounded-xl border border-[#001161]/10 bg-white/80 px-4 py-3 text-[14px] font-bold text-[#001161] shadow-sm transition-colors hover:border-[#7C3AED]/30 hover:bg-white hover:text-[#7C3AED]"
+                      style={FF}>
+                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white">
+                        <Play className="h-4 w-4 fill-current" aria-hidden />
+                      </span>
+                      <span>{'Mini\u0161kolen\u00ed '}{i + 1}</span>
+                      <ExternalLink className="ml-auto h-4 w-4 shrink-0 text-[#001161]/35" aria-hidden />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </motion.div>
         ) : (
           <form onSubmit={handleSubmit} className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4">

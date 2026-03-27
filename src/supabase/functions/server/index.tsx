@@ -7202,6 +7202,56 @@ async function _ragGenerate(prompt: string, apiKey: string, model = 'gemini-3-fl
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
 }
 
+/** Gemini Live API (WebSocket) — report agenta po čištění RAG (TEXT, ne AUDIO). */
+const RAG_AGENT_LIVE_MODEL = 'gemini-3.1-flash-live-preview';
+
+async function _ragGenerateGeminiLive(prompt: string, apiKey: string): Promise<string> {
+  const { GoogleGenAI, Modality } = await import('npm:@google/genai@1.46.0');
+  const ai = new GoogleGenAI({ apiKey });
+  let accumulated = '';
+  let turnDone = false;
+  let wsErr: Error | null = null;
+
+  const session = await ai.live.connect({
+    model: RAG_AGENT_LIVE_MODEL,
+    config: { responseModalities: [Modality.TEXT] },
+    callbacks: {
+      onmessage: (msg: any) => {
+        const t = msg.text as string | undefined;
+        if (t) accumulated += t;
+        const sc = msg.serverContent;
+        if (sc?.turnComplete === true || sc?.generationComplete === true) turnDone = true;
+      },
+      onerror: (e: any) => {
+        wsErr = new Error(e?.message ?? String(e));
+      },
+      onclose: () => {
+        if (accumulated.trim().length > 0) turnDone = true;
+      },
+    },
+  });
+
+  session.sendClientContent({
+    turns: [{ role: 'user', parts: [{ text: prompt }] }],
+    turnComplete: true,
+  });
+
+  const deadline = Date.now() + 45_000;
+  while (!turnDone && !wsErr && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  try {
+    session.close();
+  } catch {
+    /* ignore */
+  }
+  if (wsErr) throw wsErr;
+  if (!turnDone) throw new Error('Gemini Live: timeout 45s');
+  const out = accumulated.trim();
+  if (!out) throw new Error('Gemini Live: prázdná odpověď');
+  return out;
+}
+
 // ── (cosineSim already defined above — using it directly) ─────────
 
 // ── Quality scoring ───────────────────────────────────────────────
@@ -8130,9 +8180,14 @@ Napis kratky report (3-4 vety cesky) o stavu znalostni baze.`;
 
     let agentReport = '';
     try {
-      agentReport = await _ragGenerate(agentSummaryPrompt, apiKey, 'gemini-3-flash-preview');
-    } catch {
-      agentReport = `Agent dokoncil cisteni. Zpracovano ${all.length} chunku, smazano ${deleted}, zbyvajicich ${remaining.length}.`;
+      agentReport = await _ragGenerateGeminiLive(agentSummaryPrompt, apiKey);
+    } catch (liveErr: any) {
+      console.log(`[RAG agent] Gemini Live (${RAG_AGENT_LIVE_MODEL}) selhal, REST fallback: ${liveErr?.message ?? liveErr}`);
+      try {
+        agentReport = await _ragGenerate(agentSummaryPrompt, apiKey, 'gemini-3-flash-preview');
+      } catch {
+        agentReport = `Agent dokoncil cisteni. Zpracovano ${all.length} chunku, smazano ${deleted}, zbyvajicich ${remaining.length}.`;
+      }
     }
 
     const stats = {
@@ -8152,6 +8207,37 @@ Napis kratky report (3-4 vety cesky) o stavu znalostni baze.`;
     return c.json({ error: `RAG agent error: ${e.message}` }, 500);
   }
 });
+
+/* POST /rag/live-ephemeral-token + /admin/live-ephemeral-token — Gemini Live ephemeral token (v1alpha).
+ * Bez liveConnectConstraints — session config nastavuje klient (@google/genai live.connect). */
+async function handleLiveEphemeralToken(c: any) {
+  try {
+    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+
+    const { GoogleGenAI } = await import('npm:@google/genai@1.46.0');
+    const client = new GoogleGenAI({
+      apiKey,
+      httpOptions: { apiVersion: 'v1alpha' },
+    });
+    const now = Date.now();
+    /** Minimální tělo — další pole (uses, newSessionExpireTime) umí u některých účtů vracet INVALID_ARGUMENT. */
+    const token = await client.authTokens.create({
+      config: {
+        expireTime: new Date(now + 30 * 60 * 1000).toISOString(),
+      },
+    });
+    const name = token.name;
+    if (!name) return c.json({ error: 'Ephemeral token bez name' }, 500);
+    return c.json({ token: name, expiresAt: new Date(now + 30 * 60 * 1000).toISOString() });
+  } catch (e: any) {
+    const raw = e?.message ?? String(e);
+    console.log(`[live-ephemeral-token] ${raw}`);
+    return c.json({ error: raw }, 500);
+  }
+}
+app.post('/make-server-93a20b6f/rag/live-ephemeral-token', handleLiveEphemeralToken);
+app.post('/make-server-93a20b6f/admin/live-ephemeral-token', handleLiveEphemeralToken);
 
 function parsePriceNumber(value: unknown) {
   const raw = String(value ?? '').trim();

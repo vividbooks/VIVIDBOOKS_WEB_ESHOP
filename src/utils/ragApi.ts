@@ -8,8 +8,14 @@ async function apiCall<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
-      const body = await res.json();
-      msg = body.error ?? body.message ?? JSON.stringify(body);
+      const body = await res.json() as Record<string, unknown>;
+      const err = body.error;
+      if (typeof err === 'string') msg = err;
+      else if (err && typeof err === 'object' && 'message' in err && typeof (err as { message?: string }).message === 'string') {
+        msg = (err as { message: string }).message;
+      } else if (typeof body.message === 'string') msg = body.message;
+      else if (typeof body.error === 'string') msg = body.error;
+      else msg = JSON.stringify(body);
     } catch {
       msg = await res.text().catch(() => `HTTP ${res.status}`);
     }
@@ -46,6 +52,18 @@ export async function ragRunAgent() {
   return apiCall<{ success: boolean; stats: any; actions: any[] }>(
     await fetch(`${BASE}/rag/agent/run`, { method: 'POST', headers: H, body: '{}' })
   );
+}
+
+/** Krátkodobý token pro Gemini Live (hlas) — Web operátor / RAG (POST …/admin/live-ephemeral-token) */
+export async function liveEphemeralToken() {
+  return apiCall<{ token: string; expiresAt?: string }>(
+    await fetch(`${BASE}/admin/live-ephemeral-token`, { method: 'POST', headers: H, body: '{}' })
+  );
+}
+
+/** @deprecated použij liveEphemeralToken — alias na stejný endpoint */
+export async function ragLiveEphemeralToken() {
+  return liveEphemeralToken();
 }
 
 export async function ragIngestSource(source: 'produkty' | 'blog' | 'novinky' | 'webinare' | 'tabs' | 'mailchimp') {

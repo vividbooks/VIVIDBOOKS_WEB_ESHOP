@@ -15,6 +15,7 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridgeContext';
 import CollageModal from './CollageModal';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
+import { RagLiveVoicePanel } from './RagLiveVoicePanel';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -1629,6 +1630,11 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           >
             <Plus className="w-3.5 h-3.5" /> {!isMobile && 'Nový'}
           </button>
+        </div>
+
+        {/* Realtime hlas (Gemini Live) — stejný backend token jako RAG; ovládání pod hlavičkou Web operátora */}
+        <div className="px-3 md:px-4 pt-2 pb-3 shrink-0 border-b border-violet-100/90 bg-gradient-to-r from-violet-50/40 to-transparent">
+          <RagLiveVoicePanel embedded />
         </div>
 
         {/* Messages */}

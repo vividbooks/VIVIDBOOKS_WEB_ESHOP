@@ -740,7 +740,7 @@ function AgentTab() {
     const addLog = (type: AgentLog['type'], message: string) =>
       setLogs(prev => [...prev, { id: String(Date.now() + Math.random()), time: new Date().toLocaleTimeString('cs-CZ'), type, message }]);
 
-    addLog('info', 'Agent spu\u0161t\u011bn \u2014 gemini-3-flash-preview');
+    addLog('info', 'Agent spu\u0161t\u011bn \u2014 gemini-3.1-flash-live-preview (Live API)');
     addLog('info', 'Na\u010d\u00edt\u00e1m chunky z datab\u00e1ze\u2026');
 
     try {
@@ -766,7 +766,7 @@ function AgentTab() {
       addLog('success', `Agent dokon\u010dil: ${total} chunk\u016f, smazano ${deleted} (HTML: ${htmlCleaned}, kval: ${lowQualityRemoved}, duplik\u00e1ty: ${duplicatesRemoved}), zbv\u00e1: ${kept}`);
 
       if (agentReport) {
-        addLog('info', `Gemini 3 Flash report: ${agentReport.slice(0, 200)}`);
+        addLog('info', `Gemini Live report: ${agentReport.slice(0, 200)}`);
       }
     } catch (e: any) {
       addLog('error', `Chyba: ${e.message}`);
@@ -778,21 +778,23 @@ function AgentTab() {
     <div className="p-8 overflow-y-auto h-full">
       <div className="flex items-start gap-6 mb-8">
         <div className="flex-1">
-          <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] leading-tight mb-2">{'Gemini 3 Flash Cleaning Agent'}</h2>
+          <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] leading-tight mb-2">{'Gemini Live Cleaning Agent'}</h2>
           <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/50 text-[13px] leading-relaxed max-w-[560px]">
-            {'Gemini 3 Flash \u2014 skute\u010dn\u00e9 vol\u00e1n\u00ed Gemini API. Kontroluje HTML artefakty, quality score (\u2265\u00a00,35), duplik\u00e1ty (cosine\u00a0>\u00a00,95) a generuje report.'}
+            {'Shrnut\u00ed po \u010di\u0161t\u011bn\u00ed generuje '}
+            <span className="font-mono text-[12px]">gemini-3.1-flash-live-preview</span>
+            {' (Live API, TEXT). Pravidla z\u016fst\u00e1vaj\u00ed: HTML artefakty, quality \u2265\u00a00,35, duplik\u00e1ty (cosine\u00a0>\u00a00,95). P\u0159i nedostupnosti Live se pou\u017eije REST gemini-3-flash-preview.'}
           </p>
         </div>
-        <button onClick={runAgent} disabled={running}
-          className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold transition-all">
-          {running ? <><RefreshCw className="w-4 h-4 animate-spin" />{'B\u011b\u017e\u00ed\u2026'}</> : <><Play className="w-4 h-4" />{'Spustit agenta'}</>}
-        </button>
-      </div>
+          <button onClick={runAgent} disabled={running}
+            className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold transition-all shrink-0">
+            {running ? <><RefreshCw className="w-4 h-4 animate-spin" />{'B\u011b\u017e\u00ed\u2026'}</> : <><Play className="w-4 h-4" />{'Spustit agenta'}</>}
+          </button>
+        </div>
 
       {/* Config */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { icon: Zap, label: 'Model', val: 'gemini-3-flash-preview', sub: 'Gemini 3 Flash' },
+          { icon: Zap, label: 'Report (LLM)', val: 'gemini-3.1-flash-live-preview', sub: 'Live API \u2192 fallback REST' },
           { icon: Clock, label: 'Trigger', val: 'Manu\u00e1ln\u00ed', sub: 'A po ka\u017ed\u00e9m importu' },
           { icon: ShieldCheck, label: 'Quality threshold', val: '\u2265 0.35', sub: 'Pod touto hranici = smaz\u00e1no' },
         ].map(s => (
@@ -832,7 +834,7 @@ function AgentTab() {
           <div className="flex gap-1.5">
             {['bg-red-500/60','bg-amber-500/60','bg-emerald-500/60'].map(c => <div key={c} className={`w-3 h-3 rounded-full ${c}`} />)}
           </div>
-          <span className="text-[11px] text-gray-500 font-mono ml-2">{'agent_log \u2014 Gemini 3 Flash Cleaning Agent'}</span>
+          <span className="text-[11px] text-gray-500 font-mono ml-2">{'agent_log \u2014 Gemini Live (RAG report)'}</span>
           <span className={`ml-auto text-[11px] font-mono ${running ? 'text-amber-400 animate-pulse' : logs.length > 0 ? 'text-emerald-400' : 'text-gray-600'}`}>
             {running ? '\u25cf RUNNING' : logs.length > 0 ? '\u25cf DONE' : '\u25cb IDLE'}
           </span>
