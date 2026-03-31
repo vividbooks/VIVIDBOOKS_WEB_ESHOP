@@ -8296,59 +8296,59 @@ app.delete('/make-server-93a20b6f/rag/delete-source', async (c) => {
   }
 });
 
-/* POST /rag/query — RAG dotaz přes Gemini 2.0 Flash */
-app.post('/make-server-93a20b6f/rag/query', async (c) => {
-  try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
-    const { question, topK = 5 } = await c.req.json();
-    if (!question?.trim()) return c.json({ error: 'Chybi question' }, 400);
+/** Sdílená pipeline: pgvector retrieval + Gemini odpověď (stejná logika jako interní /rag/query). */
+async function executeRagQueryPipeline(question: string, topK: number): Promise<{
+  answer: string;
+  sources: any[];
+  chunksUsed: number;
+}> {
+  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG neni nastaven');
 
-    // 1. Embed question
-    const queryVec = await embedText(question);
+  const queryVec = await embedText(question);
+  const sb = getDbClient();
+  const { data: rankedRows, error: matchError } = await sb.rpc('match_rag_chunks', {
+    p_query_embedding: vectorToSql(queryVec),
+    p_match_count: topK,
+    p_source_types: null,
+    p_document_ids: null,
+    p_metadata_filter: {},
+  });
+  let ranked = (rankedRows || []).map((row: any) => ({
+    id: row.metadata?.external_id || row.chunk_id,
+    text: row.content,
+    metadata: {
+      ...(row.metadata || {}),
+      source: row.metadata?.source || row.source_type,
+      sourceId: row.metadata?.sourceId || row.source_id,
+      title: row.metadata?.title || row.title,
+    },
+    score: Number(row.similarity || 0),
+  }));
+  if (matchError) {
+    console.log(`[RAG query] RPC unavailable, fallback to exact scan: ${matchError.message}`);
+    const all = await loadAllChunks();
+    ranked = all
+      .filter((ch: any) => ch.embedding?.length)
+      .map((ch: any) => ({ ...ch, score: cosineSim(queryVec, ch.embedding) }))
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, topK);
+  }
+  if (!ranked.length) {
+    return {
+      answer: 'Znalostni baze je prazdna. Nejprve indexujte data v Admin → RAG.',
+      sources: [],
+      chunksUsed: 0,
+    };
+  }
 
-    // 2. Query indexed chunks directly in Postgres/pgvector
-    const sb = getDbClient();
-    const { data: rankedRows, error: matchError } = await sb.rpc('match_rag_chunks', {
-      p_query_embedding: vectorToSql(queryVec),
-      p_match_count: topK,
-      p_source_types: null,
-      p_document_ids: null,
-      p_metadata_filter: {},
-    });
-    let ranked = (rankedRows || []).map((row: any) => ({
-      id: row.metadata?.external_id || row.chunk_id,
-      text: row.content,
-      metadata: {
-        ...(row.metadata || {}),
-        source: row.metadata?.source || row.source_type,
-        sourceId: row.metadata?.sourceId || row.source_id,
-        title: row.metadata?.title || row.title,
-      },
-      score: Number(row.similarity || 0),
-    }));
-    if (matchError) {
-      console.log(`[RAG query] RPC unavailable, fallback to exact scan: ${matchError.message}`);
-      const all = await loadAllChunks();
-      ranked = all
-        .filter((ch: any) => ch.embedding?.length)
-        .map((ch: any) => ({ ...ch, score: cosineSim(queryVec, ch.embedding) }))
-        .sort((a: any, b: any) => b.score - a.score)
-        .slice(0, topK);
-    }
-    if (!ranked.length) {
-      return c.json({ answer: 'Znalostni baze je prazdna. Nejprve indexujte data v Admin → RAG.', sources: [], chunksUsed: 0 });
-    }
+  const context = ranked
+    .map((ch: any, i: number) =>
+      `[${i + 1}] (zdroj: ${ch.metadata?.source ?? '?'}, titul: ${ch.metadata?.title ?? ''}, skore: ${ch.score.toFixed(3)})\n${ch.text}`
+    )
+    .join('\n\n---\n\n');
 
-    // 3. Build context
-    const context = ranked
-      .map((ch: any, i: number) =>
-        `[${i + 1}] (zdroj: ${ch.metadata?.source ?? '?'}, titul: ${ch.metadata?.title ?? ''}, skore: ${ch.score.toFixed(3)})\n${ch.text}`
-      )
-      .join('\n\n---\n\n');
-
-    // 4. Generate answer with Gemini 2.0 Flash
-    const prompt = `Jsi pomocny asistent Vividbooks — ceskych interaktivnich ucebnic a pracovnich sesitu.
+  const prompt = `Jsi pomocny asistent Vividbooks — ceskych interaktivnich ucebnic a pracovnich sesitu.
 Odpovez na otazku nize pouze na zaklade poskytnuteho kontextu. Pokud kontext neobsahuje odpoved, rici to uprimne.
 Odpovez cesky, strucne a presne.
 
@@ -8359,31 +8359,74 @@ OTAZKA: ${question}
 
 ODPOVED:`;
 
-    const answer = await _ragGenerate(prompt, apiKey, 'gemini-3-flash-preview');
+  const answer = await _ragGenerate(prompt, apiKey, 'gemini-3-flash-preview');
 
-    // Deduplicate by sourceId — keep highest-score chunk per entity
-    const seenSid = new Map<string, any>();
-    for (const ch of ranked) {
-      const sid = `${ch.metadata?.source}__${ch.metadata?.sourceId || ch.id}`;
-      const ex = seenSid.get(sid);
-      if (!ex || ch.score > ex.score) seenSid.set(sid, ch);
-    }
+  const seenSid = new Map<string, any>();
+  for (const ch of ranked) {
+    const sid = `${ch.metadata?.source}__${ch.metadata?.sourceId || ch.id}`;
+    const ex = seenSid.get(sid);
+    if (!ex || ch.score > ex.score) seenSid.set(sid, ch);
+  }
 
-    const sources = [...seenSid.values()]
-      .sort((a: any, b: any) => b.score - a.score)
-      .map((ch: any) => ({
-        id: ch.id,
-        source: ch.metadata?.source ?? '',
-        sourceId: ch.metadata?.sourceId ?? ch.metadata?.slug ?? '',
-        title: ch.metadata?.title ?? '',
-        score: ch.score,
-        text: ch.text?.slice(0, 200),
-      }));
+  const sources = [...seenSid.values()]
+    .sort((a: any, b: any) => b.score - a.score)
+    .map((ch: any) => ({
+      id: ch.id,
+      source: ch.metadata?.source ?? '',
+      sourceId: ch.metadata?.sourceId ?? ch.metadata?.slug ?? '',
+      title: ch.metadata?.title ?? '',
+      score: ch.score,
+      text: ch.text?.slice(0, 200),
+    }));
 
-    return c.json({ answer, sources, chunksUsed: ranked.length });
+  return { answer, sources, chunksUsed: ranked.length };
+}
+
+/* POST /rag/query — RAG dotaz přes Gemini 2.0 Flash */
+app.post('/make-server-93a20b6f/rag/query', async (c) => {
+  try {
+    const { question, topK = 5 } = await c.req.json();
+    if (!question?.trim()) return c.json({ error: 'Chybi question' }, 400);
+    const k = Math.min(16, Math.max(1, Number(topK) || 5));
+    const { answer, sources, chunksUsed } = await executeRagQueryPipeline(String(question).trim(), k);
+    return c.json({ answer, sources, chunksUsed });
   } catch (e: any) {
     console.log(`[RAG query] ${e.message}`);
     return c.json({ error: `RAG query error: ${e.message}` }, 500);
+  }
+});
+
+/**
+ * Externí partner (např. Ninjabot): POST JSON { "query": "..." }, hlavička X-API-Key.
+ * Odpověď: { "answer": "..." }. Vyžaduje secret NINJABOT_RAG_API_KEY nebo RAG_EXTERNAL_API_KEY.
+ */
+app.post('/make-server-93a20b6f/external/rag-query', async (c) => {
+  const secret = (Deno.env.get('NINJABOT_RAG_API_KEY') || Deno.env.get('RAG_EXTERNAL_API_KEY') || '').trim();
+  if (!secret) {
+    return c.json({ error: 'External RAG API is not configured (missing NINJABOT_RAG_API_KEY).' }, 503);
+  }
+  const clientKey = c.req.header('X-API-Key') || c.req.header('x-api-key') || '';
+  if (clientKey !== secret) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  const rawQ = body.query ?? body.question;
+  const q = typeof rawQ === 'string' ? rawQ.trim() : '';
+  if (!q) {
+    return c.json({ error: 'Missing or empty "query" field' }, 400);
+  }
+  const topK = Math.min(16, Math.max(1, Number(body.topK) || 5));
+  try {
+    const { answer } = await executeRagQueryPipeline(q, topK);
+    return c.json({ answer });
+  } catch (e: any) {
+    console.log(`[external/rag-query] ${e.message}`);
+    return c.json({ error: e.message || 'RAG query failed' }, 500);
   }
 });
 
