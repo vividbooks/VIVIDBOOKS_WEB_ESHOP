@@ -55,6 +55,8 @@ function statusStyles(status: string) {
   switch (status) {
     case 'active_subscription':
       return 'bg-emerald-100 text-emerald-700';
+    case 'active_trial':
+      return 'bg-violet-100 text-violet-800';
     case 'in_progress':
       return 'bg-amber-100 text-amber-700';
     case 'past_request':
@@ -550,7 +552,17 @@ export function AdminSchoolsPage() {
                         {school.name}
                       </p>
                       <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${selectedSchool?.ico === school.ico ? 'bg-white/15 text-white' : statusStyles(school.status)}`}>
-                        {school.status === 'active_subscription' ? 'aktivní' : school.status === 'in_progress' ? 'open deal' : school.status === 'past_request' ? 'historie' : school.status === 'known' ? 'známá' : 'nová'}
+                        {school.status === 'active_subscription'
+                          ? 'předplatné'
+                          : school.status === 'active_trial'
+                            ? 'zkouší'
+                            : school.status === 'in_progress'
+                              ? 'open deal'
+                              : school.status === 'past_request'
+                                ? 'historie'
+                                : school.status === 'known'
+                                  ? 'známá'
+                                  : 'nová'}
                       </span>
                     </div>
                     <p className={`text-[11px] mt-1 ${selectedSchool?.ico === school.ico ? 'text-blue-100/80' : 'text-gray-400'}`}>

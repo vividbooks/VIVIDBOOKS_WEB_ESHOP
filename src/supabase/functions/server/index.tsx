@@ -5780,6 +5780,21 @@ type PipedriveSchoolLookup = {
   org?: any | null;
   deals?: any[];
   ownerUserId?: number | null;
+  /** ISO — poslední trial deal (název trial / zkušební / zkusit) */
+  lastTrialDealAt: string | null;
+  /** true = od posledního trial dealu neuplynulo 6 „měsíců“ (30d) — formulář trial na webu má blokovat */
+  trialCooldownActive: boolean;
+  /** ISO — nejdřívější datum, kdy lze trial z formuláře znovu (lastTrial + cooldown) */
+  trialNextEligibleAt: string | null;
+  /**
+   * Jen při `lookupSchoolInPipedrive(..., { includePipedriveRaw: true })` —
+   * skutečná JSON těla z Pipedrive (dealy org., hit z search), ne náš souhrn.
+   */
+  pipedriveApi?: {
+    deals: any[];
+    organizationSearchItem: any | null;
+    dealLabelIdToName: Record<string, string>;
+  };
 };
 
 const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
@@ -5800,9 +5815,180 @@ function parsePipedriveNumericId(value: unknown) {
   return Number.isFinite(num) && num > 0 ? num : null;
 }
 
-function isPipedriveTrialDeal(deal: any): boolean {
-  const title = String(deal?.title || '').toLowerCase();
-  return title.includes('trial') || title.includes('zkušebn') || title.includes('zkusit');
+/** Minimální odstup mezi zkušebními žádostmi pro stejné IČO (6×30 dní, shodně s KV newsletter — přibližné měsíce). */
+const PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS = 6 * 30 * 24 * 60 * 60 * 1000;
+
+let pipedriveDealLabelOptionsCache: { expiresAt: number; options: Record<string, string> } | null = null;
+
+/** Mapování ID → název z pole Label u dealu (Pipedrive /dealFields, key label). */
+async function getPipedriveDealLabelIdToName(apiToken: string): Promise<Record<string, string>> {
+  if (pipedriveDealLabelOptionsCache && pipedriveDealLabelOptionsCache.expiresAt > Date.now()) {
+    return pipedriveDealLabelOptionsCache.options;
+  }
+  try {
+    const map = await getPipedriveFieldMap(apiToken, '/dealFields');
+    const options = map['label']?.options || {};
+    pipedriveDealLabelOptionsCache = { expiresAt: Date.now() + 15 * 60 * 1000, options };
+    return options;
+  } catch (e: any) {
+    console.log(`[Pipedrive] deal label options: ${e.message}`);
+    return {};
+  }
+}
+
+/** Jména štítků přiřazených dealu (pole label = ID nebo CSV ID). */
+function dealLabelNamesFromDeal(deal: any, idToName: Record<string, string>): string[] {
+  const out: string[] = [];
+  const raw = deal?.label ?? deal?.labels;
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (item && typeof item === 'object' && (item as any).label != null) {
+        out.push(String((item as any).label));
+      } else if (item != null) {
+        const name = idToName[String((item as any)?.id ?? item)];
+        if (name) out.push(name);
+      }
+    }
+    return out;
+  }
+  if (raw != null && raw !== '') {
+    for (const id of String(raw).split(',').map((s) => s.trim()).filter(Boolean)) {
+      const name = idToName[id];
+      if (name) out.push(name);
+    }
+  }
+  return out;
+}
+
+/**
+ * Prospect + Interactive — v CRM často česky „Prospekt“, „Interaktivní“ (bez anglického „prospect“).
+ * Štítky mohou být rozdělené na více položek; text spojíme.
+ */
+function dealHasProspectInteractiveLabel(deal: any, idToName: Record<string, string>): boolean {
+  const names = dealLabelNamesFromDeal(deal, idToName);
+  if (!names.length) return false;
+  const blob = removeDiacritics(names.join(' '));
+  const hasProspecty = blob.includes('prospect') || blob.includes('prospekt');
+  const hasInteractive = blob.includes('interactive') || blob.includes('interaktiv');
+  return hasProspecty && hasInteractive;
+}
+
+/**
+ * Štítky „Trial web (interactive)“, „Trial upsell v app (interactive)“… — obsahují „trial“, ne „prospect“.
+ * „Trial Web - parent…“ často nemá v textu „interactive“, ale má „trial web“.
+ */
+function dealHasTrialInteractiveFamilyLabel(deal: any, idToName: Record<string, string>): boolean {
+  const names = dealLabelNamesFromDeal(deal, idToName);
+  if (!names.length) return false;
+  const blob = removeDiacritics(names.join(' '));
+  const hasIx = blob.includes('interactive') || blob.includes('interaktiv');
+  const hasTrialish =
+    blob.includes('trial') ||
+    blob.includes('zkuseb') ||
+    blob.includes('zkusit') ||
+    blob.includes('free trial');
+  if (hasIx && hasTrialish) return true;
+  if (blob.includes('trial web') || blob.includes('trialweb')) return true;
+  return false;
+}
+
+/**
+ * Trial / zkušební deal: hlavně štítek PROSPECT (INTERACTIVE) + stav open (aktivní) nebo lost (historie).
+ * Doplňují heuristiky podle názvu (trial, deal - GŠ, …).
+ */
+function isPipedriveTrialDeal(deal: any, dealLabelIdToName?: Record<string, string> | null): boolean {
+  const idToName = dealLabelIdToName || {};
+  const st = String(deal?.status || '').toLowerCase();
+
+  if (dealHasProspectInteractiveLabel(deal, idToName)) {
+    if (st === 'lost' || st === 'open') return true;
+  }
+
+  if (dealHasTrialInteractiveFamilyLabel(deal, idToName)) {
+    if (st === 'lost' || st === 'open') return true;
+  }
+
+  const title = removeDiacritics(String(deal?.title || ''));
+  return (
+    title.includes('trial') ||
+    title.includes('zkusebn') ||
+    title.includes('zkusit') ||
+    title.includes('free trial') ||
+    title.includes('deal - gš') ||
+    title.includes('deal - gs') ||
+    title.includes('deal-gs') ||
+    title.includes('deal-gš')
+  );
+}
+
+function parsePipedriveDealTimestampMs(value: unknown): number | null {
+  const s = String(value || '').trim();
+  if (!s) return null;
+  const normalized = s.includes('T') ? s : s.replace(' ', 'T');
+  const t = new Date(normalized).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/** Řazení dealů podle poslední aktivity (owner, záložní výběr). */
+function pipedriveDealRecencyScoreMs(deal: any): number {
+  const candidates = [
+    deal?.update_time,
+    deal?.stage_change_time,
+    deal?.add_time,
+    deal?.lost_time,
+    deal?.close_time,
+  ];
+  let best = 0;
+  for (const c of candidates) {
+    const ms = parsePipedriveDealTimestampMs(c);
+    if (ms != null && ms > best) best = ms;
+  }
+  return best;
+}
+
+function pickMostRecentPipedriveDeal(deals: any[]): any | null {
+  if (!Array.isArray(deals) || deals.length === 0) return null;
+  return [...deals].sort((a, b) => pipedriveDealRecencyScoreMs(b) - pipedriveDealRecencyScoreMs(a))[0];
+}
+
+/** Nejnovější čas z trial dealu v CRM (podle won_time, add_time, update_time, stage_change_time). */
+function getLatestPipedriveTrialDealInfo(
+  deals: any[],
+  dealLabelIdToName?: Record<string, string> | null,
+): { lastMs: number; lastIso: string } | null {
+  const trialDeals = (Array.isArray(deals) ? deals : []).filter((d) => isPipedriveTrialDeal(d, dealLabelIdToName));
+  /* Od minulé žádosti: primárně uzavřené (lost) dealy; jinak jakýkoli trial (např. jen otevřený). */
+  const lostTrials = trialDeals.filter((d: any) => String(d?.status || '').toLowerCase() === 'lost');
+  const pool = lostTrials.length > 0 ? lostTrials : trialDeals;
+  let bestMs = 0;
+  for (const d of pool) {
+    const candidates = [d?.won_time, d?.add_time, d?.update_time, d?.stage_change_time];
+    for (const c of candidates) {
+      const ms = parsePipedriveDealTimestampMs(c);
+      if (ms != null && ms > bestMs) bestMs = ms;
+    }
+  }
+  if (bestMs <= 0) return null;
+  return { lastMs: bestMs, lastIso: new Date(bestMs).toISOString() };
+}
+
+/** Odhad data ukončení / vypršení přístupů z uzavřených trial dealů (ne open). */
+function getLatestTrialAccessEndedMs(deals: any[], dealLabelIdToName?: Record<string, string> | null): number | null {
+  const closedTrials = (Array.isArray(deals) ? deals : [])
+    .filter((d) => isPipedriveTrialDeal(d, dealLabelIdToName))
+    .filter((d: any) => d?.status !== 'open');
+  let bestMs = 0;
+  for (const d of closedTrials) {
+    const ms = parsePipedriveDealTimestampMs(
+      d.lost_time || d.won_time || d.close_time || d.update_time,
+    );
+    if (ms != null && ms > bestMs) bestMs = ms;
+  }
+  return bestMs > 0 ? bestMs : null;
+}
+
+function formatCsDateLongFromMs(ms: number): string {
+  return new Date(ms).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function formatPipedriveColleagueName(name: string) {
@@ -5811,8 +5997,9 @@ function formatPipedriveColleagueName(name: string) {
   return parts[0] || '';
 }
 
-function buildPipedriveLookupCacheKey(params: { ico?: string; name?: string }) {
-  return `${String(params.ico || '').trim()}::${normalizePipedriveSearchText(String(params.name || ''))}`;
+function buildPipedriveLookupCacheKey(params: { ico?: string; name?: string; includePipedriveRaw?: boolean }) {
+  const raw = params.includePipedriveRaw ? 'raw1' : 'raw0';
+  return `${String(params.ico || '').trim()}::${normalizePipedriveSearchText(String(params.name || ''))}::${raw}`;
 }
 
 function summarizePipedriveSchoolState(params: {
@@ -5825,11 +6012,17 @@ function summarizePipedriveSchoolState(params: {
   ownerUserId: number | null;
   products: string[];
   org?: any | null;
+  /** ID → název z dealFields.label (PROSPECT INTERACTIVE apod.) */
+  dealLabelIdToName?: Record<string, string> | null;
 }): PipedriveSchoolLookup {
   const deals = Array.isArray(params.deals) ? params.deals : [];
-  const subscriptionDeals = deals.filter((deal: any) => !isPipedriveTrialDeal(deal));
+  const labelMap = params.dealLabelIdToName || {};
+  const subscriptionDeals = deals.filter((deal: any) => !isPipedriveTrialDeal(deal, labelMap));
   const wonSubs = subscriptionDeals.filter((deal: any) => deal?.status === 'won');
   const openSubs = subscriptionDeals.filter((deal: any) => deal?.status === 'open');
+  const openTrials = deals.filter(
+    (deal: any) => isPipedriveTrialDeal(deal, labelMap) && deal?.status === 'open',
+  );
   const colleagues = (Array.isArray(params.persons) ? params.persons : [])
     .filter((person: any) => person?.name && person?.active_flag !== false)
     .map((person: any) => formatPipedriveColleagueName(person.name))
@@ -5837,17 +6030,41 @@ function summarizePipedriveSchoolState(params: {
     .slice(0, 6);
 
   let status = 'known';
-  let message = 'Tuto školu máme v systému. Rádi vám připravíme nabídku.';
+  let message =
+    'Vítejte, ještě vás neznáme\n\nVyplňte formulář níže a my vám obratem pošleme přístupové kódy ke všem učebnicím. Zdarma, bez závazků.';
   if (wonSubs.length > 0) {
     status = 'active_subscription';
-    message = 'Máte aktivní předplatné!';
+    message = 'Vaše škola má aktivní přístup k Vividbooks.';
+  } else if (openTrials.length > 0) {
+    /* Otevřený trial — frontend rozliší od aktivního placeného přístupu (active_subscription). */
+    status = 'active_trial';
+    message = '\u0160kola pr\u00e1v\u011b testuje Vividbooks v r\u00e1mci zku\u0161ebn\u00edho p\u0159\u00edstupu.';
   } else if (openSubs.length > 0) {
     status = 'in_progress';
-    message = 'Tato škola má rozjednanou objednávku — váš obchodní zástupce vás kontaktuje.';
+    message =
+      'S touto školou právě řešíme další krok z naší strany. Brzy se ozve konkrétní kontakt z týmu Vividbooks.';
   } else if (deals.length > 0) {
     status = 'past_request';
-    message = 'Tato škola nás již kontaktovala. Rádi vám připravíme novou nabídku.';
+    const trialDeals = deals.filter((d) => isPipedriveTrialDeal(d, labelMap));
+    if (trialDeals.length > 0) {
+      const endMs = getLatestTrialAccessEndedMs(deals, labelMap);
+      message = endMs
+        ? `Vaše přístupy vypršely ${formatCsDateLongFromMs(endMs)}. Vyplňte formulář níže a zaregistrujte se pro nové přístupy.`
+        : 'Vaše zkušební přístupy už vypršely. Vyplňte formulář níže a zaregistrujte se pro nové přístupy.';
+    } else {
+      message =
+        'S touto školou už jsme byli v kontaktu. Pokud potřebujete pomoct s přístupem k učebnicím, vyplňte prosím formulář níže.';
+    }
   }
+
+  const trialInfo = getLatestPipedriveTrialDealInfo(deals, labelMap);
+  const nowMs = Date.now();
+  const trialCooldownActive = Boolean(
+    trialInfo && nowMs - trialInfo.lastMs < PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS,
+  );
+  const trialNextEligibleAt = trialInfo
+    ? new Date(trialInfo.lastMs + PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS).toISOString()
+    : null;
 
   return {
     status,
@@ -5864,6 +6081,9 @@ function summarizePipedriveSchoolState(params: {
     org: params.org || null,
     deals,
     ownerUserId: params.ownerUserId,
+    lastTrialDealAt: trialInfo?.lastIso ?? null,
+    trialCooldownActive,
+    trialNextEligibleAt,
   };
 }
 
@@ -5996,13 +6216,17 @@ function pickBestPipedriveOrganizationMatch(items: any[], expectedName: string) 
   return includes || items[0];
 }
 
-async function lookupSchoolInPipedrive(apiToken: string, params: { ico?: string; name?: string }): Promise<PipedriveSchoolLookup> {
+async function lookupSchoolInPipedrive(
+  apiToken: string,
+  params: { ico?: string; name?: string; includePipedriveRaw?: boolean },
+): Promise<PipedriveSchoolLookup> {
   const cacheKey = buildPipedriveLookupCacheKey(params);
   const cached = pipedriveSchoolLookupCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.value;
   }
 
+  const includePipedriveRaw = !!params.includePipedriveRaw;
   const ico = String(params.ico || '').trim();
   const name = String(params.name || '').trim();
   let items: any[] = [];
@@ -6025,7 +6249,8 @@ async function lookupSchoolInPipedrive(apiToken: string, params: { ico?: string;
   if (!orgId) {
     const result = {
       status: 'new',
-      message: 'Tato škola zatím nemá záznam v našem systému.',
+      message:
+        'Vítejte, ještě vás neznáme\n\nVyplňte formulář níže a my vám obratem pošleme přístupové kódy ke všem učebnicím. Zdarma, bez závazků.',
       orgId: null,
       orgName: name || null,
       owner: null,
@@ -6038,16 +6263,36 @@ async function lookupSchoolInPipedrive(apiToken: string, params: { ico?: string;
       org: null,
       deals: [],
       ownerUserId: null,
+      lastTrialDealAt: null,
+      trialCooldownActive: false,
+      trialNextEligibleAt: null,
     };
+    if (includePipedriveRaw) {
+      (result as PipedriveSchoolLookup).pipedriveApi = {
+        deals: [],
+        organizationSearchItem: org,
+        dealLabelIdToName: {},
+      };
+    }
     pipedriveSchoolLookupCache.set(cacheKey, { expiresAt: Date.now() + PIPEDRIVE_LOOKUP_CACHE_TTL_MS, value: result });
     return result;
   }
 
+  const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken);
   const deals = await getPipedriveOrganizationDeals(apiToken, orgId);
-  const subscriptionDeals = deals.filter((deal: any) => !isPipedriveTrialDeal(deal));
+  const subscriptionDeals = deals.filter((deal: any) => !isPipedriveTrialDeal(deal, dealLabelIdToName));
   const wonSubs = subscriptionDeals.filter((deal: any) => deal?.status === 'won');
   const openSubs = subscriptionDeals.filter((deal: any) => deal?.status === 'open');
-  const ownerDeal = wonSubs[0] || openSubs[0] || deals[0] || null;
+  /* Stejná priorita jako summarizePipedriveSchoolState: vyhrané předplatné → otevřený trial → otevřený „ne-trial“ deal.
+   * Dřív se bral openSubs před openTrials → špatný owner (např. Eduard místo vlastníka trial dealu Gabriela). */
+  const openTrialsForOwner = deals.filter(
+    (deal: any) => isPipedriveTrialDeal(deal, dealLabelIdToName) && String(deal?.status || '').toLowerCase() === 'open',
+  );
+  const ownerDeal =
+    wonSubs[0] ||
+    (openTrialsForOwner.length > 0 ? pickMostRecentPipedriveDeal(openTrialsForOwner) : null) ||
+    openSubs[0] ||
+    pickMostRecentPipedriveDeal(deals);
   const ownerUserId = parsePipedriveNumericId(ownerDeal?.user_id?.id || ownerDeal?.user_id?.value || ownerDeal?.owner_id?.id || ownerDeal?.owner_id);
   const owner = ownerDeal?.user_id ? await getPipedriveUserSummary(apiToken, ownerDeal.user_id) : null;
 
@@ -6083,7 +6328,15 @@ async function lookupSchoolInPipedrive(apiToken: string, params: { ico?: string;
     ownerUserId,
     products: Array.from(productNames),
     org,
+    dealLabelIdToName,
   });
+  if (includePipedriveRaw) {
+    result.pipedriveApi = {
+      deals,
+      organizationSearchItem: org,
+      dealLabelIdToName,
+    };
+  }
   pipedriveSchoolLookupCache.set(cacheKey, { expiresAt: Date.now() + PIPEDRIVE_LOOKUP_CACHE_TTL_MS, value: result });
   return result;
 }
@@ -6481,8 +6734,9 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
     }),
   );
 
-  const ownerDeal = dealsWithProducts.find((deal: any) => !isPipedriveTrialDeal(deal) && deal?.status === 'open')
-    || dealsWithProducts.find((deal: any) => !isPipedriveTrialDeal(deal) && deal?.status === 'won')
+  const dealLabelIdToName = dealFieldMap['label']?.options || {};
+  const ownerDeal = dealsWithProducts.find((deal: any) => !isPipedriveTrialDeal(deal, dealLabelIdToName) && deal?.status === 'open')
+    || dealsWithProducts.find((deal: any) => !isPipedriveTrialDeal(deal, dealLabelIdToName) && deal?.status === 'won')
     || dealsWithProducts[0]
     || null;
   const owner = ownerDeal?.user_id ? await getPipedriveUserSummary(apiToken, ownerDeal.user_id) : lookup?.owner || null;
@@ -6520,6 +6774,7 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
     ownerUserId,
     products: pipedriveProductNames,
     org: organization,
+    dealLabelIdToName,
   });
   const orderSummary = await fetchSchoolOrderSummary({ ico: organizationIco, schoolName });
   const productsSummary = Array.from(new Set([
@@ -6563,6 +6818,9 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
   };
 }
 
+/** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
+const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 2;
+
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   const ico = String(c.req.query('ico') || '').trim();
@@ -6581,7 +6839,9 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   }
 
   try {
-    const result = await lookupSchoolInPipedrive(apiToken, { ico, name });
+    const includePipedriveRaw =
+      c.req.query('includePipedriveRaw') === '1' || c.req.query('pipedriveRaw') === '1';
+    const result = await lookupSchoolInPipedrive(apiToken, { ico, name, includePipedriveRaw });
     console.log(`[Pipedrive] School lookup ico=${ico || '-'} name="${name || '-'}" orgId=${result.orgId ?? 'null'} status=${result.status}`);
     return c.json({
       status: result.status,
@@ -6595,6 +6855,18 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
       wonDeals: result.wonDeals,
       totalDeals: result.totalDeals,
       matchedBy: result.matchedBy,
+      lastTrialDealAt: result.lastTrialDealAt,
+      trialCooldownActive: result.trialCooldownActive,
+      trialNextEligibleAt: result.trialNextEligibleAt,
+      ...(includePipedriveRaw
+        ? {
+            pipedriveApi: result.pipedriveApi ?? null,
+            _pipedriveCheckDebug: {
+              apiRevision: SCHOOL_PIPEDRIVE_CHECK_API_REVISION,
+              pipedriveApiDealCount: result.pipedriveApi?.deals?.length ?? null,
+            },
+          }
+        : {}),
     });
   } catch (error: any) {
     console.log(`[Pipedrive] Chyba: ${error.message}`);
@@ -6719,9 +6991,10 @@ app.post('/make-server-93a20b6f/admin/pipedrive/activities', async (c) => {
 
     let inferredOwnerId: number | null = null;
     if (!parsePipedriveNumericId(body.userId) && orgId) {
+      const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken);
       const deals = await getPipedriveOrganizationDeals(apiToken, orgId).catch(() => []);
-      const ownerDeal = deals.find((deal: any) => !isPipedriveTrialDeal(deal) && deal?.status === 'open')
-        || deals.find((deal: any) => !isPipedriveTrialDeal(deal) && deal?.status === 'won')
+      const ownerDeal = deals.find((deal: any) => !isPipedriveTrialDeal(deal, dealLabelIdToName) && deal?.status === 'open')
+        || deals.find((deal: any) => !isPipedriveTrialDeal(deal, dealLabelIdToName) && deal?.status === 'won')
         || deals[0];
       inferredOwnerId = parsePipedriveNumericId(ownerDeal?.user_id?.id || ownerDeal?.user_id?.value || ownerDeal?.owner_id?.id || ownerDeal?.owner_id);
     }
@@ -8881,14 +9154,34 @@ function vividbooksEmailTemplate(params: {
 }): string {
   const { headline, body, ctaText, ctaUrl, preheader } = params;
   // Only add standalone CTA if the body doesn't already contain CTA buttons
-  const bodyHasCta = body.includes('background-color:#7C3AED') || body.includes('background-color: #7C3AED');
+  const bodyHasCta =
+    body.includes('background-color:#7C3AED') ||
+    body.includes('background-color: #7C3AED') ||
+    body.includes('background-color:#F06632') ||
+    body.includes('background-color: #F06632');
   const ctaBlock = (!bodyHasCta && ctaText && ctaUrl) ? `
-    <tr><td style="padding:20px 40px 10px 40px;text-align:center;">
-      <a href="${ctaUrl}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">
-        ${ctaText}
-      </a>
+    <tr><td class="vb-cta" style="padding:6px 24px 22px 24px;text-align:center;background-color:#ffffff;">
+      <a href="${ctaUrl}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">${ctaText}</a>
     </td></tr>` : '';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:#f4f5f9;font-family:'Fenomen Sans',Arial,Helvetica,sans-serif;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f5f9;"><tr><td align="center" style="padding:20px 10px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.06);"><tr><td style="background-color:#001161;padding:28px 40px;text-align:center;"><span style="font-family:'Fenomen Sans',Arial,sans-serif;font-size:26px;font-weight:800;color:#ffffff;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td style="padding:36px 40px 12px 40px;"><h1 style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:24px;font-weight:800;color:#001161;line-height:1.3;">${headline}</h1></td></tr><tr><td style="padding:8px 40px 20px 40px;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;line-height:1.6;color:#333333;">${body}</td></tr>${ctaBlock}<tr><td style="padding:24px 0;"></td></tr><tr><td style="background-color:#f4f5f9;padding:24px 40px;text-align:center;border-top:1px solid #e5e7eb;"><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:13px;color:#888888;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:12px;color:#aaaaaa;"><a href="https://www.vividbooks.com" style="color:#7C3AED;text-decoration:none;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#7C3AED;text-decoration:none;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif;font-size:11px;color:#cccccc;"><a href="*|UNSUB|*" style="color:#999999;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  const mcResponsiveStyle = `<style type="text/css">
+@media only screen and (max-width: 600px) {
+  .vb-shell-pad { padding: 12px 8px !important; }
+  .vb-card-outer { width: 100% !important; max-width: 100% !important; }
+  .vb-brand { padding: 20px 16px 10px 16px !important; }
+  .vb-brand span { font-size: 22px !important; letter-spacing: 0.3px !important; }
+  .vb-hero { padding: 26px 18px 24px 18px !important; }
+  .vb-hero h1 { font-size: 22px !important; line-height: 1.28 !important; }
+  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 17px !important; line-height: 1.65 !important; }
+  .vb-cta { padding: 4px 16px 20px 16px !important; }
+  .vb-cta a { font-size: 17px !important; padding: 16px 28px !important; line-height: 1.2 !important; }
+  .vb-foot { padding: 22px 18px !important; }
+  .vb-foot p { font-size: 13px !important; }
+  .vb-foot a { font-size: 13px !important; }
+}
+</style>`;
+  /* Původní náhled AI Email Agentu: světle šedé plátno + bílá zaoblená karta, tmavě modrý hero, fialové hlavní CTA. */
+  const vbCanvas = '#E8EAED';
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* GET /admin/mailchimp/campaigns */
@@ -9048,7 +9341,10 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
   }
 });
 
-/* POST /admin/mailchimp/generate-email — AI generates structured email */
+/* POST /admin/mailchimp/generate-email — AI generates structured email
+ * Architektura: u nového zadání nejdřív model (lite) sestaví textový brief ze stejných dat (RAG, katalog…),
+ * poté hlavní model složí JSON mail (HTML). Úpravy existujícího mailu / výběr v náhledu = jedna fáze jako dřív.
+ * Volitelně: body.skipBriefPhase === true vynutí přeskočení 1. kroku. */
 app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
   try {
     const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
@@ -9057,68 +9353,194 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
     const { prompt, conversationContext } = body;
     if (!prompt) return c.json({ error: 'Chybi prompt' }, 400);
 
+    const EMAIL_GEN_MODELS: Record<'lite' | 'pro', string> = {
+      lite: 'gemini-3.1-flash-lite-preview',
+      pro: 'gemini-3.1-pro-preview',
+    };
+    /** Fallback řetěz při 503 „high demand“ na preview modelech (rotuje se dřív než dlouhé čekání na jednom ID). */
+    const EMAIL_GEN_FALLBACK_MODELS = ['gemini-2.0-flash', 'gemini-1.5-flash'] as const;
+    const geminiStatusRetryable = (status: number) =>
+      status === 429 || status === 503 || status === 500 || status === 502 || status === 504;
+    const m = body.model;
+    const tier: 'lite' | 'pro' =
+      m === 'pro' || m === EMAIL_GEN_MODELS.pro ? 'pro' : 'lite';
+    const geminiModelId = EMAIL_GEN_MODELS[tier];
+    /** `rag: false` z klienta — nenačítat chunky, nevolat embed (rychlejší). Výchozí zapnuto. */
+    const ragEnabled = body.rag !== false;
+    /** Lite nebo `fast: true` — kratší podklady (kampaně/produkty/…), nezávislé na RAG. */
+    const preferFast = tier === 'lite' || body.fast === true;
+
     let ragCtx = '';
     let ragDebug = { indexSize: 0, chunksUsed: 0, topScore: 0, sources: [] as string[] };
-    try {
-      const allCh = await loadAllChunks();
-      ragDebug.indexSize = allCh.length;
-      if (allCh.length > 0) {
-        const qE = await embedText(prompt);
-        const top = allCh.filter((ch: any) => ch.embedding?.length).map((ch: any) => ({ ...ch, score: cosineSim(qE, ch.embedding) })).sort((a: any, b: any) => b.score - a.score).slice(0, 6).filter((ch: any) => ch.score >= 0.15);
-        ragDebug.chunksUsed = top.length;
-        ragDebug.topScore = top.length > 0 ? Math.round(top[0].score * 100) : 0;
-        ragDebug.sources = [...new Set(top.map((ch: any) => ch.metadata?.source || 'unknown'))];
-        if (top.length) ragCtx = '\n\nRAG kontext:\n' + top.map((ch: any, i: number) => `[${i+1}] ${ch.metadata?.source}: ${ch.metadata?.title}\n${ch.text?.slice(0, 500)}`).join('\n---\n');
+
+    const [
+      chunksRes,
+      campsRes,
+      productsRes,
+      webinarsRes,
+      blogPackRes,
+    ] = await Promise.all([
+      ragEnabled
+        ? loadAllChunks().catch((e: any) => {
+          console.log(`[MC Gen] chunks load: ${e?.message}`);
+          return [];
+        })
+        : Promise.resolve([]),
+      loadMailchimpCampaigns().catch(() => []),
+      getAllProducts().catch((e: any) => {
+        console.log(`[MC Gen] Products error (non-fatal): ${e?.message}`);
+        return [];
+      }),
+      getCollection(WEBINARS_KEY).catch(() => []),
+      Promise.all([getCollection(BLOG_KEY), getCollection(NOVINKY_KEY)]).catch(() => [[], []]),
+    ]);
+
+    const allCh: any[] = Array.isArray(chunksRes) ? chunksRes : [];
+
+    if (!ragEnabled) {
+      console.log('[MC Gen] RAG: vypnuto klientem');
+    }
+    /** Hluboký RAG text jen pro Agent 1 (brief) — krátký RAG zůstává v system promptu u skládání HTML (tokenové limity). */
+    let ragCtxDeep = '';
+    if (ragEnabled && allCh.length > 0) {
+      try {
+        ragDebug.indexSize = allCh.length;
+        const embedQuery = [String(prompt || ''), String(conversationContext || '').trim().slice(0, 4000)]
+          .filter(Boolean)
+          .join('\n\n')
+          .slice(0, 12_000);
+        const qE = await embedText(embedQuery.trim() || String(prompt || ''));
+        const ranked = allCh
+          .filter((ch: any) => ch.embedding?.length)
+          .map((ch: any) => ({ ...ch, score: cosineSim(qE, ch.embedding) }))
+          .sort((a: any, b: any) => b.score - a.score);
+
+        const compactCap = preferFast ? 8 : 14;
+        const compactSlice = preferFast ? 900 : 1400;
+        const compactMinScore = preferFast ? 0.15 : 0.11;
+        const topCompact = ranked.filter((ch: any) => ch.score >= compactMinScore).slice(0, compactCap);
+        ragDebug.chunksUsed = topCompact.length;
+        ragDebug.topScore = topCompact.length > 0 ? Math.round(topCompact[0].score * 100) : 0;
+        ragDebug.sources = [...new Set(topCompact.map((ch: any) => ch.metadata?.source || 'unknown'))];
+        if (topCompact.length) {
+          ragCtx =
+            '\n\nRAG kontext (shrnutí pro skládání HTML):\n' +
+            topCompact
+              .map(
+                (ch: any, i: number) =>
+                  `[${i + 1}] ${ch.metadata?.source}: ${ch.metadata?.title} (${Math.round(ch.score * 100)}%)\n${String(ch.text || '').slice(0, compactSlice)}`,
+              )
+              .join('\n---\n');
+        }
+
+        const RAG_BRIEF_MIN_SCORE = 0.08;
+        const RAG_BRIEF_MAX_CHUNKS = 38;
+        const RAG_BRIEF_CHARS_PER_CHUNK = 4200;
+        const RAG_BRIEF_TOTAL_CAP = 160_000;
+        const topDeep = ranked.filter((ch: any) => ch.score >= RAG_BRIEF_MIN_SCORE).slice(0, RAG_BRIEF_MAX_CHUNKS);
+        (ragDebug as any).chunksBriefUsed = topDeep.length;
+        (ragDebug as any).ragBriefTopScore = topDeep.length > 0 ? Math.round(topDeep[0].score * 100) : 0;
+
+        if (topDeep.length) {
+          const lines: string[] = [
+            '\n\n## RAG — plné textové úryvky (pro Agent 1 / obsahový brief)\n',
+            'Níže jsou vytažené pasáže z interní znalostní báze, seřazené podle relevance k zadání. V briefu je musíš systematicky pročíst, sloučit a rozvinout do souvislého výkladu (ne jen zkopírovat nadpisy).\n',
+          ];
+          let acc = 0;
+          for (let i = 0; i < topDeep.length; i++) {
+            const ch = topDeep[i];
+            const slice = String(ch.text || '').slice(0, RAG_BRIEF_CHARS_PER_CHUNK);
+            const block = `### Úryvek ${i + 1} | ${ch.metadata?.source || '?'} | ${ch.metadata?.title || 'bez názvu'} | shoda ${(ch.score * 100).toFixed(0)}%\n${slice}`;
+            if (acc + block.length > RAG_BRIEF_TOTAL_CAP) break;
+            acc += block.length;
+            lines.push(block);
+          }
+          ragCtxDeep = lines.join('\n\n---\n\n');
+          console.log(
+            `[MC Gen] RAG brief: ${topDeep.length} chunks, ~${ragCtxDeep.length} chars; HTML prompt: ${topCompact.length} chunks`,
+          );
+        }
+        console.log(
+          `[MC Gen] RAG: ${ragDebug.chunksUsed} compact chunks from ${ragDebug.indexSize}, top: ${ragDebug.topScore}%, sources: ${ragDebug.sources.join(', ')}`,
+        );
+      } catch (ragErr: any) {
+        console.log(`[MC Gen] RAG error (non-fatal): ${ragErr.message}`);
       }
-      console.log(`[MC Gen] RAG: ${ragDebug.chunksUsed} chunks from ${ragDebug.indexSize}, top: ${ragDebug.topScore}%, sources: ${ragDebug.sources.join(', ')}`);
-    } catch (ragErr: any) {
-      console.log(`[MC Gen] RAG error (non-fatal): ${ragErr.message}`);
+    } else if (ragEnabled && allCh.length === 0) {
+      ragDebug.indexSize = 0;
     }
 
     let campStats = '';
     let campStructures = '';
     try {
-      const camps = (await loadMailchimpCampaigns()).slice(0, 15);
+      const campsRaw = Array.isArray(campsRes) ? campsRes : [];
+      const camps = campsRaw.slice(0, 15);
       if (camps.length) {
-        // Sort by click rate to show best-performing first
         const sorted = [...camps].sort((a: any, b: any) => (b.clickRate || 0) - (a.clickRate || 0));
-        campStats = '\n\nHistoricke kampane (serazeno dle click rate, POUZE pro inspiraci stylem a subject lines — NEPOUZIVEJ konkretni fakta, ceny, data!):\n' + sorted.map((cc: any) => `- "${cc.subject}" | Open: ${cc.openRate != null ? (cc.openRate*100).toFixed(0)+'%' : '?'} | Click: ${cc.clickRate != null ? (cc.clickRate*100).toFixed(0)+'%' : '?'} | Datum: ${cc.sendTime?.slice(0,10) || '?'}`).join('\n');
-        // Top 3 campaigns with plainText as structural reference
-        const top3 = sorted.filter((cc: any) => cc.plainText?.length > 100).slice(0, 3);
-        if (top3.length) {
-          campStructures = '\n\n## Obsahova struktura top kampani (pro inspiraci SEKCEMI a LAYOUTEM):\n' + top3.map((cc: any, i: number) => `### Kampan ${i+1}: "${cc.subject}" (Click: ${cc.clickRate ? (cc.clickRate*100).toFixed(0)+'%' : '?'})\n${cc.plainText?.slice(0, 1500)}`).join('\n---\n');
+        campStats =
+          '\n\nHistoricke kampane (serazeno dle click rate, POUZE pro inspiraci stylem a subject lines — NEPOUZIVEJ konkretni fakta, ceny, data!):\n' +
+          sorted
+            .map((cc: any) =>
+              `- "${cc.subject}" | Open: ${cc.openRate != null ? (cc.openRate * 100).toFixed(0) + '%' : '?'} | Click: ${cc.clickRate != null ? (cc.clickRate * 100).toFixed(0) + '%' : '?'} | Datum: ${cc.sendTime?.slice(0, 10) || '?'}`,
+            )
+            .join('\n');
+        if (!preferFast) {
+          const top3 = sorted.filter((cc: any) => cc.plainText?.length > 100).slice(0, 3);
+          if (top3.length) {
+            campStructures =
+              '\n\n## Obsahova struktura top kampani (pro inspiraci SEKCEMI a LAYOUTEM):\n' +
+              top3
+                .map(
+                  (cc: any, i: number) =>
+                    `### Kampan ${i + 1}: "${cc.subject}" (Click: ${cc.clickRate ? (cc.clickRate * 100).toFixed(0) + '%' : '?'})\n${cc.plainText?.slice(0, 1500)}`,
+                )
+                .join('\n---\n');
+          }
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
 
-    // ── Načtení produktového katalogu ──
     let productCtx = '';
     let productCount = 0;
-    let allProducts: any[] = [];
+    let allProducts: any[] = Array.isArray(productsRes) ? productsRes : [];
+    productCount = allProducts.length;
+    const productSlice = preferFast ? 40 : 80;
     try {
-      allProducts = await getAllProducts();
-      productCount = allProducts.length;
+      if (allProducts.length > productSlice) allProducts = allProducts.slice(0, productSlice);
       if (allProducts.length > 0) {
-        productCtx = '\n\n## Aktualni produkty v katalogu Vividbooks (POUZIJ KONKRETNI NAZVY!):\n' + allProducts.slice(0, 80).map((p: any) =>
-          `- **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: https://www.vividbooks.com/produkt/${p.id}`
-        ).join('\n');
+        productCtx =
+          '\n\n## Aktualni produkty v katalogu Vividbooks (POUZIJ KONKRETNI NAZVY!):\n' +
+          allProducts
+            .map((p: any) =>
+              `- **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: https://www.vividbooks.com/produkt/${p.id}`,
+            )
+            .join('\n');
       }
-      console.log(`[MC Gen] Products: ${productCount} loaded`);
+      console.log(`[MC Gen] Products: ${productCount} in DB, ${allProducts.length} in prompt`);
     } catch (prodErr: any) {
-      console.log(`[MC Gen] Products error (non-fatal): ${(prodErr as any).message}`);
+      console.log(`[MC Gen] Products ctx error (non-fatal): ${(prodErr as any).message}`);
     }
     (ragDebug as any).productCount = productCount;
 
-    // ── Načtení webinářů a blogu ──
     let webinarCtx = '';
     let webinarCount = 0;
+    const webinars = Array.isArray(webinarsRes) ? webinarsRes : [];
+    const webLimit = preferFast ? 10 : 20;
     try {
-      const webinars = await getCollection(WEBINARS_KEY);
       webinarCount = webinars.length;
       if (webinars.length > 0) {
-        webinarCtx = '\n\n## Webinare Vividbooks:\n' + webinars.slice(0, 20).map((w: any) =>
-          `- **${w.title}**${w.subtitle ? ' — ' + w.subtitle : ''} | ${w.day || ''}. ${w.monthName || ''} ${w.year || ''} ${w.time || ''} | Lektor: ${w.lecturer || '?'}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'}${w.coverImage ? ' | img: ' + w.coverImage : ''}`
-        ).join('\n');
+        webinarCtx =
+          '\n\n## Webinare Vividbooks:\n' +
+          webinars
+            .slice(0, webLimit)
+            .map((w: any) => {
+              const slug = String(w.slug || w.id || '').trim();
+              const pageUrl = slug ? `https://www.vividbooks.com/webinar/${slug}` : '';
+              return (
+                `- **${w.title}**${w.subtitle ? ' — ' + w.subtitle : ''} | ${w.day || ''}. ${w.monthName || ''} ${w.year || ''} ${w.time || ''} | Lektor: ${w.lecturer || '?'}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'}${pageUrl ? ' | url: ' + pageUrl : ''}${w.coverImage ? ' | img: ' + w.coverImage : ''}`
+              );
+            })
+            .join('\n');
       }
       console.log(`[MC Gen] Webinars: ${webinarCount} loaded`);
     } catch (webErr: any) {
@@ -9126,145 +9548,619 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
     }
 
     let blogCtx = '';
+    let blogLoaded = 0;
     try {
-      const blogs = await getCollection(BLOG_KEY);
-      const novinky = await getCollection(NOVINKY_KEY);
-      const allContent = [...(blogs || []), ...(novinky || [])].slice(0, 15);
+      const pack = Array.isArray(blogPackRes) ? blogPackRes : [[], []];
+      const blogs = Array.isArray(pack[0]) ? pack[0] : [];
+      const novinky = Array.isArray(pack[1]) ? pack[1] : [];
+      const contentLimit = preferFast ? 8 : 15;
+      const allContent = [...blogs, ...novinky].slice(0, contentLimit);
+      blogLoaded = allContent.length;
       if (allContent.length > 0) {
-        blogCtx = '\n\n## Blog a novinky Vividbooks:\n' + allContent.map((b: any) =>
-          `- **${b.title}**${b.category ? ' (' + b.category + ')' : ''}${b.author ? ' — ' + b.author : ''}${b.coverImage ? ' | img: ' + b.coverImage : ''}`
-        ).join('\n');
+        blogCtx =
+          '\n\n## Blog a novinky Vividbooks:\n' +
+          allContent
+            .map((b: any) =>
+              `- **${b.title}**${b.category ? ' (' + b.category + ')' : ''}${b.author ? ' — ' + b.author : ''}${b.coverImage ? ' | img: ' + b.coverImage : ''}`,
+            )
+            .join('\n');
       }
-      console.log(`[MC Gen] Blog/Novinky: ${allContent.length} loaded`);
+      console.log(`[MC Gen] Blog/Novinky: ${blogLoaded} loaded`);
     } catch (blogErr: any) {
       console.log(`[MC Gen] Blog error (non-fatal): ${blogErr.message}`);
     }
 
     (ragDebug as any).webinarCount = webinarCount;
 
+    const ragForBriefBundle = ragCtxDeep.trim() ? ragCtxDeep : ragCtx;
+    const bundleCtx = `${productCtx}${webinarCtx}${blogCtx}${ragForBriefBundle}${campStats}${campStructures}`;
+    const convStr = String(conversationContext || '');
+    const promptStr = String(prompt || '');
+    const combinedDetect = `${convStr}\n${promptStr}`;
+    /** Druhá fáze (HTML) sama — stejně jako dřív u úprav existujícího mailu nebo výběru v náhledu. */
+    const iterationLike =
+      body.skipBriefPhase === true ||
+      /Úprava EXISTUJÍCÍHO|Úprava EXISTUJICIHO|Aktuální email:|Aktualni email:|bodyHtml:/i.test(combinedDetect) ||
+      /režim výběru v náhledu|režim vložení u znaku|DŮLEŽITÉ — režim výběru|DŮLEŽITÉ — režim vložení/i.test(
+        combinedDetect,
+      );
+
+    let contentBrief = '';
+    const briefModelCandidates = [EMAIL_GEN_MODELS.lite, ...EMAIL_GEN_FALLBACK_MODELS];
+
+    if (!iterationLike) {
+      const briefSys = `Jsi obsahový stratég a redaktor pro Vividbooks — českou platformu digitálních interaktivních učebnic.
+Tvým úkolem je NIKOLI psát HTML e-mail, ale vytvořit JEDEN komplexní TEXTOVÝ BRIEF v češtině pro druhého agenta, který z něj poskládá e-mail v Mailchimpu.
+
+Důraz: Pod sekcí „RAG — plné textové úryvky“ často dostaneš MNOHO dlouhých pasáží z interní báze. Projdi je systematicky (ne jen první dva). Zpracuj je do JEDNOHO uceleného výstupu: souvislé odstavce, vysvětlení kontextu, proč to pro čtenáře důležité, propojení mezi tématy. NESMÍš vrátit jen krátký seznam 4 bodů podle uživatelské zprávy — to je málo. Uživatelův seznam je pouze osnova; skutečný obsah musí vyrůst z RAG + katalogu + webinářů.
+
+Rozsah: Pokud celkový text v RAG úryvcích přesahuje cca 2 000 znaků, pole "contentBrief" musí mít MINIMÁLNĚ přibližně 4 000–10 000 znaků (podle bohatosti zdrojů). Když je RAG skutečně bohatý, směřuj k horní hranici. Kratší výstup je přijatelný jen tehdy, když v datech opravdu nic víc není.
+
+Druhý agent má v HTML držet styl opravdového školního newsletteru Vividbooks (jako odeslané kampaně učitelům): **dlouhý, hodnotný text** uvnitř mailu — klidný, redakční tón, srozumitelné vysvětlení; číslované sekce jen budou‑li dávat smysl. Předávej mu **bohatý podklad v odstavcích** (ne jen 4 odrážky z uživatelské zprávy), aby mohl vygenerovat **rozvinutý dopis**, ne billboard.
+
+Výstup: JSON s jediným polem "contentBrief" (řetězec).
+
+Struktura briefu (logické sekce s podnadpisy v čistém textu):
+- Kontext a cílová skupina
+- Hlavní témata rozepsaná v **souvislých odstavcích** (ne jednovětné blurby): „dopisová“ hloubka jako u kvalitních newsletterů — úvod s kontextem, proč to čtenáře zajímá, čas akce, výzva k akci v přirozené češtině
+- **Rozvinuté pasáže** pro druhého agenta: např. benefity / dárek pro účastníky (výčet faktů z dat); doprovodné produkty (minihry, aplikace); **„co od nás (můžete) očekávat“** — spolupráce s **jmenovanými** odborníky **jen pokud jsou v RAG nebo veřejných podkladech**; **horizont vydání / ročníky** z katalogu nebo RAG; **online podpora** (co umí, odkaz na návod); **zpětná vazba** (skupiny, kontakt — bez vymýšlených odkazů); **objednávky / PDF ukázky** — pokud to téma vyžaduje. Tyto bloky nemusí být vždy všechny, ale plnohodnotný mail z bohatých dat má mít **6–10 obsazených tematických celků** v briefu rozepsaných slovně.
+- Produkty / webináře / akce výslovně navázané na obsah (názvy a fakta jen z přiložených dat)
+- Sekce „Navrhované HTML bloky“ (povinná): jasně napiš, které typy bloků má druhý agent použít — více sekcí **(2) Text** s vlastními h2, **Blok (rámeček)** pro výčty benefitů, Produkt (vyjmenuj 1–3 konkrétní tituly z katalogu), Infografika (jen pokud jsou 3 ověřitelné statistiky z dat), Webinář — hlavní 6a / vedlejší 6b / seznam 6c (vyjmenuj přesný název webináře a datum z dat). Bez této sekce není brief kompletní.
+- Sekce „Pozadí sekcí“ (doporučená, 2–4 odrážky): které části mají jít jako **plný pás** (např. #001161 webinář, #F06632 poděkování, žlutý tip), které jako **bílá karta v šedém pásu** (#E8EDF4), a u typů **(1)(2)(4)(6b)(6c)** které **pastelové karty** z „BARVY KARET“ použít (úvod #FFFBF7, text #F4F8FC, produkt #EFF6FF, …). Bez HTML — jen plán.
+- Tón a návrh úvodu vs. jádra zprávy
+- Sekce „Konkrétní fakta z podkladů“: tabulka nebo podnadpisy s tím, CO přesně říkají RAG úryvky o MŠMT, ročnících, aplikaci, ukázkách, webinářích (citace nebo těsné parafráze, ne jedna obecná věta)
+
+KONKRÉTNOST (anti-vágnost):
+- V briefu musí být jmenovány KONKRÉTNÍ produkty učebnic / názvy webinářů z dat, data konání a časy pokud jsou v seznamu webinářů, přesná formulace „doložka MŠMT“ jen podle toho, co je v RAG (ne právní poučka v obecnosti).
+- Zakázané výplňové řádky bez vazby na data: „transformovat výuku“, „moderní vzdělávání“, „jedinečná příležitost“, vymyšlené počty („500 učitelů“, „tisíce“) pokud v podkladech nejsou. **Sociální důkaz s číslem** do briefu napiš jen tehdy, když je číslo nebo formulace ověřitelná z RAG/historie kampaní; jinak poděkování bez čísel.
+- Pokud údaj v RAG není, napiš: „V RAG podkladech není doplněno: …“ — ne ho domýslet.
+
+Pravidla:
+- Nevkládej HTML značky ani tabulky
+- Nic si nevymýšlej — URL, produkty a čísla jen z přiložených dat
+- Citace myšlenek z RAG můžeš přeformulovat, fakta a názvy drž věrně`;
+
+      const briefUser =
+        `UŽIVATELSKÉ ZADÁNÍ:\n${promptStr}\n` +
+        (convStr.trim() ? `\nKONVERZACE / DODATEČNÝ KONTEXT:\n${convStr}\n` : '') +
+        `\n---\nDATA (produkty, webináře, blog, RAG, historie kampaní — pro fakta vycházej výhradně z nich):\n${bundleCtx.trim() || '(žádná extra data)'}\n`;
+
+      const briefSchema = {
+        type: 'OBJECT',
+        properties: {
+          contentBrief: {
+            type: 'STRING',
+            description:
+              'Velmi obsáhlý dopisový brief (4k–10k+ znaků): více tematických celků rozepsaných odstavci (úvod, benefity, odborníci, horizont, podpora, zpětná vazba…) + Navrhované HTML bloky + Pozadí sekcí; ne krátký bullet list',
+          },
+        },
+        required: ['contentBrief'],
+      };
+      const briefPayloadBase = {
+        contents: [{ role: 'user', parts: [{ text: briefUser }] }],
+        system_instruction: { parts: [{ text: briefSys }] },
+      };
+      try {
+        briefModelLoop: for (const briefModelTry of briefModelCandidates) {
+          let briefGenCfg: Record<string, unknown> = {
+            temperature: 0.45,
+            topP: 0.9,
+            maxOutputTokens: 24_576,
+            responseMimeType: 'application/json',
+            responseSchema: briefSchema,
+          };
+          for (let bAttempt = 0; bAttempt < 3; bAttempt++) {
+            console.log(`[MC Gen] Brief phase (1/2): model=${briefModelTry} attempt=${bAttempt + 1}`);
+            const briefUrl = `https://generativelanguage.googleapis.com/v1beta/models/${briefModelTry}:generateContent?key=${geminiKey}`;
+            const briefRes = await fetch(briefUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...briefPayloadBase, generationConfig: briefGenCfg }),
+            });
+            const briefRawText = await briefRes.text();
+            if (briefRes.ok) {
+              try {
+                const briefJson = JSON.parse(briefRawText);
+                const bParts = briefJson?.candidates?.[0]?.content?.parts ?? [];
+                let bText = bParts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+                bText = bText.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+                const bExtract = extractFirstJsonObject(bText);
+                if (bExtract.ok && bExtract.value && typeof (bExtract.value as any).contentBrief === 'string') {
+                  contentBrief = String((bExtract.value as any).contentBrief).trim();
+                  console.log(`[MC Gen] Brief phase OK (${briefModelTry}): ${contentBrief.length} chars`);
+                  break briefModelLoop;
+                } else {
+                  console.log(
+                    `[MC Gen] Brief phase: parse ${!bExtract.ok ? bExtract.reason : 'no contentBrief'} — možná další model`,
+                  );
+                }
+              } catch (parseErr: any) {
+                console.log(`[MC Gen] Brief phase JSON parse: ${parseErr?.message || parseErr}`);
+              }
+              break;
+            }
+            if (
+              briefRes.status === 400 &&
+              briefGenCfg.responseSchema &&
+              /schema|responseSchema|unknown name|invalid.*generation/i.test(briefRawText)
+            ) {
+              console.log('[MC Gen] Brief: 400 schema — zkouším bez responseSchema');
+              delete briefGenCfg.responseSchema;
+              continue;
+            }
+            if (geminiStatusRetryable(briefRes.status) && bAttempt < 2) {
+              const waitMs = Math.min(18_000, 2000 * Math.pow(2, bAttempt));
+              console.log(
+                `[MC Gen] Brief ${briefModelTry} HTTP ${briefRes.status} — čekám ${waitMs}ms před opakováním`,
+              );
+              await new Promise((r) => setTimeout(r, waitMs));
+              continue;
+            }
+            console.log(
+              `[MC Gen] Brief ${briefModelTry} selhal (${briefRes.status}): ${briefRawText.slice(0, 200)}`,
+            );
+            break;
+          }
+        }
+      } catch (briefErr: any) {
+        console.log(`[MC Gen] Brief phase error: ${briefErr?.message || briefErr}`);
+      }
+    }
+
+    (ragDebug as any).contentBriefUsed = Boolean(contentBrief);
+    (ragDebug as any).contentBriefIterationSkipped = iterationLike;
+    (ragDebug as any).contentBriefChars = contentBrief.length;
+
     const sysPrompt = `Jsi SENIOR e-mail marketingovy specialista a designer pro Vividbooks — ceskou platformu interaktivnich digitalnich ucebnic.
-Tvym ukolem je generovat vizualne bohate, MULTI-SEKCNI emaily pro Mailchimp kampane — NE jednoduche textove zpravy.
+Tvym ukolem je psat prompty do Mailchimpu EXPLICITNE a FAKTICKY — jako mail od cloveka z tymu pro ucitele, ne jako letak z tlacene reklamy. Kazdy usek musi nest KONKRETNI OBSAH z briefu nebo z kontextu nize (nazvy produktu, webinare s datumy, presne formulace z RAG). Vágní slogany bez faktu jsou chyba.
 
-ODPOVEZ VYHRADNE V TOMTO JSON FORMATU:
-{"subject":"Predmet (max 60 znaku, lakave, s emoji)","previewText":"Preview text (max 100 znaku)","headline":"Hlavni nadpis","bodyHtml":"KOMPLETNI VICESEKCNI HTML","ctaText":"Text hlavniho CTA","ctaUrl":"https://www.vividbooks.com/vyzkousejte","audience":"newsletter","productImages":["url1","url2"]}
+ODPOVEZ VYHRADNE JEDEN JSON OBJEKT (vystupni format vynucuje API — zadny Markdown, zadne \`\`\` obaly, zadny text pred ani po objektu).
+Pole: subject, previewText, headline, bodyHtml, ctaText, ctaUrl a volitelne audience, productImages (stringy s URL obalu).
 
-═══ MULTI-SEKCNI EMAIL DESIGN (KRITICKE!) ═══
-Kazdy email MUSI mit VICE VIZUALNE ODLISENYCH SEKCI. Pouzivej tyto stavebni bloky v bodyHtml:
+═══ VÝCHOZÍ STYL — PŮVODNÍ AI EMAIL AGENT (BÍLÁ KARTA + HERO + FIALOVÉ CTA) ═══
+Šablona mimo pole \`bodyHtml\` už sama obsahuje:
+- **Světle šedé plátno** ~**#E8EAED** a nahoře **logo Vividbooks** (tmavě modré na šedé).
+- **Bílou zaoblenou kartu** se stínem; v horní části karty **tmavě modrý hero** **#001161** s **bílým textem** = JSON pole **\`headline\`** (krátký, výrazný titulek typu „Máme doložku MŠMT!“).
+- **Primární tlačítko** hned pod hero z **\`ctaText\` / \`ctaUrl\`** — **fialové #7C3AED**, bílý text, zaoblená pilulka. Stejné hlavní tlačítko do \`bodyHtml\` znovu nepřidávej, pokud šablona už stačí.
 
-HERO SEKCE (vzdy na zacatku):
-<div style="background:linear-gradient(135deg,#001161 0%,#1a237e 100%);padding:40px 32px;text-align:center;border-radius:16px;margin-bottom:24px;">
-  <h1 style="color:#ffffff;font-family:'Fenomen Sans',Arial,sans-serif;font-size:28px;font-weight:800;margin:0 0 12px 0;">NADPIS</h1>
-  <p style="color:rgba(255,255,255,0.8);font-size:16px;margin:0;">Podnadpis</p>
-</div>
+**\`bodyHtml\`** = jen obsah **uvnitř bílé karty pod tímto tlačítkem**:
+- **NIKDY** neopakuj ten stejný titulek jako **\`headline\`** (žádné duplicitní \`<h1>\`); **nezačínej** typem **(1)** jako druhým herem.
+- **Úvod (2) TEXT:** **2–4 souvislé odstavce** (ne jedna věta) — pozdrav např. „Dobrý den, vážení učitelé…“, kontext, hlavní sdělení, čas/registrace v přirozené větě, odkazy podtržené. **Sociální důkaz s číslem** („už X učitelů“) **jen pokud X plyne z briefu/RAG/dat** — jinak poděkování bez vymyšlených čísel.
+- **Tělo mailu:** několik tematických sekcí pod **\`<h2>\`** (oranžové) podle podkladů — např. dárek/benefity (**(3)** s ikonami nebo \`<ul>\` po krátkém odstavci); další nabídka; „co od nás můžete čekat“ / spolupráce s odborníky (**jména jen z podkladů**); výhled titulů a ročníků; návod na online podpora + kontakt; zpětná vazba (skupiny — odkazy jen pokud jsou v datech); objednávky/ukázky. **Typický plný newsletter = 6–10 logických částí**; vyhni se řetězu prázdných jednovětých odstavců.
+- **Rozsah textu:** při bohatém briefu směřuj k **přibližně 800–1 500 slov** čistého textu v \`bodyHtml\` (HTML značky nepočítej). Krátký útlý mail jen když uživatel výslovně chce minimum **nebo** data jsou chudá.
+- **\`<h2>\`** uvnitř **#F06632** tučně; **odkazy v textu** **#F06632** podtržené; **klíčová fakta** lze **#2563EB** tučně.
+- Sekundární **pill** uvnitř mailu může být **#F06632** (webinář…) — celkem **max 1–2** výrazné knoflíky včetně fialového ze šablony.
 
-CTA TLACITKO (pouzij 2-4x v emailu, ne jen na konci!):
-<div style="text-align:center;padding:20px 0;">
-  <a href="URL" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">Text</a>
-</div>
+**Delší / speciální kampaně:** můžeš použít **full-width pásy** z sekce POZADÍ (B), pastelové vnitřní boxy nebo **(1)** jen pokud to není duplicita k **\`headline\`**. Výchozí ale zůstává **jeden** hlavní proud na bílé kartě, ne „sousto“ oddělených karet na šedém plátně.
 
-BAREVNA SEKCE (stridej bile a barevne pozadi):
-<div style="background-color:#FFF7ED;padding:32px;border-radius:16px;margin:24px 0;">
-  <h2 style="color:#001161;font-family:'Fenomen Sans',Arial,sans-serif;font-size:20px;font-weight:800;margin:0 0 12px 0;">Nadpis</h2>
-  <p style="color:#333;font-family:'Fenomen Sans',Arial,sans-serif;font-size:15px;line-height:1.7;">Obsah...</p>
-</div>
-Barvy pozadi: #FFF7ED (oranzova), #F5F3FF (fialova), #ECFDF5 (zelena), #EFF6FF (modra), #FEF2F2 (cervena), #F8F7FC (seda)
+═══ VIZUÁLNÍ ŠABLONA ═══
+- Hlavní vizuální identita = **hero #001161 + fialové CTA + bílý obsah**; \`bodyHtml\` je **dlouhý dopis** se strukturovanými sekcemi, tabulkami **(3)** a odrážkami tam, kde to nesou informaci.
 
-PRODUKTOVA KARTA (max 3 na email, kazda s obrazkem!):
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">
-  <tr>
-    <td width="130" style="vertical-align:top;padding-right:20px;">
-      <img src="PRODUCT_IMG_URL" alt="Nazev" style="width:120px;height:auto;border-radius:12px;" />
-    </td>
-    <td style="vertical-align:top;">
-      <h3 style="color:#001161;font-family:'Fenomen Sans',Arial,sans-serif;font-size:17px;font-weight:800;margin:0 0 8px 0;"><a href="PRODUCT_URL" style="color:#001161;text-decoration:none;">Nazev produktu</a></h3>
-      <p style="color:#666;font-family:'Fenomen Sans',Arial,sans-serif;font-size:14px;line-height:1.6;margin:0 0 12px 0;">Kratky popis...</p>
-      <a href="PRODUCT_URL" style="color:#7C3AED;font-family:'Fenomen Sans',Arial,sans-serif;font-weight:700;font-size:14px;text-decoration:none;">Zjistit vice →</a>
-    </td>
-  </tr>
-</table>
+═══ POZADÍ — GLOBÁL (canvas) × SEKCE × SLOUPEC (DŮLEŽITÉ) ═══
+Tři úrovně — v HTML je vždy odděluj:
 
-FEATURE SEZNAM (s emoji):
-<table width="100%" cellpadding="0" cellspacing="0" border="0">
-  <tr><td style="padding:12px 0;vertical-align:top;width:40px;font-size:24px;">🎯</td>
-  <td style="padding:12px 0;vertical-align:top;">
-    <strong style="color:#001161;font-family:'Fenomen Sans',Arial,sans-serif;font-size:15px;">Feature</strong>
-    <p style="color:#666;font-family:'Fenomen Sans',Arial,sans-serif;font-size:14px;margin:4px 0 0 0;">Popis</p>
+**(A) Globální canvas** — Mailchimp šablona má světle šedý podklad **#E8EAED** a **jednu bílou hlavní kartu** (hero + CTA + obsah). V \`bodyHtml\` proto **nepřidávej** druhý stejný „obálkový“ layout přes celou šířku; vnitřní boxy ano.
+
+**(B) Sekce na celou šířku obsahu** — horizontální „pás“ s vlastní barvou (celá šířka 600px řádku). Použij **vždy obal** tabulkou width="100%", bez vodorovného marginu navíc, typicky margin-bottom 16–22px:
+
+Plná šířka + tmavě modrá (webinář / hero):
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#001161;">
+  <tr><td style="padding:28px 22px;text-align:center;">
+    … obsah (bílý text) …
   </td></tr>
 </table>
 
-CITAT/TESTIMONIAL:
-<div style="background-color:#F5F3FF;border-left:4px solid #7C3AED;padding:24px 28px;border-radius:0 16px 16px 0;margin:24px 0;">
-  <p style="color:#333;font-family:'Fenomen Sans',Arial,sans-serif;font-size:16px;font-style:italic;line-height:1.7;margin:0 0 8px 0;">"Citace..."</p>
-  <p style="color:#7C3AED;font-family:'Fenomen Sans',Arial,sans-serif;font-weight:700;font-size:13px;margin:0;">— Jmeno, Role</p>
+Plná šířka + oranžová (poděkování / krátká výzva):
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#F06632;">
+  <tr><td style="padding:22px 20px;text-align:center;">
+    <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.65;color:#001161;font-weight:700;">Krátký text na oranžovém pásu</p>
+  </td></tr>
+</table>
+
+Plná šířka + žlutý „tip“ box (#F9E000 nebo #FFEB7A — jen jeden takový blok na mail): stejný vzor jako oranžová, barva pozadí podle řádku; uvnitř tmavý text, CTA pill může být #001161.
+
+**(C) Sloupec / vnitřní karta uvnitř širší sekce** — když má sekce šedé / modrošedé pozadí po stranách a uprostřed „list“:
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#E8EDF4;">
+  <tr><td align="center" style="padding:20px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:540px;background-color:#ffffff;border-radius:16px;border:1px solid rgba(0,0,0,0.06);">
+      <tr><td style="padding:24px 22px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#333;">
+        … hlavní text …
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+
+Pravidla:
+- Výchozí vzhled řeší šablona (šedé plátno + bílá karta). Uvnitř \`bodyHtml\` stačí **jemný kontrast** např. **(3)** na #FFF7ED nebo #F8FAFC; plné pásy **(B)** hlavně u **(6a)** nebo záměrné promo sekce.
+- **(6a) Webinář hlavní** a **(1-alt) tmavý banner** patří jako **sekce (B)** — celá šířka (šablona už má hero — druhý tmavý pás jen pokud to dává smysl).
+- Běžný **(2) Text** přímo na bílé (transparentně splyne s kartou) nebo v lehkém vnitřním boxu; struktura **(C)** jen u dlouhé pasáže.
+- Obrázky: max-width 100 %; mezi sekcemi dej svislý odstup (margin), nepřilepuj.
+
+═══ POVINNÁ SKLÁDAČKA BLOKŮ (NEDÁVAT JEN „SÁM TEXT“) ═══
+- „Newsletter jako dopis“ = **hodnotný dlouhý text** + bloky. **\`headline\` je už v hero** — \`bodyHtml\` MUSÍ obsahovat MINIMÁLNĚ: **úvod ve (2) TEXT** (**2–4 odstavce**, bez typu (1)) + **nejméně jeden (3) Blok** (benefity / novinky s ikonami nebo výčtem) + **nejméně dvě další sekce (2) TEXT** s vlastním \`<h2>\` (jiná témata z briefu) + **(4)(5)(6*)** podle dat. **(1) nepoužívej** jako standardní úvod. U jednoho \`<h2>\` nesmí viset jen jedna krátká věta — sekce má mít **obsah**.
+- Pokud brief nebo zadání zmiňuje konkrétní učebnice / ročníky / katalog: **povinně** použij **(4) Produkt** pro 1–3 nejrelevantnější tituly (přesné názvy a URL z „## Aktualni produkty“) **nebo** při 4+ produktech **značku data-product-collage + pole productImages**.
+- Pokud v „## Webinare Vividbooks“ existuje **alespoň jeden NADCHÁZEJÍCÍ** webinář související s tématem (nebo jde o obecný newsletter k DVPP): **povinně** použij jeden z **(6a) hlavní**, **(6b) vedlejší** (s cover obrázkem z řádku „img:“ v datech) **nebo (6c) seznam** (při 2+ nadcházejících). Datum, čas, název a odkaz „url:“ ber přesně z této sekce — žádné vymyšlené termíny.
+- **(3) Blok** (rámeček): použij **minimálně jednou** — 4–8 bodů (benefity, „s žáky můžete“, kroky); před blokem krátký **(2)** odstavec „proč“; dlouhé souvislé líčení nech v **(2)**.
+
+═══ TON A PRIORITA (POVINNE) ═══
+- **70–85 % slov** patří do **(2) TEXT** — víceodstavcové sekce, \`<h2>\`, odrážky \`<ul>\` uvnitř tématu, podtržené odkazy. **(3)(4)(6)** doplňují strukturu; nesmí být celý mail jen karty bez souvislého vysvětlení.
+- Infografika (5) a tmavý gradient (1-alt) **max 1×** každý na mail. Rámeček (3) typicky **1×**, maximálně **2×** jen na výslovnou žádost. **(1)** a **(1-alt)** vynech, pokud už stačí šablonový hero; **(1-alt)** jen výjimečně uvnitř \`bodyHtml\`.
+- V bloku **(4) Produkt**: krátký marketingový popis **2–4 věty**, zbytek hlubšího výkladu dej do **(2) TEXT** pod nebo nad kartu.
+- CTA: **primární fialové** dodá šablona (**#7C3AED**); v \`bodyHtml\` max **1** další výrazná **oranžová** pill; další výzvy jako podtržené odkazy v **(2)**.
+- Oddělovače max 1–2.
+
+═══ KONKRÉTNOST — ZAKAZ VÁGNÍ COPY (POVINNÉ) ═══
+- Typ (2) TEXT: kazda vetsi sekce (pod \`<h2>\`) ma mit **vic odstavcu nebo smyslupiny <ul>**; **kazdy** takovy usek musi obsahovat MINIMALNE JEDNU konkretizaci (produkt, webinář, ročník, datum, jméno odborníka **jen z podkladů**, fakt z RAG). Obecne vety bez vazby na fakta = prepis.
+- NIKDY nevymyslej statistiky, pocty prihlasenych, skol, procenta, „50k+“, „500 učitelů“ ani cisla do infografiky (5), pokud nejsou v briefu nebo v seznamu produktu/webinaru/RAG — **ani pro „důvěryhodný“ tón**.
+- Předmět (subject) a previewText: konkretni co a pro koho (rocnik, typ akce), ne jen emoji a prazdna nadsenost.
+- Úvod v **(2) TEXT**: **2–4 odstavce** s fakty z podkladu — **bez** opakování \`headline\`; tmavý banner jen (1-alt) výjimečně.
+- Pokud dostanes OBSAHOVY BRIEF z 1. kroku: NEZKRACUJ ho na marketingove slogany — prenes konkretni formulace a fakta do odstavcu v bodyHtml.
+
+═══ TYPOLOGIE BLOKU (stejné názvy jako v editoru — forma = obsah) ═══
+Každý typ má jinou HTML strukturu **i** jiný styl psaní. Při úpravě z chatu („přehoď na text / na blok / přidej webinář“) měň **obojí** — viz sekce ITERACE.
+
+**CO DO BLOKU PATŘÍ (ANO × NE):**
+- **(1) Úvodní:** **VÝCHOZOVĚ NE** — hlavní titulek je pole \`headline\` v šabloně. **(1)** jen výjimečně jako samostatná vnitřní kartička s **jiným** obsahem než \`headline\` (např. speciální oznámení). NE \`<h1>\` duplicitní k hero.
+- **(2) Text:** ANO **víceodstavcové** pasáže pod \`<h2>\`, h3, \`<ul>\` výčty v rámci tématu, ilustrační obrázky, podtržené odkazy. NE zhuštěný „jen ikony“ layout (to je **(3) Blok**). NE opakovat celou produktovou kartu (to je **(4)**).
+- **(3) Blok (rámeček):** ANO 3–6 zhuštěných bodů, výčet kroků, „proč se zapojit“, struktura emoji+řádek. NE dlouhé souvislé eseje — přepiš je do **(2) Text** nebo zkrát na body.
+- **(4) Produkt:** ANO konkrétní název z katalogu, obrázek z řádku „img:“ v katalogu, URL z řádku „url:“, krátký popis + CTA „Detail →“. NE vymyšlená cena ani produkt mimo seznam.
+- **(5) Infografika:** ANO právě 3 srovnatelné faktické údaje z dat. NE vymyšlená %; NE plný souvětý text do sloupců.
+- **(6) Webinář:** ANO datum/čas/název/URL z „## Webinare“. Varianta **6a** = jeden sloupec jako hero na webu; **6b** = obrázek vlevo, text vpravo (třídy vb-web-split-img / vb-web-split-txt); **6c** = tabulka/seznam 2+ akcí. NE jiný termín než v datech.
+
+**BARVY KARET / BLOKŮ (podle odeslaných mailů — střídej, přidej stín):**
+- **(1) Úvodní:** barvy jako dříve (#FFFBF7 + fialový pruh) **jen výjimečně**, když (1) vůbec použiješ — výchozí úvod je (2) kvůli šablonovému hero.
+- **(2) Text:** **primárně #FFFFFF** + stín; druhá/čtvrtá textová karta může **#F4F8FC** (bez „jednobarevného“ mailu).
+- **(3) Blok:** zůstaň u broskvové **#FFF7ED** / rumělkové (už ve vzoru).
+- **(4) Produkt:** obal celé karty do kontejneru s pozadím **#EFF6FF** (ledově modrá) a zaoblením — produktový „stripe“.
+- **(5) Infografika:** sloupce mohou mít **#F1F0FD** (lehounce fialová šedá) místo šedé; čísla zůstávají #F06632.
+- **(6b) Vedlejší webinář:** lehký obal **#F1F5F9** (břidlicová), padding 18–22px, border-radius 16px.
+- **(6c) Seznam:** celek na jemném **#F8FAFC** s vnitřním paddingem, řádky oddělené border-bottom.
+
+(1) ÚVODNÍ BLOK — teplá karta, fialový pruh nahoře, stín; pozdrav + text + obrázek; volitelně žlutý tip dole (DNA).
+<div style="background:#FFFBF7;border-radius:20px;padding:26px 24px 0 24px;margin:0 0 20px 0;max-width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.06);border-top:3px solid #C4B5FD;box-shadow:0 2px 10px rgba(0,17,97,0.08);">
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;"><strong>Vážení učitelé,</strong></p>
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;">Úvodní odstavec; klíčová fakta <strong style="color:#2563EB">modře tučně</strong>.</p>
+  <div style="margin:16px 0 0 0;">
+    <img src="URL_OBRAZKU" alt="" style="max-width:100%;height:auto;border-radius:12px;display:block;" />
+  </div>
+  <div style="margin-top:20px;background:#FFF9E6;padding:16px 18px 18px 18px;border-radius:0 0 18px 18px;border-top:1px solid #F5E6B3;">
+    <p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.65;color:#333;font-style:italic;">Krátký doplněk s <a href="URL" style="color:#F06632;font-weight:700;text-decoration:underline;">odkazem →</a></p>
+  </div>
 </div>
 
-STATISTIKA:
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0;">
+(1-alt) POUZE VYJIMEČNĚ — tmavý „banner“ (max jednou v mailu):
+<div style="background:linear-gradient(135deg,#001161 0%,#1a237e 100%);padding:36px 28px;text-align:center;border-radius:16px;margin:0 0 18px 0;max-width:100%;box-sizing:border-box;">
+  <h1 style="color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;margin:0 0 12px 0;">HLAVNI NADPIS</h1>
+  <p style="color:rgba(255,255,255,0.9);font-family:Arial,Helvetica,sans-serif;font-size:15px;margin:0;line-height:1.55;">Krátký podnadpis</p>
+</div>
+
+(2) TEXT — **bílá karta #FFFFFF** + stín (nebo střídavě #F4F8FC); více nadpisů a obrázků; h2 oranžově, odkazy oranžově podtržené:
+<div style="background:#ffffff;border-radius:20px;padding:28px 26px;margin:0 0 20px 0;max-width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.06);box-shadow:0 2px 10px rgba(0,17,97,0.08);">
+  <h2 style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:800;margin:0 0 10px 0;">1) Nadpis sekce</h2>
+  <h3 style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:17px;font-weight:700;margin:16px 0 8px 0;">Podnadpis</h3>
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;">Odstavec s <a href="URL" style="color:#F06632;text-decoration:underline;font-weight:700;">→ odkazem v textu</a> …</p>
+  <img src="URL" alt="" style="max-width:100%;height:auto;border-radius:10px;margin:14px 0;display:block;" />
+</div>
+
+(3) BLOK — ohraničený barevný rámeček; **strukturovanější než (2)** — řádky s ikonou/emoji, tučný titulek řádku, 1–2 věty. Typicky jeden až dva takové bloky na mail. Dlouhé souvislé texty sem nepatří. Pozadí např. #FFF7ED, #FEF3C7, #EFF6FF (border 1px solid rgba(240,102,50,0.15)):
+<div style="background-color:#FFF7ED;padding:32px 28px;border-radius:20px;margin:0 0 18px 0;max-width:100%;box-sizing:border-box;border:1px solid rgba(240,102,50,0.15);">
+  <h2 style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:800;margin:0 0 20px 0;">✨ Nadpis celeho bloku</h2>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" role="presentation">
+    <tr>
+      <td style="padding:14px 0;vertical-align:top;width:44px;font-size:22px;">💎</td>
+      <td style="padding:14px 0;vertical-align:top;">
+        <strong style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:15px;display:block;margin:0 0 4px 0;">Nadpis polozky</strong>
+        <p style="color:#555;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.65;margin:0;">Strucny popisek …</p>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:14px 0;vertical-align:top;width:44px;font-size:22px;">🚀</td>
+      <td style="padding:14px 0;vertical-align:top;">
+        <strong style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:15px;display:block;margin:0 0 4px 0;">Druha polozka</strong>
+        <p style="color:#555;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.65;margin:0;">…</p>
+      </td>
+    </tr>
+  </table>
+</div>
+
+(4) PRODUKT — **foto obálky + větší popisek + CTA**: celé obal do kontejneru **#EFF6FF**; uvnitř tabulka vb-prod-img / vb-prod-txt. Max 3 plné karty; **4+** produkty = data-product-collage + productImages + seznam v (2).
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#EFF6FF;border-radius:18px;border:1px solid rgba(37,99,235,0.12);">
+  <tr><td style="padding:18px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0;">
   <tr>
-    <td style="text-align:center;background:#F8F7FC;padding:20px;border-radius:12px;width:33%;">
-      <div style="color:#7C3AED;font-family:'Fenomen Sans',Arial,sans-serif;font-size:32px;font-weight:800;">150+</div>
-      <div style="color:#666;font-family:'Fenomen Sans',Arial,sans-serif;font-size:13px;">Lekci</div>
+    <td class="vb-prod-img" width="130" style="vertical-align:top;padding-right:20px;">
+      <img src="PRODUCT_IMG_URL" alt="Nazev" style="width:120px;max-width:100%;height:auto;border-radius:12px;" />
     </td>
-    <td style="width:12px;"></td>
-    <td style="text-align:center;background:#F8F7FC;padding:20px;border-radius:12px;width:33%;">
-      <div style="color:#7C3AED;font-family:'Fenomen Sans',Arial,sans-serif;font-size:32px;font-weight:800;">50k+</div>
-      <div style="color:#666;font-family:'Fenomen Sans',Arial,sans-serif;font-size:13px;">Studentu</div>
+    <td class="vb-prod-txt" style="vertical-align:top;">
+      <h3 style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:17px;font-weight:800;margin:0 0 8px 0;"><a href="PRODUCT_URL" style="color:#001161;text-decoration:none;">Nazev produktu</a></h3>
+      <p style="color:#666;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;margin:0 0 12px 0;">Kratky marketingovy popis</p>
+      <a href="PRODUCT_URL" style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;text-decoration:underline;">Detail produktu →</a>
+    </td>
+  </tr>
+</table>
+  </td></tr>
+</table>
+
+(5) INFOGRAFIKA — tri sloupce; POUZE pokud 3 srovnatelna cisla opravdu prinesou hodnotu — max JEDNA infografika na mail, jinak stejne informace radsi do obycejneho textu nebo odrázek v (2). Stejna visualni vaha sloupcu; na mobilu @media (pridej tridy vb-inf-col na kazdy <td> se sloupcem).
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:22px 0;border-collapse:separate;border-spacing:10px 0;">
+  <tr>
+    <td class="vb-inf-col" width="33%" style="vertical-align:top;background:#F1F0FD;border-radius:14px;padding:18px 14px;text-align:center;border:1px solid #e4e0f5;">
+      <div style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;line-height:1.1;">96 %</div>
+      <div style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;margin:8px 0 4px 0;">Krátký nadpis</div>
+      <div style="color:#666;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.45;">Jedna veta faktu</div>
+    </td>
+    <td class="vb-inf-col" width="33%" style="vertical-align:top;background:#F1F0FD;border-radius:14px;padding:18px 14px;text-align:center;border:1px solid #e4e0f5;">
+      <div style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;line-height:1.1;">42</div>
+      <div style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;margin:8px 0 4px 0;">Druhý fakt</div>
+      <div style="color:#666;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.45;">Popis</div>
+    </td>
+    <td class="vb-inf-col" width="33%" style="vertical-align:top;background:#F1F0FD;border-radius:14px;padding:18px 14px;text-align:center;border:1px solid #e4e0f5;">
+      <div style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;line-height:1.1;">15+</div>
+      <div style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;margin:8px 0 4px 0;">Třetí fakt</div>
+      <div style="color:#666;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.45;">Popis</div>
     </td>
   </tr>
 </table>
 
-KOLAZ PRODUKTU (pro 2+ produktu — frontend vytvori vizualni kolaz):
+(6a) WEBINÁŘ — HLAVNÍ: vždy jako **sekce plné šířky** (tabulka width 100%), uvnitř buď gradient nebo #001161 — viz vzor v „POZADÍ — GLOBÁL × SEKCE × SLOUPEC“. href přesně z „url:“ u webináře v datech.
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;">
+  <tr>
+    <td style="background:linear-gradient(135deg,#001161 0%,#1a237e 100%);padding:28px 22px;text-align:center;border-radius:16px;">
+      <p style="margin:0 0 10px;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:rgba(255,255,255,0.92);">DVPP Webinář zdarma — 27. 1. 2026 od 18:00</p>
+      <h2 style="margin:0 0 10px;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#ffffff;">Název webináře</h2>
+      <p style="margin:0 0 18px;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:rgba(255,255,255,0.9);line-height:1.5;">Krátký podtitul / téma</p>
+      <a href="WEBINAR_URL" style="display:inline-block;background-color:#F06632;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;padding:12px 28px;border-radius:999px;text-decoration:none;">Registrovat se</a>
+    </td>
+  </tr>
+</table>
+
+(6b) WEBINÁŘ — VEDLEJŠÍ (obal #F1F5F9): 1. sloupec obrázek z „img:“ v datech, 2. sloupec text — vb-web-split-img / vb-web-split-txt.
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#F1F5F9;border-radius:16px;border:1px solid #e2e8f0;">
+  <tr><td style="padding:20px 18px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0;">
+  <tr>
+    <td class="vb-web-split-img" width="46%" style="vertical-align:top;padding-right:18px;">
+      <img src="WEBINAR_COVER_URL" alt="" style="width:100%;max-width:260px;height:auto;border-radius:14px;display:block;" />
+    </td>
+    <td class="vb-web-split-txt" style="vertical-align:top;">
+      <p style="margin:0 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#F06632;font-weight:700;">Webinář</p>
+      <h3 style="margin:0 0 8px;font-family:Arial,Helvetica,sans-serif;font-size:18px;font-weight:800;color:#001161;line-height:1.25;">Název</h3>
+      <p style="margin:0 0 6px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#444;">Datum a čas z kontextu</p>
+      <p style="margin:0 0 14px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#555;line-height:1.6;">1–2 věty proč přijít</p>
+      <a href="WEBINAR_URL" style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;text-decoration:underline;">Více a registrace →</a>
+    </td>
+  </tr>
+</table>
+  </td></tr>
+</table>
+
+(6c) WEBINÁŘ — SEZNAM (2+ nadcházející): celek na **#F8FAFC**, vnitřní padding; u každé položky datum, název, link z „url:“. Pouze z „## Webinare Vividbooks“.
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#F8FAFC;border-radius:18px;border:1px solid #e5e7eb;">
+  <tr><td style="padding:18px 18px 8px 18px;">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0;">
+  <tr><td style="padding:14px 0;border-bottom:1px solid #e2e8f0;">
+    <p style="margin:0 0 4px;font-size:12px;color:#F06632;font-weight:700;">12. 2. 2026 · 18:00</p>
+    <p style="margin:0;font-size:15px;font-weight:800;color:#001161;">Název webináře</p>
+    <a href="URL" style="font-size:13px;color:#F06632;font-weight:700;text-decoration:underline;">Registrace →</a>
+  </td></tr>
+</table>
+  </td></tr>
+</table>
+
+DALSÍ SYSTEMOVE ELEMENTY:
+CTA PILL — hlavni akci obstarava sablona (fialova #7C3AED). V \`bodyHtml\` pouzij maximalne 1 dalsi pill, typicky oranzovou #F06632 pro webinar / sekundarni akci; dalsi vyzvy = podtrzene odkazy v odstavcich.
+<div style="text-align:center;padding:20px 0;">
+  <a href="URL" style="display:inline-block;background-color:#F06632;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">Sekundarni CTA</a>
+</div>
+
+CITAT / SOCIAL PROOF (volitelne jen pokud to nenaklada dalsi „reklamni“ vrstvu — neni stejny jako BLOK ramecek):
+<div style="background-color:#FFF7ED;border-left:4px solid #F06632;padding:24px 28px;border-radius:0 16px 16px 0;margin:0 0 18px 0;">
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-style:italic;line-height:1.7;margin:0 0 8px 0;">„Citace…“</p>
+  <p style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:13px;margin:0;">— Jméno</p>
+</div>
+
+KOLAZ PRODUKTU (4+ produkty — pouze misto holderu, URL v productImages):
 <div data-product-collage="true"></div>
-VZDY vloz obalkove URL do "productImages"!
 
 ODDELOVAC:
 <div style="height:2px;background:linear-gradient(90deg,transparent,#e5e7eb,transparent);margin:28px 0;"></div>
 
 ═══ PRAVIDLA STRUKTURY ═══
-1. MINIMALNE 4-6 vizualnich sekci (hero + obsah + produkty + CTA + dalsi)
-2. STRIDEJ bile a barevne pozadi sekci
-3. 2-4 CTA tlacitka v emailu (ne jen na konci!) — po hero, po produktech, na konci
-4. Mezi sekcemi pouzij oddelovace
-5. Emoji v nadpisech sekci pro vizualni atraktivitu
-6. Vice nez 3 produkty = kolaz + seznam odkazu pod ni
-7. 1-3 produkty = produktove karty s obrazky
-8. font-family:'Fenomen Sans',Arial,sans-serif u VSECH textu!
+1. MINIMÁLNĚ **6–10 logických segmentů** v HTML u běžného nového mailu (řádkové nadpisy \`<h2>\`, bloky (2)+(3), příp. (4)(6)); **4–5 segmentů** jen při krátkém zadání nebo chudých datech. Převažuje **(2) TEXT** + **minimálně jeden (3)**. **(4)** a **(6*)** dle POVINNÉ SKLÁDAČKY. Typ (1-alt) + (5) dohromady max 2 „silné“ dekorace na mail.
+2. **Pozadí:** výchozí obal je **šablona** (#E8EAED + bílá karta). \`bodyHtml\` doplňuje **vnitřní** kontrast ((3) na #FFF7ED apod.); násobné „plovoucí“ karty na šedém canvasu nejsou výchozí.
+3. Webinář (6a–c): vždy obal **(2) TEXT** (proč to dává smysl) před nebo po boxu. URL/datum výhradně z „## Webinare“.
+4. CTA: **1× fialová** ze šablony + nanejvýš **1×** oranžová pill v \`bodyHtml\`; zbytek odkazy v (2).
+5. Oddělovač střídmě.
+6. 4+ produkty: značka data-product-collage + pole productImages v JSON; 1–3 produkty: jedna nebo více tabulek (4) — popis v kartě 2–4 věty, rozšíření v (2).
+7. font-family Arial všude; obrázky max-width:100%.
+8. **ITERACE Z CHATU (forma = obsah):**
+   - „přehoď / předělej na text“ u označeného bloku = změň HTML na **(2) TEXT**: slouč body z rámečku/infografiky do souvislejších odstavců, **rozpiš** detaily které byly ve zhuštěných bodech; odstraň tabulku rámečku nebo 3 sloupce.
+   - „přehoď na blok / zhuť“ = na **(3) Blok**: z dlouhého textu vyrob 3–6 krátkých řádků (emoji + titulek + 1 věta), **zahoď** opakování a souvětí navíc.
+   - „přidej pozvánku na webinář [název]“ = doplň **(6a) nebo (6b)** s přesnými datumy a href z řádku „url:“ v datech; pokud jen „přidej webináře“, použij **(6c)**.
+   - „přidej produkt [název]“ nebo produktová sekce = **(4)** nebo koláž podle počtu.
+   - „předělej na infografiku“ = ověřitelná čísla z textu → **(5)** (jinak infografiku necpat).
+   - „dej tomu oranžový / tmavý / šedý pás“ / „odděl sekce pozadím“ = obal daný blok tabulkou **sekce (B)** nebo dej text do **sloupce (C)** se šedým pozadím a bílou vnitřní kartou podle vzoru v POZADÍ.
+
+═══ MOBIL — POUZE @media (max-width:600px), desktop se NEMENI ═══
+- U kazdeho emailu na ZACATEK bodyHtml (pred prvni vizualni blok) vloz PRESNE tento jeden styl + obal:
+<style type="text/css">@media only screen and (max-width:600px){.vb-email-root p,.vb-email-root li{font-size:17px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color: #F06632"],.vb-email-root a[style*="background-color:#7C3AED"],.vb-email-root a[style*="background-color: #7C3AED"]{font-size:17px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt{display:block!important;width:100%!important}.vb-prod-img{padding:0 0 14px 0!important;text-align:center!important;padding-right:0!important}.vb-prod-img img{width:100%!important;max-width:280px!important;height:auto!important}.vb-prod-txt{padding-left:0!important}.vb-web-split-img,.vb-web-split-txt{display:block!important;width:100%!important}.vb-web-split-img{padding:0 0 16px 0!important;padding-right:0!important;text-align:center!important}.vb-web-split-img img{max-width:280px!important;width:100%!important;margin:0 auto!important}.vb-web-split-txt{padding-left:0!important}.vb-inf-col{display:block!important;width:100%!important;margin-bottom:12px!important}}</style>
+<div class="vb-email-root" style="max-width:100%"> ... cely obsah ... </div>
+- Produktove karty MUSI pouzit tridy vb-prod-img a vb-prod-txt (desktop zustane side-by-side; na mobilu se zlomi podle CSS vyse).
+- Na sirce nad 600px se nesmi menit velikosti fontu oproti klasickemu newsletteru — upravy jen uvnitr @media.
 
 ═══ ITERATIVNI UPRAVY ═══
 - "Aktualni email:" v kontextu = UPRAVIT, NE prepsat
-- "pridej/doplň/přidej sekci" → zachovej existujici, PRIDEJ novou sekci
-- "zmen/prepis/uprav" → zmen JEN pozadovane
+- "pridej/doplň/přidej sekci" → zachovej existujici, PRIDEJ novou sekci (spravny TYP bloku podle zadani)
+- "zmen/prepis/uprav" / zmena TYPU bloku (text ↔ ramecek ↔ infografika ↔ produkt ↔ webinar) = UPRAV HTML strukturu podle nove typologie A tomu prizpusob text (viz PRAVIDLA bod 8); zmena pozadi sekce = uprav obalkove tabulky(B)/(C)
 - "od znova/vytvor znovu" → novy email
 - Subject/previewText/headline zachovej pokud neni zmena
 
 ═══ PRODUKTOVE ODKAZY ═══
-- Kazdy produkt: <a href="PRODUCT_URL" style="color:#7C3AED;font-weight:bold;text-decoration:none;">Nazev</a>
+- Kazdy produkt: <a href="PRODUCT_URL" style="color:#F06632;font-weight:bold;text-decoration:underline;">Nazev</a> (primární nadpis produktu může zůstat #001161)
 - URL z pole "url:" v katalogu
 - Do "productImages" VZDY obalkove obrazky (pole "img:")
 - NIKDY nevymyslej URL! Pouze ze skutecnych dat!
 - Pouzij KONKRETNI nazvy z katalogu!
 
-═══ PRIKLADY STRUKTURY ═══
+═══ PŘÍKLADY ŘETĚZENÍ BLOKŮ ═══
 
-Produktovy email: hero → uvodni text → 2-3 produktove karty → CTA → kolaz → feature seznam → testimonial → zaverecne CTA
+Produktový newsletter: **(2)** úvod (bez (1)) → **(2)** hlavní téma → **(3)** rámeček s body → **(4)** 1–2 produkty **nebo** koláž → **(2)** doplnění → případně **(6b)** pokud sedí webinář (CTA už v šabloně)
 
-Webinarovy email: hero s datem → popis → lektor box → temata (feature) → CTA registrace → testimonial → CTA
+Webinářový newsletter: **(2)** úvod → **(2)** proč přijít → **(6a) nebo (6b)** → **(2)** další info → **(6c)** pokud je více termínů
 
-Newsletter: hero → top novinka → produkty mesice (karty/kolaz) → tipy sekce → webinare → CTA → statistiky
+Obecný newsletter (novinky): **(2)** úvod (2–4 odst.) → **(3)** benefity / novinky → **(2)** „co od nás…“ / odborníci (jména jen z dat) → **(2)** horizont titulů → **(2)** podpora / kontakt → **(2)** zpětná vazba / objednávky (jak sedí tématu) → **(4) nebo koláž** → **(6*)**
 
 ═══ JAZYK ═══
 VZDY cesky. Jen HTML (zadny Markdown). Inline styly.
 ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
 
-    const fullPrompt = conversationContext ? `Kontext konverzace:\n${conversationContext}\n\nPozadavek: ${prompt}` : prompt;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiKey}`;
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system_instruction: { parts: [{ text: sysPrompt }] }, contents: [{ role: 'user', parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7, topP: 0.9, maxOutputTokens: 8192 } }) });
-    if (!res.ok) { const t = await res.text(); throw new Error(`Gemini ${res.status}: ${t.slice(0, 200)}`); }
+    /** 2. krok: skládání HTML — u nového zadání často s textovým briefem z 1. kroku; u iterací beze změny jako dřív. */
+    let fullPrompt: string;
+    if (contentBrief) {
+      const composeConcreteHint =
+        '\n\n---\nPOVINNÉ PRO SKLÁDÁNÍ HTML: Šablona už má tmavý hero (\`headline\`) a fialové CTA. \`bodyHtml\` musí být **dlouhý dopis**: úvod 2–4 odstavce, více sekcí s vlastním \`<h2>\`, (3) na výčty — přeneste **celý obsah** z briefu v souvislých odstavcích (ca 800–1500 slov při bohatém briefu), ne zkrácený leták. Žádné vymyšlené počty. KONKRÉTNÍ názvy a URL z katalogu/webinářů.\n';
+      fullPrompt = conversationContext
+        ? `OBSAHOVÝ BRIEF (1. krok — primární zdroj faktů a formulací; strukturu bloků dodrž podle systémového promptu):\n\n${contentBrief}\n\n---\nKontext konverzace:\n${conversationContext}\n\n---\nPůvodní požadavek uživatele:\n${prompt}${composeConcreteHint}`
+        : `OBSAHOVÝ BRIEF (1. krok):\n\n${contentBrief}\n\n---\nPožadavek uživatele:\n${prompt}${composeConcreteHint}`;
+    } else {
+      const iterHint =
+        '\n\n[KONKRÉTNOST + DÉLKA] Rozviň obsah v souvislých odstavcích a více sekcích \`<h2>\` — nezkracuj na jednovětné bloky; sociální důkazy s čísly jen z podkladů. Drž šablonu (hero + fialové CTA). Žádné vymyšlené počty.\n';
+      fullPrompt = conversationContext
+        ? `Kontext konverzace:\n${conversationContext}\n\nPozadavek: ${prompt}${iterHint}`
+        : `${promptStr}${iterHint}`;
+    }
+    const emailJsonSchema = {
+      type: 'OBJECT',
+      properties: {
+        subject: { type: 'STRING', description: 'Predmet max 60 znaku: konkretni tema (rocnik, akce), ne jen emoji' },
+        previewText: { type: 'STRING', description: 'Preheader s faktem z briefu, ne prazdna nadsenost' },
+        headline: { type: 'STRING', description: 'Kratky titulek v tmave modrem hero v Mailchimp sablone — neopakovat v bodyHtml jako h1' },
+        bodyHtml: {
+          type: 'STRING',
+          description:
+            'Inline HTML: dlouhy dopis (vice sekci h2, 2–4 odstavce uvodu), konkretni fakta z briefu/RAG; pri bohatem briefu cca 800–1500 slov textu; vb-email-root + mobile CSS; zadne vymyslene pocty',
+        },
+        ctaText: { type: 'STRING' },
+        ctaUrl: { type: 'STRING' },
+        audience: { type: 'STRING' },
+        productImages: { type: 'ARRAY', items: { type: 'STRING' } },
+      },
+      required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'],
+    };
+    const geminiPayloadBase = {
+      system_instruction: { parts: [{ text: sysPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
+    };
+    const composeModelCandidates = [
+      geminiModelId,
+      ...(tier === 'pro' ? [EMAIL_GEN_MODELS.lite] : []),
+      ...EMAIL_GEN_FALLBACK_MODELS,
+    ];
+    const seenCompose = new Set<string>();
+    const uniqueComposeModels = composeModelCandidates.filter((id) =>
+      seenCompose.has(id) ? false : (seenCompose.add(id), true),
+    );
 
-    let rawText = (await res.json()).candidates?.[0]?.content?.parts?.[0]?.text || '';
+    console.log(
+      `[MC Gen] compose models=[${uniqueComposeModels.join(', ')}] tier=${tier}, rag=${ragEnabled}, compact=${preferFast}, briefLed=${Boolean(contentBrief)}`,
+    );
+
+    let geminiResponse: Response | null = null;
+    let lastErrText = '';
+    let composeModelUsed = geminiModelId;
+    let composeOk = false;
+
+    composeLoop: for (const modelTry of uniqueComposeModels) {
+      let genCfg: Record<string, unknown> = {
+        temperature: 0.52,
+        topP: 0.88,
+        maxOutputTokens: 16384,
+        responseMimeType: 'application/json',
+        responseSchema: emailJsonSchema,
+      };
+      const urlTry = `https://generativelanguage.googleapis.com/v1beta/models/${modelTry}:generateContent?key=${geminiKey}`;
+      /** Krátké opakování na jednom modelu, pak rychlá rotace — při přetížení Google často pomůže jiné ID dřív než dlouhé čekání. */
+      for (let attempt = 0; attempt < 3; attempt++) {
+        geminiResponse = await fetch(urlTry, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...geminiPayloadBase, generationConfig: genCfg }),
+        });
+        if (geminiResponse.ok) {
+          composeModelUsed = modelTry;
+          composeOk = true;
+          break composeLoop;
+        }
+        lastErrText = await geminiResponse.text();
+        if (
+          geminiResponse.status === 400 &&
+          genCfg.responseSchema &&
+          /schema|responseSchema|unknown name|invalid.*generation/i.test(lastErrText)
+        ) {
+          console.log(`[MC Gen] ${modelTry}: 400 u responseSchema — opakuji jen s responseMimeType`);
+          delete genCfg.responseSchema;
+          continue;
+        }
+        if (geminiStatusRetryable(geminiResponse.status) && geminiResponse.status !== 400 && attempt < 2) {
+          const ms = Math.min(20_000, 2200 * Math.pow(2, attempt));
+          console.log(
+            `[MC Gen] ${modelTry} HTTP ${geminiResponse.status} — čekám ${ms}ms (pokus ${attempt + 1}/3)`,
+          );
+          await new Promise((r) => setTimeout(r, ms));
+          continue;
+        }
+        console.log(
+          `[MC Gen] model ${modelTry} končím s ${geminiResponse.status}, zkouším další v řadě…`,
+        );
+        break;
+      }
+    }
+
+    if (!composeOk || !geminiResponse?.ok) {
+      throw new Error(
+        `Gemini dočasně nedostupná nebo přetížená (503). Zkuste znovu za 1–2 minuty — nebo v builderu přepněte na LITE. ` +
+          `Technicky: ${lastErrText.slice(0, 500)}`,
+      );
+    }
+    (ragDebug as any).composeModelUsed = composeModelUsed;
+
+    const gJson = await geminiResponse.json();
+    const cand0 = gJson?.candidates?.[0];
+    if (!cand0) {
+      const block = gJson?.promptFeedback?.blockReason || '';
+      console.log(`[MC Gen] zadny candidate${block ? ` (block: ${block})` : ''}`);
+      return c.json(
+        {
+          error: block ? `Gemini zablokoval pozadavek: ${block}` : 'Gemini nevratila zadny vystup',
+          raw: JSON.stringify(gJson).slice(0, 600),
+        },
+        500,
+      );
+    }
+    if (cand0?.finishReason && cand0.finishReason !== 'STOP') {
+      console.log(`[MC Gen] finishReason=${cand0.finishReason}`);
+    }
+    const parts = cand0?.content?.parts ?? [];
+    let rawText = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
     rawText = rawText.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
-    let emailData: any;
-    try { emailData = JSON.parse(rawText); } catch { return c.json({ error: 'Agent nevratil validni JSON', raw: rawText.slice(0, 500) }, 500); }
+    const extracted = extractFirstJsonObject(rawText);
+    if (!extracted.ok) {
+      console.log(`[MC Gen] JSON parse: ${extracted.reason} | head=${rawText.slice(0, 200)}`);
+      return c.json(
+        { error: `Agent nevratil validni JSON (${extracted.reason})`, raw: rawText.slice(0, 800) },
+        500,
+      );
+    }
+    const emailData = extracted.value as any;
+    if (!emailData || typeof emailData.bodyHtml !== 'string' || !emailData.bodyHtml.trim()) {
+      return c.json(
+        {
+          error: 'Agent vratil JSON bez platneho pole bodyHtml',
+          raw: rawText.slice(0, 600),
+        },
+        500,
+      );
+    }
 
     // ── Product images: keep placeholder in bodyHtml, frontend will generate canvas collage ──
     const productImages: string[] = emailData.productImages || [];
@@ -9284,6 +10180,110 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
   } catch (e: any) {
     console.log(`[MC Gen] Error: ${e.message}`);
     return c.json({ error: `MC gen: ${e.message}` }, 500);
+  }
+});
+
+/* POST /admin/mailchimp/generate-inline-cta — AI navrhne text + URL podle textu nad kurzorem */
+app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) => {
+  try {
+    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const body = await c.req.json();
+    const contextText = (body.contextText || '').toString().slice(0, 6000);
+    const subject = (body.subject || '').toString().slice(0, 200);
+    const headline = (body.headline || '').toString().slice(0, 200);
+    const defaultCtaUrl = (body.defaultCtaUrl || 'https://www.vividbooks.com/vyzkousejte').toString().slice(0, 500);
+    if (!contextText.trim() && !subject.trim()) {
+      return c.json({ error: 'Chybi contextText nebo subject' }, 400);
+    }
+
+    let productLines = '';
+    try {
+      const allProducts = await getAllProducts();
+      productLines = allProducts.slice(0, 60).map((p: any) =>
+        `- ${p.name}${p.category ? ' | ' + p.category : ''} → https://www.vividbooks.com/produkt/${p.id}`,
+      ).join('\n');
+    } catch { /* ignore */ }
+
+    let webinarLines = '';
+    try {
+      const webinars = await getCollection(WEBINARS_KEY);
+      webinarLines = (webinars || [])
+        .filter((w: any) => w?.slug || w?.id)
+        .slice(0, 12)
+        .map((w: any) =>
+          `- ${w.title} → https://www.vividbooks.com/webinar/${w.slug || w.id}`,
+        ).join('\n');
+    } catch { /* ignore */ }
+
+    const sys = `Jsi copywriter pro Vividbooks. Uzivatel vklada INLINE CTA tlacitko do rozdelaneho emailu.
+Tvym ukolem je navrhnout KRATKY text na tlacitko (max 40 znaku, cesky, akcni) a URL kam ma tlacitko vest.
+
+OSTRE PRAVIDLA:
+- url MUSI byt budz "https://www.vividbooks.com/..." z tabulek nize NEBO presne defaultCtaUrl z pozadavku.
+- NIKDY nevymyslej produktovou URL, ktera neni v seznamu produktu.
+- Pokud kontext nesedi k konkretnimu produktu, pouzij defaultCtaUrl nebo https://www.vividbooks.com/vyzkousejte nebo https://www.vividbooks.com/produkty
+- buttonText: bez uvozovek, bez HTML
+
+ODPOVEZ POUZE JSON (zadny markdown):
+{"buttonText":"...","url":"https://...","hint":"1 veta proc tento cil"}`;
+
+    const userBlock =
+      `Predmet emailu: ${subject || '(prazdne)'}\nHlavni nadpis sablony: ${headline || '(prazdne)'}\n` +
+      `Vychozi hlavni CTA draftu (preferuj pokud sedi): ${defaultCtaUrl}\n\n` +
+      `TEXT A OBSAH NAD MISTEM KDE BUDE TLACITKO (posledni cast je nejdulezitejsi):\n"""${contextText || '(prazdne)'}"""\n\n` +
+      `PRODUKTY (pouze tato URL pro /produkt/...):\n${productLines || '(nacteni selhalo)'}\n\n` +
+      `WEBINARE (slug muze byt nekompletni — pokud nejsi jisty, nepouzivej):\n${webinarLines || '(zadne)'}`;
+
+    const urlGem = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${geminiKey}`;
+    const res = await fetch(urlGem, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: sys }] },
+        contents: [{ role: 'user', parts: [{ text: userBlock }] }],
+        generationConfig: {
+          temperature: 0.55,
+          topP: 0.9,
+          maxOutputTokens: 1024,
+          responseMimeType: 'application/json',
+        },
+      }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      return c.json({ error: `Gemini ${res.status}: ${t.slice(0, 200)}` }, 500);
+    }
+
+    const gInline = await res.json();
+    const partsInline = gInline?.candidates?.[0]?.content?.parts ?? [];
+    let raw = partsInline.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+    raw = raw.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+    const extractedCta = extractFirstJsonObject(raw);
+    if (!extractedCta.ok) {
+      return c.json({ error: `AI nevratila validni JSON (${extractedCta.reason})`, raw: raw.slice(0, 400) }, 500);
+    }
+    const parsed = extractedCta.value as any;
+
+    let btn = (parsed.buttonText || '').toString().trim().slice(0, 80);
+    let href = (parsed.url || '').toString().trim();
+    const hint = (parsed.hint || '').toString().trim().slice(0, 240);
+
+    if (!btn) btn = 'Zjistit více';
+    if (!href || !href.startsWith('http')) href = defaultCtaUrl;
+
+    const allowed =
+      href.startsWith('https://www.vividbooks.com') ||
+      href.startsWith('https://vividbooks.com') ||
+      href.startsWith('https://www.vividbooks.cz') ||
+      href.startsWith('https://vividbooks.cz') ||
+      href === defaultCtaUrl;
+    if (!allowed) href = defaultCtaUrl;
+
+    return c.json({ success: true, cta: { buttonText: btn, url: href, hint } });
+  } catch (e: any) {
+    console.log(`[Inline CTA] Error: ${e.message}`);
+    return c.json({ error: `Inline CTA: ${e.message}` }, 500);
   }
 });
 
@@ -9390,6 +10390,16 @@ app.post('/make-server-93a20b6f/admin/email-drafts', async (c) => {
     const toSave = existing
       ? { ...existing, ...draft, updatedAt: now }
       : { ...draft, createdAt: draft.createdAt || now, updatedAt: now };
+    const mergedBody = String(toSave.bodyHtml || '').trim();
+    if (mergedBody) {
+      toSave.fullHtml = vividbooksEmailTemplate({
+        headline: String(toSave.headline || toSave.subject || ''),
+        body: mergedBody,
+        ctaText: String(toSave.ctaText || 'Vyzkoušejte zdarma'),
+        ctaUrl: String(toSave.ctaUrl || 'https://www.vividbooks.com/vyzkousejte'),
+        preheader: String(toSave.previewText || ''),
+      });
+    }
     await kv.set(`${EMAIL_DRAFT_PREFIX}${draft.id}`, toSave);
     console.log(`[Email Drafts] Saved draft ${draft.id.slice(0, 8)} — subject: "${toSave.subject || '(empty)'}"`);
     return c.json({ success: true, draft: toSave });
@@ -10029,7 +11039,7 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'update_novinka', description: 'Upraví existující novinku.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT' } }, required: ['id', 'fields'] } },
   { name: 'delete_novinka', description: 'Smaže novinku trvale. Nejdřív zavolej get_novinky pro zjištění ID.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
   // ── Email kampaně ─────────────────────────────────────────────────
-  { name: 'create_email_campaign_draft', description: 'Uloží email kampaň jako draft do Email Builderu. NAPIŠ CELÝ OBSAH — subject, headline, bodyHtml (HTML s produkty, výhodami, obrázky). audience: newsletter | no-newsletter.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků, výrazný' }, previewText: { type: 'STRING', description: 'Preheader text, max 90 znaků', nullable: true }, headline: { type: 'STRING', description: 'Hlavní nadpis emailu' }, bodyHtml: { type: 'STRING', description: 'Celé tělo jako HTML. <h2>, <p>, <strong>, <ul><li>, <img src="URL" style="max-width:100%;border-radius:8px">. Češtině, přátelský tón.' }, ctaText: { type: 'STRING', description: 'Text CTA tlačítka' }, ctaUrl: { type: 'STRING', description: 'URL CTA' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
+  { name: 'create_email_campaign_draft', description: 'POVINNÉ při žádosti o mail do Mailchimpu / šablonu / canvas (Email Builder). Uloží draft v pravém panelu. Stejné jako generate-email (1)–(6): typ (2) převažuje slovně, plus (3)(4)(6); minimálně dvě různé barvy sekcí / karet (viz vrstvená pozadí v tool schema u bodyHtml). 1–2 CTA pill, Arial.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků' }, previewText: { type: 'STRING', description: 'Preheader', nullable: true }, headline: { type: 'STRING', description: 'Hlavní nadpis v šabloně' }, bodyHtml: { type: 'STRING', description: 'Jako generate-email: vb-email-root + mobile CSS, typy (1)–(6), vrstvená pozadí — full-width tabulky pro tmavý/oranžový/žlutý pás, šedý pás #E8EDF4 s bílou vnitřní kartou, produkt vb-prod-*, webinář vb-web-split-* a 6a jako width 100 % tabulka; CTA #F06632; 4+ produktů data-product-collage + URL z get_products. Bez <!DOCTYPE>.' }, ctaText: { type: 'STRING' }, ctaUrl: { type: 'STRING' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true }, fullHtml: { type: 'STRING', description: 'Volitelné: celý dokument jako hotové HTML pro Mailchimp. Jinak se vygeneruje z bodyHtml + Vividbooks obálka.', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
   { name: 'get_email_drafts', description: 'Načte seznam existujících email draftů z Email Builderu.', parameters: { type: 'OBJECT', properties: {} } },
   // ── Delegace na specialisty ────────────────────────────────────────
   { name: 'delegate_to_seo_specialist', description: 'Předá zadání SEO specialistovi. Použij pro SEO brief, meta title/description, obsahovou strukturu, search intent, interní prolinkování a obsahovou strategii.', parameters: { type: 'OBJECT', properties: { task: { type: 'STRING', description: 'SEO nebo obsahový úkol.' }, context: { type: 'STRING', description: 'Doplňující kontext: URL, cílová stránka, publikum, produkt, téma.', nullable: true } }, required: ['task'] } },
@@ -10060,7 +11070,40 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'open_collage_builder', description: 'Otevře Koláž Builder v UI s předvybranými obrázky a stylem. Použij místo generate_blog_image pokud chce uživatel KLASICKÝ styl koláže (scattered = rozházené, grid = mřížka, fan = vějíř) — ne AI generaci. Agent doporučí obrázky a styl, uživatel dokončí koláž v dialogu sám.', parameters: { type: 'OBJECT', properties: { image_urls: { type: 'ARRAY', items: { type: 'STRING' }, description: 'URL obrázků produktů k předvýběru (získej přes get_product_images). Min. 2.' }, style: { type: 'STRING', description: 'scattered (rozházené s rotací) | grid (mřížka) | fan (vějíř). Výchozí: grid' }, note: { type: 'STRING', description: 'Volitelná poznámka uživateli (proč jsi vybral tyto obrázky / tento styl)', nullable: true } }, required: ['image_urls'] } },
 ];
 
-async function runAdminTool(name: string, args: any): Promise<{ result: any; action?: any }> {
+/** Poslední zprávy z Web operátora → chatHistory pro EmailBuilder (Marketing / E-maily). */
+function adminAgentMessagesToEmailChatHistory(msgs: any[]): any[] {
+  if (!Array.isArray(msgs) || msgs.length === 0) return [];
+  const base = Date.now();
+  const out: any[] = [];
+  let seq = 0;
+  for (const m of msgs) {
+    const role =
+      m.role === 'user' ? 'user' : m.role === 'assistant' || m.role === 'model' ? 'ai' : null;
+    if (!role) continue;
+    let content = String(m.content ?? '').trim();
+    if (Array.isArray(m.images) && m.images.length) {
+      content = content
+        ? `${content}\n\n[Přiloženo ${m.images.length} obr.]`
+        : `[Přiloženo ${m.images.length} obr.]`;
+    }
+    if (!content) continue;
+    if (content.length > 18_000) content = `${content.slice(0, 18_000)}\n\n…(zkráceno)`;
+    out.push({
+      id: `wo-${base}-${seq}`,
+      role,
+      content,
+      timestamp: new Date(base + seq * 1000).toISOString(),
+    });
+    seq += 1;
+  }
+  return out;
+}
+
+async function runAdminTool(
+  name: string,
+  args: any,
+  ctx?: { agentMessages?: any[] },
+): Promise<{ result: any; action?: any }> {
   const ts = new Date().toISOString();
   if (name === 'get_products') {
     let products = await getAllProducts();
@@ -10720,18 +11763,57 @@ async function runAdminTool(name: string, args: any): Promise<{ result: any; act
   if (name === 'create_email_campaign_draft') {
     const now = new Date().toISOString();
     const id = `draft-agent-${Date.now()}`;
+    const bodyHtml = String(args.bodyHtml || '');
+    const headline = String(args.headline || args.subject || '');
+    const fullHtmlFromAgent = typeof args.fullHtml === 'string' && args.fullHtml.trim().length > 10 ? args.fullHtml.trim() : '';
+    const fullHtml = fullHtmlFromAgent || vividbooksEmailTemplate({
+      headline,
+      body: bodyHtml,
+      ctaText: String(args.ctaText || 'Prohlédnout produkty'),
+      ctaUrl: String(args.ctaUrl || 'https://www.vividbooks.com'),
+      preheader: String(args.previewText || ''),
+    });
+    const rawMsgs = Array.isArray(ctx?.agentMessages) && ctx.agentMessages.length > 0
+      ? ctx.agentMessages
+      : (globalThis as any).__adminAgentRecentMessages || [];
+    let chatHistory = adminAgentMessagesToEmailChatHistory(rawMsgs.slice(-20));
+    if (chatHistory.length === 0 && rawMsgs.length > 0) {
+      chatHistory = [
+        {
+          id: `wo-fallback-${Date.now()}`,
+          role: 'ai',
+          content:
+            'Zprávy z Web operátora šly uložit jen částečně. Pokračujte v tomto chatu nebo otevřete Web operátora kvůli plné historii.',
+          timestamp: now,
+        },
+      ];
+    }
+    if (chatHistory.length > 0) {
+      chatHistory = [
+        ...chatHistory,
+        {
+          id: `wo-email-seed-${Date.now()}`,
+          role: 'ai',
+          content:
+            '📧 **Draft z Web operátora** — konverzace výše je z chatu s Web operátorem; v Email builderu můžeš pokračovat úpravami nebo psát tomuto AI asistentovi.',
+          timestamp: new Date().toISOString(),
+        },
+      ];
+    }
     const draft = {
       id,
       subject: args.subject || '',
       previewText: args.previewText || '',
       headline: args.headline || '',
-      bodyHtml: args.bodyHtml || '',
+      bodyHtml,
+      fullHtml,
       ctaText: args.ctaText || 'Prohlédnout produkty',
       ctaUrl: args.ctaUrl || 'https://www.vividbooks.com',
       audience: (args.audience === 'no-newsletter' ? 'no-newsletter' : 'newsletter') as 'newsletter' | 'no-newsletter',
       status: 'draft' as const,
       createdAt: now,
       updatedAt: now,
+      ...(chatHistory.length > 0 ? { chatHistory } : {}),
     };
     await kv.set(`vb:email-draft:${id}`, draft);
     console.log(`[AdminAgent] create_email_campaign_draft → id=${id} subject="${draft.subject}"`);
@@ -11219,11 +12301,29 @@ function shouldForceAdminToolCall(message: any): boolean {
   return /(uloz vyse uveden|uloz z predchozi odpovedi|pouzij update_subject_page|pouzij create_subject_page|pouzij delete_subject_page|pouzij get_subject_pages|uprav stranku predmetu|uloz to do predmetu|aktualizuj pole|proved aktualizaci pole|najdriv zjisti id predmetu)/.test(text);
 }
 
+/** Uživatel chce email/Mailchimp verzi uloženou přes nástroj → canvas vpravo (ne jen text v chatu). */
+function userWantsEmailCanvasDraft(message: any): boolean {
+  const text = normalizeRoutingText(String(message?.content || ''));
+  if (!text.trim()) return false;
+
+  return /(mail\s*chimp|mailchimp|email\s*builder|\bmailing(u|ovy|ova)?\b.{0,60}(sablona|template|html|verz|kampan|newsletter)|sablona.{0,40}(mail|email|mailchimp|mailing)|newsletter.{0,40}(sablona|html|mailchimp|canvas)|(jako|jakoze|dalsi|dals|predchozi).{0,35}verz(i|e)?.{0,25}(mail|email|mailchimp|mailing)|verz(i|e)?.{0,20}(mail|email|mailchimp)|otevri.{0,25}(v\s*)?(canvas|panel|email)|uloz.{0,30}(email|mail|mailing).{0,30}(draft|builder|canvas|mailchimp)|kampan(e|i)?.{0,25}(draft|mailchimp)|vygeneruj.{0,40}\bemail|predmet\s*e-?mailu|telo\s*e-?mailu)/.test(text);
+}
+
 function looksLikeFakeToolExecution(reply: string): boolean {
   const text = normalizeRoutingText(reply);
   if (!text.trim()) return false;
 
   return /(probiha volani nastroju|nyni se pustim do vlozeni|nejdrive zjistim id|pote provedu aktualizaci|pockejte prosim na potvrzeni|get_[a-z_]+\s*\(|update_[a-z_]+\s*\(|create_[a-z_]+\s*\(|delete_[a-z_]+\s*\()/.test(text);
+}
+
+/** Model popsal Mailchimp/email strukturu v čistém textu místo create_email_campaign_draft. */
+function looksLikeEmailTemplateNarrationWithoutTool(reply: string): boolean {
+  const text = normalizeRoutingText(reply);
+  if (!text.trim() || text.length < 40) return false;
+
+  const mailCue = /(mailchimp|mailingovs|sablona.{0,40}mail|email builder|\[block|block:\s*image|predmet(\s*e-?mailu)?\s*:|preview\s*text|preheader)/.test(text);
+  const structureCue = /(hero|sekci|sekce|cta|body\s*html|inline styly|mailov(a|y) sablona|vizualne)/.test(text);
+  return mailCue && structureCue;
 }
 
 function inferAdminSpecialistRoute(message: any): { specialist: 'marketing' | 'seo' | 'image' | null; reason?: string } {
@@ -11328,10 +12428,14 @@ Máš k dispozici 2 specialisty:
 - "Tab", "záložka", "prodejní argument", "Pracovní sešity", "Učební text", "Procvičování" = subject taby, tedy get_subject_tabs + create/update/delete_subject_tab.
 - Pokud uživatel řekne "ulož to do předmětu" nebo "uprav stránku předmětu", neukládej to do tabů, ale do subject page.
 
-### Email drafty
-- Pokud uživatel chce spravovat existující email drafty nebo jejich seznam, používej get_email_drafts.
-- Pokud chce nový marketingový email od nuly, napiš ho sám.
-- Pokud ho chce rovnou uložit do Email Builderu, použij create_email_campaign_draft.
+### Email drafty (Mailchimp-ready HTML) — Canvas
+- **KRITICKÉ:** Jakmile uživatel chce **mail verzi**, **Mailchimp šablonu**, **otevřít v canvasu / editoru**, nebo **uložit do Email Builderu**, **NESMÍŠ** odpovědět jen dlouhým textem nebo osnovou bloků v chatu. **VŽDY nejdřív zavolej** \`create_email_campaign_draft\` s plným \`bodyHtml\` + subject, previewText, headline, ctaText, ctaUrl. Krátké potvrzení („Uloženo, otevři panel vpravo“) piš **až po** úspěšném nástroji. Teprve nástroj otevře uživateli email **canvas** (pravý panel).
+- **Typy bloků jako \`/admin/mailchimp/generate-email\`:** skládej **(1)–(6)** — **objem textu** převažuje v **(2)**, plus **(3)(4)(6)** dle dat. Střídej **pozadí sekcí**: full-width tabulky (\`#001161\`, oranžová, žlutý tip, šedý \`#E8EDF4\` s bílou vnitřní kartou), ne jen jedna barva. Oranžové CTA \`#F06632\`, \`vb-email-root\` + \`@media\`, 4+ produktů → koláž + URL z \`get_products\`. „Předělej na text“ = souvislé odstavce; „přidej webinář“ = **(6a–c)** z \`get_webinars\`. Font **Arial**.
+- **Marketing agent vs. ty:** Generátor v Marketing agentovi (\`generate-email\`) má navíc sestavený kontext (RAG, katalog, historie kampaní) — je **nejvhodnější pro nejbohatší první verzi**, pokud ji uživatel vygeneruje **ručně tam** a pak ji v Email Builderu upraví. Jako Web operátor ten kontext nemáš automaticky: pro plnou paritu **nejdřív načti produkty** (\`get_products\`) a text z briefu uživatele převeď na výše popsané HTML; nebo uživateli stručně řekni, že nejbohatší start je v Marketing agentovi, pokud nechce čekat na ruční kompozici.
+- Pokud už v konverzaci existuje obsah emailu z dřívějška, **převeď ho** do plného \`bodyHtml\` podle tohoto layoutu a ulož nástrojem — neopisuj znovu jako Markdown osnovu.
+- Seznam draftů: \`get_email_drafts\`.
+- Volitelné \`fullHtml\` jen výjimečně; jinak systém obalí \`bodyHtml\` do Vividbooks šablony.
+- V canvasu pak může uživatel kliknout **Mailchimp** pro draft kampaně v MC.
 
 ## ═══ RAG ZNALOSTNÍ BÁZE ═══
 
@@ -11420,11 +12524,12 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
 
     const nowPrague = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Prague' }));
     const todayCZ = nowPrague.toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    (globalThis as any).__adminAgentRecentMessages = Array.isArray(messages) ? messages.slice(-10) : [];
+    (globalThis as any).__adminAgentRecentMessages = Array.isArray(messages) ? messages.slice(-15) : [];
 
     const lastUserIdx = [...messages].map((m: any, i: number) => m.role === 'user' ? i : -1).filter(i => i >= 0).pop() ?? -1;
     const lastUserMessage = lastUserIdx >= 0 ? messages[lastUserIdx] : null;
-    const forceAdminToolCall = shouldForceAdminToolCall(lastUserMessage);
+    const forceSubjectPageToolCall = shouldForceAdminToolCall(lastUserMessage);
+    const forceEmailDraftToolCall = userWantsEmailCanvasDraft(lastUserMessage);
     const routed = inferAdminSpecialistRoute(lastUserMessage);
     if (routed.specialist) {
       const enrichedContent = `${String(lastUserMessage?.content || '')}${Array.isArray(lastUserMessage?.images) && lastUserMessage.images.length > 0 ? `\n\nUživatel přiložil ${lastUserMessage.images.length} obrázek/obrázky.` : ''}`;
@@ -11484,7 +12589,10 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         console.log(`[AdminAgent] RAG supplement skipped: ${ragErr.message}`);
       }
     }
-    const systemText = `${ADMIN_AGENT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}`;
+    const emailCanvasSystemNudge = forceEmailDraftToolCall
+      ? `\n\n## OKAMŽITÝ POŽADAVEK (email → canvas vpravo)\nUživatel chce mail v Email Builderu. **První krok na tomto kole:** volej výhradně \`create_email_campaign_draft\` s plným \`bodyHtml\` z kontextu konverzace a metadaty. Nepíš osnovu ani předmět jen do textu odpovědi — nástroj spustí náhled v panelu.`
+      : '';
+    const systemText = `${ADMIN_AGENT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}${emailCanvasSystemNudge}`;
 
     // Build Gemini contents — support multimodal (images) only for the LAST user message
     // (older messages were already processed in previous turns, re-fetching all would be too slow)
@@ -11537,6 +12645,10 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
     // Expose deadline so runAdminTool can skip RAG when time is tight
     (globalThis as any).__agentDeadline = AGENT_DEADLINE;
 
+    /** Dokud nevznikne create_email_campaign_draft, drž vynucené volání tohoto nástroje (i po opravném kole). */
+    let restrictToEmailDraftTool = forceEmailDraftToolCall;
+    if (forceEmailDraftToolCall) console.log('[AdminAgent] Email/Mailchimp canvas intent — tool lock activates until create_email_campaign_draft');
+
     for (let turn = 0; turn < 16; turn++) {
       const remaining = AGENT_DEADLINE - Date.now();
       if (remaining < 20_000) {
@@ -11549,7 +12661,15 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         system_instruction: { parts: [{ text: systemText }] },
         contents,
         tools,
-        tool_config: { function_calling_config: { mode: turn === 0 && forceAdminToolCall ? 'ANY' : 'AUTO' } },
+        tool_config: (() => {
+          const emailDraftDone = allActions.some((a: any) => a.type === 'create_email_campaign_draft');
+          if (restrictToEmailDraftTool && !emailDraftDone) {
+            return { function_calling_config: { mode: 'ANY' as const, allowed_function_names: ['create_email_campaign_draft'] } };
+          }
+          if (turn !== 0) return { function_calling_config: { mode: 'AUTO' as const } };
+          if (forceSubjectPageToolCall) return { function_calling_config: { mode: 'ANY' as const } };
+          return { function_calling_config: { mode: 'AUTO' as const } };
+        })(),
         generationConfig: { temperature: 0.3, maxOutputTokens: 8192 },
       };
       console.log(`[AdminAgent] Turn ${turn+1} — contents=${contents.length} parts, remaining=${remaining}ms`);
@@ -11591,6 +12711,18 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
           });
           continue;
         }
+        const hasEmailDraft = allActions.some((a: any) => a.type === 'create_email_campaign_draft');
+        if (!hasEmailDraft && looksLikeEmailTemplateNarrationWithoutTool(reply) && turn < 15) {
+          restrictToEmailDraftTool = true;
+          console.log('[AdminAgent] Mailchimp-style text without create_email_campaign_draft — forcing tool round');
+          contents.push({
+            role: 'user',
+            parts: [{
+              text: 'Tuto odpověď uživateli nestačí — aby se otevřel emailový canvas vpravo, MUSÍŠ zavolat nástroj create_email_campaign_draft s plným bodyHtml (inline HTML jako u generate-email: převažuje souvislý text, ne „leták\") + subject, previewText, headline, ctaText, ctaUrl. Nepiš už jen osnovu bloků nebo předmět do čistého textu.',
+            }],
+          });
+          continue;
+        }
         console.log(`[AdminAgent] Done turn=${turn+1} actions=${allActions.length} replyLen=${reply.length}`);
         (globalThis as any).__adminAgentRecentMessages = undefined;
         (globalThis as any).__agentDeadline = undefined;
@@ -11602,7 +12734,7 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         const { name, args } = part.functionCall;
         console.log(`[AdminAgent] Calling tool: ${name} args=${JSON.stringify(args || {}).slice(0, 200)}`);
         try {
-          const { result, action } = await runAdminTool(name, args || {});
+          const { result, action } = await runAdminTool(name, args || {}, { agentMessages: messages });
           if (action) allActions.push(action);
           console.log(`[AdminAgent] Tool ${name} result: ${JSON.stringify(result).slice(0, 200)}`);
           // Gemini REST API function response format

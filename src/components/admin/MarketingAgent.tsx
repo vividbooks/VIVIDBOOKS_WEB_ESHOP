@@ -3,6 +3,12 @@ import { Send, Sparkles, Copy, Check, Trash2, RefreshCw, Plus, MessageSquare, Cl
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
+import {
+  EMAIL_BUILDER_AI_TIER_KEY,
+  type EmailAiTier,
+  fetchGenerateEmailWithRetry,
+  getStoredEmailAiTier,
+} from '../../utils/emailAiTier';
 import { AnimatePresence } from 'motion/react';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -175,6 +181,12 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
     return () => window.removeEventListener('resize', check);
   }, []);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EMAIL_BUILDER_AI_TIER_KEY, mcEmailModelTier);
+    } catch { /* ignore */ }
+  }, [mcEmailModelTier]);
+
   // Mailchimp state
   const [mcPanel, setMcPanel] = useState(false);
   const [mcGenerating, setMcGenerating] = useState(false);
@@ -183,6 +195,8 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
   const [mcEmail, setMcEmail] = useState<any>(null);
   const [mcPrompt, setMcPrompt] = useState('');
   const [mcPreview, setMcPreview] = useState(false);
+  /** Model pro endpoint `generate-email` (sdíleno s Email Builderem přes localStorage). */
+  const [mcEmailModelTier, setMcEmailModelTier] = useState<EmailAiTier>(() => getStoredEmailAiTier());
 
   // Canvas state
   const [canvasContent, setCanvasContent] = useState<string | null>(null);
@@ -218,16 +232,17 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
         .slice(-6)
         .map(m => `${m.role === 'user' ? 'User' : 'Agent'}: ${m.content.slice(0, 300)}`)
         .join('\n');
-      const res = await fetch(`${SERVER}/admin/mailchimp/generate-email`, {
-        method: 'POST',
-        headers: AUTH_H,
-        body: JSON.stringify({
+      const { response: genRes, data } = await fetchGenerateEmailWithRetry(
+        `${SERVER}/admin/mailchimp/generate-email`,
+        AUTH_H,
+        {
           prompt: mcPrompt.trim() || 'Vytvoř newsletter email na základě naší konverzace',
           conversationContext: conversationCtx,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || data.error) throw new Error(data.error || 'Generování selhalo');
+          model: mcEmailModelTier,
+        },
+        () => toast.info('Gemini přetížená — zkouším znovu…', { duration: 4500 }),
+      );
+      if (!genRes.ok || data.error) throw new Error(String(data.error || 'Generování selhalo'));
       setMcEmail(data.email);
       toast.success('Email vygenerován!');
     } catch (e: any) {
@@ -841,24 +856,56 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
             </div>
 
             {/* Prompt input */}
-            <div className="flex gap-2">
-              <input
-                value={mcPrompt}
-                onChange={e => setMcPrompt(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') generateEmail(); }}
-                placeholder="Napiš téma emailu... (např. 'Newsletter o novém webináři Fyzika')"
-                className="flex-1 rounded-[12px] border border-gray-200 bg-white px-3 py-2 text-[13px] text-[#001161] placeholder-[#001161]/30 focus:outline-none focus:border-[#7C3AED]/40 focus:ring-2 focus:ring-[#7C3AED]/10"
-                style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
-              />
-              <button
-                onClick={generateEmail}
-                disabled={mcGenerating || (!mcPrompt.trim() && !messages.some(m => m.role === 'user'))}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-[12px] bg-[#7C3AED] text-white text-[12px] font-bold hover:bg-[#6D28D9] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
-              >
-                {mcGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-                {mcGenerating ? 'Generuji...' : 'Generovat email'}
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  className="text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide"
+                >
+                  Model emailu
+                </span>
+                <div className="flex p-0.5 rounded-lg bg-gray-100 border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => setMcEmailModelTier('lite')}
+                    className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                      mcEmailModelTier === 'lite' ? 'bg-white text-[#001161] shadow-sm' : 'text-[#001161]/35'
+                    }`}
+                    style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  >
+                    Lite
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMcEmailModelTier('pro')}
+                    className={`px-2.5 py-0.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                      mcEmailModelTier === 'pro' ? 'bg-white text-[#001161] shadow-sm' : 'text-[#001161]/35'
+                    }`}
+                    style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  >
+                    Pro
+                  </button>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={mcPrompt}
+                  onChange={e => setMcPrompt(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') generateEmail(); }}
+                  placeholder="Napiš téma emailu... (např. 'Newsletter o novém webináři Fyzika')"
+                  className="flex-1 rounded-[12px] border border-gray-200 bg-white px-3 py-2 text-[13px] text-[#001161] placeholder-[#001161]/30 focus:outline-none focus:border-[#7C3AED]/40 focus:ring-2 focus:ring-[#7C3AED]/10"
+                  style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                />
+                <button
+                  onClick={generateEmail}
+                  disabled={mcGenerating || (!mcPrompt.trim() && !messages.some(m => m.role === 'user'))}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-[12px] bg-[#7C3AED] text-white text-[12px] font-bold hover:bg-[#6D28D9] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+                  style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                >
+                  {mcGenerating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                  {mcGenerating ? 'Generuji...' : 'Generovat email'}
+                </button>
+              </div>
             </div>
 
             {/* Generated email preview */}

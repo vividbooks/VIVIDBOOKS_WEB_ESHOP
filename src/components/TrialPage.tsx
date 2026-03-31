@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink, Play } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
@@ -28,6 +28,13 @@ const TEAM_PHOTOS: Record<string, string> = {
 };
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
+
+/** Skryté ve výchozím stavu. Zapnutí: VITE_SHOW_PIPEDRIVE_ICO_DEBUG=true nebo ?pipedriveDebug=1 */
+function showPipedriveIcoDebugControls(): boolean {
+  if (import.meta.env.VITE_SHOW_PIPEDRIVE_ICO_DEBUG === 'true') return true;
+  if (typeof window !== 'undefined' && /(?:^|[?&])pipedriveDebug=1(?:&|$)/.test(window.location.search)) return true;
+  return false;
+}
 
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
 const FREE_TRIAL_AJAX_URL = 'https://api.vividbooks.com/web/free-trial-ajax';
@@ -224,7 +231,16 @@ interface VvbIdentity {
 }
 interface SchoolResult { ico: string; name: string; address?: string; }
 interface PdOwner { name: string; firstName: string; email: string; phone: string; photoUrl: string; }
-type PipedriveStatus = 'new' | 'known' | 'in_progress' | 'past_request' | 'active_subscription' | 'unknown' | 'invalid' | null;
+type PipedriveStatus =
+  | 'new'
+  | 'known'
+  | 'in_progress'
+  | 'past_request'
+  | 'active_trial'
+  | 'active_subscription'
+  | 'unknown'
+  | 'invalid'
+  | null;
 
 function useDebouncedCallback<T extends (...args: any[]) => void>(fn: T, delay: number) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -257,6 +273,7 @@ const PD_CFG: Record<string, { color: string; bg: string; border: string; icon: 
   known:               { color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: <Building2 className="w-4 h-4" /> },
   in_progress:         { color: '#2563eb', bg: '#eff6ff', border: '#bfdbfe', icon: <Clock className="w-4 h-4" /> },
   past_request:        { color: '#d97706', bg: '#fffbeb', border: '#fde68a', icon: <Clock className="w-4 h-4" /> },
+  active_trial:        { color: '#7C3AED', bg: '#f5f3ff', border: '#ddd6fe', icon: <BookOpen className="w-4 h-4" /> },
   active_subscription: { color: '#7C3AED', bg: '#f5f3ff', border: '#ddd6fe', icon: <Sparkles className="w-4 h-4" /> },
   unknown:             { color: '#94a3b8', bg: '#f8fafc', border: '#e2e8f0', icon: <AlertCircle className="w-4 h-4" /> },
 };
@@ -265,6 +282,8 @@ const PD_CFG: Record<string, { color: string; bg: string; border: string; icon: 
 function SchoolSearch({
   schoolName, ico, onSelect, onIcoChange,
   pdStatus, pdMessage, pdLoading, colleagues, owner, products,
+  hidePipedriveStatusCard,
+  pipedriveDebug,
 }: {
   schoolName: string; ico: string;
   onSelect: (name: string, ico: string) => void;
@@ -273,6 +292,12 @@ function SchoolSearch({
   colleagues: string[];
   owner: PdOwner | null;
   products: string[];
+  hidePipedriveStatusCard?: boolean;
+  pipedriveDebug?: {
+    raw: unknown | null;
+    open: boolean;
+    onToggle: () => void;
+  };
 }) {
   const [query, setQuery] = useState(schoolName);
   const [results, setResults] = useState<SchoolResult[]>([]);
@@ -317,7 +342,15 @@ function SchoolSearch({
   };
 
   const cfg = pdStatus ? PD_CFG[pdStatus] : null;
+  /** Zkušební přístup, placený přístup nebo rozjetý krok v CRM — stejná velká karta */
+  const showExpandedLicenseCard =
+    pdStatus === 'active_subscription' ||
+    pdStatus === 'active_trial' ||
+    pdStatus === 'in_progress';
+  const expandCfg = PD_CFG.active_subscription;
   const colleagueText = colleagues.length > 0 ? colleagues.join(', ') : null;
+  const isTrialTestingCard = pdStatus === 'active_trial';
+  const isOpenDealProgress = pdStatus === 'in_progress';
 
   return (
     <div className="space-y-3">
@@ -369,32 +402,112 @@ function SchoolSearch({
               : cfg ? <span style={{ color: cfg.color }}>{cfg.icon}</span> : null}
           </div>
         </div>
-        <a
-          href="https://ares.gov.cz/ekonomicke-subjekty"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={FF}
-          className="inline-block text-[13px] text-[#7C3AED] underline underline-offset-2 hover:opacity-80"
-        >
-          {'Nezn\u00e1te va\u0161e I\u010c? Zde ho m\u016f\u017eete naj\u00edt'}
-        </a>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <a
+            href="https://ares.gov.cz/ekonomicke-subjekty"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={FF}
+            className="inline-block text-[13px] text-[#7C3AED] underline underline-offset-2 hover:opacity-80"
+          >
+            {'Nezn\u00e1te va\u0161e I\u010c? Zde ho m\u016f\u017eete naj\u00edt'}
+          </a>
+          {pipedriveDebug && ico.length >= 6 && (
+            <button
+              type="button"
+              onClick={pipedriveDebug.onToggle}
+              style={FF}
+              className="text-[12px] font-semibold text-[#001161]/50 hover:text-[#7C3AED] underline-offset-2 hover:underline"
+            >
+              {pipedriveDebug.open ? 'Skr\u00fdt JSON (Pipedrive)' : 'Dev \u2014 JSON (Pipedrive)'}
+            </button>
+          )}
+        </div>
+        {pipedriveDebug?.open && (
+          <div
+            className="rounded-xl border border-[#001161]/12 bg-[#0f172a]/95 p-3 max-h-[min(420px,50vh)] overflow-auto"
+            style={FF}
+          >
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+              school-pipedrive-check (+ pipedriveApi = surov\u00e9 dealy Pipedrive, jen v Dev)
+            </p>
+            {pipedriveDebug.raw == null ? (
+              <p className="text-[12px] text-slate-400">Na\u010d\u00edt\u00e1m\u2026</p>
+            ) : (
+              <pre className="text-[11px] leading-relaxed text-emerald-100/95 whitespace-pre-wrap break-all m-0 font-mono">
+                {typeof pipedriveDebug.raw === 'string' ? pipedriveDebug.raw : JSON.stringify(pipedriveDebug.raw, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Pipedrive status card */}
       <AnimatePresence>
-        {cfg && pdMessage && !pdLoading && (
+        {!hidePipedriveStatusCard && cfg && pdMessage && !pdLoading && (
           <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-            {pdStatus === 'active_subscription' ? (
-              /* ══ ACTIVE SUBSCRIPTION — rozšířená karta ══ */
-              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${cfg.border}` }}>
+            {showExpandedLicenseCard ? (
+              /* ══ Předplatné nebo aktivní zkušební přístup (in_progress) — stejná karta ══ */
+              <div className="rounded-2xl overflow-hidden" style={{ border: `1px solid ${expandCfg.border}` }}>
 
                 {/* Header */}
-                <div className="flex items-center gap-2.5 px-4 pt-4 pb-3" style={{ backgroundColor: cfg.bg }}>
-                  <span style={{ color: cfg.color }}>{cfg.icon}</span>
-                  <p style={{ ...FF, color: cfg.color }} className="text-[14px] font-bold">{pdMessage}</p>
+                <div className="px-4 pt-4 pb-3 space-y-2.5" style={{ backgroundColor: expandCfg.bg }}>
+                  <div className="flex items-center gap-2.5">
+                    <span style={{ color: expandCfg.color }}>{expandCfg.icon}</span>
+                    <p style={{ ...FF, color: expandCfg.color }} className="text-[14px] font-bold">
+                      {isTrialTestingCard
+                        ? '\u0160kola pr\u00e1v\u011b testuje digit\u00e1ln\u00ed u\u010debnice (zku\u0161ebn\u00ed p\u0159\u00edstup)'
+                        : pdMessage}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-[#001161]/8 bg-white/55 px-3.5 py-3 space-y-2.5">
+                    <p style={FF} className="text-[13px] font-bold text-[#001161] leading-snug">
+                      {isTrialTestingCard
+                        ? '\u0160kola pr\u00e1v\u011b testuje Vividbooks. Nov\u00e9 p\u0159\u00edstupov\u00e9 k\u00f3dy z tohoto formul\u00e1\u0159e nez\u00edsk\u00e1te \u2014 pot\u0159ebujete-li p\u0159\u00edstup, obra\u0165te se na kolegy v seznamu n\u00ed\u017ee nebo vyu\u017eijte kontakt v kart\u011b.'
+                        : isOpenDealProgress
+                          ? 'Nov\u00e9 p\u0159\u00edstupov\u00e9 k\u00f3dy z tohoto formul\u00e1\u0159e te\u010f nez\u00edsk\u00e1te. Pokud pot\u0159ebujete pomoct s p\u0159\u00edstupem, obra\u0165te se na kolegy n\u00ed\u017ee nebo napi\u0161te kontaktu z t\u00fdmu Vividbooks v kart\u011b.'
+                          : 'Nov\u00e9 p\u0159\u00edstupov\u00e9 k\u00f3dy z tohoto formul\u00e1\u0159e nez\u00edsk\u00e1te \u2014 \u0161kola u\u017e m\u00e1 aktivn\u00ed p\u0159\u00edstup k u\u010debn\u00edcm.'}
+                    </p>
+                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45">
+                      {'Co m\u016f\u017eete ud\u011blat'}
+                    </p>
+                    <ul className="space-y-2 list-none m-0 p-0">
+                      <li className="flex gap-2.5" style={FF}>
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: expandCfg.color }} aria-hidden />
+                        <span className="text-[13px] text-[#001161]/75 leading-snug">
+                          <span className="font-bold text-[#001161]">{'Kolegov\u00e9'}</span>
+                          {' \u2014 zeptejte se n\u011bkoho ze seznamu '}
+                          <span className="whitespace-nowrap text-[#001161]/90 font-semibold">{'n\u00ed\u017ee'}</span>
+                          {'.'}
+                        </span>
+                      </li>
+                      <li className="flex gap-2.5" style={FF}>
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: expandCfg.color }} aria-hidden />
+                        <span className="text-[13px] text-[#001161]/75 leading-snug">
+                          <span className="font-bold text-[#001161]">{'Kontakt z t\u00fdmu Vividbooks'}</span>
+                          {' \u2014 '}
+                          {owner ? (
+                            <>
+                              {'napi\u0161te pros\u00edm osob\u011b v kart\u011b '}
+                              <span className="whitespace-nowrap text-[#001161]/90 font-semibold">{'n\u00ed\u017ee'}</span>
+                              {'.'}
+                            </>
+                          ) : (
+                            <>
+                              {'napi\u0161te n\u00e1m na '}
+                              <a href="mailto:hello@vividbooks.com" className="font-bold text-[#001161] underline underline-offset-2 decoration-[#001161]/25 hover:opacity-80" style={{ color: expandCfg.color }}>
+                                hello@vividbooks.com
+                              </a>
+                              {'.'}
+                            </>
+                          )}
+                        </span>
+                      </li>
+                    </ul>
+                  </div>
                 </div>
 
-                <div className="px-4 pb-4 space-y-3" style={{ backgroundColor: cfg.bg }}>
+                <div className="px-4 pb-4 space-y-3" style={{ backgroundColor: expandCfg.bg }}>
 
                   {/* ── Deal owner card ── */}
                   {owner && (() => {
@@ -421,29 +534,29 @@ function SchoolSearch({
                             <p style={FF} className="text-[11px] text-[#001161]/45 mb-0.5">
                               {'O va\u0161i \u0161kolu se star\u00e1:'}
                             </p>
-                            <p style={{ ...FF, color: cfg.color }} className="text-[15px] font-bold leading-tight truncate">
+                            <p style={{ ...FF, color: expandCfg.color }} className="text-[15px] font-bold leading-tight truncate">
                               {owner.name}
                             </p>
                           </div>
                           <a
                             href={owner.email ? `mailto:${owner.email}?subject=${mailSubject}&body=${mailBody}` : '#'}
                             className="shrink-0 inline-flex items-center gap-1.5 text-white font-bold text-[12px] px-3 py-2 rounded-lg no-underline transition-all hover:opacity-90 active:scale-95"
-                            style={{ ...FF, backgroundColor: cfg.color }}
+                            style={{ ...FF, backgroundColor: expandCfg.color }}
                           >
                             <MessageCircle className="w-3.5 h-3.5" />
-                            {'Po\u017e\u00e1dat o k\u00f3dy'}
+                            {'Napsat o p\u0159\u00edstup'}
                           </a>
                         </div>
                         {/* Bottom row: email + phone */}
                         {(() => {
                           const teamPhone = TEAM_PHONES[owner.email?.toLowerCase()];
                           return (
-                            <div className="flex items-stretch border-t" style={{ borderColor: `${cfg.color}20` }}>
+                            <div className="flex items-stretch border-t" style={{ borderColor: `${expandCfg.color}20` }}>
                               {owner.email && (
                                 <a
                                   href={`mailto:${owner.email}`}
                                   className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 no-underline transition-colors hover:bg-[#7C3AED]/5 min-w-0"
-                                  style={{ ...FF, color: cfg.color, fontSize: '12px' }}
+                                  style={{ ...FF, color: expandCfg.color, fontSize: '12px' }}
                                 >
                                   <Mail className="w-3.5 h-3.5 shrink-0" />
                                   <span className="truncate">{owner.email}</span>
@@ -451,11 +564,11 @@ function SchoolSearch({
                               )}
                               {teamPhone && (
                                 <>
-                                  {owner.email && <div className="w-px self-stretch" style={{ backgroundColor: `${cfg.color}20` }} />}
+                                  {owner.email && <div className="w-px self-stretch" style={{ backgroundColor: `${expandCfg.color}20` }} />}
                                   <Link
                                     to="/kontakt"
                                     className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 no-underline transition-colors hover:bg-[#7C3AED]/5 font-bold"
-                                    style={{ ...FF, color: cfg.color, fontSize: '13px' }}
+                                    style={{ ...FF, color: expandCfg.color, fontSize: '13px' }}
                                   >
                                     <Phone className="w-3.5 h-3.5 shrink-0" />
                                     {teamPhone}
@@ -475,24 +588,36 @@ function SchoolSearch({
                   {colleagueText && (
                     <div className="bg-white/70 rounded-xl px-3.5 py-3">
                       <div className="flex items-center gap-2 mb-1.5">
-                        <Users className="w-3.5 h-3.5 shrink-0" style={{ color: cfg.color }} />
+                        <Users className="w-3.5 h-3.5 shrink-0" style={{ color: expandCfg.color }} />
                         <p style={FF} className="text-[11px] text-[#001161]/50 font-bold uppercase tracking-wide">
                           {'Kolegov\u00e9 s p\u0159\u00edstupem ve va\u0161\u00ed \u0161kole'}
                         </p>
                       </div>
-                      <p style={{ ...FF, color: cfg.color }} className="text-[13px] font-bold">{colleagueText}</p>
+                      <p style={{ ...FF, color: expandCfg.color }} className="text-[13px] font-bold">{colleagueText}</p>
                     </div>
                   )}
 
                   {/* ── No owner fallback ── */}
                   {!owner && (
                     <div className="flex items-start gap-2.5">
-                      <p style={FF} className="text-[13px] text-[#001161]/70">
-                        {'Napi\u0161te n\u00e1m na\u00a0'}
-                        <a href="mailto:hello@vividbooks.com" className="font-bold no-underline hover:opacity-75" style={{ color: cfg.color }}>
-                          hello@vividbooks.com
-                        </a>
-                        {' a po\u0161leme v\u00e1m p\u0159\u00edstupov\u00fd k\u00f3d.'}
+                      <p style={FF} className="text-[13px] text-[#001161]/70 leading-relaxed">
+                        {colleagueText ? (
+                          <>
+                            {'Kontaktn\u00ed osobu pro tuto \u0161kolu tu te\u010f nezobrazujeme\u00a0\u2014 zkuste pros\u00edm kolegy v\u00fd\u0161e, p\u0159\u00edpadn\u011b n\u00e1m napi\u0161te na\u00a0'}
+                            <a href="mailto:hello@vividbooks.com" className="font-bold no-underline hover:opacity-75" style={{ color: expandCfg.color }}>
+                              hello@vividbooks.com
+                            </a>
+                            .
+                          </>
+                        ) : (
+                          <>
+                            {'Napi\u0161te n\u00e1m pros\u00edm na\u00a0'}
+                            <a href="mailto:hello@vividbooks.com" className="font-bold no-underline hover:opacity-75" style={{ color: expandCfg.color }}>
+                              hello@vividbooks.com
+                            </a>
+                            {' a domluv\u00edme p\u0159\u00edstup pro va\u0161i \u0161kolu.'}
+                          </>
+                        )}
                       </p>
                     </div>
                   )}
@@ -503,7 +628,23 @@ function SchoolSearch({
               <div className="flex items-start gap-2.5 px-4 py-3 rounded-xl text-[13px]"
                 style={{ backgroundColor: cfg.bg, border: `1px solid ${cfg.border}`, color: cfg.color }}>
                 <span className="mt-0.5 shrink-0">{cfg.icon}</span>
-                <span style={FF} className="leading-snug">{pdMessage}</span>
+                {(pdStatus === 'new' || pdStatus === 'known') && pdMessage.includes('\n\n') ? (
+                  <div style={FF} className="leading-snug min-w-0 flex-1">
+                    {(() => {
+                      const parts = pdMessage.split('\n\n');
+                      const head = parts[0] ?? '';
+                      const tail = parts.slice(1).join('\n\n');
+                      return (
+                        <>
+                          <p style={FF} className="font-bold m-0 mb-1.5 text-[14px]">{head}</p>
+                          <p style={FF} className="m-0 opacity-90 leading-relaxed">{tail}</p>
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <span style={FF} className="leading-snug">{pdMessage}</span>
+                )}
               </div>
             )}
           </motion.div>
@@ -533,6 +674,12 @@ export function TrialPage() {
   const [colleagues, setColleagues] = useState<string[]>([]);
   const [owner, setOwner] = useState<PdOwner | null>(null);
   const [products, setProducts] = useState<string[]>([]);
+  /** CRM: od posledního trial dealu podle IČO neuplynulo 6×30 dní */
+  const [trialCooldownActive, setTrialCooldownActive] = useState(false);
+  const [trialNextEligibleAt, setTrialNextEligibleAt] = useState<string | null>(null);
+  /** Dev: poslední odpověď school-pipedrive-check (jen když je zapnutý debug UI) */
+  const [pdCheckRaw, setPdCheckRaw] = useState<unknown | null>(null);
+  const [pdCheckDebugOpen, setPdCheckDebugOpen] = useState(false);
 
   // Form
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '' });
@@ -555,6 +702,33 @@ export function TrialPage() {
 
   const isTeacher = form.position === 'U\u010ditel/ka';
   const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
+
+  /** Rozšířená fialová karta + bez formuláře — předplatné, zkušební přístup nebo rozjetý krok v CRM. */
+  const schoolHasActiveLicense =
+    (pdStatus === 'active_subscription' ||
+      pdStatus === 'active_trial' ||
+      pdStatus === 'in_progress') &&
+    !!pdMessage &&
+    !pdLoading;
+
+  const schoolHasRecentTrialBlock =
+    trialCooldownActive &&
+    !pdLoading &&
+    !schoolHasActiveLicense &&
+    pdStatus !== 'unknown' &&
+    pdStatus !== 'invalid' &&
+    pdStatus !== null &&
+    ico.length >= 6;
+
+  const trialNextEligibleDisplay = useMemo(() => {
+    if (!trialNextEligibleAt) return null;
+    const d = new Date(trialNextEligibleAt);
+    if (Number.isNaN(d.getTime())) return null;
+    return {
+      dateStr: d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }),
+      daysLeft: Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
+    };
+  }, [trialNextEligibleAt]);
 
   useEffect(() => {
     const saved = localStorage.getItem('vvb_identity');
@@ -586,20 +760,78 @@ export function TrialPage() {
   const pdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (pdTimer.current) clearTimeout(pdTimer.current);
-    if (!ico || ico.length < 6) { setPdStatus(null); setPdMessage(''); setColleagues([]); setOwner(null); setProducts([]); return; }
+    if (!ico || ico.length < 6) {
+      setPdStatus(null);
+      setPdMessage('');
+      setColleagues([]);
+      setOwner(null);
+      setProducts([]);
+      setTrialCooldownActive(false);
+      setTrialNextEligibleAt(null);
+      setPdCheckRaw(null);
+      setPdCheckDebugOpen(false);
+      return;
+    }
     pdTimer.current = setTimeout(async () => {
       setPdLoading(true);
+      const debugHud = showPipedriveIcoDebugControls();
+      if (debugHud) setPdCheckRaw(null);
       try {
-        const res = await fetch(`${SERVER}/school-pipedrive-check?ico=${encodeURIComponent(ico)}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
-        const data = await res.json();
-        setPdStatus(data.status || 'unknown');
-        setPdMessage(data.message || '');
-        setColleagues(data.colleagues || []);
-        setOwner(data.owner || null);
-        setProducts(data.products || []);
-        if (data.orgName && !schoolName) setSchoolName(data.orgName);
-      } catch { setPdStatus('unknown'); setPdMessage(''); setColleagues([]); setOwner(null); setProducts([]); }
-      finally { setPdLoading(false); }
+        const url = `${SERVER}/school-pipedrive-check?ico=${encodeURIComponent(ico)}${debugHud ? '&includePipedriveRaw=1' : ''}`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+        const text = await res.text();
+        let data: Record<string, unknown> = {};
+        try {
+          data = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+        } catch {
+          if (debugHud) {
+            setPdCheckRaw({
+              _request: { ico, url, httpStatus: res.status, ok: res.ok, jsonParseFailed: true },
+              _rawBody: text.slice(0, 4000),
+            });
+          }
+          setPdStatus('unknown');
+          setPdMessage('');
+          setColleagues([]);
+          setOwner(null);
+          setProducts([]);
+          setTrialCooldownActive(false);
+          setTrialNextEligibleAt(null);
+          return;
+        }
+        if (debugHud) {
+          setPdCheckRaw({
+            _request: { ico, url, httpStatus: res.status, ok: res.ok },
+            ...data,
+          });
+        }
+        setPdStatus((data.status as PipedriveStatus) || 'unknown');
+        setPdMessage(typeof data.message === 'string' ? data.message : '');
+        setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
+        setOwner((data.owner as PdOwner | null) ?? null);
+        setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
+        setTrialCooldownActive(!!data.trialCooldownActive);
+        setTrialNextEligibleAt(typeof data.trialNextEligibleAt === 'string' ? data.trialNextEligibleAt : null);
+        if (typeof data.orgName === 'string' && data.orgName) {
+          setSchoolName((prev) => (prev.trim() ? prev : data.orgName as string));
+        }
+      } catch (e) {
+        if (debugHud) {
+          setPdCheckRaw({
+            _request: { ico, endpoint: 'school-pipedrive-check' },
+            _networkError: String(e instanceof Error ? e.message : e),
+          });
+        }
+        setPdStatus('unknown');
+        setPdMessage('');
+        setColleagues([]);
+        setOwner(null);
+        setProducts([]);
+        setTrialCooldownActive(false);
+        setTrialNextEligibleAt(null);
+      } finally {
+        setPdLoading(false);
+      }
     }, 600);
   }, [ico]);
 
@@ -635,6 +867,7 @@ export function TrialPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (schoolHasActiveLicense || schoolHasRecentTrialBlock) return;
     const flash = (id: string) => setTimeout(() => flashInvalidField(document.getElementById(id)), 0);
 
     if (!gdprConsent) {
@@ -738,7 +971,7 @@ export function TrialPage() {
                 <p style={FF} className="text-[#001161]/60 text-[13px]">{identity.email}</p>
               </div>
             </div>
-            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'Na\u0161 obchodn\u00ed z\u00e1stupce v\u00e1m br\u007ey odp\u00ed\u0161e s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}</p>
+            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'T\u00fdm Vividbooks v\u00e1m brzy po\u0161le p\u0159\u00edstupov\u00e9 \u00fadaje.'}</p>
             <a href="/" className="inline-flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/90 text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline" style={FF}>
               {'Prohl\u00e9dnout u\u010debnice'}
             </a>
@@ -871,19 +1104,126 @@ export function TrialPage() {
                 onIcoChange={setIco}
                 pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
                 colleagues={colleagues} owner={owner} products={products}
+                hidePipedriveStatusCard={schoolHasRecentTrialBlock}
+                pipedriveDebug={showPipedriveIcoDebugControls()
+                  ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
+                  : undefined}
               />
             </div>
 
-            <div className="space-y-2 py-1">
-              {pdStatus === 'active_subscription' && (
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-[#001161]/8" />
-                  <p style={FF} className="text-[13px] font-bold text-[#7C3AED] text-center whitespace-nowrap">
-                    {'nebo si za\u017e\u00e1dejte o nov\u00fd zku\u0161ebn\u00ed p\u0159\u00edstup'}
+            {schoolHasRecentTrialBlock && (() => {
+              const extendMail = owner?.email || 'hello@vividbooks.com';
+              const extendSubject = encodeURIComponent('Prodlou\u017een\u00ed p\u0159\u00edstupu k u\u010debn\u00edcm Vividbooks');
+              const extendBody = encodeURIComponent(
+                `Dobr\u00fd den,\n\npros\u00edm o prodlou\u017een\u00ed / up\u0159esn\u011bn\u00ed p\u0159\u00edstupu k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks pro \u0161kolu:\n${schoolName || ''}\nI\u010cO: ${ico}\n\nD\u011bkuji.`,
+              );
+              const extendHref = `mailto:${extendMail}?subject=${extendSubject}&body=${extendBody}`;
+              return (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="rounded-2xl overflow-hidden border border-amber-200 bg-amber-50/90"
+              >
+                <div className="flex items-center gap-2.5 px-4 pt-4 pb-2">
+                  <Clock className="w-4 h-4 shrink-0 text-amber-600" aria-hidden />
+                  <p style={FF} className="text-[14px] font-bold text-amber-900">
+                    {'Tato \u0161kola dostala p\u0159\u00edstup ned\u00e1vno'}
                   </p>
-                  <div className="flex-1 h-px bg-[#001161]/8" />
                 </div>
-              )}
+                <div className="px-4 pb-4 space-y-3">
+                  <div className="rounded-xl border border-amber-200/80 bg-white/70 px-3.5 py-3 space-y-2.5">
+                    <p style={FF} className="text-[13px] text-[#001161]/80 leading-relaxed m-0">
+                      {'Zku\u0161ebn\u00ed p\u0159\u00edstupy vyd\u00e1v\u00e1me ka\u017ed\u00e9 \u0161kole jednou za \u0161est m\u011bs\u00edc\u016f.'}
+                    </p>
+                    <div className="rounded-lg bg-amber-50/90 border border-amber-100 px-3 py-2.5">
+                      <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-2">
+                        {'Napi\u0161te n\u00e1m'}
+                      </p>
+                      <div className="flex gap-3 items-start">
+                        <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 border border-amber-200/80 bg-amber-100/40 shadow-sm">
+                          <ImageWithFallback
+                            src={TEAM_PHOTOS['gabriela@vividbooks.com']}
+                            alt="Gabriela"
+                            className="w-full h-full object-cover object-top"
+                          />
+                        </div>
+                        <p style={FF} className="text-[13px] text-[#001161]/80 leading-snug m-0 flex-1 min-w-0 pt-0.5">
+                          {'Pot\u0159ebujete p\u0159\u00edstup d\u0159\u00edv? Napi\u0161te pros\u00edm na '}
+                          <a
+                            href={extendHref}
+                            className="inline-flex items-center gap-1.5 font-bold text-amber-900 underline underline-offset-2 hover:opacity-80"
+                            style={FF}
+                          >
+                            <Mail className="w-4 h-4 shrink-0" aria-hidden />
+                            {extendMail}
+                          </a>
+                          {owner?.name ? (
+                            <span className="text-[#001161]/70">
+                              {' ('}
+                              {owner.name}
+                              {').'}
+                            </span>
+                          ) : (
+                            '.'
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 pt-0.5 m-0">
+                      {'Dal\u0161\u00ed \u017e\u00e1dost p\u0159es tento formul\u00e1\u0159'}
+                    </p>
+                    <ul className="space-y-2 list-none m-0 p-0">
+                      <li className="flex gap-2.5" style={FF}>
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                        <span className="text-[13px] text-[#001161]/75 leading-snug">
+                          {trialNextEligibleDisplay ? (
+                            <>
+                              {'Nov\u00fd p\u0159\u00edstup z tohoto formul\u00e1\u0159e bude mo\u017en\u00fd od '}
+                              <span className="font-bold text-amber-900">{trialNextEligibleDisplay.dateStr}</span>
+                              {trialNextEligibleDisplay.daysLeft > 0 ? (
+                                <>
+                                  {' ('}
+                                  {'za '}
+                                  <span className="font-semibold text-[#001161]">{trialNextEligibleDisplay.daysLeft}</span>
+                                  {'\u00a0dn\u00ed).'}
+                                </>
+                              ) : (
+                                '.'
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {'Term\u00edn dal\u0161\u00edho p\u0159\u00edstupu z formul\u00e1\u0159e v\u00e1m r\u00e1di potvrd\u00edme na '}
+                              <a href="mailto:hello@vividbooks.com" className="font-bold text-amber-800 underline underline-offset-2 hover:opacity-80">
+                                hello@vividbooks.com
+                              </a>
+                              .
+                            </>
+                          )}
+                        </span>
+                      </li>
+                      {colleagues.length > 0 ? (
+                        <li className="flex gap-2.5" style={FF}>
+                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                          <span className="text-[13px] text-[#001161]/75 leading-snug">
+                            <span className="font-bold text-[#001161]">
+                              {'Kolegov\u00e9 s p\u0159\u00edstupem ve va\u0161\u00ed \u0161kole'}
+                            </span>
+                            {': '}
+                            <span className="font-semibold text-[#001161]">{colleagues.join(', ')}</span>
+                          </span>
+                        </li>
+                      ) : null}
+                    </ul>
+                  </div>
+                </div>
+              </motion.div>
+              );
+            })()}
+
+            {!schoolHasActiveLicense && !schoolHasRecentTrialBlock && (
+              <>
+            <div className="space-y-2 py-1">
               <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest text-center pl-1">
                 {'Kontaktn\u00ed \u00fadaje'}
               </p>
@@ -1037,6 +1377,8 @@ export function TrialPage() {
             </button>
 
             <p style={FF} className="text-[13px] text-[#001161]/40 pt-1">{'* Povinn\u00e9 pole'}</p>
+              </>
+            )}
           </form>
         )}
       </div>

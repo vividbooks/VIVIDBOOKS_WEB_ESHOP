@@ -20,6 +20,7 @@ import {
 } from '../../utils/studioKidsPrompt';
 import { StudioKidsStylePanel } from './StudioKidsStylePanel';
 import { GALLERY_FOLDER_COLORS as FOLDER_COLORS, defaultGalleryFolderColor as defaultFolderColor } from '../../utils/galleryFolderTheme';
+import { generateCollageDataUrl } from './collageUtils';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -676,71 +677,36 @@ export default function ImageGallery() {
     });
   }, []);
 
-  /* ── Canvas collage ── */
+  /* ── Canvas collage (sdílený renderer: collageUtils = stejné jako Email builder / CollageModal) ── */
   const generateCollage = useCallback(async () => {
     if (collageSelection.length < 2) { toast.error('Vyberte alespoň 2 obrázky'); return; }
     setCollageGenerating(true);
     try {
-      const loadImg = (url: string): Promise<HTMLImageElement> => new Promise((res, rej) => { const i = new window.Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => rej(new Error(url)); i.src = url; });
-      const loaded: HTMLImageElement[] = [];
-      for (const item of collageSelection) { try { loaded.push(await loadImg(item.url)); } catch {} }
-      if (!loaded.length) { toast.error('Žádný obrázek se nepodařilo načíst'); return; }
-      const canvas = canvasRef.current!; const ctx = canvas.getContext('2d')!; const r = collageRounded;
+      const dataUrl = await generateCollageDataUrl(
+        collageSelection.map(s => s.url),
+        {
+          cols: collageCols,
+          padding: collagePadding,
+          bg: collageBg,
+          rounded: collageRounded,
+          style: collageStyle,
+          bookScale: collageBookScale,
+        },
+      );
+      if (!dataUrl) { toast.error('Žádný obrázek se nepodařilo načíst'); return; }
 
-      const drawBookShadow = (c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, rad: number) => {
-        c.shadowColor='rgba(10,15,60,0.10)'; c.shadowBlur=55; c.shadowOffsetX=0; c.shadowOffsetY=30;
-        c.fillStyle='rgba(0,0,0,0.001)'; roundRect(c,x,y,w,h,rad); c.fill();
-        c.shadowColor='rgba(8,18,70,0.22)'; c.shadowBlur=20; c.shadowOffsetX=3; c.shadowOffsetY=14;
-        c.fillStyle='rgba(0,0,0,0.001)'; roundRect(c,x,y,w,h,rad); c.fill();
-        c.shadowColor='rgba(5,12,55,0.38)'; c.shadowBlur=5; c.shadowOffsetX=2; c.shadowOffsetY=5;
-        c.fillStyle='rgba(0,0,0,0.001)'; roundRect(c,x,y,w,h,rad); c.fill();
-        c.shadowColor='transparent'; c.shadowBlur=0; c.shadowOffsetX=0; c.shadowOffsetY=0;
-      };
-      const drawBookShadowC = (c: CanvasRenderingContext2D, w: number, h: number, rad: number) => drawBookShadow(c,-w/2,-h/2,w,h,rad);
+      const canvas = canvasRef.current!;
+      const ctx = canvas.getContext('2d')!;
+      const base = new window.Image();
+      await new Promise<void>((res, rej) => {
+        base.onload = () => res();
+        base.onerror = () => rej(new Error('decode'));
+        base.src = dataUrl;
+      });
+      canvas.width = base.width;
+      canvas.height = base.height;
+      ctx.drawImage(base, 0, 0);
 
-      const _bScale = collageBookScale / 100;
-      if (collageStyle === 'scattered') {
-        const bW = Math.round(108 * _bScale), bH = Math.round(150 * _bScale), cols = Math.min(collageCols, loaded.length), rows = Math.ceil(loaded.length / cols);
-        const spX = bW + collagePadding + 44, spY = bH + collagePadding + 55, mg = 72;
-        canvas.width = cols * spX + mg * 2; canvas.height = rows * spY + mg * 2;
-        ctx.fillStyle = collageBg; roundRect(ctx, 0, 0, canvas.width, canvas.height, 24); ctx.fill();
-        const rots = loaded.map((_, i) => { const b = [-8,5,-4,6,-5,4,-7,3,-3,7,-4.5,5.5]; return b[i%b.length] + (Math.random()-.5)*2.5; });
-        const offs = loaded.map(() => ({ dx: (Math.random()-.5)*18, dy: (Math.random()-.5)*14 }));
-        for (let i = 0; i < loaded.length; i++) {
-          const cx = mg+(i%cols)*spX+spX/2+offs[i].dx, cy = mg+Math.floor(i/cols)*spY+spY/2+offs[i].dy;
-          ctx.save(); ctx.translate(cx,cy); ctx.rotate(rots[i]*Math.PI/180);
-          drawBookShadowC(ctx,bW,bH,r);
-          ctx.save(); roundRect(ctx,-bW/2,-bH/2,bW,bH,r); ctx.clip();
-          const img=loaded[i]; const sc=Math.max(bW/img.width,bH/img.height); ctx.drawImage(img,-img.width*sc/2,-img.height*sc/2,img.width*sc,img.height*sc);
-          ctx.restore(); ctx.restore();
-        }
-      } else if (collageStyle === 'fan') {
-        const bW=Math.round(96*_bScale), bH=Math.round(132*_bScale), count=loaded.length, spread=Math.min(count*12,70);
-        canvas.width=Math.max(680,count*88); canvas.height=400;
-        ctx.fillStyle=collageBg; roundRect(ctx,0,0,canvas.width,canvas.height,24); ctx.fill();
-        const cx=canvas.width/2, cy=canvas.height+88;
-        for (let i=0;i<loaded.length;i++) {
-          const t=count===1?0:(i/(count-1))-.5, a=(t*spread*Math.PI)/180;
-          const x=cx+Math.sin(a)*330, y=cy-Math.cos(a)*330;
-          ctx.save(); ctx.translate(x,y); ctx.rotate(a);
-          drawBookShadowC(ctx,bW,bH,r);
-          ctx.save(); roundRect(ctx,-bW/2,-bH/2,bW,bH,r); ctx.clip();
-          const img=loaded[i]; const sc=Math.max(bW/img.width,bH/img.height); ctx.drawImage(img,-img.width*sc/2,-img.height*sc/2,img.width*sc,img.height*sc);
-          ctx.restore(); ctx.restore();
-        }
-      } else {
-        const cols=Math.min(collageCols,loaded.length), rows=Math.ceil(loaded.length/cols), cW=Math.round(144*_bScale), cH=Math.round(192*_bScale), pad=collagePadding;
-        canvas.width=cols*(cW+pad)+pad; canvas.height=rows*(cH+pad)+pad;
-        ctx.fillStyle=collageBg; roundRect(ctx,0,0,canvas.width,canvas.height,20); ctx.fill();
-        for (let i=0;i<loaded.length;i++) {
-          const x=pad+(i%cols)*(cW+pad), y=pad+Math.floor(i/cols)*(cH+pad);
-          drawBookShadow(ctx,x,y,cW,cH,r);
-          ctx.save(); roundRect(ctx,x,y,cW,cH,r); ctx.clip();
-          const img=loaded[i]; const sc=Math.max(cW/img.width,cH/img.height); ctx.drawImage(img,x+(cW-img.width*sc)/2,y+(cH-img.height*sc)/2,img.width*sc,img.height*sc);
-          ctx.restore();
-        }
-      }
-      // Phone SVG overlay — draw on top right, portrait phone
       if (collagePhoneOverlay) {
         const phW = Math.round(canvas.width * 0.22);
         const phH = Math.round(phW * (468 / 286));
@@ -750,7 +716,7 @@ export default function ImageGallery() {
       }
 
       setCollagePreview(canvas.toDataURL('image/png'));
-      toast.success(`Koláž vytvořena (${loaded.length} obrázků)`);
+      toast.success(`Koláž vytvořena (${collageSelection.length} obrázků)`);
     } catch (e: any) { toast.error(`Chyba: ${e.message}`); }
     finally { setCollageGenerating(false); }
   }, [collageSelection, collageCols, collagePadding, collageBg, collageRounded, collageStyle, collagePhoneOverlay, drawPhoneOverlay, collageBookScale]);

@@ -4,11 +4,12 @@ import {
   X, Sparkles, ChevronLeft, ChevronRight, RefreshCw,
   Edit2, Send, FileText, Mail, Radio, Newspaper, Layers, LayoutTemplate,
   AlertCircle, Save, Check, Eye, EyeOff, Copy,
-  RotateCcw, Pencil, Image, Wand2,
+  RotateCcw, Pencil, Image, Wand2, Loader2, Zap,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import CollageModal from './CollageModal';
+import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
 import {
   HERO_SLIDER_HEIGHT_PX,
   heroSlideShouldShowCta,
@@ -38,6 +39,29 @@ interface ContentCanvasProps {
   mobileFullscreen?: boolean;
   onClose: () => void;
   onSendToAgent: (prompt: string) => void;
+  /** Poslední zprávy z Web operátora — pro „Generovat“ z kontextu v Mailchimp canvasu */
+  mailchimpChatContext?: string;
+  /** Když false a téma je prázdné, horní Generovat je zakázán (stejně jako u spodního panelu). */
+  mailchimpHasUserMessage?: boolean;
+}
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy failed');
+  } finally {
+    document.body.removeChild(ta);
+  }
 }
 
 /* ── Detect & worthy ─────────────────────────────────────── */
@@ -961,11 +985,20 @@ function EditOverlay({ item, fields, onSave, onClose }: {
 /* ══════════════════════════════════════════════════════════
    STRUCTURED CANVAS — fetches live data, shows visual preview
    ══════════════════════════════════════════════════════════ */
-function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen = false }: {
+function StructuredCanvas({
+  dataSource,
+  onClose,
+  onSendToAgent,
+  mobileFullscreen = false,
+  mailchimpChatContext = '',
+  mailchimpHasUserMessage = true,
+}: {
   dataSource: CanvasDataSource;
   onClose: () => void;
   onSendToAgent: (prompt: string) => void;
   mobileFullscreen?: boolean;
+  mailchimpChatContext?: string;
+  mailchimpHasUserMessage?: boolean;
 }) {
   const meta = DS_META[dataSource.type];
   const MetaIcon = meta.icon;
@@ -980,6 +1013,13 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
   const [prompt, setPrompt] = useState('');
   const [selectedSnippet, setSelectedSnippet] = useState('');
   const promptRef = useRef<HTMLInputElement>(null);
+  const [mailchimpPushing, setMailchimpPushing] = useState(false);
+  /** E-mail canvas: stejný engine jako Marketing / spodní Mailchimp panel (`generate-email`), ne Web operátor */
+  const [emailGenLoading, setEmailGenLoading] = useState(false);
+  /** Horní „Mailchimp Email Builder“ (téma + Generovat + sync) — dříve pod chatem v AdminAgentPage */
+  const [mcTopic, setMcTopic] = useState('');
+  const [mcTopGenBusy, setMcTopGenBusy] = useState(false);
+  const [mcSyncBusy, setMcSyncBusy] = useState(false);
 
   /* ── Collage / image picker ── */
   const [collageOpen, setCollageOpen] = useState(false);
@@ -1057,17 +1097,185 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
     const method = dataSource.type === 'email' ? 'POST' : 'PUT';
     const res = await fetch(url, { method, headers: AUTH, body: JSON.stringify(data) });
     if (!res.ok) throw new Error(await res.text());
-    setItems(prev => prev.map(i => i.id === id ? data : i));
+    if (dataSource.type === 'email') {
+      const j = await res.json();
+      const saved = j.draft;
+      if (saved?.id) setItems(prev => prev.map(i => i.id === saved.id ? saved : i));
+      else setItems(prev => prev.map(i => i.id === id ? data : i));
+    } else {
+      setItems(prev => prev.map(i => i.id === id ? data : i));
+    }
     toast.success('Uloženo!');
   };
 
-  const sendPrompt = () => {
+  const syncMailchimpCampaigns = async () => {
+    setMcSyncBusy(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/mailchimp/sync?skipRag=1`, { method: 'POST', headers: AUTH });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Sync selhal');
+      if ((data.campaigns ?? 0) === 0) {
+        toast.error('Mailchimp sync proběhl, ale nebyly nalezeny žádné kampaně k indexaci.');
+        return;
+      }
+      const ingestRes = await fetch(`${SERVER}/rag/ingest-source`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ source: 'mailchimp' }),
+      });
+      const ingestData = await ingestRes.json();
+      if (!ingestRes.ok || ingestData.error) throw new Error(ingestData.error || 'RAG ingest selhal');
+      toast.success(`Synced ${data.campaigns} kampaní, ${ingestData.ingested} zaindexováno do RAG`);
+    } catch (e: any) {
+      toast.error(`Sync: ${e.message}`);
+    } finally {
+      setMcSyncBusy(false);
+    }
+  };
+
+  const generateEmailFromBuilderTopic = async () => {
+    if (dataSource.type !== 'email') return;
+    const topic = mcTopic.trim();
+    const conv = (mailchimpChatContext || '').trim();
+    if (!topic && !conv) {
+      toast.error('Zadej téma emailu nebo pokračuj v chatu — kontext se předá sem.');
+      return;
+    }
+    if (!topic && !mailchimpHasUserMessage) return;
+    setMcTopGenBusy(true);
+    try {
+      const prompt = topic || 'Vytvoř newsletter email na základě konverzace s Web operátorem';
+      const { response: genRes, data } = await fetchGenerateEmailWithRetry(
+        `${SERVER}/admin/mailchimp/generate-email`,
+        AUTH,
+        { prompt, conversationContext: conv, model: getStoredEmailAiTier() },
+        () => toast.info('Gemini přetížená — zkouším znovu…', { duration: 4500 }),
+      );
+      if (!genRes.ok || data.error) throw new Error(String(data.error || 'Generování selhalo'));
+      const email = data.email;
+      const id = dataSource.id || crypto.randomUUID();
+      const saveRes = await fetch(`${SERVER}/admin/email-drafts`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({
+          id,
+          subject: email.subject,
+          previewText: email.previewText || '',
+          headline: email.headline || email.subject,
+          bodyHtml: email.bodyHtml || '',
+          ctaText: email.ctaText || 'Vyzkoušejte zdarma',
+          ctaUrl: email.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+          audience: email.audience || 'newsletter',
+          fullHtml: email.fullHtml,
+        }),
+      });
+      const saveData = await saveRes.json();
+      if (!saveRes.ok || saveData.error) throw new Error(saveData.error || 'Uložení draftu selhalo');
+      await fetchData();
+      toast.success('Email vygenerován');
+    } catch (e: any) {
+      toast.error(e.message || 'Chyba generování');
+    } finally {
+      setMcTopGenBusy(false);
+    }
+  };
+
+  const pushEmailToMailchimp = async () => {
+    if (dataSource.type !== 'email') return;
+    const d = items[activeIdx];
+    if (!d?.subject) {
+      toast.error('Chybí předmět emailu');
+      return;
+    }
+    setMailchimpPushing(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/mailchimp/create-draft`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({
+          subject: d.subject,
+          previewText: d.previewText || '',
+          headline: d.headline || d.subject,
+          bodyContent: d.bodyHtml || '',
+          ctaText: d.ctaText || 'Vyzkoušejte zdarma',
+          ctaUrl: d.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+          audience: d.audience === 'no-newsletter' ? 'no-newsletter' : 'newsletter',
+          htmlBody: d.fullHtml || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Mailchimp draft selhal');
+      toast.success(
+        <div>
+          <strong>Draft vytvořen v Mailchimpu</strong>
+          <br />
+          <a href={data.mailchimpUrl} target="_blank" rel="noopener noreferrer" className="underline text-[#7C3AED]">
+            Otevřít v Mailchimpu →
+          </a>
+        </div>,
+        { duration: 12_000 },
+      );
+    } catch (e: any) {
+      toast.error(e.message || 'Mailchimp chyba');
+    } finally {
+      setMailchimpPushing(false);
+    }
+  };
+
+  const sendPrompt = async () => {
     if (!prompt.trim()) return;
+    const d = items[activeIdx];
+    const selectionMailchimp = selectedSnippet ? `\n\nOznačená část (upřednostni):\n"""${selectedSnippet}"""` : '';
+    const selectionAgent = selectedSnippet ? `\n\nZaměř se pouze na tuto označenou část a přepiš jen ji:\n"""${selectedSnippet}"""` : '';
+
+    if (dataSource.type === 'email' && d?.id) {
+      setEmailGenLoading(true);
+      try {
+        const { response: genRes, data } = await fetchGenerateEmailWithRetry(
+          `${SERVER}/admin/mailchimp/generate-email`,
+          AUTH,
+          {
+            prompt: `${prompt.trim()}${selectionMailchimp}\n\n---\nÚprava EXISTUJÍCÍHO email draftu. Vrať platný JSON: subject, previewText, headline, bodyHtml (kompletní vícesekční inline HTML), ctaText, ctaUrl, audience.\n\nAktuální stav:\nPředmět: ${d.subject || ''}\nPreview: ${d.previewText || ''}\nHeadline: ${d.headline || ''}\nCTA: ${d.ctaText || ''} → ${d.ctaUrl || ''}\n\nbodyHtml:\n${String(d.bodyHtml || '').slice(0, 12_000)}`,
+            conversationContext: 'Email Builder — iterace draftu v Content Canvas.',
+            model: getStoredEmailAiTier(),
+          },
+          () => toast.info('Gemini přetížená — zkouším znovu…', { duration: 4500 }),
+        );
+        if (!genRes.ok || data.error) throw new Error(String(data.error || 'Generování selhalo'));
+        const email = data.email;
+        const saveRes = await fetch(`${SERVER}/admin/email-drafts`, {
+          method: 'POST',
+          headers: AUTH,
+          body: JSON.stringify({
+            id: d.id,
+            subject: email.subject,
+            previewText: email.previewText ?? d.previewText,
+            headline: email.headline ?? email.subject,
+            bodyHtml: email.bodyHtml ?? '',
+            ctaText: email.ctaText ?? d.ctaText,
+            ctaUrl: email.ctaUrl ?? d.ctaUrl,
+            audience: email.audience ?? d.audience,
+            fullHtml: email.fullHtml,
+          }),
+        });
+        if (!saveRes.ok) throw new Error(await saveRes.text());
+        toast.success('Email přegenerován (Mailchimp šablona)');
+        setPrompt('');
+        setSelectedSnippet('');
+        await fetchData();
+      } catch (e: any) {
+        toast.error(e.message || 'Chyba generátoru');
+      } finally {
+        setEmailGenLoading(false);
+      }
+      promptRef.current?.blur();
+      return;
+    }
+
     const ctx = dataSource.type === 'subject-tabs'
       ? `${meta.label}: ${activeSubject} (${items.length} tabů)`
       : `${meta.label} (${items.length} položek)${items[activeIdx] ? ` · "${items[activeIdx].title || items[activeIdx].tabText || ''}"` : ''}`;
-    const selectionPart = selectedSnippet ? `\n\nZaměř se pouze na tuto označenou část a přepiš jen ji:\n"""${selectedSnippet}"""` : '';
-    onSendToAgent(`${prompt.trim()}\n\nKontext: ${ctx}${selectionPart}`);
+    onSendToAgent(`${prompt.trim()}\n\nKontext: ${ctx}${selectionAgent}`);
     setPrompt('');
     setSelectedSnippet('');
     promptRef.current?.blur();
@@ -1180,6 +1388,19 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
           </div>
         )}
         <div className="flex-1" />
+        {dataSource.type === 'email' && items.length > 0 && !loading && (
+          <button
+            type="button"
+            onClick={pushEmailToMailchimp}
+            disabled={mailchimpPushing}
+            title="Vytvořit kampaň v Mailchimpu (HTML šablona)"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#FFE01B]/90 hover:bg-[#FFE01B] text-[#241C15] text-[11px] font-bold cursor-pointer disabled:opacity-50 shrink-0"
+            style={FF}
+          >
+            {mailchimpPushing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+            Mailchimp
+          </button>
+        )}
         <button onClick={fetchData} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-[#001161]/30 hover:text-[#001161] cursor-pointer transition-all">
           <RefreshCw className="w-3.5 h-3.5" />
         </button>
@@ -1187,6 +1408,67 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {dataSource.type === 'email' && (
+        <div
+          className={`border-b border-[#7C3AED]/20 bg-gradient-to-b from-[#7C3AED]/[0.04] to-white shrink-0 space-y-2 ${mobileFullscreen ? 'px-2.5 py-2.5' : 'px-3 py-2.5'}`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-6 h-6 rounded-lg bg-[#FFE01B] flex items-center justify-center shrink-0">
+                <Mail className="w-3.5 h-3.5 text-[#241C15]" />
+              </div>
+              <h3 style={FF} className="text-[13px] font-bold text-[#001161] truncate">
+                Mailchimp Email Builder
+              </h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => void syncMailchimpCampaigns()}
+              disabled={mcSyncBusy}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-[#001161]/50 hover:text-[#001161] hover:bg-[#001161]/5 transition-all cursor-pointer disabled:opacity-40 shrink-0"
+              style={FF}
+            >
+              {mcSyncBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+              {mcSyncBusy ? 'Sync…' : 'Sync kampaní'}
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={mcTopic}
+              onChange={e => setMcTopic(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') void generateEmailFromBuilderTopic(); }}
+              placeholder="Téma emailu… (nebo nechte prázdné — použije kontext chatu)"
+              className="flex-1 min-w-0 rounded-[12px] border border-gray-200 bg-white px-3 py-2 text-[13px] text-[#001161] placeholder-[#001161]/30 focus:outline-none focus:border-[#7C3AED]/40 focus:ring-2 focus:ring-[#7C3AED]/10"
+              style={FF}
+            />
+            <button
+              type="button"
+              onClick={() => void generateEmailFromBuilderTopic()}
+              disabled={mcTopGenBusy || (!mcTopic.trim() && !mailchimpHasUserMessage)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-[12px] bg-[#7C3AED] text-white text-[12px] font-bold hover:bg-[#6D28D9] transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              style={FF}
+            >
+              {mcTopGenBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+              {mcTopGenBusy ? 'Generuji…' : 'Generovat'}
+            </button>
+          </div>
+          {!!activeItem?.fullHtml && String(activeItem.fullHtml).trim() && (
+            <div className="flex items-center gap-2 pt-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  void copyTextToClipboard(String(activeItem.fullHtml)).then(() => toast.success('HTML v clipboardu'));
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold text-[#001161]/45 hover:text-[#001161] hover:bg-[#001161]/5 cursor-pointer transition-all"
+                style={FF}
+              >
+                <Copy className="w-3 h-3" /> Kopírovat HTML
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Subject selector — only for subject-tabs */}
       {dataSource.type === 'subject-tabs' && (
@@ -1252,17 +1534,41 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
               <ProductPreview item={activeItem} onEditRequest={item => setEditingItem(item)} />
             )}
             {dataSource.type === 'email' && activeItem && (
-              <EmailPreview
-                blocks={parseBlocks([
-                  activeItem.subject ? `Předmět: ${activeItem.subject}` : '',
-                  activeItem.previewText ? `Preview text: ${activeItem.previewText}` : '',
-                  activeItem.headline ? `# ${activeItem.headline}` : '',
-                  activeItem.bodyHtml ? String(activeItem.bodyHtml).replace(/<[^>]+>/g, '\n').replace(/\n{2,}/g, '\n') : '',
-                  activeItem.ctaText ? `CTA text: ${activeItem.ctaText}` : '',
-                  activeItem.ctaUrl ? `CTA URL: ${activeItem.ctaUrl}` : '',
-                ].filter(Boolean).join('\n\n'))}
-                onEditRequest={() => setEditingItem(activeItem)}
-              />
+              <div className="flex flex-col h-full min-h-0 bg-[#f4f4f5]">
+                <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-2.5 space-y-1" style={FF}>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-[#001161]/75">
+                    <span><span className="text-[#001161]/40 font-bold uppercase tracking-wide text-[9px]">Od</span>{' '}Vividbooks &lt;hello@vividbooks.com&gt;</span>
+                  </div>
+                  {activeItem.subject && (
+                    <div className="text-[12px] font-bold text-[#001161] leading-snug">{activeItem.subject}</div>
+                  )}
+                  {activeItem.previewText && (
+                    <div className="text-[11px] text-[#001161]/50 italic">{activeItem.previewText}</div>
+                  )}
+                </div>
+                <div className="flex-1 min-h-[280px] p-2 overflow-hidden">
+                  <iframe
+                    title="Náhled HTML šablony (Mailchimp pipeline)"
+                    className="w-full h-full min-h-[260px] rounded-[12px] border border-gray-200 bg-white shadow-sm"
+                    sandbox="allow-same-origin"
+                    srcDoc={
+                      activeItem.fullHtml && String(activeItem.fullHtml).trim()
+                        ? activeItem.fullHtml
+                        : `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;font-family:'Fenomen Sans',Arial,sans-serif">${activeItem.bodyHtml || '<p style="padding:16px;color:#666">Prázdné tělo — uložte nebo vygenerujte znovu.</p>'}</body></html>`
+                    }
+                  />
+                </div>
+                <div className="shrink-0 border-t border-gray-200 bg-white px-3 py-2 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setEditingItem(activeItem)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#001161]/12 text-[11px] font-bold text-[#001161]/50 hover:text-[#7C3AED] hover:border-[#7C3AED]/30 transition-colors cursor-pointer"
+                    style={FF}
+                  >
+                    <Edit2 className="w-3 h-3" /> Upravit pole
+                  </button>
+                </div>
+              </div>
             )}
           </>
         )}
@@ -1324,17 +1630,22 @@ function StructuredCanvas({ dataSource, onClose, onSendToAgent, mobileFullscreen
             ref={promptRef}
             value={prompt}
             onChange={e => setPrompt(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') sendPrompt(); }}
-            placeholder={`Prompt k ${meta.label.toLowerCase()}...`}
+            onKeyDown={e => { if (e.key === 'Enter') void sendPrompt(); }}
+            placeholder={
+              dataSource.type === 'email'
+                ? 'Úprava e-mailu — popiš změny (stejný engine jako Generovat nahoře)…'
+                : `Prompt k ${meta.label.toLowerCase()}...`
+            }
             className="flex-1 bg-white rounded-[10px] border border-[#001161]/10 px-3 py-1.5 text-[12px] text-[#001161] placeholder-[#001161]/25 focus:outline-none focus:border-[#7C3AED]/40 transition-colors"
             style={FF}
           />
           <button
-            onClick={sendPrompt}
-            disabled={!prompt.trim()}
+            type="button"
+            onClick={() => void sendPrompt()}
+            disabled={!prompt.trim() || (dataSource.type === 'email' && emailGenLoading)}
             className="w-8 h-8 flex items-center justify-center rounded-[10px] bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-30 transition-all cursor-pointer shrink-0"
           >
-            <Send className="w-3.5 h-3.5" />
+            {dataSource.type === 'email' && emailGenLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
           </button>
         </div>
       </div>
@@ -1585,9 +1896,28 @@ function TextCanvas({ content, title, type: typeProp, onClose, onSendToAgent, mo
 }
 
 /* ── Default export ────────────────────────────────────── */
-export default function ContentCanvas({ content, title, type, dataSource, mobileFullscreen = false, onClose, onSendToAgent }: ContentCanvasProps) {
+export default function ContentCanvas({
+  content,
+  title,
+  type,
+  dataSource,
+  mobileFullscreen = false,
+  onClose,
+  onSendToAgent,
+  mailchimpChatContext,
+  mailchimpHasUserMessage,
+}: ContentCanvasProps) {
   if (dataSource) {
-    return <StructuredCanvas dataSource={dataSource} mobileFullscreen={mobileFullscreen} onClose={onClose} onSendToAgent={onSendToAgent} />;
+    return (
+      <StructuredCanvas
+        dataSource={dataSource}
+        mobileFullscreen={mobileFullscreen}
+        onClose={onClose}
+        onSendToAgent={onSendToAgent}
+        mailchimpChatContext={mailchimpChatContext}
+        mailchimpHasUserMessage={mailchimpHasUserMessage}
+      />
+    );
   }
   return <TextCanvas content={content} title={title} type={type} mobileFullscreen={mobileFullscreen} onClose={onClose} onSendToAgent={onSendToAgent} />;
 }

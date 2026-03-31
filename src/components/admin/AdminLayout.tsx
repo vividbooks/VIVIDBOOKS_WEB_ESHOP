@@ -263,6 +263,91 @@ export default function AdminLayout() {
     );
   }
 
+  const asideNode = !hideSidebar ? (
+    <aside
+      className={`
+          fixed md:static top-0 left-0 bottom-0 z-[70]
+          w-[220px] bg-white border-r border-gray-200 shrink-0 flex flex-col min-h-0
+          ${showAgentChatHistory ? 'overflow-hidden' : 'overflow-y-auto'}
+          transition-transform duration-300 ease-in-out
+          ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          md:h-full
+        `}
+      style={{ paddingTop: 'env(safe-area-inset-top)' }}
+    >
+      <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
+        <span className="text-[13px] font-bold text-[#001161]">{activeMode.title}</span>
+        <button type="button" onClick={() => setMobileSidebarOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
+          <X className="w-4 h-4 text-gray-500" />
+        </button>
+      </div>
+
+      <div
+        className={`flex-1 min-h-0 ${showAgentChatHistory ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}
+      >
+        <div className={showAgentChatHistory ? 'shrink-0' : ''}>
+          {sidebarItems.map((section) => (
+            <div key={section.section} className="py-3">
+              <div className="px-4 pb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                {section.section}
+              </div>
+              {section.items.map((item: any) => {
+                const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
+                const isAlertsItem = item.path === '/admin/alerty';
+                const dynamicBadge = isAlertsItem && alertSummary && alertSummary.critical_open > 0
+                  ? String(alertSummary.critical_open)
+                  : item.badge;
+                const dynamicBadgeColor = isAlertsItem && alertSummary && alertSummary.critical_open > 0
+                  ? 'amber'
+                  : item.badgeColor;
+                return (
+                  <button
+                    key={item.path}
+                    type="button"
+                    onClick={() => { navigate(item.path); setMobileSidebarOpen(false); }}
+                    className={`w-full text-left px-4 py-2 text-[13px] flex items-center gap-2.5 transition-all ${
+                      isActive
+                        ? 'bg-[#001161] text-white font-bold'
+                        : 'text-gray-600 hover:bg-gray-50 hover:text-[#001161]'
+                    }`}
+                  >
+                    <item.icon className="w-4 h-4 shrink-0" />
+                    <span>{item.label}</span>
+                    {dynamicBadge && (
+                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        dynamicBadgeColor === 'purple'
+                          ? 'bg-purple-100 text-purple-700'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {dynamicBadge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {showAgentChatHistory && (
+          <AdminSidebarChatHistory onAfterSelect={() => setMobileSidebarOpen(false)} />
+        )}
+      </div>
+    </aside>
+  ) : null;
+
+  const mainColumnClass = isEmailBuilder
+    ? /* Sidebar + panel ≥ viewport → scroll na shellu; na širokém monitoru main doroste (flex-1). */
+      'min-h-0 h-full min-w-[1100px] flex-1 shrink-0 flex flex-col overflow-y-hidden'
+    : isAgentWorkspace
+      ? 'min-h-0 min-w-0 flex-1 h-full overflow-y-hidden overflow-x-hidden flex flex-col'
+      : 'min-h-0 min-w-0 flex-1 overflow-y-auto';
+
+  const mainColumn = (
+    <main className={mainColumnClass}>
+      <Outlet />
+    </main>
+  );
+
   return (
     <div className="h-dvh max-h-dvh min-h-0 flex flex-col overflow-hidden bg-[#f7f8fc] font-['Fenomen_Sans',sans-serif]">
       <Toaster position="top-right" richColors />
@@ -386,7 +471,7 @@ export default function AdminLayout() {
 
       <div
         data-admin-horizontal-shell={isAgentWorkspace ? 'true' : 'false'}
-        className={`flex-1 flex relative min-h-0 ${(isEmailBuilder || isAgentWorkspace) ? 'overflow-x-auto overflow-y-hidden' : 'overflow-hidden'}`}
+        className={`flex-1 flex relative min-h-0 min-w-0 ${(isEmailBuilder || isAgentWorkspace) ? 'overflow-x-auto overflow-y-hidden' : 'overflow-hidden'}`}
       >
 
         {/* MOBILE SIDEBAR BACKDROP */}
@@ -397,89 +482,21 @@ export default function AdminLayout() {
           />
         )}
 
-        {/* LEFT SIDEBAR — desktop always visible, mobile slide-in */}
-        {!hideSidebar && (
-        <aside className={`
-          fixed md:static top-0 left-0 bottom-0 z-[70]
-          w-[220px] bg-white border-r border-gray-200 shrink-0 flex flex-col min-h-0
-          ${showAgentChatHistory ? 'overflow-hidden' : 'overflow-y-auto'}
-          transition-transform duration-300 ease-in-out
-          ${mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-          md:h-full
-        `}
-        style={{ paddingTop: 'env(safe-area-inset-top)' }}
-        >
-          {/* Mobile sidebar header */}
-          <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-gray-100 shrink-0">
-            <span className="text-[13px] font-bold text-[#001161]">{activeMode.title}</span>
-            <button onClick={() => setMobileSidebarOpen(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
-              <X className="w-4 h-4 text-gray-500" />
-            </button>
-          </div>
-
+        {/* E-maily: jeden široký řádek (w-max min-w-full) → shell scrolluje celý panel včetně navigace */}
+        {isEmailBuilder ? (
           <div
-            className={`flex-1 min-h-0 ${showAgentChatHistory ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}
+            className="flex min-h-0 h-full shrink-0"
+            style={{ minWidth: hideSidebar ? 'max(100%, 1100px)' : 'max(100%, calc(220px + 1100px))' }}
           >
-            <div className={showAgentChatHistory ? 'shrink-0' : ''}>
-              {sidebarItems.map((section) => (
-                <div key={section.section} className="py-3">
-                  <div className="px-4 pb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                    {section.section}
-                  </div>
-                  {section.items.map((item: any) => {
-                    const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
-                    const isAlertsItem = item.path === '/admin/alerty';
-                    const dynamicBadge = isAlertsItem && alertSummary && alertSummary.critical_open > 0
-                      ? String(alertSummary.critical_open)
-                      : item.badge;
-                    const dynamicBadgeColor = isAlertsItem && alertSummary && alertSummary.critical_open > 0
-                      ? 'amber'
-                      : item.badgeColor;
-                    return (
-                      <button
-                        key={item.path}
-                        onClick={() => { navigate(item.path); setMobileSidebarOpen(false); }}
-                        className={`w-full text-left px-4 py-2 text-[13px] flex items-center gap-2.5 transition-all ${
-                          isActive
-                            ? 'bg-[#001161] text-white font-bold'
-                            : 'text-gray-600 hover:bg-gray-50 hover:text-[#001161]'
-                        }`}
-                      >
-                        <item.icon className="w-4 h-4 shrink-0" />
-                        <span>{item.label}</span>
-                        {dynamicBadge && (
-                          <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                            dynamicBadgeColor === 'purple'
-                              ? 'bg-purple-100 text-purple-700'
-                              : 'bg-amber-100 text-amber-700'
-                          }`}>
-                            {dynamicBadge}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-            {showAgentChatHistory && (
-              <AdminSidebarChatHistory onAfterSelect={() => setMobileSidebarOpen(false)} />
-            )}
+            {asideNode}
+            {mainColumn}
           </div>
-
-        </aside>
+        ) : (
+          <>
+            {asideNode}
+            {mainColumn}
+          </>
         )}
-
-        {/* MAIN CONTENT — běžné stránky musí scrollovat (min-h-0 kvůli flex + overflow-hidden na rodiči) */}
-        <main
-          className={
-            isEmailBuilder || isAgentWorkspace
-              ? 'shrink-0 min-h-0 min-w-0 h-full overflow-y-hidden flex flex-col'
-              : 'min-h-0 min-w-0 flex-1 overflow-y-auto'
-          }
-        >
-          <Outlet />
-        </main>
       </div>
     </div>
   );

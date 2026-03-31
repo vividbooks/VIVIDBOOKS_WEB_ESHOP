@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   Send, Loader2, Bot, User, Sparkles, Plus, Trash2,
   ChevronRight, ExternalLink, CheckCircle, Package,
-  Image, FileText, Radio, Bell, Newspaper, Zap, Copy,
+  Image, FileText, Radio, Bell, Newspaper, Copy,
   RotateCcw, MessageSquare, ChevronDown, ChevronUp, Mail,
   Brain, DatabaseZap, Trash, RefreshCw, ChevronLeft,
   Activity, AlertCircle, Wand2, Layers, Eye, ThumbsUp, ThumbsDown, Clock, Tag, User as UserIcon,
@@ -14,12 +14,50 @@ import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridgeContext';
 import CollageModal from './CollageModal';
+import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
-import { RagLiveVoicePanel } from './RagLiveVoicePanel';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
+/** Marketing → E-maily (stejný editor jako záložka v adminu) */
+const MARKETING_EMAILS_PATH = '/marketing/emaily';
+const EMAIL_IMPORT_HISTORY_MAX = 15;
+
+/** Konverzace Web operátora → chatHistory pro Email builder (AI Email Agent). */
+function agentMessagesToImportedEmailChatHistory(msgs: Msg[]): Array<{ id: string; role: 'user' | 'ai'; content: string; timestamp: string }> {
+  const out: Array<{ id: string; role: 'user' | 'ai'; content: string; timestamp: string }> = [];
+  for (const m of msgs) {
+    if (m.loading) continue;
+    const role: 'user' | 'ai' = m.role === 'user' ? 'user' : 'ai';
+    let content = (m.content || '').trim();
+    if (m.images?.length) {
+      content = content
+        ? `${content}\n\n[Přiloženo ${m.images.length} obr.]`
+        : `[Přiloženo ${m.images.length} obr.]`;
+    }
+    if (!content) continue;
+    if (content.length > 18_000) content = `${content.slice(0, 18_000)}\n\n…(zkráceno)`;
+    out.push({
+      id: m.id,
+      role,
+      content,
+      timestamp: new Date(m.ts).toISOString(),
+    });
+  }
+  const tail = out.slice(-EMAIL_IMPORT_HISTORY_MAX);
+  if (tail.length === 0) return [];
+  return [
+    ...tail,
+    {
+      id: `email-import-${Date.now()}`,
+      role: 'ai',
+      content:
+        '📧 **Pokračování z Web operátora** — výše je kontext chatu, ze kterého byl vygenerován tento email.',
+      timestamp: new Date().toISOString(),
+    },
+  ];
+}
 
 type Role = 'user' | 'assistant';
 interface Msg { id: string; role: Role; content: string; actions?: Action[]; loading?: boolean; ts: number; images?: string[]; }
@@ -280,16 +318,6 @@ const SUGGESTIONS = [
   { label: '📧 Napiš email kampaň pro nové produkty', icon: Mail },
   { label: '🧠 Co je v RAGu a co chybí?', icon: Brain },
 ];
-
-const QUICK_CANVAS_ITEMS = [
-  { label: 'Produkt', ds: { type: 'product' } as CanvasDataSource, color: 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200' },
-  { label: 'Mailing', ds: { type: 'email' } as CanvasDataSource, color: 'text-violet-700 bg-violet-50 hover:bg-violet-100 border-violet-200' },
-  { label: 'Taby', ds: { type: 'subject-tabs', subject: 'Fyzika' } as CanvasDataSource, color: 'text-teal-700 bg-teal-50 hover:bg-teal-100 border-teal-200' },
-  { label: 'Slidery', ds: { type: 'slider' } as CanvasDataSource, color: 'text-orange-700 bg-orange-50 hover:bg-orange-100 border-orange-200' },
-  { label: 'Blog', ds: { type: 'blog' } as CanvasDataSource, color: 'text-blue-700 bg-blue-50 hover:bg-blue-100 border-blue-200' },
-  { label: 'Webináře', ds: { type: 'webinar' } as CanvasDataSource, color: 'text-cyan-700 bg-cyan-50 hover:bg-cyan-100 border-cyan-200' },
-  { label: 'Novinky', ds: { type: 'novinka' } as CanvasDataSource, color: 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200' },
-] as const;
 
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; }
 
@@ -651,10 +679,10 @@ function ActionCard({ action, navigate, onOpenCollageBuilder, onOpenCanvas, onSe
               Ve stejném chatu
             </span>
           )}
-          {/* Canvas button — email draft */}
-          {action.type === 'create_email_campaign_draft' && onOpenCanvas && action.id && (
+          {/* Email draft — otevřít Marketing / E-maily (ne boční canvas) */}
+          {action.type === 'create_email_campaign_draft' && action.id && (
             <button
-              onClick={() => onOpenCanvas({ type: 'email', id: action.id })}
+              onClick={() => navigate(`${MARKETING_EMAILS_PATH}?draft=${encodeURIComponent(action.id!)}`)}
               className="flex items-center gap-1 px-2.5 py-1 bg-violet-700 hover:bg-violet-800 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
               style={FF}
             >
@@ -713,7 +741,13 @@ function ActionCard({ action, navigate, onOpenCollageBuilder, onOpenCanvas, onSe
           )}
           {action.reviewPath && action.type !== 'open_collage_builder' && !isInternalSpecialist && (
             <button
-              onClick={() => navigate(action.reviewPath!)}
+              onClick={() => {
+                let path = action.reviewPath!;
+                if (action.type === 'create_email_campaign_draft' && action.id) {
+                  path = `${MARKETING_EMAILS_PATH}?draft=${encodeURIComponent(action.id)}`;
+                }
+                navigate(path);
+              }}
               className={`flex items-center gap-1 px-2.5 py-1 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer ${btnColor}`}
               style={FF}
             >
@@ -753,7 +787,7 @@ function ActionCard({ action, navigate, onOpenCollageBuilder, onOpenCanvas, onSe
   );
 }
 
-function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenCollageBuilder, onOpenCanvas, onOpenStructuredCanvas, onSendPrompt }: {
+function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenCollageBuilder, onOpenCanvas, onOpenStructuredCanvas, onSendPrompt, onMailchimpFromText, mailchimpBusy, mailchimpAllowed = true }: {
   msg: Msg;
   navigate: (p: string) => void;
   onApproveAction?: (actionIdx: number, savedId: string) => void;
@@ -762,6 +796,11 @@ function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenC
   onOpenCanvas?: (content: string, title?: string) => void;
   onOpenStructuredCanvas?: (source: CanvasDataSource) => void;
   onSendPrompt?: (prompt: string) => void;
+  /** Celý text bubliny → Mailchimp generate-email jako prompt */
+  onMailchimpFromText?: (assistantPlainText: string) => void;
+  mailchimpBusy?: boolean;
+  /** Alespoň jedna zpráva uživatele v chatu — neslibuj Mailchimp u úvodního welcome */
+  mailchimpAllowed?: boolean;
 }) {
   const isUser = msg.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -777,121 +816,132 @@ function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenC
     }
   };
 
+  const bubbleMax = 'max-w-[min(92%,42rem)]';
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      className={`flex gap-3 w-full min-w-0 max-w-full ${isUser ? 'flex-row justify-end' : 'flex-row justify-start'} group`}
+      transition={{ duration: 0.15 }}
+      className="group w-full min-w-0 shrink-0 isolate"
     >
-      {/* Pořadí: asistent [avatar][bublina], uživatel [bublina][avatar] — bez flex-row-reverse + ml-auto,
-          které s overflow-x-hidden na rodiči ořezávaly uživatelské bubliny mimo viewport. */}
-      {!isUser && (
-        <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-[13px] font-bold bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8]">
-          <Bot className="w-4 h-4" />
-        </div>
-      )}
-
-      <div
-        className={`min-w-0 w-fit max-w-[min(100%,42rem)] flex flex-col shrink-0 ${isUser ? 'items-end' : 'items-start'}`}
-      >
-        {/* Bubble — pevný strop šířky pro všechny zprávy (vč. dlouhých odpovědí) */}
+      <div className={`flex w-full min-w-0 gap-3 items-start ${isUser ? 'flex-row-reverse' : 'flex-row'}`}>
         <div
-          className={`relative rounded-[16px] px-4 py-3 min-w-0 max-w-full overflow-hidden ${isUser ? 'bg-[#001161] text-white rounded-tr-[4px]' : 'bg-white border border-[#001161]/8 text-[#001161] rounded-tl-[4px] shadow-[0_2px_8px_rgba(0,17,97,0.06)]'}`}
+          className={`w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-[13px] font-bold ${
+            isUser ? 'bg-[#001161]' : 'bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8]'
+          }`}
         >
-          {msg.loading ? (
-            <div className="flex items-center gap-2 py-0.5">
-              <Loader2 className="w-4 h-4 animate-spin opacity-60" />
-              <span style={FF} className="text-[14px] opacity-60">Agent přemýšlí…</span>
-            </div>
-          ) : (
-            <>
-              {/* Text content */}
-              {msg.content && (
-                <div
-                  style={{ ...FF, lineHeight: '1.6', wordBreak: 'break-word', overflowWrap: 'anywhere' }}
-                  className={`whitespace-pre-wrap text-[15px] md:text-[14px] max-w-full [&_code]:break-all [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:break-words [&_p]:break-words ${
-                    isUser ? '[&_code]:!bg-white/15 [&_code]:!text-white' : ''
-                  }`}
-                  dangerouslySetInnerHTML={{
-                    __html: formatMarkdown(isUser ? escapeHtml(msg.content) : msg.content),
-                  }}
-                />
-              )}
-              {/* User uploaded images */}
-              {isUser && msg.images && msg.images.length > 0 && (
-                <div className={`flex flex-wrap gap-2 ${msg.content ? 'mt-2' : ''}`}>
-                  {msg.images.map((url, i) => (
-                    <ChatImage key={i} src={url} />
-                  ))}
-                </div>
-              )}
-              {/* Assistant: auto-detect image URLs in text */}
-              {!isUser && (() => {
-                const imgs = extractImagesFromText(msg.content);
-                if (imgs.length === 0) return null;
-                return (
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {imgs.map((url, i) => (
+          {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+        </div>
+
+        <div className={`min-w-0 flex-1 flex flex-col ${isUser ? 'items-end' : 'items-start'} gap-1`}>
+          <div
+            className={`relative rounded-[16px] px-4 py-3 text-left break-words [overflow-wrap:anywhere] ${bubbleMax} ${
+              isUser
+                ? 'bg-[#001161] text-white rounded-tr-[4px]'
+                : 'w-full bg-white border border-[#001161]/8 text-[#001161] rounded-tl-[4px] shadow-[0_2px_8px_rgba(0,17,97,0.06)]'
+            }`}
+          >
+            {msg.loading ? (
+              <div className="flex items-center gap-2 py-0.5">
+                <Loader2 className="w-4 h-4 animate-spin opacity-60" />
+                <span style={FF} className="text-[14px] opacity-60">Agent přemýšlí…</span>
+              </div>
+            ) : (
+              <>
+                {!isUser && mailchimpAllowed && onMailchimpFromText && msg.content.trim().length >= 40 && !/^\s*❌/.test(msg.content) && (
+                  <div className="mb-3 pb-2 border-b border-[#001161]/10 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onMailchimpFromText(msg.content.trim())}
+                      disabled={!!mailchimpBusy}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] bg-[#7C3AED] text-white text-[12px] font-bold hover:bg-[#6D28D9] transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_8px_rgba(124,58,237,0.2)]"
+                      style={FF}
+                      title="Pošle tento text do Mailchimp generátoru a otevře šablonu v canvasu"
+                    >
+                      {mailchimpBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+                      Mailchimp
+                    </button>
+                    <span style={FF} className="text-[10px] text-[#001161]/40">z textu níže → e-mail šablona</span>
+                  </div>
+                )}
+                {msg.content && (
+                  <div
+                    style={{ ...FF, lineHeight: '1.6', wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                    className={`whitespace-pre-wrap text-[15px] md:text-[14px] [&_code]:break-all [&_strong]:break-words [&_em]:break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:break-words [&_p]:break-words ${
+                      isUser ? '[&_code]:!bg-white/15 [&_code]:!text-white' : ''
+                    }`}
+                    dangerouslySetInnerHTML={{
+                      __html: formatMarkdown(isUser ? escapeHtml(msg.content) : msg.content),
+                    }}
+                  />
+                )}
+                {isUser && msg.images && msg.images.length > 0 && (
+                  <div className={`flex flex-wrap gap-2 ${msg.content ? 'mt-2' : ''}`}>
+                    {msg.images.map((url, i) => (
                       <ChatImage key={i} src={url} />
                     ))}
                   </div>
-                );
-              })()}
-            </>
-          )}
+                )}
+                {!isUser && (() => {
+                  const imgs = extractImagesFromText(msg.content);
+                  if (imgs.length === 0) return null;
+                  return (
+                    <div className="flex flex-wrap gap-2 mt-3">
+                      {imgs.map((url, i) => (
+                        <ChatImage key={i} src={url} />
+                      ))}
+                    </div>
+                  );
+                })()}
+              </>
+            )}
 
-          {/* Copy btn */}
-          {!msg.loading && !isUser && (
-            <button
-              onClick={copy}
-              className="absolute top-2 right-2 p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-100 rounded cursor-pointer"
-            >
-              {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-[#001161]/30" />}
-            </button>
-          )}
-        </div>
-
-        {/* Actions */}
-        {visibleActions.length > 0 && (
-          <div className="w-full min-w-0 max-w-[min(100%,42rem)] mt-1 flex flex-col gap-1">
-            {visibleActions.map((action, i) => (
-              action.type === 'blog_draft_preview' && action.draft
-                ? <BlogDraftPreviewCard
-                    key={i}
-                    draft={action.draft}
-                    onApprove={(savedId) => onApproveAction?.(i, savedId)}
-                    onReject={() => onRejectAction?.(i)}
-                    onOpenCanvas={onOpenCanvas}
-                  />
-                : <ActionCard key={i} action={action} navigate={navigate} onOpenCollageBuilder={onOpenCollageBuilder} onOpenCanvas={onOpenStructuredCanvas} onSendPrompt={onSendPrompt} />
-            ))}
+            {!msg.loading && !isUser && (
+              <button
+                type="button"
+                onClick={copy}
+                className="absolute top-2 right-2 z-10 p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-100 rounded cursor-pointer"
+              >
+                {copied ? <CheckCircle className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3 text-[#001161]/30" />}
+              </button>
+            )}
           </div>
-        )}
 
-        {/* Timestamp + Canvas btn */}
-        <div className="flex items-center gap-2 mt-1 px-1">
-          <span style={FF} className="text-[10px] text-[#001161]/30">
-            {new Date(msg.ts).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
-          </span>
-          {!isUser && onOpenCanvas && isCanvasWorthy(msg.content) && (
-            <button
-              onClick={() => onOpenCanvas(msg.content)}
-              style={{ ...FF, fontSize: 10, fontWeight: 800 }}
-              className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#7C3AED]/10 text-[#7C3AED] hover:bg-[#7C3AED]/20 transition-all cursor-pointer"
-            >
-              <Layers className="w-2.5 h-2.5" />
-              Canvas
-            </button>
+          {visibleActions.length > 0 && (
+            <div className={`w-full min-w-0 ${bubbleMax} flex flex-col gap-1`}>
+              {visibleActions.map((action, i) => (
+                action.type === 'blog_draft_preview' && action.draft
+                  ? <BlogDraftPreviewCard
+                      key={i}
+                      draft={action.draft}
+                      onApprove={(savedId) => onApproveAction?.(i, savedId)}
+                      onReject={() => onRejectAction?.(i)}
+                      onOpenCanvas={onOpenCanvas}
+                    />
+                  : <ActionCard key={i} action={action} navigate={navigate} onOpenCollageBuilder={onOpenCollageBuilder} onOpenCanvas={onOpenStructuredCanvas} onSendPrompt={onSendPrompt} />
+              ))}
+            </div>
           )}
+
+          <div className={`flex flex-wrap items-center gap-2 px-1 ${isUser ? 'justify-end' : 'justify-start'}`}>
+            <span style={FF} className="text-[10px] text-[#001161]/30">
+              {new Date(msg.ts).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+            {!isUser && onOpenCanvas && isCanvasWorthy(msg.content) && (
+              <button
+                type="button"
+                onClick={() => onOpenCanvas(msg.content)}
+                style={{ ...FF, fontSize: 10, fontWeight: 800 }}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#7C3AED]/10 text-[#7C3AED] hover:bg-[#7C3AED]/20 transition-all cursor-pointer"
+              >
+                <Layers className="w-2.5 h-2.5" />
+                Canvas
+              </button>
+            )}
+          </div>
         </div>
       </div>
-
-      {isUser && (
-        <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center text-white text-[13px] font-bold bg-[#001161]">
-          <User className="w-4 h-4" />
-        </div>
-      )}
     </motion.div>
   );
 }
@@ -1174,7 +1224,6 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Msg[]>([]);
   const currentChatIdRef = useRef(currentChatId);
-  const [mobileCanvasPickerOpen, setMobileCanvasPickerOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -1183,6 +1232,11 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     window.addEventListener('resize', check);
     return () => window.removeEventListener('resize', check);
   }, []);
+
+  /** Mailchimp z bubliny asistenta — busy stav pro tlačítko (builder UI je v ContentCanvas) */
+  const [mcGenerating, setMcGenerating] = useState(false);
+  const canvasDsRef = useRef<CanvasDataSource | null>(null);
+
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
@@ -1194,6 +1248,10 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
   const [canvasTitle, setCanvasTitle] = useState('');
   const [canvasDataSource, setCanvasDataSource] = useState<CanvasDataSource | null>(null);
   const lastAutoCanvasKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    canvasDsRef.current = canvasDataSource;
+  }, [canvasDataSource]);
 
   const scrollToCanvas = () => {
     setTimeout(() => {
@@ -1242,6 +1300,66 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
   };
   const closeCanvas = () => { setCanvasContent(null); setCanvasDataSource(null); };
 
+  const mailchimpConversationContext = () =>
+    messages
+      .filter(m => !m.loading)
+      .slice(-8)
+      .map(m => `${m.role === 'user' ? 'User' : 'Agent'}: ${m.content.slice(0, 400)}`)
+      .join('\n');
+
+  const persistMcEmailToDraft = async (email: any) => {
+    const ds = canvasDsRef.current;
+    const id = ds?.type === 'email' && ds.id ? ds.id : crypto.randomUUID();
+    const chatHistory = agentMessagesToImportedEmailChatHistory(messagesRef.current);
+    const res = await fetch(`${SERVER}/admin/email-drafts`, {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        id,
+        subject: email.subject,
+        previewText: email.previewText || '',
+        headline: email.headline || email.subject,
+        bodyHtml: email.bodyHtml || '',
+        ctaText: email.ctaText || 'Vyzkoušejte zdarma',
+        ctaUrl: email.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+        audience: email.audience || 'newsletter',
+        fullHtml: email.fullHtml,
+        ...(chatHistory.length > 0 ? { chatHistory } : {}),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Uložení draftu selhalo');
+    navigate(`${MARKETING_EMAILS_PATH}?draft=${encodeURIComponent(id)}`);
+  };
+
+  /** Text z bubliny asistenta → generate-email + draft + canvas */
+  const generateMcEmail = async (textFromAssistant: string) => {
+    const bubble = textFromAssistant.trim();
+    if (!bubble) return;
+    setMcGenerating(true);
+    try {
+      const prompt = `Z následujícího textu nebo osnovy (odpověď Web operátora) vytvoř kompletní marketingový e-mail Vividbooks: více vizuálních sekcí, hero, CTA, produkty pokud sedí, inline HTML v body. Zachovej fakta, češtinu a tón.\n\n---\n${bubble.slice(0, 14_000)}\n---`;
+      const { response: genRes, data } = await fetchGenerateEmailWithRetry(
+        `${SERVER}/admin/mailchimp/generate-email`,
+        AUTH,
+        {
+          prompt,
+          conversationContext: mailchimpConversationContext(),
+          model: getStoredEmailAiTier(),
+        },
+        () => toast.info('Gemini přetížená — zkouším znovu…', { duration: 4500 }),
+      );
+      if (!genRes.ok || data.error) throw new Error(String(data.error || 'Generování selhalo'));
+      const email = data.email;
+      await persistMcEmailToDraft(email);
+      toast.success('Email vygenerován — otevřen v sekci Marketing → E-maily');
+    } catch (e: any) {
+      toast.error(e.message || 'Chyba generování');
+    } finally {
+      setMcGenerating(false);
+    }
+  };
+
   useEffect(() => {
     const lastMsg = [...messages].reverse().find(m => m.role === 'assistant' && !m.loading && (m.actions?.length || 0));
     if (!lastMsg?.actions?.length) return;
@@ -1250,9 +1368,16 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     );
     if (!lastAction) return;
 
+    if (lastAction.type === 'create_email_campaign_draft' && lastAction.id) {
+      const key = `${lastAction.type}:${lastAction.id}`;
+      if (lastAutoCanvasKeyRef.current === key) return;
+      lastAutoCanvasKeyRef.current = key;
+      navigate(`${MARKETING_EMAILS_PATH}?draft=${encodeURIComponent(lastAction.id)}`);
+      return;
+    }
+
     let ds: CanvasDataSource | null = null;
-    if (lastAction.type === 'create_email_campaign_draft' && lastAction.id) ds = { type: 'email', id: lastAction.id };
-    else if ((lastAction.type === 'create_subject_tab' || lastAction.type === 'update_subject_tab') && lastAction.subject) ds = { type: 'subject-tabs', subject: lastAction.subject };
+    if ((lastAction.type === 'create_subject_tab' || lastAction.type === 'update_subject_tab') && lastAction.subject) ds = { type: 'subject-tabs', subject: lastAction.subject };
     else if (lastAction.type === 'create_hero_slide' || lastAction.type === 'update_hero_slide') ds = { type: 'slider' };
     else if ((lastAction.type === 'create_product' || lastAction.type === 'update_product' || lastAction.type === 'duplicate_product') && lastAction.id) ds = { type: 'product', id: lastAction.id };
     else if ((lastAction.type === 'create_novinka' || lastAction.type === 'update_novinka') && lastAction.id) ds = { type: 'novinka', id: lastAction.id };
@@ -1516,14 +1641,27 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
+  const desktopCanvasOpen = !isMobile && !!(canvasContent || canvasDataSource);
+
   return (
     <>
-    <div ref={scrollAreaRef} onScroll={syncAdminShellScroll} className="h-full min-h-0 w-full max-w-full flex overflow-x-auto overflow-y-hidden bg-[#f7f8fc] relative">
+    <div
+      ref={scrollAreaRef}
+      onScroll={syncAdminShellScroll}
+      className={`h-full min-h-0 flex-1 min-w-0 w-full overflow-y-hidden bg-[#f7f8fc] relative ${
+        desktopCanvasOpen ? 'overflow-x-auto' : 'overflow-x-hidden'
+      }`}
+    >
+      <div
+        className={`flex h-full min-h-0 flex-nowrap ${
+          desktopCanvasOpen ? 'w-max min-w-full' : 'w-full min-w-0'
+        }`}
+      >
 
       {/* ── CHAT COLUMN — flex-1 + min-w-0 zabrání horizontálnímu „nafukování“ od dlouhých zpráv; s canvasem fixní 760px ── */}
       <div
         className={`flex flex-col h-full min-h-0 md:border-r border-gray-200 transition-[width] duration-300 ${
-          !isMobile && (canvasContent || canvasDataSource) ? 'w-[760px] max-w-[760px] shrink-0' : 'w-full min-w-0 flex-1 max-w-full'
+          desktopCanvasOpen ? 'w-[760px] max-w-[760px] shrink-0' : 'w-full min-w-0 flex-1 max-w-full'
         }`}
       >
 
@@ -1591,25 +1729,23 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
 
           <div className="flex-1" />
 
-          <div className="hidden md:flex items-center gap-1 mr-1">
-            {QUICK_CANVAS_ITEMS.map(item => (
-              <button
-                key={item.label}
-                onClick={() => openStructuredCanvas(item.ds)}
-                style={FF}
-                className={`flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-bold cursor-pointer transition-colors ${item.color} ${(canvasDataSource?.type === item.ds.type) ? 'ring-1 ring-offset-1 ring-current' : ''}`}
-              >
-                <Pencil className="w-2.5 h-2.5" /> {item.label}
-              </button>
-            ))}
-          </div>
-
           <button
-            onClick={() => setMobileCanvasPickerOpen(true)}
-            className="md:hidden flex items-center gap-1.5 px-3 py-2 bg-[#7C3AED]/8 hover:bg-[#7C3AED]/12 text-[#7C3AED] rounded-xl text-[12px] font-bold transition-colors cursor-pointer"
+            type="button"
+            onClick={() => navigate(MARKETING_EMAILS_PATH)}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all cursor-pointer shrink-0 text-[#7C3AED] hover:bg-[#7C3AED]/10"
             style={FF}
+            title="Marketing → E-maily (editor šablon)"
           >
-            <Pencil className="w-3 h-3" /> {!hubMode && 'Canvas'}
+            <Mail className="w-3.5 h-3.5" />
+            Mailchimp
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate(MARKETING_EMAILS_PATH)}
+            className="md:hidden flex items-center justify-center w-9 h-9 rounded-xl border shrink-0 border-[#7C3AED]/25 text-[#7C3AED] bg-[#7C3AED]/6"
+            title="Marketing → E-maily"
+          >
+            <Mail className="w-4 h-4" />
           </button>
 
           {hubMode && onOpenAgentSheet && (
@@ -1632,11 +1768,6 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           </button>
         </div>
 
-        {/* Realtime hlas (Gemini Live) — stejný backend token jako RAG; ovládání pod hlavičkou Web operátora */}
-        <div className="px-3 md:px-4 pt-2 pb-3 shrink-0 border-b border-violet-100/90 bg-gradient-to-r from-violet-50/40 to-transparent">
-          <RagLiveVoicePanel embedded />
-        </div>
-
         {/* Messages */}
         <div ref={messagesScrollRef} className="flex-1 min-h-0 min-w-0 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain px-3 md:px-4 py-4 md:py-5 flex flex-col gap-4">
           {messages.map((msg, msgIdx) => (
@@ -1648,6 +1779,9 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
               onOpenCanvas={openCanvas}
               onOpenStructuredCanvas={openStructuredCanvas}
               onSendPrompt={send}
+              onMailchimpFromText={(t) => void generateMcEmail(t)}
+              mailchimpBusy={mcGenerating}
+              mailchimpAllowed={messages.slice(0, msgIdx).some(m => m.role === 'user')}
               onApproveAction={(actionIdx, savedId) => {
                 // Přidej potvrzovací zprávu do chatu
                 const confirmMsg: Msg = {
@@ -1815,7 +1949,8 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
         </AnimatePresence>
       )}
 
-    </div>{/* end scrollable flex row */}
+      </div>
+    </div>{/* end scroll port + inner row */}
 
       <AnimatePresence>
         {hubMode && historyOpen && (
@@ -1911,51 +2046,6 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
         preSelectStyle={collagePreSelectStyle}
       />
 
-      <AnimatePresence>
-        {isMobile && mobileCanvasPickerOpen && (
-          <motion.div
-            className="fixed inset-0 z-[75] flex flex-col justify-end"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-          >
-            <div className="absolute inset-0 bg-black/40" onClick={() => setMobileCanvasPickerOpen(false)} />
-            <motion.div
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="relative rounded-t-[24px] bg-white px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] shadow-2xl"
-            >
-              <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-[#001161]/10" />
-              <div className="mb-3">
-                <p style={{ ...FF, fontSize: 10, fontWeight: 800, color: 'rgba(0,17,97,0.35)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>
-                  Canvas
-                </p>
-                <h3 style={{ ...FF, fontSize: 18, fontWeight: 900, color: '#001161' }}>
-                  Otevřít pracovní náhled
-                </h3>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {QUICK_CANVAS_ITEMS.map(item => (
-                  <button
-                    key={item.label}
-                    onClick={() => {
-                      openStructuredCanvas(item.ds);
-                      setMobileCanvasPickerOpen(false);
-                    }}
-                    className={`flex items-center gap-2 rounded-[16px] border px-3 py-3 text-left cursor-pointer transition-colors ${item.color}`}
-                    style={FF}
-                  >
-                    <Pencil className="w-3.5 h-3.5 shrink-0" />
-                    <span className="text-[12px] font-bold leading-tight">{item.label}</span>
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </>
   );
 }
