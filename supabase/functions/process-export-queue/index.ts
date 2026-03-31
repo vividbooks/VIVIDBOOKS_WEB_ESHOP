@@ -93,18 +93,24 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
-// VERIFY: iDoklad country id for Czech Republic in this account/tenant.
-const IDOKLAD_COUNTRY_ID_CZ = 2;
-// VERIFY WITH ACCOUNTANT: iDoklad payment type id for card payment.
-const IDOKLAD_PAYMENT_TYPE_CARD_ID = 3;
-// VERIFY: iDoklad currency id for CZK.
-const IDOKLAD_CURRENCY_ID_CZK = 1;
-// VERIFY: iDoklad enum for prices entered including VAT.
-const IDOKLAD_PRICE_TYPE_WITH_VAT = 1;
-// VERIFY WITH ACCOUNTANT: reduced VAT for books/workbooks.
-const IDOKLAD_VAT_RATE_REDUCED = 2;
-// VERIFY WITH ACCOUNTANT: standard VAT for shipping.
-const IDOKLAD_VAT_RATE_STANDARD = 1;
+function idokladEnvInt(name: string, fallback: number): number {
+  const raw = (Deno.env.get(name) || '').trim();
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Hodnoty dle [iDoklad API v3](https://api.idoklad.cz/Help/v3/cs/index.html) / nastavení účtu — lze přepsat secrety. */
+function getIdokladNumericSettings() {
+  return {
+    countryIdCz: idokladEnvInt('IDOKLAD_COUNTRY_ID', 2),
+    paymentTypeCardId: idokladEnvInt('IDOKLAD_PAYMENT_TYPE_ID', 3),
+    currencyIdCzk: idokladEnvInt('IDOKLAD_CURRENCY_ID', 1),
+    priceTypeWithVat: idokladEnvInt('IDOKLAD_PRICE_TYPE_WITH_VAT', 1),
+    vatRateReduced: idokladEnvInt('IDOKLAD_VAT_RATE_REDUCED', 2),
+    vatRateStandard: idokladEnvInt('IDOKLAD_VAT_RATE_STANDARD', 1),
+  };
+}
 
 let idokladAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
@@ -504,9 +510,15 @@ async function getIdokladAccessToken(forceRefresh = false) {
     body: body.toString(),
   });
 
-  const data = await response.json().catch(() => ({} as IdokladTokenResponse)) as IdokladTokenResponse;
+  const data = await response.json().catch(() => ({} as IdokladTokenResponse & { error?: string; error_description?: string })) as IdokladTokenResponse & {
+    error?: string;
+    error_description?: string;
+  };
   if (!response.ok || !data.access_token || !data.expires_in) {
-    throw new Error(`iDoklad token fetch failed with HTTP ${response.status}`);
+    const hint = data.error_description || data.error || '';
+    throw new Error(
+      `iDoklad token fetch failed HTTP ${response.status}${hint ? `: ${hint}` : ''}`,
+    );
   }
 
   idokladAccessTokenCache = {
@@ -579,6 +591,7 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
     throw new Error(`Order ${order.order_number} has no items.`);
   }
 
+  const idok = getIdokladNumericSettings();
   const issueDate = new Date();
   const payload = {
     Description: `Objednávka ${order.order_number}`,
@@ -587,7 +600,7 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
       Street: order.street || '',
       City: order.city || '',
       PostalCode: order.zip || '',
-      CountryId: IDOKLAD_COUNTRY_ID_CZ,
+      CountryId: idok.countryIdCz,
       IdentificationNumber: order.ico || '',
       Email: order.customer_email,
       Phone: order.customer_phone || '',
@@ -597,24 +610,24 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
     DateOfMaturity: toIsoDate(addDays(issueDate, 14)),
     DateOfTaxing: toIsoDate(issueDate),
     IsEet: false,
-    PaymentTypeId: IDOKLAD_PAYMENT_TYPE_CARD_ID,
-    CurrencyId: IDOKLAD_CURRENCY_ID_CZK,
+    PaymentTypeId: idok.paymentTypeCardId,
+    CurrencyId: idok.currencyIdCzk,
     OrderNumber: order.order_number,
     Items: [
       ...orderItems.map((item) => ({
         Name: item.product_name,
         Amount: item.quantity,
         UnitPrice: amountInCzk(item.unit_price),
-        PriceType: IDOKLAD_PRICE_TYPE_WITH_VAT,
-        VatRateType: IDOKLAD_VAT_RATE_REDUCED,
+        PriceType: idok.priceTypeWithVat,
+        VatRateType: idok.vatRateReduced,
       })),
       ...(order.shipping_price > 0
         ? [{
             Name: `Doprava — ${deliveryMethodLabel(order.shipping_method)}`,
             Amount: 1,
             UnitPrice: amountInCzk(order.shipping_price),
-            PriceType: IDOKLAD_PRICE_TYPE_WITH_VAT,
-            VatRateType: IDOKLAD_VAT_RATE_STANDARD,
+            PriceType: idok.priceTypeWithVat,
+            VatRateType: idok.vatRateStandard,
           }]
         : []),
     ],
@@ -842,18 +855,6 @@ Deno.serve(async (req) => {
                 'system'
               )
             `;
-
-            await upsertWorkflowStep(tx, {
-              orderId: queueItem.order_id,
-              stepKey: 'basecom_exported',
-              status: 'done',
-              attemptCount: queueItem.retry_count + 1,
-              lastError: null,
-              metadata: {
-                queueItemId: queueItem.id,
-                basecomOrderId: result.orderId,
-              },
-            });
           });
 
           summary.skipped += 1;
@@ -907,14 +908,13 @@ Deno.serve(async (req) => {
 
             await upsertWorkflowStep(tx, {
               orderId: queueItem.order_id,
-              stepKey: 'idoklad_exported',
+              stepKey: 'basecom_exported',
               status: 'done',
               attemptCount: queueItem.retry_count + 1,
               lastError: null,
               metadata: {
                 queueItemId: queueItem.id,
-                invoiceId: result.invoiceId,
-                documentNumber: result.documentNumber,
+                basecomOrderId: result.orderId,
               },
             });
           });
@@ -969,13 +969,14 @@ Deno.serve(async (req) => {
 
             await upsertWorkflowStep(tx, {
               orderId: queueItem.order_id,
-              stepKey: 'customer_email_sent',
+              stepKey: 'idoklad_exported',
               status: 'done',
               attemptCount: queueItem.retry_count + 1,
               lastError: null,
               metadata: {
                 queueItemId: queueItem.id,
-                emailType,
+                invoiceId: result.invoiceId,
+                documentNumber: result.documentNumber,
               },
             });
           });
@@ -1026,6 +1027,18 @@ Deno.serve(async (req) => {
                 'system'
               )
             `;
+
+            await upsertWorkflowStep(tx, {
+              orderId: queueItem.order_id,
+              stepKey: 'customer_email_sent',
+              status: 'done',
+              attemptCount: queueItem.retry_count + 1,
+              lastError: null,
+              metadata: {
+                queueItemId: queueItem.id,
+                emailType,
+              },
+            });
           });
 
           summary.succeeded += 1;

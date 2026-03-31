@@ -73,6 +73,29 @@ Minimálně pro platby:
 
 Další proměnné podle zapnutých integrací (Basecom, iDoklad, e‑mail SMTP, …).
 
+#### iDoklad ([API v3](https://api.idoklad.cz/Help/v3/cs/index.html))
+
+Po úspěšné platbě zařadí `stripe-webhook` úlohu `idoklad` do `export_queue`. Zpracuje ji funkce **`process-export-queue`** (OAuth **client credentials**, pak `POST https://api.idoklad.cz/v3/IssuedInvoices`).
+
+| Secret | K čemu |
+|--------|--------|
+| `IDOKLAD_CLIENT_ID` | OAuth Client ID z iDoklad (vývojářská aplikace). |
+| `IDOKLAD_CLIENT_SECRET` | OAuth Client secret. |
+| Scopes | V kódu je `scope=idoklad_api` (musí být u aplikace povolené). |
+
+Volitelné číselné ID podle vašeho účtu iDoklad (když výchozí hodnoty neodpovídají číselníkům v administraci):
+
+| Secret | Výchozí | Význam |
+|--------|---------|--------|
+| `IDOKLAD_COUNTRY_ID` | `2` | Země adresy partnera (ČR). |
+| `IDOKLAD_PAYMENT_TYPE_ID` | `3` | Typ platby (např. karta). |
+| `IDOKLAD_CURRENCY_ID` | `1` | Měna CZK. |
+| `IDOKLAD_PRICE_TYPE_WITH_VAT` | `1` | Ceny včetně DPH. |
+| `IDOKLAD_VAT_RATE_REDUCED` | `2` | Snížená sazba (sešity / knihy). |
+| `IDOKLAD_VAT_RATE_STANDARD` | `1` | Základní sazba (např. doprava). |
+
+Nasazení: `supabase functions deploy process-export-queue --no-verify-jwt` (nebo celý skript v sekci výše). Frontu je potřeba pravidelně spouštět (cron / Supabase schedule), pokud ji už nemáte napojenou.
+
 ---
 
 ## Stripe — co nastavit v Dashboardu
