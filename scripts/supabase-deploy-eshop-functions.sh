@@ -4,11 +4,14 @@
 set -euo pipefail
 FUNCS=(
   create-payment-intent
+  submit-transfer-order
   stripe-webhook
   get-order-by-payment-intent
   resume-checkout
   send-order-email
   process-export-queue
+  cancel-stale-orders
+  pipedrive-inbound-deal
   make-server-93a20b6f
 )
 for f in "${FUNCS[@]}"; do

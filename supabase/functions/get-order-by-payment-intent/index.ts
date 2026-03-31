@@ -47,11 +47,13 @@ type OrderHeadRow = {
   customer_email: string;
   status: string;
   payment_status: string | null;
+  payment_method: string;
 };
 
 async function buildOrderSummaryResponse(
   sql: ReturnType<typeof postgres>,
   order: OrderHeadRow,
+  transferThankYou: boolean,
 ) {
   const items = await sql<OrderItemRow[]>`
     select
@@ -72,6 +74,8 @@ async function buildOrderSummaryResponse(
     pickup_point_name: order.pickup_point_name,
     customer_email: maskEmail(order.customer_email),
     status: order.status,
+    payment_method: order.payment_method,
+    transfer_flow: transferThankYou,
     items,
   });
 }
@@ -97,6 +101,7 @@ Deno.serve(async (req) => {
     || url.searchParams.get('order_number')?.trim()
     || ''
   );
+  const transferThankYou = url.searchParams.get('transfer') === '1';
 
   if (!paymentIntentId && !orderNumber) {
     return jsonResponse({ error: 'Missing payment_intent_id or order (order_number).' }, 400);
@@ -134,7 +139,8 @@ Deno.serve(async (req) => {
           pickup_point_name,
           customer_email,
           status,
-          payment_status
+          payment_status,
+          payment_method
         from public.orders
         where stripe_payment_intent_id = ${paymentIntentId}
         limit 1
@@ -149,7 +155,8 @@ Deno.serve(async (req) => {
           pickup_point_name,
           customer_email,
           status,
-          payment_status
+          payment_status,
+          payment_method
         from public.orders
         where order_number = ${orderNumber}
         limit 1
@@ -157,11 +164,21 @@ Deno.serve(async (req) => {
     }
 
     const order = rows[0];
-    if (!order || order.payment_status !== 'paid') {
+    if (!order) {
       return jsonResponse({ error: 'Order not found.' }, 404);
     }
 
-    return await buildOrderSummaryResponse(sql, order);
+    const paidOk = order.payment_status === 'paid';
+    const transferPending =
+      transferThankYou
+      && order.payment_method === 'transfer'
+      && order.status === 'pending_payment';
+
+    if (!paidOk && !transferPending) {
+      return jsonResponse({ error: 'Order not found.' }, 404);
+    }
+
+    return await buildOrderSummaryResponse(sql, order, transferThankYou);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Order lookup failed.';
     return jsonResponse({ error: message }, 500);

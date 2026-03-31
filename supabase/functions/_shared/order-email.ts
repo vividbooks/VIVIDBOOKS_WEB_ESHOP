@@ -4,7 +4,9 @@ export type OrderEmailType =
   | 'order_confirmed'
   | 'order_shipped'
   | 'order_cancelled'
-  | 'payment_reminder';
+  | 'payment_reminder'
+  | 'order_transfer_received'
+  | 'order_auto_cancelled_unpaid';
 
 type OrderRow = {
   id: string;
@@ -26,6 +28,7 @@ type OrderRow = {
   total: number;
   cancelled_reason: string | null;
   payment_resume_token: string | null;
+  stripe_receipt_url: string | null;
 };
 
 type OrderItemRow = {
@@ -160,11 +163,19 @@ function buildOrderItemsTable(items: OrderItemRow[]) {
 }
 
 function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[]) {
+  const receiptBlock = order.stripe_receipt_url
+    ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
+        Účtenku od Stripe si můžete stáhnout zde:
+        <a href="${escapeHtml(order.stripe_receipt_url)}" style="color:#2563eb;text-decoration:none;">Zobrazit účtenku</a>
+      </p>`
+    : '';
+
   return buildShell(
     `Potvrzení objednávky ${order.order_number} — VividBooks`,
     `
       <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Děkujeme za objednávku!</h1>
       <p style="margin:0 0 8px;font-size:15px;line-height:1.7;color:#374151;">Číslo objednávky: <strong>${escapeHtml(order.order_number)}</strong></p>
+      ${receiptBlock}
       ${buildOrderItemsTable(items)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
         <tr>
@@ -241,6 +252,39 @@ function buildPaymentReminderHtml(order: OrderRow, items: OrderItemRow[], resume
   );
 }
 
+function buildOrderTransferReceivedHtml(order: OrderRow) {
+  return buildShell(
+    `Objednávka ${order.order_number} — VividBooks`,
+    `
+      <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Máme vaši objednávku</h1>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
+        Potvrzujeme přijetí objednávky <strong>${escapeHtml(order.order_number)}</strong>.
+        Ozve se vám náš obchodník, který s vámi objednávku dokončí.
+      </p>
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#374151;">
+        Tento e-mail neobsahuje platební údaje — domluvíte je přímo s obchodním zástupcem.
+      </p>
+    `,
+  );
+}
+
+function buildOrderAutoCancelledUnpaidHtml(order: OrderRow) {
+  const site = getPublicSiteUrl();
+  return buildShell(
+    `Objednávka ${order.order_number} zrušena — VividBooks`,
+    `
+      <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Objednávka byla zrušena</h1>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
+        Vaše objednávka <strong>${escapeHtml(order.order_number)}</strong> byla zrušena — nebyla zaplacena.
+      </p>
+      <p style="margin:0;font-size:15px;line-height:1.7;color:#374151;">
+        Pokud máte stále zájem, můžete vytvořit novou objednávku na
+        <a href="${escapeHtml(site)}" style="color:#2563eb;text-decoration:none;">vividbooks.cz</a>.
+      </p>
+    `,
+  );
+}
+
 function buildOrderCancelledHtml(order: OrderRow) {
   return buildShell(
     `Objednávka ${order.order_number} byla zrušena — VividBooks`,
@@ -278,7 +322,8 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
       payment_method,
       total,
       cancelled_reason,
-      payment_resume_token
+      payment_resume_token,
+      stripe_receipt_url
     from public.orders
     where id = ${orderId}::uuid
     limit 1
@@ -331,6 +376,12 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
     }
     subject = `Dokončete platbu — objednávka ${order.order_number} — VividBooks`;
     html = buildPaymentReminderHtml(order, items, token);
+  } else if (params.emailType === 'order_transfer_received') {
+    subject = `Objednávka ${order.order_number} — potvrzení přijetí — VividBooks`;
+    html = buildOrderTransferReceivedHtml(order);
+  } else if (params.emailType === 'order_auto_cancelled_unpaid') {
+    subject = `Objednávka ${order.order_number} zrušena — VividBooks`;
+    html = buildOrderAutoCancelledUnpaidHtml(order);
   } else {
     throw new Error(`Unsupported emailType: ${params.emailType}`);
   }

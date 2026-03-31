@@ -1,0 +1,335 @@
+/**
+ * Školní / B objednávka s platbou převodem (pouze s IČO). Bez Stripe PI, bez export_queue.
+ */
+import postgres from 'npm:postgres';
+import { sendOrderEmail } from '../_shared/order-email.ts';
+
+type CheckoutItem = {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  variant?: string;
+  bundleId?: string;
+  bundleTitle?: string;
+};
+
+type CheckoutShipping = {
+  method: string;
+  price: number;
+  pickupPointId?: string;
+  pickupPointName?: string;
+  differentAddress?: boolean;
+  deliveryAddress?: {
+    recipientName?: string;
+    street?: string;
+    city?: string;
+    zip?: string;
+  };
+};
+
+type CheckoutCustomer = {
+  email: string;
+  name: string;
+  phone: string;
+  schoolName?: string;
+  ico?: string;
+  street: string;
+  city: string;
+  zip: string;
+};
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+
+function getDatabaseUrl() {
+  return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
+}
+
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
+function isPositiveInteger(value: unknown) {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+function validateItems(items: unknown): items is CheckoutItem[] {
+  return Array.isArray(items) && items.length > 0 && items.every((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const candidate = item as Record<string, unknown>;
+    const variantOk = candidate.variant === undefined || typeof candidate.variant === 'string';
+    return (
+      typeof candidate.productId === 'string' &&
+      typeof candidate.productName === 'string' &&
+      isPositiveInteger(candidate.quantity) &&
+      isPositiveInteger(candidate.unitPrice) &&
+      variantOk
+    );
+  });
+}
+
+function validateShipping(shipping: unknown): shipping is CheckoutShipping {
+  if (!shipping || typeof shipping !== 'object') return false;
+  const candidate = shipping as Record<string, unknown>;
+  return (
+    typeof candidate.method === 'string' &&
+    typeof candidate.price === 'number' &&
+    Number.isInteger(candidate.price) &&
+    candidate.price >= 0
+  );
+}
+
+function validateCustomer(customer: unknown): customer is CheckoutCustomer {
+  if (!customer || typeof customer !== 'object') return false;
+  const candidate = customer as Record<string, unknown>;
+  return (
+    typeof candidate.email === 'string' &&
+    typeof candidate.name === 'string' &&
+    typeof candidate.phone === 'string' &&
+    typeof candidate.street === 'string' &&
+    typeof candidate.city === 'string' &&
+    typeof candidate.zip === 'string' &&
+    candidate.email.trim().length > 0 &&
+    candidate.name.trim().length > 0 &&
+    candidate.phone.trim().length > 0 &&
+    candidate.street.trim().length > 0 &&
+    candidate.city.trim().length > 0 &&
+    candidate.zip.trim().length > 0
+  );
+}
+
+function getFunctionBaseUrl() {
+  return (Deno.env.get('SUPABASE_URL') || '').trim().replace(/\/$/, '');
+}
+
+function getFunctionAuthHeaders() {
+  const functionKey = (
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    || Deno.env.get('PROJECT_PUBLIC_ANON_KEY')
+    || Deno.env.get('PUBLIC_ANON_KEY')
+    || Deno.env.get('SUPABASE_ANON_KEY')
+    || ''
+  ).trim();
+  return functionKey
+    ? { Authorization: `Bearer ${functionKey}`, apikey: functionKey }
+    : {};
+}
+
+async function invokePipedriveSync(orderId: string) {
+  const base = getFunctionBaseUrl();
+  if (!base) {
+    console.error('[submit-transfer-order] Missing SUPABASE_URL for pipedrive sync.');
+    return;
+  }
+  const url = `${base}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getFunctionAuthHeaders() },
+    body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    console.error('[submit-transfer-order] pipedrive-sync failed:', res.status, t.slice(0, 300));
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+  if (req.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+
+  const databaseUrl = getDatabaseUrl();
+  if (!databaseUrl) {
+    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+  }
+
+  let payload: {
+    items?: unknown;
+    shipping?: unknown;
+    customer?: unknown;
+    schoolInquiry?: unknown;
+  };
+  try {
+    payload = await req.json();
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+  }
+
+  const { items, shipping, customer, schoolInquiry } = payload;
+
+  if (!validateItems(items)) {
+    return jsonResponse({ error: 'Neplatné položky košíku.' }, 400);
+  }
+  if (!validateShipping(shipping)) {
+    return jsonResponse({ error: 'Neplatná doprava.' }, 400);
+  }
+  if (!validateCustomer(customer)) {
+    return jsonResponse({ error: 'Neplatné zákaznické údaje.' }, 400);
+  }
+
+  const ico = String(customer.ico || '').trim().replace(/\s/g, '');
+  if (!ico) {
+    return jsonResponse({ error: 'Pro platbu převodem vyplňte IČO.' }, 400);
+  }
+
+  if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {
+    return jsonResponse({ error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
+  }
+
+  const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+  const total = subtotal + shipping.price;
+  if (subtotal <= 0 || total <= 0) {
+    return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
+  }
+
+  const noteText =
+    schoolInquiry != null && typeof schoolInquiry === 'object'
+      ? JSON.stringify({ schoolInquiry }, null, 2).slice(0, 12000)
+      : null;
+
+  const sql = postgres(databaseUrl, {
+    prepare: false,
+    max: 1,
+    idle_timeout: 5,
+    connect_timeout: 10,
+    ssl: 'require',
+  });
+
+  try {
+    const inserted = await sql<{ id: string; order_number: string }[]>`
+      insert into public.orders (
+        status,
+        customer_email,
+        customer_name,
+        customer_phone,
+        school_name,
+        ico,
+        street,
+        city,
+        zip,
+        country,
+        shipping_method,
+        shipping_price,
+        pickup_point_id,
+        pickup_point_name,
+        payment_method,
+        payment_status,
+        subtotal,
+        total,
+        note
+      ) values (
+        'pending_payment',
+        ${customer.email.trim()},
+        ${customer.name.trim()},
+        ${customer.phone.trim()},
+        ${customer.schoolName?.trim() || null},
+        ${ico},
+        ${customer.street.trim()},
+        ${customer.city.trim()},
+        ${customer.zip.trim()},
+        'CZ',
+        ${shipping.method},
+        ${shipping.price ?? 0},
+        ${shipping.pickupPointId ?? null},
+        ${shipping.pickupPointName ?? null},
+        'transfer',
+        'pending',
+        ${subtotal},
+        ${total},
+        ${noteText}
+      )
+      returning id, order_number
+    `;
+
+    const orderRow = inserted[0];
+    if (!orderRow) {
+      return jsonResponse({ error: 'Uložení objednávky selhalo.' }, 500);
+    }
+
+    for (const item of items) {
+      const variant = typeof item.variant === 'string' && item.variant.trim()
+        ? item.variant.trim()
+        : null;
+      const bundleId = typeof item.bundleId === 'string' && item.bundleId.trim()
+        ? item.bundleId.trim()
+        : null;
+      const bundleTitle = typeof item.bundleTitle === 'string' && item.bundleTitle.trim()
+        ? item.bundleTitle.trim()
+        : null;
+      await sql`
+        insert into public.order_items (
+          order_id,
+          product_id,
+          product_name,
+          variant,
+          quantity,
+          unit_price,
+          total_price,
+          bundle_id,
+          bundle_title
+        ) values (
+          ${orderRow.id}::uuid,
+          ${item.productId},
+          ${item.productName},
+          ${variant},
+          ${item.quantity},
+          ${item.unitPrice},
+          ${item.unitPrice * item.quantity},
+          ${bundleId},
+          ${bundleTitle}
+        )
+      `;
+    }
+
+    await sql`
+      insert into public.order_events (
+        order_id,
+        event_type,
+        from_status,
+        to_status,
+        details,
+        actor
+      ) values (
+        ${orderRow.id}::uuid,
+        'order_created',
+        null,
+        'pending_payment',
+        ${JSON.stringify({ paymentMethod: 'transfer', ico })}::jsonb,
+        'customer'
+      )
+    `;
+
+    await invokePipedriveSync(orderRow.id);
+
+    try {
+      await sendOrderEmail(sql, { orderId: orderRow.id, emailType: 'order_transfer_received' });
+    } catch (e) {
+      console.error('[submit-transfer-order] Email:', e);
+    }
+
+    return jsonResponse({
+      success: true,
+      orderId: orderRow.id,
+      orderNumber: orderRow.order_number,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Submit failed.';
+    console.error('[submit-transfer-order]', msg);
+    return jsonResponse({ error: msg }, 500);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});

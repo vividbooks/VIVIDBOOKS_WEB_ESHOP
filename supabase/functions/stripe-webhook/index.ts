@@ -130,6 +130,50 @@ function getMakeServerOrdersUrl(fallbackRequestUrl?: string) {
   return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/orders` : '';
 }
 
+function getEshopPipedriveSyncUrl(fallbackRequestUrl?: string) {
+  const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
+  return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
+}
+
+async function invokeEshopPipedriveSync(
+  orderId: string,
+  mode: 'b2c_card_won' | 'b2b_card_won',
+  fallbackRequestUrl?: string,
+) {
+  const url = getEshopPipedriveSyncUrl(fallbackRequestUrl);
+  if (!url) {
+    console.error('[stripe-webhook] Missing base URL for eshop pipedrive-sync.');
+    return;
+  }
+  const headers = getFunctionAuthHeaders();
+  if (!headers.Authorization) {
+    console.error('[stripe-webhook] Missing key for eshop pipedrive-sync.');
+    return;
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ orderId, mode }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      console.error('[stripe-webhook] eshop pipedrive-sync failed:', res.status, t.slice(0, 400));
+    }
+  } catch (e) {
+    console.error('[stripe-webhook] eshop pipedrive-sync error:', e);
+  }
+}
+
+function extractStripeReceiptUrl(paymentIntent: Stripe.PaymentIntent): string | null {
+  const lc = paymentIntent.latest_charge;
+  if (lc && typeof lc === 'object' && 'receipt_url' in lc) {
+    const u = (lc as Stripe.Charge).receipt_url;
+    return typeof u === 'string' && u.trim() ? u.trim() : null;
+  }
+  return null;
+}
+
 /** Minimální tělo /orders, když chybí school_inquiry (starší klienti). */
 function buildSchoolOrdersBodyFallback(
   customer: CustomerMetadata,
@@ -233,6 +277,7 @@ async function forwardSchoolInquiryToMakeServer(
 
   const body = {
     ...baseBody,
+    paidViaStripe: true,
     paidViaStripeSchoolFlow: true,
     eshopOrderId,
     stripePaymentIntentId: paymentIntentId,
@@ -386,8 +431,12 @@ Deno.serve(async (req) => {
 
   try {
     if (event.type === 'payment_intent.succeeded') {
-      const paymentIntent = event.data.object as Stripe.PaymentIntent;
+      const paymentIntent = await stripe.paymentIntents.retrieve(
+        (event.data.object as Stripe.PaymentIntent).id,
+        { expand: ['latest_charge'] },
+      );
       currentPaymentIntentId = paymentIntent.id;
+      const receiptUrl = extractStripeReceiptUrl(paymentIntent);
       const checkoutSessionId = paymentIntent.metadata?.checkout_session_id;
 
       if (!checkoutSessionId) {
@@ -413,6 +462,7 @@ Deno.serve(async (req) => {
       const items = normalizeItems(checkoutSession.cart_data);
       const customer = normalizeCustomer(checkoutSession.customer_data);
       const shipping = normalizeShipping(checkoutSession.shipping_data);
+      const hasIco = String(customer.ico ?? '').trim().replace(/\s/g, '').length > 0;
 
       const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
       const total = subtotal + (Number.isInteger(shipping.price) ? shipping.price : 0);
@@ -446,6 +496,7 @@ Deno.serve(async (req) => {
                   status = 'paid',
                   payment_status = 'paid',
                   stripe_charge_id = ${chargeId},
+                  stripe_receipt_url = ${receiptUrl},
                   payment_method = ${pm},
                   paid_at = now(),
                   updated_at = now()
@@ -471,20 +522,28 @@ Deno.serve(async (req) => {
                     service,
                     status,
                     payload
-                  ) values
-                  (
+                  ) values (
                     ${order.id},
                     'basecom',
                     'pending',
                     ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
-                  ),
-                  (
-                    ${order.id},
-                    'idoklad',
-                    'pending',
-                    ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
                   )
                 `;
+                if (hasIco) {
+                  await tx`
+                    insert into public.export_queue (
+                      order_id,
+                      service,
+                      status,
+                      payload
+                    ) values (
+                      ${order.id},
+                      'idoklad',
+                      'pending',
+                      ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
+                    )
+                  `;
+                }
               }
 
               await tx`
@@ -560,6 +619,7 @@ Deno.serve(async (req) => {
               payment_status,
               stripe_payment_intent_id,
               stripe_charge_id,
+              stripe_receipt_url,
               subtotal,
               total,
               paid_at
@@ -582,6 +642,7 @@ Deno.serve(async (req) => {
               'paid',
               ${paymentIntent.id},
               ${chargeId},
+              ${receiptUrl},
               ${subtotal},
               ${total},
               now()
@@ -634,20 +695,28 @@ Deno.serve(async (req) => {
               service,
               status,
               payload
-            ) values
-            (
+            ) values (
               ${order.id},
               'basecom',
               'pending',
               ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
-            ),
-            (
-              ${order.id},
-              'idoklad',
-              'pending',
-              ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
             )
           `;
+          if (hasIco) {
+            await tx`
+              insert into public.export_queue (
+                order_id,
+                service,
+                status,
+                payload
+              ) values (
+                ${order.id},
+                'idoklad',
+                'pending',
+                ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
+              )
+            `;
+          }
 
           await tx`
             insert into public.order_events (
@@ -702,6 +771,13 @@ Deno.serve(async (req) => {
       }
 
       if (createdOrderId) {
+        const hasStoredInquiry =
+          checkoutSession.school_inquiry != null
+          && typeof checkoutSession.school_inquiry === 'object'
+          && !Array.isArray(checkoutSession.school_inquiry);
+        const isSchoolObjednat =
+          paymentIntent.metadata?.order_source === 'school_objednat' || hasStoredInquiry;
+
         const [emailResult, exportQueueResult, schoolOrdersResult] = await Promise.allSettled([
           invokeOrderEmail(createdOrderId, 'order_confirmed', req.url),
           invokeProcessExportQueue(req.url),
@@ -752,6 +828,11 @@ Deno.serve(async (req) => {
             ? schoolOrdersResult.reason.message
             : 'Unknown school /orders forward error.';
           console.error('[stripe-webhook] make-server /orders forward invocation failed:', message);
+        }
+
+        if (!isSchoolObjednat) {
+          const mode = hasIco ? 'b2b_card_won' : 'b2c_card_won';
+          await invokeEshopPipedriveSync(createdOrderId, mode, req.url);
         }
       }
 

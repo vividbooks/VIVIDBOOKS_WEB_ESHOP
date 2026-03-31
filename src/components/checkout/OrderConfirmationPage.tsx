@@ -16,6 +16,8 @@ interface OrderSummary {
   pickup_point_name?: string | null;
   customer_email: string;
   status: string;
+  payment_method?: string;
+  transfer_flow?: boolean;
   items?: OrderSummaryItem[];
 }
 
@@ -38,6 +40,7 @@ export function OrderConfirmationPage() {
   const [searchParams] = useSearchParams();
   const paymentIntent = searchParams.get('payment_intent');
   const orderFromUrl = searchParams.get('order');
+  const transferThankYou = searchParams.get('transfer') === '1';
   const { clearCart } = useCart();
   const clearedRef = useRef(false);
   const [order, setOrder] = useState<OrderSummary | null>(null);
@@ -54,10 +57,13 @@ export function OrderConfirmationPage() {
       return `${GET_ORDER_FN}?payment_intent_id=${encodeURIComponent(paymentIntentTrimmed)}`;
     }
     if (orderTrimmed) {
-      return `${GET_ORDER_FN}?order=${encodeURIComponent(orderTrimmed)}`;
+      const u = new URL(GET_ORDER_FN);
+      u.searchParams.set('order', orderTrimmed);
+      if (transferThankYou) u.searchParams.set('transfer', '1');
+      return u.toString();
     }
     return null;
-  }, [paymentIntentTrimmed, orderTrimmed]);
+  }, [paymentIntentTrimmed, orderTrimmed, transferThankYou]);
 
   const isPaymentIntentMode = Boolean(paymentIntentTrimmed);
 
@@ -194,6 +200,11 @@ export function OrderConfirmationPage() {
               <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[38px] md:text-[52px] leading-none mb-4">
                 {'Děkujeme'}
               </h1>
+              {order.transfer_flow && (
+                <p className="font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161]/80 leading-relaxed max-w-[480px] mx-auto mb-6">
+                  {'Děkujeme za objednávku. Ozve se vám náš obchodník, který s vámi objednávku dokončí.'}
+                </p>
+              )}
               <div className="space-y-3 max-w-[420px] mx-auto text-left mt-8">
                 <div className="flex items-center justify-between gap-4 font-['Fenomen_Sans',sans-serif] text-[14px]">
                   <span className="text-[#001161]/55">{'Číslo objednávky'}</span>

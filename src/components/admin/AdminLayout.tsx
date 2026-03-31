@@ -11,6 +11,9 @@ import {
 import { fetchAdminAlertSummary, type AdminAlertSummary } from '../../utils/adminApi';
 import { AdminSidebarChatHistory } from './AdminSidebarChatHistory';
 
+// Pipedrive → obchod: Edge funkce pipedrive-inbound-deal (webhook na won deal + token v query).
+// Admin přehled zatím v běžném /admin/objednávky — volitelně /admin/pipedrive-objednavky + ruční expedice.
+
 /* ── Sidebar config per mode ──────────────────────────────────────────── */
 
 const WEB_SIDEBAR = [

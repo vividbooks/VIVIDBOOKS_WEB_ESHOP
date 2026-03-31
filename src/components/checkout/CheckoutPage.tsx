@@ -79,6 +79,7 @@ interface ShippingState {
 const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? '';
 const stripePromise = stripePublishableKey ? loadStripeForApp(stripePublishableKey) : null;
 const CREATE_PAYMENT_INTENT_URL = `https://${projectId}.supabase.co/functions/v1/create-payment-intent`;
+const SUBMIT_TRANSFER_ORDER_URL = `https://${projectId}.supabase.co/functions/v1/submit-transfer-order`;
 const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resume-checkout`;
 const CONTACT_SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
@@ -150,7 +151,7 @@ const PAYMENT_OPTIONS: Array<{
   {
     id: 'transfer',
     label: 'Převodem',
-    description: 'Připravujeme samostatný převodový flow.',
+    description: 'Obchodník vás kontaktuje a dokončí objednávku. Vyžaduje vyplněné IČO.',
     priceLabel: 'Zdarma',
   },
 ];
@@ -194,6 +195,8 @@ export function CheckoutPage() {
   } | null>(null);
   const [resumedOrderNumber, setResumedOrderNumber] = useState<string | null>(null);
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('card');
+  const [transferSubmitting, setTransferSubmitting] = useState(false);
   const [schoolQuery, setSchoolQuery] = useState('');
   const [schoolResults, setSchoolResults] = useState<SchoolSearchResult[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
@@ -369,6 +372,27 @@ export function CheckoutPage() {
     shipping.method !== 'zasilkovna' || !!shipping.pickupPointId
   ), [shipping]);
 
+  const hasTransferIco = customer.ico.trim().replace(/\s/g, '').length > 0;
+
+  const paymentOptionsVisible = useMemo(
+    () => PAYMENT_OPTIONS.filter(
+      (o) => o.id !== 'transfer' || hasTransferIco,
+    ),
+    [hasTransferIco],
+  );
+
+  useEffect(() => {
+    if (resumeFlowActive && paymentMethod !== 'card') {
+      setPaymentMethod('card');
+    }
+  }, [resumeFlowActive, paymentMethod]);
+
+  useEffect(() => {
+    if (paymentMethod === 'transfer' && !hasTransferIco) {
+      setPaymentMethod('card');
+    }
+  }, [paymentMethod, hasTransferIco]);
+
   const canGoForward = (
     (currentStep === 1 && items.length > 0) ||
     (currentStep === 2 && isCustomerStepValid) ||
@@ -466,6 +490,13 @@ export function CheckoutPage() {
 
   useEffect(() => {
     if (currentStep !== 4) return;
+    if (paymentMethod !== 'card') {
+      setClientSecret(null);
+      setPaymentIntentId(null);
+      setPaymentIntentError('');
+      lastPaymentKeyRef.current = null;
+      return;
+    }
     if (resumeFlowActive) return;
     if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) return;
 
@@ -544,6 +575,82 @@ export function CheckoutPage() {
     isShippingStepValid,
     clientSecret,
     resumeFlowActive,
+    paymentMethod,
+  ]);
+
+  const submitTransferOrder = useCallback(async () => {
+    if (!hasTransferIco) return;
+    setTransferSubmitting(true);
+    setPaymentIntentError('');
+    try {
+      const payload = {
+        items: items.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          ...(item.variantName?.trim() ? { variant: item.variantName.trim() } : {}),
+          ...(item.bundleId?.trim() ? { bundleId: item.bundleId.trim() } : {}),
+          ...(item.bundleTitle?.trim() ? { bundleTitle: item.bundleTitle.trim() } : {}),
+        })),
+        shipping: {
+          method: shipping.method,
+          price: shipping.price,
+          pickupPointId: shipping.pickupPointId,
+          pickupPointName: shipping.pickupPointName,
+          differentAddress: hasSeparateDeliveryAddress,
+          deliveryAddress: hasSeparateDeliveryAddress ? {
+            recipientName: deliveryAddress.recipientName.trim() || customer.name.trim(),
+            street: deliveryAddress.deliveryStreet.trim(),
+            city: deliveryAddress.deliveryCity.trim(),
+            zip: deliveryAddress.deliveryZip.trim(),
+          } : undefined,
+        },
+        customer: {
+          email: customer.email.trim(),
+          name: customer.name.trim(),
+          phone: customer.phone.trim(),
+          schoolName: customer.schoolName.trim() || undefined,
+          ico: customer.ico.trim() || undefined,
+          street: customer.street.trim(),
+          city: customer.city.trim(),
+          zip: customer.zip.trim(),
+        },
+      };
+
+      const response = await fetch(SUBMIT_TRANSFER_ORDER_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Odeslání objednávky se nezdařilo.');
+      }
+      const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
+      if (!num) throw new Error('Chybí číslo objednávky v odpovědi.');
+      const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
+      thankYou.searchParams.set('order', num);
+      thankYou.searchParams.set('transfer', '1');
+      window.location.assign(thankYou.toString());
+    } catch (error: unknown) {
+      setPaymentIntentError(error instanceof Error ? error.message : 'Odeslání se nezdařilo.');
+    } finally {
+      setTransferSubmitting(false);
+    }
+  }, [
+    hasTransferIco,
+    items,
+    shipping.method,
+    shipping.price,
+    shipping.pickupPointId,
+    shipping.pickupPointName,
+    hasSeparateDeliveryAddress,
+    deliveryAddress,
+    customer,
   ]);
 
   const validateCustomerStep = () => {
@@ -1255,10 +1362,17 @@ export function CheckoutPage() {
 
             {currentStep === 4 && (
               <PaymentMethodSection
-                description="Platba probíhá přes Stripe Payment Element."
-                options={PAYMENT_OPTIONS}
-                selectedId="card"
-                isOptionDisabled={(id) => id === 'transfer' || (id !== 'card' && isDesktopPaymentView)}
+                description={
+                  paymentMethod === 'card'
+                    ? 'Platba probíhá přes Stripe Payment Element.'
+                    : 'Objednávku uložíme a obchodník vás kontaktuje.'
+                }
+                options={paymentOptionsVisible}
+                selectedId={paymentMethod}
+                onSelect={(id) => setPaymentMethod(id as PaymentMethodOption)}
+                isOptionDisabled={(id) =>
+                  (id !== 'card' && id !== 'transfer' && isDesktopPaymentView)
+                }
               >
                 <>
                   {!stripePublishableKey && (
@@ -1314,10 +1428,33 @@ export function CheckoutPage() {
                     </Elements>
                   )}
 
-                  {paymentIntentId && (
+                  {paymentIntentId && paymentMethod === 'card' && (
                     <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45">
                       {`PaymentIntent: ${paymentIntentId}`}
                     </p>
+                  )}
+
+                  {paymentMethod === 'transfer' && (
+                    <div className="mt-4 space-y-4">
+                      <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/75 leading-relaxed">
+                        {'Odešlete objednávku — ozve se vám obchodník a domluvíte dokončení nákupu. Nebudete platit kartou na tomto kroku.'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void submitTransferOrder()}
+                        disabled={transferSubmitting || !hasTransferIco}
+                        className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        {transferSubmitting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            {'Odesílám…'}
+                          </>
+                        ) : (
+                          'Odeslat objednávku (převod)'
+                        )}
+                      </button>
+                    </div>
                   )}
                 </>
               </PaymentMethodSection>

@@ -33,6 +33,8 @@ type OrderRow = {
   note: string | null;
   created_at: string;
   invoice_status: string | null;
+  pipedrive_deal_id: string | null;
+  school_inquiry: unknown | null;
 };
 
 type OrderItemRow = {
@@ -329,30 +331,70 @@ function matchBaseInventoryProduct(
   return matched || null;
 }
 
+function checkoutSchoolInquiryIsPresent(value: unknown): boolean {
+  if (value == null) return false;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.keys(value as Record<string, unknown>).length > 0;
+}
+
+/** Objednávka ze školního formuláře na webu (/objednat), ne z importu Pipedrivu. */
+function isSchoolSelfServiceEshopOrder(row: Pick<OrderRow, 'pipedrive_deal_id' | 'school_inquiry' | 'note'>): boolean {
+  const pd = String(row.pipedrive_deal_id || '').trim();
+  if (pd.length > 0) return false;
+  if (checkoutSchoolInquiryIsPresent(row.school_inquiry)) return true;
+  const note = row.note?.trim();
+  if (!note) return false;
+  try {
+    const parsed = JSON.parse(note) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object') return false;
+    const si = parsed.schoolInquiry;
+    return si != null && typeof si === 'object' && !Array.isArray(si);
+  } catch {
+    return false;
+  }
+}
+
+function resolveBasecomOrderStatusId(order: OrderRow): number {
+  const defaultRaw = Deno.env.get('BASECOM_ORDER_STATUS_ID');
+  const schoolRaw = (Deno.env.get('BASECOM_ORDER_STATUS_ID_SCHOOL_ESHOP') || '').trim();
+  const defaultId = Number.parseInt(defaultRaw || '', 10);
+  if (!Number.isInteger(defaultId)) {
+    throw new Error('Invalid BASECOM_ORDER_STATUS_ID.');
+  }
+  if (!schoolRaw || !isSchoolSelfServiceEshopOrder(order)) {
+    return defaultId;
+  }
+  const schoolId = Number.parseInt(schoolRaw, 10);
+  return Number.isInteger(schoolId) ? schoolId : defaultId;
+}
+
 async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
   const orderRows = await sql<OrderRow[]>`
     select
-      id,
-      order_number,
-      status,
-      customer_name,
-      customer_email,
-      customer_phone,
-      school_name,
-      ico,
-      street,
-      city,
-      zip,
-      shipping_method,
-      shipping_price,
-      pickup_point_id,
-      pickup_point_name,
-      payment_method,
-      note,
-      created_at,
-      invoice_status
-    from public.orders
-    where id = ${orderId}::uuid
+      o.id,
+      o.order_number,
+      o.status,
+      o.customer_name,
+      o.customer_email,
+      o.customer_phone,
+      o.school_name,
+      o.ico,
+      o.street,
+      o.city,
+      o.zip,
+      o.shipping_method,
+      o.shipping_price,
+      o.pickup_point_id,
+      o.pickup_point_name,
+      o.payment_method,
+      o.note,
+      o.created_at,
+      o.invoice_status,
+      o.pipedrive_deal_id,
+      cs.school_inquiry as school_inquiry
+    from public.orders o
+    left join public.checkout_sessions cs on cs.id = o.checkout_session_id
+    where o.id = ${orderId}::uuid
     limit 1
   `;
 
@@ -379,17 +421,16 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
   const productMap = await loadCatalogProductMap();
 
   const apiToken = Deno.env.get('BASECOM_API_TOKEN');
-  const orderStatusIdRaw = Deno.env.get('BASECOM_ORDER_STATUS_ID');
   const customSourceIdRaw = Deno.env.get('BASECOM_CUSTOM_SOURCE_ID');
 
-  if (!apiToken || !orderStatusIdRaw || !customSourceIdRaw) {
+  if (!apiToken || !customSourceIdRaw) {
     throw new Error('Missing Base.com environment configuration.');
   }
 
-  const orderStatusId = Number.parseInt(orderStatusIdRaw, 10);
+  const orderStatusId = resolveBasecomOrderStatusId(order);
   const customSourceId = Number.parseInt(customSourceIdRaw, 10);
 
-  if (!Number.isInteger(orderStatusId) || !Number.isInteger(customSourceId)) {
+  if (!Number.isInteger(customSourceId)) {
     throw new Error('Invalid Base.com numeric environment configuration.');
   }
 

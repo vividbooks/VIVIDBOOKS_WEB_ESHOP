@@ -12,6 +12,7 @@ import {
   type AdminOrderStockMeta,
   type AdminOrderWorkflowStep,
 } from '../../utils/adminApi';
+import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
 
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -81,6 +82,10 @@ function basecomUrl(id?: string | null) {
   return id ? `https://panel.baselinker.com/orders.php?id=${id}` : null;
 }
 
+function pipedriveDealUrl(id?: string | null) {
+  return id ? `https://app.pipedrive.com/deal/${id}` : null;
+}
+
 function shippingLabel(method: string) {
   switch (method) {
     case 'dpd':
@@ -131,6 +136,7 @@ export function AdminOrderDetailPage() {
 
   const stripeHref = useMemo(() => stripeUrl(order?.stripe_payment_intent_id), [order?.stripe_payment_intent_id]);
   const basecomHref = useMemo(() => basecomUrl(order?.basecom_order_id), [order?.basecom_order_id]);
+  const pipedriveDealHref = useMemo(() => pipedriveDealUrl(order?.pipedrive_deal_id), [order?.pipedrive_deal_id]);
 
   const loadOrder = async () => {
     if (!id) return;
@@ -390,7 +396,12 @@ export function AdminOrderDetailPage() {
               ) : alerts.map((alert) => (
                 <div key={alert.id} className="rounded-xl border border-gray-100 p-3">
                   <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div className="text-[12px] font-bold text-[#001161]">{alert.title}</div>
+                    <div>
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                        {orderAlertTypeLabelCs(alert.alert_type)}
+                      </div>
+                      <div className="text-[12px] font-bold text-[#001161]">{alert.title}</div>
+                    </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${alertSeverityClass(alert.severity)}`}>
                         {alert.severity}
@@ -466,9 +477,26 @@ export function AdminOrderDetailPage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
+              {order.stripe_receipt_url && (
+                <a
+                  href={order.stripe_receipt_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]"
+                >
+                  {'Stripe účtenka (receipt)'}
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
               {basecomHref && (
                 <a href={basecomHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">
                   {`Base.com order ${order.basecom_order_id}`}
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+              {pipedriveDealHref && (
+                <a href={pipedriveDealHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">
+                  {`Pipedrive deal ${order.pipedrive_deal_id}`}
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}

@@ -455,6 +455,8 @@ export interface AdminOrderDetail {
   payment_method: string;
   payment_status?: string | null;
   stripe_payment_intent_id?: string | null;
+  stripe_receipt_url?: string | null;
+  pipedrive_deal_id?: string | null;
   subtotal: number;
   total: number;
   basecom_status?: string | null;

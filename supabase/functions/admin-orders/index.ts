@@ -37,6 +37,8 @@ type OrderDetailRow = {
   payment_method: string;
   payment_status: string | null;
   stripe_payment_intent_id: string | null;
+  stripe_receipt_url: string | null;
+  pipedrive_deal_id: string | null;
   subtotal: number;
   total: number;
   basecom_status: string | null;
@@ -455,6 +457,8 @@ Deno.serve(async (req) => {
           payment_method,
           payment_status,
           stripe_payment_intent_id,
+          stripe_receipt_url,
+          pipedrive_deal_id,
           subtotal,
           total,
           basecom_status,

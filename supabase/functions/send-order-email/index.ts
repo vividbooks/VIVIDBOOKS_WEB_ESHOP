@@ -22,6 +22,10 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
+function isCustomerConfirmationEmailType(emailType: OrderEmailType) {
+  return emailType === 'order_confirmed' || emailType === 'order_transfer_received';
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -82,7 +86,7 @@ Deno.serve(async (req) => {
       )
     `;
 
-    if (payload.emailType === 'order_confirmed') {
+    if (isCustomerConfirmationEmailType(payload.emailType)) {
       await upsertWorkflowStep(sql, {
         orderId: payload.orderId,
         stepKey: 'customer_email_sent',
@@ -124,7 +128,7 @@ Deno.serve(async (req) => {
       // Email logging is best-effort only.
     }
 
-    if (payload.emailType === 'order_confirmed') {
+    if (isCustomerConfirmationEmailType(payload.emailType)) {
       try {
         await upsertWorkflowStep(sql, {
           orderId: payload.orderId,

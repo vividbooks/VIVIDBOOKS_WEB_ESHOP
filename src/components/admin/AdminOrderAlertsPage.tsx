@@ -7,6 +7,7 @@ import {
   runAdminOrderAlertAction,
   type AdminOrderAlert,
 } from '../../utils/adminApi';
+import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
 
 const STATE_FILTERS = [
   { id: 'open', label: 'Otevřené' },
@@ -168,6 +169,9 @@ export function AdminOrderAlertsPage() {
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold bg-slate-100 text-slate-700">
+                      {orderAlertTypeLabelCs(alert.alert_type)}
+                    </span>
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-[12px] font-bold ${severityClass(alert.severity)}`}>
                       {alert.severity}
                     </span>

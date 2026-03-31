@@ -11,9 +11,13 @@ type OrderRow = {
   created_at: string;
   status: string;
   payment_status: string | null;
+  payment_method: string;
   basecom_status: string | null;
   invoice_status: string | null;
   tracking_number: string | null;
+  stripe_payment_intent_id: string | null;
+  stripe_receipt_url: string | null;
+  pipedrive_deal_id: string | null;
 };
 
 type QueueRow = {
@@ -53,6 +57,8 @@ const MONITORED_ALERT_TYPES = [
   'idoklad_stuck',
   'idoklad_failed',
   'export_queue_processing_too_long',
+  'stripe_receipt_missing',
+  'transfer_payment_stale',
 ] as const;
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -98,6 +104,18 @@ function severityByMinutes(minutes: number, warningAfter: number, criticalAfter:
   return minutes >= criticalAfter ? 'critical' : minutes >= warningAfter ? 'warning' : null;
 }
 
+/** Převod čekající na platbu — bez Base/iDoklad fronty. */
+function isTransferPendingOrder(order: OrderRow) {
+  return order.status === 'pending_payment' && order.payment_method === 'transfer';
+}
+
+function severityByTransferAgeDays(days: number) {
+  if (days >= 15) return 'critical' as const;
+  if (days >= 10) return 'warning' as const;
+  if (days >= 7) return 'info' as const;
+  return null;
+}
+
 function dedupeKey(alertType: string, orderId: string, suffix?: string) {
   return suffix
     ? `${alertType}:order:${orderId}:${suffix}`
@@ -134,9 +152,13 @@ Deno.serve(async (req) => {
         created_at,
         status,
         payment_status,
+        payment_method,
         basecom_status,
         invoice_status,
-        tracking_number
+        tracking_number,
+        stripe_payment_intent_id,
+        stripe_receipt_url,
+        pipedrive_deal_id
       from public.orders
       where created_at >= now() - interval '30 days'
         and status not in ('delivered', 'refunded')
@@ -211,9 +233,13 @@ Deno.serve(async (req) => {
 
     for (const order of orders) {
       const orderAgeMinutes = minutesSince(order.created_at);
+      const orderAgeDays = orderAgeMinutes / 60 / 24;
       const queues = queueByOrder.get(order.id) || [];
       const baseQueue = queues.find((row) => row.service === 'basecom');
       const idokladQueue = queues.find((row) => row.service === 'idoklad');
+      const hasBasecomQueue = queues.some((row) => row.service === 'basecom');
+      const hasIdokladQueue = queues.some((row) => row.service === 'idoklad');
+      const transferPending = isTransferPendingOrder(order);
       const latestEmailStatus = emailStatusInfo(emailsByOrder.get(order.id) || []);
 
       await upsertWorkflowStep(sql, {
@@ -232,16 +258,19 @@ Deno.serve(async (req) => {
         },
       });
 
+      const skipEmailAutomation = Boolean(order.pipedrive_deal_id);
       const emailStepStatus =
         order.status === 'cancelled'
           ? 'skipped'
-          : latestEmailStatus.status === 'done'
-            ? 'done'
-            : latestEmailStatus.status === 'failed'
-              ? 'failed'
-              : orderAgeMinutes >= 5
-                ? 'stuck'
-                : 'pending';
+          : skipEmailAutomation
+            ? 'skipped'
+            : latestEmailStatus.status === 'done'
+              ? 'done'
+              : latestEmailStatus.status === 'failed'
+                ? 'failed'
+                : orderAgeMinutes >= 5
+                  ? 'stuck'
+                  : 'pending';
 
       await upsertWorkflowStep(sql, {
         orderId: order.id,
@@ -253,14 +282,20 @@ Deno.serve(async (req) => {
       let baseStepStatus: 'pending' | 'running' | 'done' | 'failed' | 'stuck' | 'skipped' = 'pending';
       if (order.status === 'cancelled') {
         baseStepStatus = 'skipped';
+      } else if (transferPending) {
+        baseStepStatus = 'skipped';
       } else if (order.basecom_status === 'done' || ['exported', 'shipped', 'delivered'].includes(order.status)) {
         baseStepStatus = 'done';
       } else if (order.basecom_status === 'failed') {
         baseStepStatus = 'failed';
       } else if (baseQueue?.status === 'processing') {
         baseStepStatus = minutesSince(baseQueue.created_at) >= 10 ? 'stuck' : 'running';
-      } else if (orderAgeMinutes >= 10) {
+      } else if (order.payment_status === 'paid' && !hasBasecomQueue && orderAgeMinutes >= 5) {
         baseStepStatus = 'stuck';
+      } else if (order.payment_status === 'paid' && orderAgeMinutes >= 10) {
+        baseStepStatus = 'stuck';
+      } else if (!hasBasecomQueue && order.payment_status !== 'paid') {
+        baseStepStatus = 'pending';
       }
 
       await upsertWorkflowStep(sql, {
@@ -274,10 +309,14 @@ Deno.serve(async (req) => {
       let idokladStepStatus: 'pending' | 'running' | 'done' | 'failed' | 'stuck' | 'skipped' = 'pending';
       if (order.status === 'cancelled') {
         idokladStepStatus = 'skipped';
+      } else if (transferPending) {
+        idokladStepStatus = 'skipped';
       } else if (order.invoice_status === 'done') {
         idokladStepStatus = 'done';
       } else if (order.invoice_status === 'failed') {
         idokladStepStatus = 'failed';
+      } else if (!hasIdokladQueue) {
+        idokladStepStatus = 'skipped';
       } else if (idokladQueue?.status === 'processing') {
         idokladStepStatus = minutesSince(idokladQueue.created_at) >= 15 ? 'stuck' : 'running';
       } else if (orderAgeMinutes >= 20) {
@@ -299,7 +338,11 @@ Deno.serve(async (req) => {
         metadata: order.tracking_number ? { trackingNumber: order.tracking_number } : null,
       });
 
-      if (order.payment_status === 'paid' && latestEmailStatus.status !== 'done') {
+      if (
+        order.payment_status === 'paid'
+        && latestEmailStatus.status !== 'done'
+        && !order.pipedrive_deal_id
+      ) {
         const severity = severityByMinutes(orderAgeMinutes, 2, 5);
         if (severity) {
           const key = dedupeKey('customer_email_missing', order.id);
@@ -322,6 +365,54 @@ Deno.serve(async (req) => {
         }
       }
 
+      if (
+        order.payment_status === 'paid'
+        && order.stripe_payment_intent_id
+        && !order.stripe_receipt_url
+      ) {
+        const severity = severityByMinutes(orderAgeMinutes, 10, 30);
+        if (severity) {
+          const key = dedupeKey('stripe_receipt_missing', order.id);
+          seenAlertKeys.add(key);
+          await openOrUpdateOrderAlert(sql, {
+            orderId: order.id,
+            alertType: 'stripe_receipt_missing',
+            severity,
+            dedupeKey: key,
+            title: `Chybí Stripe receipt u ${order.order_number}`,
+            message:
+              `Objednávka má PaymentIntent (${order.stripe_payment_intent_id.slice(0, 14)}…), ale sloupec stripe_receipt_url je prázdný.`,
+            payload: {
+              orderNumber: order.order_number,
+              stripePaymentIntentId: order.stripe_payment_intent_id,
+            },
+          });
+          openedOrUpdatedAlerts += 1;
+        }
+      }
+
+      if (transferPending) {
+        const sev = severityByTransferAgeDays(orderAgeDays);
+        if (sev) {
+          const key = dedupeKey('transfer_payment_stale', order.id);
+          seenAlertKeys.add(key);
+          await openOrUpdateOrderAlert(sql, {
+            orderId: order.id,
+            alertType: 'transfer_payment_stale',
+            severity: sev,
+            dedupeKey: key,
+            title: `Platba převodem čeká — ${order.order_number}`,
+            message:
+              `Objednávka čeká na převod ${orderAgeDays.toFixed(1)} d. Po 21 dnech se automaticky stornuje (cancel-stale-orders).`,
+            payload: {
+              orderNumber: order.order_number,
+              ageDays: orderAgeDays,
+            },
+          });
+          openedOrUpdatedAlerts += 1;
+        }
+      }
+
       if (order.basecom_status === 'failed') {
         const key = dedupeKey('basecom_failed', order.id);
         seenAlertKeys.add(key);
@@ -338,7 +429,11 @@ Deno.serve(async (req) => {
           },
         });
         openedOrUpdatedAlerts += 1;
-      } else if (order.payment_status === 'paid' && order.basecom_status !== 'done') {
+      } else if (
+        order.payment_status === 'paid'
+        && order.basecom_status !== 'done'
+        && !transferPending
+      ) {
         const severity = severityByMinutes(orderAgeMinutes, 3, 8);
         if (severity) {
           const key = dedupeKey('basecom_stuck', order.id);
@@ -362,7 +457,7 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (order.invoice_status === 'failed') {
+      if (order.invoice_status === 'failed' && !transferPending) {
         const key = dedupeKey('idoklad_failed', order.id);
         seenAlertKeys.add(key);
         await openOrUpdateOrderAlert(sql, {
@@ -378,7 +473,12 @@ Deno.serve(async (req) => {
           },
         });
         openedOrUpdatedAlerts += 1;
-      } else if (order.payment_status === 'paid' && order.invoice_status !== 'done') {
+      } else if (
+        order.payment_status === 'paid'
+        && order.invoice_status !== 'done'
+        && hasIdokladQueue
+        && !transferPending
+      ) {
         const severity = severityByMinutes(orderAgeMinutes, 15, 30);
         if (severity) {
           const key = dedupeKey('idoklad_stuck', order.id);

@@ -73,11 +73,16 @@ const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
     ],
   },
   {
-    title: 'Vzd\u011bl\u00e1v\u00e1n\u00ed u\u010ditel\u016f',
+    title: 'DVPP webin\u00e1\u0159e',
     items: [
       { label: 'DVPP webin\u00e1\u0159e', internal: '/webinare' },
-      { label: 'Novinky',                internal: '/novinky' },
-      { label: 'Blog',                   internal: '/blog' },
+    ],
+  },
+  {
+    title: 'Novinky a blog',
+    items: [
+      { label: 'Novinky', internal: '/novinky' },
+      { label: 'Blog',    internal: '/blog' },
     ],
   },
   {
@@ -395,18 +400,38 @@ export default function CatalogLayout() {
                 </div>
 
                 {/* Other nav */}
-                <div className="px-4 pt-2 pb-4 border-t border-gray-200 mt-2">
-                  {[
-                    { label: 'Webináře DVPP', path: '/webinare' },
-                    { label: 'Novinky', path: '/novinky' },
-                    { label: 'Blog', path: '/blog' },
-                    { label: 'Kontakt', path: '/kontakt' },
-                  ].map(item => (
-                    <button key={item.path} onClick={() => { navigate(item.path); setMobileSidebarOpen(false); }}
-                      className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1">
-                      {item.label}
-                    </button>
-                  ))}
+                <div className="px-4 pt-2 pb-4 border-t border-gray-200 mt-2 flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/webinare'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                  >
+                    {'DVPP webin\u00e1\u0159e'}
+                  </button>
+                  <p className="px-3 pt-2 pb-0.5 text-[11px] font-bold uppercase tracking-wider text-[#001161]/40">
+                    {'Novinky a blog'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/novinky'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[15px] font-semibold text-[#001161]/85 hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                  >
+                    Novinky
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/blog'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[15px] font-semibold text-[#001161]/85 hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                  >
+                    Blog
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/kontakt'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                  >
+                    Kontakt
+                  </button>
                 </div>
 
                 {/* Phone */}

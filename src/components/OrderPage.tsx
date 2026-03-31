@@ -440,6 +440,20 @@ export function OrderPage() {
     name: '', email: '', phone: '', position: '', gdpr: false, newsletter: false,
     schoolName: '', ico: '', street: '', city: '', zip: '',
   });
+
+  const schoolPaymentOptionsVisible = useMemo(
+    () => SCHOOL_PAYMENT_OPTIONS.filter(
+      (o) => o.id !== 'transfer' || form.ico.trim().replace(/\s/g, '').length > 0,
+    ),
+    [form.ico],
+  );
+
+  useEffect(() => {
+    if (paymentMethod === 'transfer' && !form.ico.trim().replace(/\s/g, '')) {
+      setPaymentMethod('card');
+    }
+  }, [paymentMethod, form.ico]);
+
   const [hasSeparateDeliveryAddress, setHasSeparateDeliveryAddress] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddressState>({
     recipientName: '',
@@ -2315,10 +2329,10 @@ export function OrderPage() {
                     ? 'Platba probíhá přes Stripe Payment Element — stejně jako v pokladně. U ostatních metod platbu domluvíme po odeslání poptávky.'
                     : 'Platbu u školní poptávky domluvíme po odeslání. Níže zvolte preferovanou metodu.'
                 }
-                options={SCHOOL_PAYMENT_OPTIONS}
+                options={schoolPaymentOptionsVisible}
                 selectedId={paymentMethod}
                 onSelect={(id) => setPaymentMethod(id as SchoolPaymentPref)}
-                isOptionDisabled={(id) => id === 'transfer' || (id !== 'card' && isDesktopPaymentView)}
+                isOptionDisabled={(id) => id !== 'card' && id !== 'transfer' && isDesktopPaymentView}
                 notice={showDigitalPlusPrintNotice ? (
                   <div className="mb-5 flex items-start gap-3 rounded-[16px] border border-amber-200/80 bg-amber-50/90 px-4 py-3">
                     <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
