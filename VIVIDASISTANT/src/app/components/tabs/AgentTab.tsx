@@ -1,11 +1,22 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Loader2, Building2, Mail, Phone, MapPin, Trash2, Mic, Navigation, CheckCircle2, Circle, AlertCircle, Volume2, VolumeX, ExternalLink, X, Hash, DollarSign, ChevronRight, Briefcase, BookOpen, Plus, FileText } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Send, User, Loader2, Building2, Mail, Phone, MapPin, Trash2, Mic, Navigation, CheckCircle2, Circle, AlertCircle, Volume2, VolumeX, ExternalLink, X, Hash, DollarSign, ChevronRight, Briefcase, BookOpen, Plus, FileText, Copy, History, PanelLeftClose } from 'lucide-react';
 import { SchoolDetailPanel } from '../ui/SchoolDetailPanel';
+import { AgentOrbAvatar } from '../ui/AgentOrbAvatar';
 import { toast } from 'sonner';
 import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
+
+/** Supabase Edge Functions vyžadují JWT (anon) — bez toho 401. */
+const FN_AUTH_JSON: HeadersInit = {
+  Authorization: `Bearer ${publicAnonKey}`,
+  'Content-Type': 'application/json',
+};
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
+
+/** Stejný backend jako Web operátor (admin agent) + CRM vrstva Pipedrive přes nástroj sales_crm_orchestrate. */
+const ADMIN_FN = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
 interface Message {
   id: string;
@@ -14,6 +25,8 @@ interface Message {
   timestamp: Date;
   crmData?: CrmResult | null;
   routeData?: RouteResult | null;
+  /** Při vyhledání škol v CRM zobraz jen karty aktivních zákazníků, bez textového shrnutí. */
+  crmUiMode?: 'active_schools_only';
   isLoading?: boolean;
   loadingSteps?: AgentStep[];
   voiceSummary?: string;
@@ -44,18 +57,204 @@ interface AgentStep {
 
 interface AgentTabProps {
   initialMessage?: string;
+  /** Příchozí text z diktafonu — vždy nová konverzace (prázdná session + první zpráva). */
+  initialMessageFromDictation?: boolean;
 }
 
-export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
-  const { smartEdit, transcribeAudio, addTask } = useApp();
-  const [messages, setMessages] = useState<Message[]>([]);
+const AGENT_SESSIONS_KEY = 'vividassistant_agent_sessions_v2';
+const LEGACY_CHAT_KEY = 'vividassistant_agent_chat_v1';
+const LEGACY_ROUTE_KEY = 'vividassistant_agent_last_route_v1';
+const MAX_STORED_MESSAGES = 100;
+const MAX_SESSIONS = 30;
+
+interface ChatSession {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messages: Message[];
+  lastRouteData: RouteResult | null;
+}
+
+function hydrateMessage(m: Omit<Message, 'timestamp'> & { timestamp: string }): Message {
+  return { ...m, timestamp: new Date(m.timestamp), isLoading: false };
+}
+
+function deriveSessionTitle(msgs: Message[]): string {
+  const first = msgs.find((m) => m.role === 'user' && m.content.trim());
+  if (first) {
+    const t = first.content.trim().replace(/\s+/g, ' ');
+    return t.length > 48 ? `${t.slice(0, 46)}…` : t;
+  }
+  return 'Nový chat';
+}
+
+function loadSessionsBootstrap(): { sessions: ChatSession[]; activeSessionId: string } {
+  if (typeof window === 'undefined') {
+    const id = `sess-${Date.now()}`;
+    return {
+      sessions: [{ id, title: 'Nový chat', updatedAt: new Date().toISOString(), messages: [], lastRouteData: null }],
+      activeSessionId: id,
+    };
+  }
+  try {
+    const raw = localStorage.getItem(AGENT_SESSIONS_KEY);
+    if (raw) {
+      const data = JSON.parse(raw) as {
+        activeSessionId: string;
+        sessions: Array<
+          Omit<ChatSession, 'messages'> & {
+            messages: Array<Omit<Message, 'timestamp'> & { timestamp: string }>;
+          }
+        >;
+      };
+      if (data?.sessions?.length) {
+        const sessions: ChatSession[] = data.sessions.map((s) => ({
+          ...s,
+          messages: s.messages.map(hydrateMessage).slice(-MAX_STORED_MESSAGES),
+        }));
+        let active = data.activeSessionId;
+        if (!sessions.some((s) => s.id === active)) active = sessions[0].id;
+        return { sessions, activeSessionId: active };
+      }
+    }
+
+    const legacyMsgsRaw = localStorage.getItem(LEGACY_CHAT_KEY);
+    let legacyMsgs: Message[] = [];
+    if (legacyMsgsRaw) {
+      const parsed = JSON.parse(legacyMsgsRaw) as Array<Omit<Message, 'timestamp'> & { timestamp: string }>;
+      if (Array.isArray(parsed)) {
+        legacyMsgs = parsed.map(hydrateMessage).slice(-MAX_STORED_MESSAGES);
+      }
+    }
+    let legacyRoute: RouteResult | null = null;
+    const legacyRouteRaw = localStorage.getItem(LEGACY_ROUTE_KEY);
+    if (legacyRouteRaw) {
+      try {
+        legacyRoute = JSON.parse(legacyRouteRaw) as RouteResult;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const id = crypto.randomUUID();
+    try {
+      localStorage.removeItem(LEGACY_CHAT_KEY);
+      localStorage.removeItem(LEGACY_ROUTE_KEY);
+    } catch {
+      /* ignore */
+    }
+
+    if (legacyMsgs.length || legacyRoute) {
+      return {
+        sessions: [
+          {
+            id,
+            title: deriveSessionTitle(legacyMsgs),
+            updatedAt: new Date().toISOString(),
+            messages: legacyMsgs,
+            lastRouteData: legacyRoute,
+          },
+        ],
+        activeSessionId: id,
+      };
+    }
+
+    return {
+      sessions: [{ id, title: 'Nový chat', updatedAt: new Date().toISOString(), messages: [], lastRouteData: null }],
+      activeSessionId: id,
+    };
+  } catch {
+    const id = crypto.randomUUID();
+    return {
+      sessions: [{ id, title: 'Nový chat', updatedAt: new Date().toISOString(), messages: [], lastRouteData: null }],
+      activeSessionId: id,
+    };
+  }
+}
+
+function newSessionId(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function getInitialSessionState(opts: { initialMessage?: string; initialMessageFromDictation?: boolean }) {
+  const b = loadSessionsBootstrap();
+  if (opts.initialMessageFromDictation && opts.initialMessage) {
+    const id = newSessionId();
+    const empty: ChatSession = {
+      id,
+      title: 'Nový chat',
+      updatedAt: new Date().toISOString(),
+      messages: [],
+      lastRouteData: null,
+    };
+    return {
+      sessions: [empty, ...b.sessions].slice(0, MAX_SESSIONS),
+      activeSessionId: id,
+    };
+  }
+  return { sessions: b.sessions, activeSessionId: b.activeSessionId };
+}
+
+export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessageFromDictation }) => {
+  const { smartEdit, transcribeAudio, addTask, setAgentProcessing } = useApp();
+  const sessionInitRef = useRef<ReturnType<typeof getInitialSessionState> | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => {
+    sessionInitRef.current = getInitialSessionState({ initialMessage, initialMessageFromDictation });
+    return sessionInitRef.current.sessions;
+  });
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => sessionInitRef.current!.activeSessionId);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(true);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [autoSpeak, setAutoSpeak] = useState(true); // Auto-speak route summaries
-  const [lastRouteData, setLastRouteData] = useState<RouteResult | null>(null); // Remember last route for follow-ups
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? sessions[0];
+  const messages = activeSession?.messages ?? [];
+  const lastRouteData = activeSession?.lastRouteData ?? null;
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      const id = newSessionId();
+      setSessions([
+        { id, title: 'Nový chat', updatedAt: new Date().toISOString(), messages: [], lastRouteData: null },
+      ]);
+      setActiveSessionId(id);
+      return;
+    }
+    if (!sessions.some((s) => s.id === activeSessionId)) {
+      setActiveSessionId(sessions[0].id);
+    }
+  }, [sessions, activeSessionId]);
+
+  const updateActiveMessages = (updater: (prev: Message[]) => Message[]) => {
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeSessionId);
+      if (idx === -1) return prev;
+      const cur = prev[idx];
+      const newMessages = updater(cur.messages).slice(-MAX_STORED_MESSAGES);
+      const copy = [...prev];
+      copy[idx] = {
+        ...cur,
+        messages: newMessages,
+        title: deriveSessionTitle(newMessages),
+        updatedAt: new Date().toISOString(),
+      };
+      return copy;
+    });
+  };
+
+  const setActiveSessionRoute = (route: RouteResult | null) => {
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeSessionId);
+      if (idx === -1) return prev;
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], lastRouteData: route, updatedAt: new Date().toISOString() };
+      return copy;
+    });
+  };
   const [selectedOrg, setSelectedOrg] = useState<any | null>(null); // Selected org for detail modal
   const [loadingOrgDetail, setLoadingOrgDetail] = useState(false);
   const [orgDetail, setOrgDetail] = useState<any | null>(null);
@@ -64,6 +263,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   const [loadingRag, setLoadingRag] = useState(false);
   const [newRagTitle, setNewRagTitle] = useState('');
   const [newRagContent, setNewRagContent] = useState('');
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -74,7 +274,9 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   const fetchRagDocuments = async () => {
     setLoadingRag(true);
     try {
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents`);
+      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents`, {
+        headers: FN_AUTH,
+      });
       if (response.ok) {
         const docs = await response.json();
         setRagDocuments(docs);
@@ -95,7 +297,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
     try {
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: FN_AUTH_JSON,
         body: JSON.stringify({ title: newRagTitle, content: newRagContent })
       });
 
@@ -116,7 +318,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   const deleteRagDocument = async (id: string) => {
     try {
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents/${id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: FN_AUTH,
       });
 
       if (response.ok) {
@@ -134,7 +337,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
     try {
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/reindex`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: FN_AUTH_JSON,
       });
 
       if (response.ok) {
@@ -162,7 +365,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   const fetchOrgDetail = async (org: any) => {
     console.log("Fetching org detail for:", org);
     
-    if (!org.id) {
+    const oid = org?.id;
+    if (oid == null || oid === '' || String(oid) === 'unknown') {
       toast.error("Organizace nemá ID");
       return;
     }
@@ -174,7 +378,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
     try {
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/org-detail`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: FN_AUTH_JSON,
         body: JSON.stringify({ orgId: org.id })
       });
 
@@ -233,6 +437,32 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
       sendMessage(initialMessage);
     }
   }, [initialMessage]);
+
+  useEffect(() => {
+    setAgentProcessing(isProcessing || isTranscribing);
+    return () => setAgentProcessing(false);
+  }, [isProcessing, isTranscribing, setAgentProcessing]);
+
+  useEffect(() => {
+    try {
+      const payload = {
+        activeSessionId,
+        sessions: sessions.map((s) => ({
+          ...s,
+          messages: s.messages
+            .filter((m) => !m.isLoading)
+            .slice(-MAX_STORED_MESSAGES)
+            .map((m) => ({
+              ...m,
+              timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
+            })),
+        })),
+      };
+      localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(payload));
+    } catch (e) {
+      console.warn('[AgentTab] Ukládání historie chatů selhalo:', e);
+    }
+  }, [sessions, activeSessionId]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -490,90 +720,121 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
       isLoading: true
     };
 
-    setMessages(prev => [...prev, userMessage, loadingMessage]);
+    updateActiveMessages((prev) => [...prev, userMessage, loadingMessage]);
     setInput('');
     setIsProcessing(true);
 
     try {
-      // ========== UNIFIED ORCHESTRATOR ==========
-      // Send everything to backend AI orchestrator which decides what to do
       const googleAccessToken = localStorage.getItem('google_provider_token');
-      
-      const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/agent/orchestrate`, {
+      const historyMessages = [
+        ...messages.filter(m => !m.isLoading).map(m => ({ role: m.role, content: m.content })),
+        { role: 'user' as const, content: messageText },
+      ];
+
+      const response = await fetch(`${ADMIN_FN}/admin/admin-agent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          message: messageText,
-          conversationHistory: messages.slice(-5).map(m => ({ role: m.role, content: m.content })),
+        headers: FN_AUTH_JSON,
+        body: JSON.stringify({
+          messages: historyMessages,
+          model: 'gemini-3.1-pro-preview',
+          crmAssistant: true,
+          embeddedAssistant: false,
           googleAccessToken,
-          lastRouteData: lastRouteData ? {
-            origin: lastRouteData.route?.origin,
-            destination: lastRouteData.route?.destination,
-            locations: lastRouteData.locations
-          } : null
-        })
+          lastRouteData: lastRouteData
+            ? {
+                origin: lastRouteData.route?.origin,
+                destination: lastRouteData.route?.destination,
+                locations: lastRouteData.locations,
+              }
+            : null,
+        }),
       });
 
       if (!response.ok) {
-        throw new Error(`Orchestrator failed: ${response.status}`);
+        const errBody = await response.json().catch(() => ({}));
+        throw new Error((errBody as any).error || `HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as {
+        reply?: string;
+        crmPayload?: {
+          needsClarification?: boolean;
+          clarificationQuestion?: string;
+          response?: string;
+          voiceSummary?: string;
+          crmData?: CrmResult | null;
+          routeData?: RouteResult | null;
+          action?: string;
+          taskText?: string;
+        };
+        error?: string;
+      };
 
-      // Handle clarification request
-      if (data.needsClarification) {
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      const cp = data.crmPayload;
+
+      if (cp?.needsClarification) {
         const assistantMessage: Message = {
           id: (Date.now() + 2).toString(),
           role: 'assistant',
-          content: data.clarificationQuestion || 'Můžete mi upřesnit, co přesně potřebujete?',
-          timestamp: new Date()
+          content: cp.clarificationQuestion || data.reply || 'Můžete mi upřesnit, co přesně potřebujete?',
+          timestamp: new Date(),
         };
-        setMessages(prev => prev.filter(m => !m.isLoading).concat(assistantMessage));
-        if (autoSpeak && data.clarificationQuestion) speak(data.clarificationQuestion);
+        updateActiveMessages((prev) => [...prev.filter((m) => !m.isLoading), assistantMessage]);
+        if (autoSpeak && (cp.clarificationQuestion || data.reply)) speak(cp.clarificationQuestion || data.reply || '');
         return;
       }
 
-      // Handle different action results
+      const replyText = data.reply || cp?.response || 'Hotovo!';
+      const voiceOut = cp?.voiceSummary;
+
+      const isCrmSchoolSearch =
+        cp?.action === 'crm_search' &&
+        Array.isArray(cp?.crmData?.organizations) &&
+        cp.crmData!.organizations.length > 0;
+
       const assistantMessage: Message = {
         id: (Date.now() + 2).toString(),
         role: 'assistant',
-        content: data.response || data.summary || 'Hotovo!',
+        content: isCrmSchoolSearch ? '' : replyText,
         timestamp: new Date(),
-        crmData: data.crmData || null,
-        routeData: data.routeData || null,
-        voiceSummary: data.voiceSummary
+        crmData: cp?.crmData ?? null,
+        routeData: cp?.routeData ?? null,
+        crmUiMode: isCrmSchoolSearch ? 'active_schools_only' : undefined,
+        voiceSummary: voiceOut,
       };
 
-      setMessages(prev => prev.filter(m => !m.isLoading).concat(assistantMessage));
+      updateActiveMessages((prev) => [...prev.filter((m) => !m.isLoading), assistantMessage]);
 
-      // Save route data for follow-ups
-      if (data.routeData) {
-        setLastRouteData(data.routeData);
+      if (cp?.routeData) {
+        setActiveSessionRoute(cp.routeData);
       }
 
-      // Show action-specific toasts
-      if (data.action === 'task_created') {
-        addTask(data.taskText);
-        toast.success("✅ Úkol přidán");
-      } else if (data.action === 'calendar_created') {
-        toast.success("📅 Schůzka přidána do kalendáře");
-      } else if (data.action === 'crm_search') {
-        toast.success(`🏢 Nalezeno ${data.crmData?.deals?.length || data.crmData?.organizations?.length || 0} výsledků`);
-      } else if (data.action === 'route_planned') {
-        toast.success(`🗺️ Trasa naplánována!`);
-      } else if (data.action === 'analyze_potential') {
-        toast.success(`📊 Analýza potenciálu dokončena`);
-      } else if (data.action === 'save_to_rag') {
-        toast.success(`📚 Uloženo do znalostní knihovny`);
-      } else if (data.action === 'compose_with_rag') {
-        toast.success(`📧 Text vygenerován z knihovny`);
+      const act = cp?.action;
+      if (act === 'task_created') {
+        const tt = (cp as { taskText?: string })?.taskText;
+        if (tt) addTask(tt);
+        toast.success('✅ Úkol přidán');
+      } else if (act === 'calendar_created') {
+        toast.success('📅 Schůzka přidána do kalendáře');
+      } else if (act === 'crm_search') {
+        toast.success(`🏢 Nalezeno ${cp?.crmData?.deals?.length || cp?.crmData?.organizations?.length || 0} výsledků`);
+      } else if (act === 'route_planned') {
+        toast.success('🗺️ Trasa naplánována!');
+      } else if (act === 'analyze_potential') {
+        toast.success('📊 Analýza potenciálu dokončena');
+      } else if (act === 'save_to_rag') {
+        toast.success('📚 Uloženo do znalostní knihovny');
+      } else if (act === 'compose_with_rag') {
+        toast.success('📧 Text vygenerován z knihovny');
       }
 
-      // Voice output
-      if (autoSpeak && data.voiceSummary) {
-        setTimeout(() => speak(data.voiceSummary), 500);
+      if (autoSpeak && voiceOut && !isCrmSchoolSearch) {
+        setTimeout(() => speak(voiceOut), 500);
       }
-
     } catch (error) {
       console.error("Agent error:", error);
       const errorMessage: Message = {
@@ -582,7 +843,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
         content: 'Omlouvám se, došlo k chybě při zpracování.',
         timestamp: new Date()
       };
-      setMessages(prev => prev.filter(m => !m.isLoading).concat(errorMessage));
+      updateActiveMessages((prev) => [...prev.filter((m) => !m.isLoading), errorMessage]);
       toast.error("Chyba při komunikaci s agentem");
     } finally {
       setIsProcessing(false);
@@ -660,8 +921,79 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   };
 
   const clearChat = () => {
-    setMessages([]);
-    toast.success("Chat vymazán");
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === activeSessionId);
+      if (idx === -1) return prev;
+      const copy = [...prev];
+      copy[idx] = {
+        ...copy[idx],
+        messages: [],
+        lastRouteData: null,
+        title: 'Nový chat',
+        updatedAt: new Date().toISOString(),
+      };
+      return copy;
+    });
+    toast.success('Chat vymazán');
+  };
+
+  const startNewChat = () => {
+    const id = newSessionId();
+    const newSession: ChatSession = {
+      id,
+      title: 'Nový chat',
+      updatedAt: new Date().toISOString(),
+      messages: [],
+      lastRouteData: null,
+    };
+    setSessions((prev) => [newSession, ...prev].slice(0, MAX_SESSIONS));
+    setActiveSessionId(id);
+  };
+
+  const selectSession = (id: string) => {
+    setActiveSessionId(id);
+  };
+
+  const deleteSession = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setSessions((prev) => {
+      const filtered = prev.filter((s) => s.id !== id);
+      if (filtered.length === 0) {
+        const nid = newSessionId();
+        return [{ id: nid, title: 'Nový chat', updatedAt: new Date().toISOString(), messages: [], lastRouteData: null }];
+      }
+      return filtered;
+    });
+  };
+
+  const getCopyableTextForMessage = (message: Message): string => {
+    const chunks: string[] = [];
+    if (message.content.trim()) chunks.push(message.content.trim());
+    if (message.routeData?.route) {
+      const r = message.routeData.route;
+      chunks.push(`Trasa: ${r.origin} → ${r.destination}`);
+    }
+    if (message.crmData?.organizations?.length) {
+      const lines = message.crmData.organizations.map((o: any) => {
+        const name = o.name || '';
+        const addr = o.address ? ` — ${o.address}` : '';
+        return `${name}${addr}`.trim();
+      }).filter(Boolean);
+      if (lines.length) chunks.push(lines.join('\n'));
+    }
+    return chunks.join('\n\n');
+  };
+
+  const copyMessageToClipboard = (message: Message) => {
+    const text = getCopyableTextForMessage(message);
+    if (!text) {
+      toast.error('Není text ke zkopírování');
+      return;
+    }
+    navigator.clipboard.writeText(text).then(
+      () => toast.success('Zkopírováno'),
+      () => toast.error('Kopírování se nepovedlo'),
+    );
   };
 
   // Render route planner results
@@ -873,10 +1205,64 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
   };
 
   // Render CRM data - Organizations first, deduplicated
-  const renderCrmData = (data: CrmResult) => {
-    // Separate active customers (with won deals) from others
+  const renderCrmData = (data: CrmResult, mode?: Message['crmUiMode']) => {
     const activeOrgs = data.organizations?.filter((o: any) => o.wonDeals > 0) || [];
     const otherOrgs = data.organizations?.filter((o: any) => !o.wonDeals || o.wonDeals === 0) || [];
+
+    if (mode === 'active_schools_only') {
+      if (activeOrgs.length === 0) {
+        return (
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-[13px] text-[#8E8E93] leading-relaxed">
+            V tomto výsledku hledání nejsou žádní aktivní zákazníci (vyhrané dealy). Zkuste upřesnit dotaz nebo hledat jinak.
+          </div>
+        );
+      }
+      return (
+        <div className="mt-4 space-y-3">
+          <div>
+            <p className="text-xs font-semibold text-green-400 uppercase mb-2 flex items-center gap-1">
+              ✅ AKTIVNÍ ZÁKAZNÍCI ({activeOrgs.length})
+            </p>
+            <div className="space-y-2">
+              {activeOrgs.slice(0, 8).map((org: any, i: number) => (
+                <div
+                  key={org.id || i}
+                  role="button"
+                  tabIndex={0}
+                  className="bg-green-900/20 border border-green-500/30 rounded-lg p-3 text-xs cursor-pointer hover:bg-green-900/40 transition-colors active:scale-[0.98]"
+                  onClick={(e) => { e.stopPropagation(); fetchOrgDetail(org); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') fetchOrgDetail(org); }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1">
+                      <p className="font-semibold text-white flex items-center gap-1">
+                        <Building2 size={12} /> {org.name}
+                      </p>
+                      {org.address && (
+                        <p className="text-[#8E8E93] mt-1 flex items-center gap-1">
+                          <MapPin size={10} /> {org.address}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-green-500/30 text-green-400">
+                        VYHRÁNO
+                      </span>
+                      <ChevronRight size={14} className="text-green-400/50" />
+                    </div>
+                  </div>
+                  {(org.dealCount || org.wonDeals) && (
+                    <p className="text-green-400/80 mt-2 text-[10px]">
+                      📊 {org.wonDeals || 0} vyhraných dealů {org.openDeals > 0 && `| ${org.openDeals} otevřených`}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="mt-4 space-y-3">
@@ -1042,7 +1428,14 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
             </p>
             <div className="space-y-2">
               {data.organizations.slice(0, 3).map((org: any, i: number) => (
-                <div key={i} className="bg-black/30 rounded-lg p-3 text-xs">
+                <div
+                  key={i}
+                  role="button"
+                  tabIndex={0}
+                  className="bg-black/30 rounded-lg p-3 text-xs cursor-pointer hover:bg-black/50 transition-colors"
+                  onClick={(e) => { e.stopPropagation(); fetchOrgDetail(org); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') fetchOrgDetail(org); }}
+                >
                   <p className="font-semibold text-white flex items-center gap-1">
                     <Building2 size={10} /> {org.name}
                   </p>
@@ -1075,56 +1468,141 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
     );
   };
 
-  return (
-    <div className="flex flex-col lg:flex-row h-full bg-black overflow-hidden relative">
-      {/* Main Chat Area */}
-      <div className={`flex flex-col h-full flex-1 ${selectedOrg ? 'lg:min-w-0' : 'w-full lg:max-w-4xl lg:mx-auto'}`}>
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-6 py-4 border-b border-white/10">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
-            <Bot size={20} className="text-white" />
-          </div>
-          <div>
-            <h1 className="text-white font-semibold">Obchodník pomocník</h1>
-            <p className="text-[#8E8E93] text-xs">CRM, Gmail, Route Planner</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setShowRagModal(true); fetchRagDocuments(); }}
-            className="p-2 rounded-lg text-[#8E8E93] hover:text-purple-400 hover:bg-white/5 transition-colors"
-            title="Znalostní knihovna"
-          >
-            <BookOpen size={20} />
-          </button>
-          <button
-            onClick={clearChat}
-            className="p-2 rounded-lg text-[#8E8E93] hover:text-red-400 hover:bg-white/5 transition-colors"
-            title="Vymazat chat"
-          >
-            <Trash2 size={20} />
-          </button>
-        </div>
-      </div>
+  const sortedSessionsForPanel = useMemo(
+    () =>
+      [...sessions].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      ),
+    [sessions],
+  );
 
+  return (
+    <div className="flex flex-col md:flex-row h-full min-h-0 w-full max-w-full bg-black overflow-hidden relative">
+      {/* Historie: ~260px (200px +30%); výchozí otevřený */}
+      {showHistoryPanel && (
+        <aside className="flex flex-col min-h-0 w-full max-h-[min(42vh,320px)] shrink-0 border-b border-white/5 bg-[#1C1C1E] md:h-full md:max-h-none md:w-[260px] md:min-w-[260px] md:shrink-0 md:border-b-0 md:border-r md:border-white/5">
+          <div className="shrink-0 flex items-center justify-between gap-1 px-2 py-2 border-b border-white/10 bg-[#1C1C1E]">
+            <h2 className="text-white font-semibold text-xs truncate pr-1">Historie</h2>
+            <div className="flex items-center shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRagModal(true);
+                  fetchRagDocuments();
+                }}
+                className="p-1.5 rounded-lg text-[#8E8E93] hover:text-purple-400 hover:bg-white/5"
+                title="Znalostní knihovna"
+              >
+                <BookOpen size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={clearChat}
+                className="p-1.5 rounded-lg text-[#8E8E93] hover:text-red-400 hover:bg-white/5"
+                title="Vymazat zprávy v tomto chatu"
+              >
+                <Trash2 size={18} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowHistoryPanel(false)}
+                className="p-1.5 rounded-lg text-[#8E8E93] hover:text-white hover:bg-white/10"
+                title="Sbalit historii"
+              >
+                <PanelLeftClose size={18} />
+              </button>
+            </div>
+          </div>
+          <div className="shrink-0 p-3 border-b border-white/10 bg-[#1C1C1E]">
+            <button
+              type="button"
+              onClick={startNewChat}
+              className="w-full flex items-center justify-center gap-2 rounded-xl py-3 px-4 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors"
+            >
+              <Plus size={18} />
+              Nový chat
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1 bg-[#1C1C1E]">
+            {sortedSessionsForPanel.map((s) => {
+              const msgCount = s.messages.filter((m) => !m.isLoading).length;
+              const isActive = s.id === activeSessionId;
+              return (
+                <div
+                  key={s.id}
+                  className={clsx(
+                    'flex items-stretch gap-1 rounded-xl border transition-colors',
+                    isActive
+                      ? 'border-emerald-500/60 bg-[#2C2C2E]'
+                      : 'border-white/5 bg-[#252528] hover:bg-[#2C2C2E]',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectSession(s.id)}
+                    className="flex-1 min-w-0 text-left py-3 px-3"
+                  >
+                    <p className="text-white text-sm font-medium truncate">{s.title || 'Chat'}</p>
+                    <p className="text-[#AEAEB2] text-[11px] mt-0.5">
+                      {new Date(s.updatedAt).toLocaleString('cs-CZ', {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                      {msgCount > 0 ? ` · ${msgCount} zpráv` : ''}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => deleteSession(s.id, e)}
+                    className="shrink-0 px-3 text-[#8E8E93] hover:text-red-400 hover:bg-black/20 rounded-r-xl"
+                    title="Smazat konverzaci"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </aside>
+      )}
+
+      {!showHistoryPanel && (
+        <button
+          type="button"
+          onClick={() => setShowHistoryPanel(true)}
+          className="flex shrink-0 w-10 flex-col items-center justify-center gap-1 border-r border-white/5 bg-[#1C1C1E] text-[#8E8E93] hover:text-emerald-400 hover:bg-white/[0.06] transition-colors"
+          title="Zobrazit historii chatů"
+        >
+          <History size={20} />
+        </button>
+      )}
+
+      {/* Chat + detail školy v řádku od md. */}
+      <div
+        className={clsx(
+          'flex flex-col h-full min-h-0 overflow-hidden min-w-0 flex-1',
+          !selectedOrg && 'w-full md:max-w-4xl md:mx-auto',
+        )}
+      >
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-center">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center mb-4">
-              <Bot size={32} className="text-purple-400" />
+            <div className="mb-4 flex justify-center">
+              <AgentOrbAvatar size="lg" />
             </div>
             <h2 className="text-white font-semibold text-lg mb-2">Ahoj! Jsem váš Obchodník pomocník.</h2>
             <p className="text-[#8E8E93] max-w-md text-sm mb-4">
-              Mohu vyhledávat v CRM, plánovat trasy s kontakty, posílat emaily a mnoho dalšího.
+              Odpovědi a formulace jako v Web operátorovi (RAG + čtení katalogu), bez změn na webu. CRM, trasy a kalendář přes Pipedrive vrstvu.
             </p>
             <div className="flex flex-wrap gap-2 justify-center">
               {[
                 "Jedu do Sedlčan, jaké školy jsou po cestě?",
                 "info o škole Dobříš",
                 "přístupové kódy pro ZŠ Dobříš",
-                "vytvoř úkol napsat do Dobříše ředitelovi",
+                "napiš newsletter o nové učebnici matematiky pro ředitele",
                 "naplánuj schůzku na pondělí v Sedlčanech"
               ].map((suggestion, i) => (
                 <button
@@ -1150,29 +1628,47 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
             )}
           >
             {message.role === 'assistant' && (
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center shrink-0">
-                <Bot size={16} className="text-white" />
-              </div>
+              <AgentOrbAvatar size="sm" className="shrink-0" />
             )}
 
-            <div className={clsx(
-              "max-w-[85%] rounded-2xl px-4 py-3",
-              message.role === 'user'
-                ? "bg-[#0A84FF] text-white"
-                : "bg-[#1C1C1E] text-white"
-            )}>
-              {message.isLoading ? (
-                <div className="flex items-center gap-2">
-                  <Loader2 size={16} className="animate-spin" />
-                  <span className="text-[#8E8E93]">Pracuji na tom...</span>
-                </div>
-              ) : (
-                <>
-                  <p className="whitespace-pre-wrap text-sm">{message.content}</p>
-                  {message.routeData && renderRouteData(message.routeData, message.voiceSummary)}
-                  {message.crmData && renderCrmData(message.crmData)}
-                </>
+            <div
+              className={clsx(
+                'flex flex-col gap-1.5 max-w-[85%] min-w-0',
+                message.role === 'user' ? 'items-end' : 'items-start',
               )}
+            >
+              <div
+                className={clsx(
+                  'w-full rounded-2xl px-4 py-3',
+                  message.role === 'user' ? 'bg-[#0A84FF] text-white' : 'bg-[#1C1C1E] text-white',
+                )}
+              >
+                {message.isLoading ? (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={16} className="animate-spin" />
+                    <span className="text-[#8E8E93]">Pracuji na tom...</span>
+                  </div>
+                ) : (
+                  <>
+                    {message.content.trim() ? (
+                      <p className="whitespace-pre-wrap text-sm">{message.content}</p>
+                    ) : null}
+                    {message.routeData && renderRouteData(message.routeData, message.voiceSummary)}
+                    {message.crmData && renderCrmData(message.crmData, message.crmUiMode)}
+                  </>
+                )}
+              </div>
+              {!message.isLoading && getCopyableTextForMessage(message) ? (
+                <button
+                  type="button"
+                  onClick={() => copyMessageToClipboard(message)}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl min-h-[44px] px-4 py-2.5 text-sm font-semibold text-white bg-[#2C2C2E] border border-white/15 hover:bg-[#3A3A3C] active:scale-[0.99] transition-colors"
+                  title="Kopírovat text zprávy"
+                >
+                  <Copy size={18} className="shrink-0 text-emerald-400" />
+                  Kopírovat
+                </button>
+              ) : null}
             </div>
 
             {message.role === 'user' && (
@@ -1244,14 +1740,19 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
 
       </div>
 
-      {/* Organization Detail Side Panel - Full screen on mobile */}
       {selectedOrg && (
-        <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[380px] xl:w-[480px] h-full lg:border-l border-white/10 shrink-0 bg-[#1C1C1E]">
+        <div
+          className={
+            'assistant-detail-rail h-full min-h-0 flex flex-col border-white/10 bg-[#1C1C1E] ' +
+            'max-md:fixed max-md:inset-0 max-md:z-50 max-md:!w-full max-md:!max-w-none max-md:flex-none max-md:border-0 ' +
+            'md:relative md:z-auto md:inset-auto md:border-l'
+          }
+        >
           <SchoolDetailPanel
             organization={{
               id: selectedOrg.id,
               name: selectedOrg.name,
-              address: orgDetail?.address || selectedOrg.address
+              address: orgDetail?.organization?.address || orgDetail?.address || selectedOrg.address
             }}
             detail={orgDetail}
             loading={loadingOrgDetail}
@@ -1267,7 +1768,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage }) => {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/70 z-50 flex items-end lg:items-center justify-center lg:p-4"
+            className="fixed inset-0 bg-black/70 z-[100] flex items-end lg:items-center justify-center lg:p-4"
             onClick={() => setShowRagModal(false)}
           >
             <motion.div

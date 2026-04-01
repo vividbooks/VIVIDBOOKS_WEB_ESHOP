@@ -263,6 +263,15 @@ export function AdminOrderDetailPage() {
         </div>
       </div>
 
+      {order.admin_note ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950">
+          <p className="font-bold text-[12px] uppercase tracking-[0.08em] text-amber-800 mb-1">
+            {'Poznámka administrátora'}
+          </p>
+          <p className="whitespace-pre-wrap">{order.admin_note}</p>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
         <div className="space-y-4">
           <section className="bg-white rounded-2xl border border-gray-100 p-4">

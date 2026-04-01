@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { flushSync } from 'react-dom';
 import { useApp } from '@/app/contexts/AppContext';
 import { ResponsiveLayout } from '@/app/components/Layout';
 import { DictationTab } from '@/app/components/tabs/DictationTab';
+
+type PendingAgentMessage = { text: string; nonce: string; fromDictation?: boolean } | null;
 import { TasksTab } from '@/app/components/tabs/TasksTab';
 import { AgentTab } from '@/app/components/tabs/AgentTab';
 import { OutreachTab } from '@/app/components/tabs/OutreachTab';
@@ -14,6 +17,7 @@ export const InnerApp: React.FC = () => {
   const { settings } = useApp();
   const [currentTab, setCurrentTab] = useState<'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings'>('dictation');
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [pendingAgentMessage, setPendingAgentMessage] = useState<PendingAgentMessage>(null);
 
   // Capture Google provider_token from OAuth callback
   useEffect(() => {
@@ -94,6 +98,34 @@ export const InnerApp: React.FC = () => {
     setShowOnboarding(false);
   };
 
+  useEffect(() => {
+    if (currentTab !== 'agent') setPendingAgentMessage(null);
+  }, [currentTab]);
+
+  const sendDictationToAssistant = (wrappedMessage: string) => {
+    const payload: NonNullable<PendingAgentMessage> = {
+      text: wrappedMessage,
+      nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      fromDictation: true,
+    };
+    flushSync(() => {
+      setPendingAgentMessage(payload);
+      setCurrentTab('agent');
+    });
+  };
+
+  const sendDictationToChat = (plainText: string) => {
+    const payload: NonNullable<PendingAgentMessage> = {
+      text: plainText,
+      nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      fromDictation: true,
+    };
+    flushSync(() => {
+      setPendingAgentMessage(payload);
+      setCurrentTab('agent');
+    });
+  };
+
   if (showOnboarding) {
     return <Onboarding onComplete={handleOnboardingComplete} />;
   }
@@ -104,9 +136,13 @@ export const InnerApp: React.FC = () => {
       onTabChange={setCurrentTab}
     >
       {currentTab === 'dictation' ? (
-        <DictationTab />
+        <DictationTab onSendToAssistant={sendDictationToAssistant} onSendToChat={sendDictationToChat} />
       ) : currentTab === 'agent' ? (
-        <AgentTab />
+        <AgentTab
+          key={pendingAgentMessage?.nonce ?? 'agent-default'}
+          initialMessage={pendingAgentMessage?.text}
+          initialMessageFromDictation={pendingAgentMessage?.fromDictation}
+        />
       ) : currentTab === 'tasks' ? (
         <TasksTab />
       ) : currentTab === 'outreach' ? (

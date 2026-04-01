@@ -1118,7 +1118,7 @@ export const TasksTab: React.FC = () => {
       
       {/* Side Panel for Event Detail with Pipedrive Data - Full screen modal on mobile */}
       {selectedEvent && (
-        <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[420px] xl:w-[520px] h-full bg-[#1C1C1E] lg:border-l border-white/10 flex flex-col shrink-0">
+        <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[300px] h-full bg-[#1C1C1E] lg:border-l border-white/10 flex flex-col shrink-0">
           {/* Header */}
           <div className="bg-[#3B82F6] p-4 flex items-start justify-between shrink-0">
             <div className="flex-1 min-w-0">

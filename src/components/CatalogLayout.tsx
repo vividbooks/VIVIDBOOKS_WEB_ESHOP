@@ -79,6 +79,12 @@ const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
     ],
   },
   {
+    title: 'Asistent',
+    items: [
+      { label: 'Vividbooks asistent', internal: '/asistent' },
+    ],
+  },
+  {
     title: 'Novinky a blog',
     items: [
       { label: 'Novinky', internal: '/novinky' },

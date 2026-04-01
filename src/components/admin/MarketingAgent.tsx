@@ -181,12 +181,6 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
     return () => window.removeEventListener('resize', check);
   }, []);
 
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(EMAIL_BUILDER_AI_TIER_KEY, mcEmailModelTier);
-    } catch { /* ignore */ }
-  }, [mcEmailModelTier]);
-
   // Mailchimp state
   const [mcPanel, setMcPanel] = useState(false);
   const [mcGenerating, setMcGenerating] = useState(false);
@@ -196,7 +190,13 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
   const [mcPrompt, setMcPrompt] = useState('');
   const [mcPreview, setMcPreview] = useState(false);
   /** Model pro endpoint `generate-email` (sdíleno s Email Builderem přes localStorage). */
-  const [mcEmailModelTier, setMcEmailModelTier] = useState<EmailAiTier>(() => getStoredEmailAiTier());
+  const [mcEmailModelTier, setMcEmailModelTierState] = useState<EmailAiTier>(() => getStoredEmailAiTier());
+  const setMcEmailModelTier = useCallback((tier: EmailAiTier) => {
+    try {
+      window.localStorage.setItem(EMAIL_BUILDER_AI_TIER_KEY, tier);
+    } catch { /* ignore */ }
+    setMcEmailModelTierState(tier);
+  }, []);
 
   // Canvas state
   const [canvasContent, setCanvasContent] = useState<string | null>(null);

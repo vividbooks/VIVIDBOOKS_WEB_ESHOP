@@ -308,12 +308,14 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
       setMessages([{
         id: genId(),
         role: 'assistant',
-        content: 'Ahoj! Jsem **Vivid Assistant**. Řekněte mi, co chcete změnit na webu, a já to zařídím přes Web operátora.',
+        content: embedded
+          ? 'Ahoj! Jsem **asistent pro texty** v této aplikaci: odpovím na dotazy z **RAG** (nabídka, webináře…) a pomůžu **formulovat e-maily** v chatu. **Neměním web, CMS ani Mailchimp** — na to je plný Web operátor v administraci. Co potřebuješ?'
+          : 'Ahoj! Jsem **Vivid Assistant**. Řekněte mi, co chcete změnit na webu, a já to zařídím přes Web operátora.',
         ts: Date.now(),
       }]);
       loadChatIndex();
     }
-  }, []);
+  }, [embedded]);
 
   useEffect(() => {
     const el = messagesScrollRef.current;
@@ -360,12 +362,19 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
     setCanvasTitle(draftAction.draft.title);
   }, [messages]);
 
-  const suggestions = useMemo(() => [
-    'Připrav mailing pro nové produkty',
-    'Uprav cenu pracovních sešitů o 10 %',
-    'Připrav SEO brief pro matematiku',
-    'Vytvoř hero slider pro jarní kampaň',
-  ], []);
+  const suggestions = useMemo(() => embedded
+    ? [
+        'Vylepši tento koncept e-mailu o webináře (krátký odstavec + předmět)',
+        'Jaké jsou aktuální termíny webinářů?',
+        'Shrň v jedné větě nabídku matematiky pro ředitele školy',
+        'Přepiš tento text zdvořileji, zachovej význam',
+      ]
+    : [
+        'Připrav mailing pro nové produkty',
+        'Uprav cenu pracovních sešitů o 10 %',
+        'Připrav SEO brief pro matematiku',
+        'Vytvoř hero slider pro jarní kampaň',
+      ], [embedded]);
 
   async function loadChatIndex() {
     setIndexLoading(true);
@@ -418,7 +427,9 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
     setMessages([{
       id: genId(),
       role: 'assistant',
-      content: 'Nový úkol. Co chcete změnit na webu?',
+      content: embedded
+        ? 'Nový chat. Napiš koncept e-mailu nebo se zeptej na informace — změny na webu patří do administrace (plný Web operátor).'
+        : 'Nový úkol. Co chcete změnit na webu?',
       ts: Date.now(),
     }]);
     setHistoryOpen(false);
@@ -472,7 +483,7 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
       const res = await fetch(`${SERVER}/admin/admin-agent`, {
         method: 'POST',
         headers: AUTH,
-        body: JSON.stringify({ messages: history, model }),
+        body: JSON.stringify({ messages: history, model, embeddedAssistant: embedded }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
@@ -540,8 +551,12 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
                 <Bot className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 style={FF} className="text-white font-semibold text-[18px]">Web operátor</h1>
-                <p style={FF} className="text-[#8E8E93] text-xs">Web operátor, RAG, Canvas</p>
+                <h1 style={FF} className="text-white font-semibold text-[18px]">
+                  {embedded ? 'Textový asistent' : 'Web operátor'}
+                </h1>
+                <p style={FF} className="text-[#8E8E93] text-xs">
+                  {embedded ? 'RAG · formulace e-mailů (bez změn na webu)' : 'Web operátor, RAG, Canvas'}
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -568,9 +583,13 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
                 <div className="w-16 h-16 rounded-full bg-gradient-to-br from-purple-500/20 to-blue-500/20 flex items-center justify-center mb-4">
                   <Bot className="w-8 h-8 text-purple-400" />
                 </div>
-                <h2 style={FF} className="text-white font-semibold text-lg mb-2">Ahoj! Jsem váš Web operátor.</h2>
+                <h2 style={FF} className="text-white font-semibold text-lg mb-2">
+                  {embedded ? 'Ahoj! Jsem textový asistent.' : 'Ahoj! Jsem váš Web operátor.'}
+                </h2>
                 <p style={FF} className="text-[#8E8E93] max-w-md text-sm mb-4 leading-relaxed">
-                  Mohu pracovat s obsahem webu, použít RAG, otevřít canvas a delegovat specialisty na pozadí.
+                  {embedded
+                    ? 'Odpovím z RAG, pomůžu napsat nebo upravit e-mail v chatu. Nasazení na web nebo Mailchimp řeší plný Web operátor v administraci.'
+                    : 'Mohu pracovat s obsahem webu, použít RAG, otevřít canvas a delegovat specialisty na pozadí.'}
                 </p>
                 <div className="flex flex-wrap gap-2 justify-center">
                   {suggestions.map((suggestion) => (

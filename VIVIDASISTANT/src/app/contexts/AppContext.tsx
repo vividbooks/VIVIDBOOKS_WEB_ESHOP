@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 
@@ -63,6 +63,17 @@ interface AppContextType {
   addRagDocument: (title: string, content: string, type?: 'text' | 'notes' | 'news') => Promise<RagDocument>;
   deleteRagDocument: (id: string) => Promise<void>;
   ragLoading: boolean;
+
+  /** Obchodník (AgentTab) zpracovává požadavek nebo přepisuje hlas — pro ikonu v menu. */
+  agentProcessing: boolean;
+  setAgentProcessing: (v: boolean) => void;
+
+  /** Levý panel: na mobilu výsuvné menu, na desktopu skrytí postranního sloupce. */
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (v: boolean) => void;
+  navDrawerOpen: boolean;
+  setNavDrawerOpen: (v: boolean) => void;
+  toggleLeftNav: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -92,6 +103,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // RAG Library state
   const [ragDocuments, setRagDocuments] = useState<RagDocument[]>([]);
   const [ragLoading, setRagLoading] = useState(false);
+  const [agentProcessing, setAgentProcessing] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+
+  const toggleLeftNav = useCallback(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+      setSidebarCollapsed((c) => !c);
+    } else {
+      setNavDrawerOpen((o) => !o);
+    }
+  }, []);
 
   // Supabase Storage Helpers
   const saveToStorage = async (key: string, value: any) => {
@@ -341,7 +363,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       shortcuts, addShortcut, updateShortcut, deleteShortcut,
       settings, updateSettings, clearAllData,
       transcribeAudio, smartEdit,
-      ragDocuments, loadRagDocuments, addRagDocument, deleteRagDocument, ragLoading
+      ragDocuments, loadRagDocuments, addRagDocument, deleteRagDocument, ragLoading,
+      agentProcessing, setAgentProcessing,
+      sidebarCollapsed, setSidebarCollapsed,
+      navDrawerOpen, setNavDrawerOpen,
+      toggleLeftNav
     }}>
       {children}
     </AppContext.Provider>

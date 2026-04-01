@@ -387,3 +387,15 @@ html {
     outline 0.15s ease,
     box-shadow 0.15s ease;
 }
+
+/* Asistent (CRM detail): pevný sloupec 400px — široký obsah nesmí roztáhnout flex (min-content) */
+@media (min-width: 768px) {
+  .assistant-detail-rail {
+    width: 400px !important;
+    max-width: 400px !important;
+    min-width: 0 !important;
+    flex: 0 0 400px !important;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+}

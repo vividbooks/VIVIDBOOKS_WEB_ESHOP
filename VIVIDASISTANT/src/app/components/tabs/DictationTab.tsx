@@ -1,52 +1,59 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Trash2, Loader2, Check, X, Sparkles, BookOpen } from 'lucide-react';
+import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
 import { RecordButton } from '@/app/components/figma/RecordButton';
 
-export const DictationTab: React.FC = () => {
-  const { shortcuts, transcribeAudio, smartEdit } = useApp();
-  
-  // State
+/** Stejný text jako v chatu s operátorem — obalí nadiktovaný koncept. */
+export function buildAssistantEmailPrompt(draftBody: string): string {
+  const t = draftBody.trim();
+  return `Napiš mi z toho mail pro zákazníka a doplň užitečné informace o subjektu:\n\n${t}`;
+}
+
+interface DictationTabProps {
+  onSendToAssistant?: (wrappedMessage: string) => void;
+  /** Přepne na záložku Obchodník a odešle přesně tento text (bez obalení promptem). */
+  onSendToChat?: (plainText: string) => void;
+}
+
+export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, onSendToChat }) => {
+  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav } = useApp();
+
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
-  const [transcript, setTranscript] = useState("");
+  const [transcript, setTranscript] = useState('');
   const [recordingTime, setRecordingTime] = useState(0);
-  
-  // RAG suggestion state
-  const [ragSuggestion, setRagSuggestion] = useState<string | null>(null);
-  const [ragDocTitle, setRagDocTitle] = useState<string | null>(null);
-  const [isGeneratingRag, setIsGeneratingRag] = useState(false);
+  /** Po kliknutí na Email/Chat bez textu: po dokončení nahrávání se provede daná akce. */
+  const [armedAction, setArmedAction] = useState<'email' | 'chat' | null>(null);
+  const armedActionRef = useRef<'email' | 'chat' | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number; text: string } | null>(null);
-  
-  // Track selection in textarea
+
   const updateSelection = () => {
     const textarea = textareaRef.current;
     if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
       selectionRef.current = {
         start: textarea.selectionStart,
         end: textarea.selectionEnd,
-        text: textarea.value.substring(textarea.selectionStart, textarea.selectionEnd)
+        text: textarea.value.substring(textarea.selectionStart, textarea.selectionEnd),
       };
     } else {
       selectionRef.current = null;
     }
   };
 
-  // Timer Logic
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
+        setRecordingTime((prev) => prev + 1);
       }, 1000);
-    } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
     }
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -59,9 +66,65 @@ export const DictationTab: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const clearArmed = () => {
+    armedActionRef.current = null;
+    setArmedAction(null);
+  };
+
+  const sendToAssistantNow = (text: string) => {
+    if (!onSendToAssistant) return;
+    onSendToAssistant(buildAssistantEmailPrompt(text));
+    toast.success('Otevírám Obchodníka pomocníka se zprávou');
+  };
+
+  const sendToChatNow = (text: string) => {
+    if (!onSendToChat) return;
+    onSendToChat(text);
+    toast.success('Otevírám chat s textem z diktování');
+  };
+
+  /** Má text → odešli hned. Nemá → zvol režim, zapni nahrávání; znovu klik → zruš a zastav nahrávání. */
+  const onEmailButton = () => {
+    if (!onSendToAssistant) return;
+    const t = transcript.trim();
+    if (t) {
+      clearArmed();
+      if (isRecording) stopRecording();
+      sendToAssistantNow(t);
+      return;
+    }
+    const next = armedAction === 'email' ? null : 'email';
+    armedActionRef.current = next;
+    setArmedAction(next);
+    if (next === null) {
+      if (isRecording) stopRecording();
+    } else if (!isRecording) {
+      void startRecording();
+    }
+  };
+
+  const onChatButton = () => {
+    if (!onSendToChat) return;
+    const t = transcript.trim();
+    if (t) {
+      clearArmed();
+      if (isRecording) stopRecording();
+      sendToChatNow(t);
+      return;
+    }
+    const next = armedAction === 'chat' ? null : 'chat';
+    armedActionRef.current = next;
+    setArmedAction(next);
+    if (next === null) {
+      if (isRecording) stopRecording();
+    } else if (!isRecording) {
+      void startRecording();
+    }
+  };
+
   const startRecording = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      toast.error("Váš prohlížeč nepodporuje nahrávání zvuku.");
+      toast.error('Váš prohlížeč nepodporuje nahrávání zvuku.');
       return;
     }
 
@@ -78,70 +141,66 @@ export const DictationTab: React.FC = () => {
       };
 
       mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach((track) => track.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        
+
         setIsTranscribing(true);
         try {
-          // 1. Transcribe audio
           let newVoiceText = await transcribeAudio(audioBlob);
-          
-          // 2. Apply Shortcuts locally
-          shortcuts.forEach(s => {
+
+          shortcuts.forEach((s) => {
             const regex = new RegExp(`\\b${s.trigger}\\b`, 'gi');
             newVoiceText = newVoiceText.replace(regex, s.replacement);
           });
 
-          // 3. Smart Edit - cleans up "ehmm", edits text
-          // Check if there was a selection when recording started
           const currentSelection = selectionRef.current;
-          const currentRagSuggestion = ragSuggestion;
-          const baseText = currentRagSuggestion || transcript;
-          
+          const baseText = transcript;
+
           let context: string | undefined;
-          let selectionData: any = undefined;
-          
-          if (currentSelection && currentSelection.text) {
-            // User had text selected - they want to edit that part
-            context = "edit_selection";
+          let selectionData: { start: number; end: number; text: string } | undefined;
+
+          if (currentSelection?.text) {
+            context = 'edit_selection';
             selectionData = currentSelection;
-          } else if (currentRagSuggestion) {
-            context = "edit_rag_suggestion";
           }
-          
-          const response = await smartEdit(baseText, newVoiceText, context, undefined, selectionData);
-          
-          if (response && typeof response === 'object') {
-            const cleanText = response.cleanText || response.text || newVoiceText;
-            
-            if (currentRagSuggestion) {
-              // We were editing RAG suggestion - update it, keep transcript unchanged
-              setRagSuggestion(cleanText);
+
+          let finalText: string;
+
+          /** Režim „Zadat chatu“: bez smart-edit (ten na serveru doplňuje e-mailovou šablonu). Jen přepis + zkratky. */
+          if (armedActionRef.current === 'chat') {
+            if (selectionData?.text != null && selectionData.start != null && selectionData.end != null) {
+              finalText =
+                baseText.slice(0, selectionData.start) + newVoiceText + baseText.slice(selectionData.end);
+            } else if (baseText.trim()) {
+              finalText = `${baseText.trimEnd()}\n\n${newVoiceText}`;
             } else {
-              // Normal flow - update transcript
-              setTranscript(cleanText);
-              
-              // Check for RAG suggestion
-              if (response.ragSuggestion && response.ragSuggestion !== cleanText) {
-                setRagSuggestion(response.ragSuggestion);
-                setRagDocTitle(response.ragDocTitle || null);
-                toast.info("📚 Nalezen relevantní obsah z knihovny", { duration: 3000 });
-              }
+              finalText = newVoiceText;
             }
           } else {
-            if (currentRagSuggestion) {
-              // Keep RAG suggestion, append voice text
-              setRagSuggestion(currentRagSuggestion + "\n\n" + newVoiceText);
+            const response = await smartEdit(baseText, newVoiceText, context, undefined, selectionData);
+            if (response && typeof response === 'object') {
+              finalText = response.cleanText || response.text || newVoiceText;
             } else {
-              setTranscript(typeof response === 'string' ? response : newVoiceText);
-              setRagSuggestion(null);
-              setRagDocTitle(null);
+              finalText = typeof response === 'string' ? response : newVoiceText;
             }
           }
 
+          setTranscript(finalText);
+
+          const trimmed = finalText.trim();
+          const armed = armedActionRef.current;
+          if (trimmed && armed === 'email' && onSendToAssistant) {
+            armedActionRef.current = null;
+            setArmedAction(null);
+            sendToAssistantNow(trimmed);
+          } else if (trimmed && armed === 'chat' && onSendToChat) {
+            armedActionRef.current = null;
+            setArmedAction(null);
+            sendToChatNow(trimmed);
+          }
         } catch (err: any) {
-          console.error("Smart edit error:", err);
-          toast.error("Chyba při zpracování: " + (err.message || "Neznámá chyba"));
+          console.error('Smart edit error:', err);
+          toast.error('Chyba při zpracování: ' + (err.message || 'Neznámá chyba'));
         } finally {
           setIsTranscribing(false);
           setRecordingTime(0);
@@ -153,11 +212,11 @@ export const DictationTab: React.FC = () => {
       setRecordingTime(0);
     } catch (err: any) {
       if (err.name === 'NotAllowedError') {
-        toast.error("Přístup k mikrofonu byl zamítnut. Povolte jej v nastavení prohlížeče.", { duration: 5000 });
+        toast.error('Přístup k mikrofonu byl zamítnut. Povolte jej v nastavení prohlížeče.', { duration: 5000 });
       } else if (err.name === 'NotFoundError') {
-        toast.error("Nebyl nalezen žádný mikrofon.");
+        toast.error('Nebyl nalezen žádný mikrofon.');
       } else {
-        toast.error("Chyba mikrofonu: " + (err.message || "Zkontrolujte oprávnění"));
+        toast.error('Chyba mikrofonu: ' + (err.message || 'Zkontrolujte oprávnění'));
       }
     }
   };
@@ -170,173 +229,207 @@ export const DictationTab: React.FC = () => {
   };
 
   const handleRecordToggle = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+    if (isRecording) stopRecording();
+    else startRecording();
   };
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(transcript);
-    toast.success("Zkopírováno!");
+    toast.success('Zkopírováno!');
   };
 
-  const acceptRagSuggestion = () => {
-    if (ragSuggestion) {
-      setTranscript(ragSuggestion);
-      setRagSuggestion(null);
-      setRagDocTitle(null);
-      toast.success("✅ RAG obsah použit");
-    }
-  };
+  const hasTranscript = !!transcript.trim();
+  const canEmail = !!onSendToAssistant;
+  const canChat = !!onSendToChat;
 
-  const rejectRagSuggestion = () => {
-    setRagSuggestion(null);
-    setRagDocTitle(null);
-    toast("Návrh zamítnut");
-  };
+  const armBtnClass = (armed: boolean) =>
+    clsx(
+      'flex items-center gap-2 px-5 py-3 rounded-full font-semibold transition-all',
+      armed
+        ? 'bg-emerald-600/25 ring-2 ring-emerald-500/70 text-white'
+        : 'bg-[#2C2C2E] hover:bg-[#3C3C3E] text-white',
+      'disabled:opacity-30 disabled:ring-0',
+    );
 
-  const generateRagSuggestion = async () => {
-    if (!transcript.trim() || isGeneratingRag) return;
-    
-    setIsGeneratingRag(true);
-    try {
-      // Call smart-edit with manual RAG trigger
-      const response = await smartEdit(transcript, "", "manual_rag_trigger");
-      
-      if (response && response.ragSuggestion) {
-        setRagSuggestion(response.ragSuggestion);
-        setRagDocTitle(response.ragDocTitle || null);
-        toast.success("📚 Nalezen relevantní obsah z knihovny");
-      } else {
-        const reason = response?.ragSkipReason || "Nenalezen žádný relevantní obsah";
-        toast.info(reason, { duration: 4000 });
-      }
-    } catch (err: any) {
-      console.error("RAG generation error:", err);
-      toast.error("Chyba při hledání v knihovně");
-    } finally {
-      setIsGeneratingRag(false);
-    }
-  };
+  const armBtnClassMobile = (armed: boolean) =>
+    clsx(
+      'flex items-center justify-center gap-1.5 py-3.5 rounded-xl text-white text-sm font-semibold active:scale-[0.99] min-w-0',
+      armed ? 'bg-emerald-600/25 ring-2 ring-emerald-500/70' : 'bg-[#2C2C2E]',
+      'disabled:opacity-30 disabled:ring-0',
+    );
+
+  const menuBtnClass =
+    'shrink-0 flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#2C2C2E] text-white transition-colors hover:bg-[#3C3C3E] active:scale-[0.98]';
 
   return (
     <div className="flex flex-col h-full w-full relative bg-black md:bg-transparent">
-      
-      {/* --- DESKTOP TOP BAR --- */}
-      <div className="hidden md:flex shrink-0 items-center justify-between p-8 pb-4">
-        <div className="flex items-center gap-8">
-          <RecordButton
-            isRecording={isRecording}
-            isProcessing={isTranscribing}
-            onClick={handleRecordToggle}
-            className={clsx(
-              "shadow-2xl transition-all duration-300 shrink-0 w-28 h-28",
-              isTranscribing ? "shadow-blue-500/40" : (isRecording ? "shadow-red-500/40" : "shadow-white/5 hover:shadow-white/10")
-            )}
-          />
-          <div className="flex flex-col justify-center min-w-[140px]">
-            {isTranscribing ? (
-              <div className="flex flex-col">
-                <span className="text-[#0A84FF] font-bold text-sm uppercase mb-1 flex items-center gap-2">
-                  <Loader2 size={14} className="animate-spin" />
-                  Zpracovávám
-                </span>
-              </div>
-            ) : isRecording ? (
-              <div className="flex flex-col">
-                <span className="text-red-500 font-bold tracking-widest text-sm uppercase mb-1 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  Nahrávání
-                </span>
-                <span className="font-monospaced text-3xl text-white font-medium">{formatTime(recordingTime)}</span>
-              </div>
-            ) : (
-              <div className="flex flex-col">
-                <span className="text-white font-medium text-2xl">Diktování</span>
-                <span className="text-[#8E8E93] text-sm">Klikněte pro nahrávání</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
+      {/* Desktop: řádek menu + email + chat, pod tím diktování */}
+      <div className="hidden md:flex shrink-0 flex-col gap-5 p-8 pb-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Zobrazit / skrýt levý panel">
+            <Menu size={22} strokeWidth={2} />
+          </button>
           <button
-            onClick={() => setTranscript("")}
+            type="button"
+            onClick={onEmailButton}
+            disabled={!canEmail}
+            className={armBtnClass(armedAction === 'email')}
+            title={
+              hasTranscript
+                ? 'Napsat email s asistentem'
+                : 'Spustí nahrávání a po dokončení odešle email přes Obchodníka (klik znovu zruší)'
+            }
+          >
+            <Mail size={18} />
+            <span className="hidden lg:inline">Napsat email s asistentem</span>
+            <span className="lg:hidden">Email</span>
+          </button>
+          <button
+            type="button"
+            onClick={onChatButton}
+            disabled={!canChat}
+            className={armBtnClass(armedAction === 'chat')}
+            title={
+              hasTranscript
+                ? 'Zadat text do chatu bez úprav'
+                : 'Spustí nahrávání a po dokončení odešle text do chatu (klik znovu zruší)'
+            }
+          >
+            <MessageSquare size={18} />
+            <span className="hidden lg:inline">Zadat chatu</span>
+            <span className="lg:hidden">Chat</span>
+          </button>
+          <div className="flex flex-1 min-w-[1rem]" />
+          <button
+            onClick={() => {
+              setTranscript('');
+              clearArmed();
+            }}
             disabled={!transcript}
             className="p-3 rounded-full text-[#8E8E93] hover:text-red-400 hover:bg-white/5 transition-colors disabled:opacity-30"
             title="Vymazat"
           >
             <Trash2 size={24} />
           </button>
-          <button
-            onClick={generateRagSuggestion}
-            disabled={!transcript || isGeneratingRag || !!ragSuggestion}
-            className="flex items-center gap-2 px-5 py-3 bg-[#2C2C2E] hover:bg-[#3C3C3E] text-white rounded-full font-semibold transition-all disabled:opacity-30"
-            title="Doplnit z knihovny"
-          >
-            {isGeneratingRag ? <Loader2 size={18} className="animate-spin" /> : <BookOpen size={18} />}
-            <span className="hidden lg:inline">Doplnit z knihovny</span>
-          </button>
-          <button
-            onClick={copyToClipboard}
-            disabled={!transcript}
-            className="flex items-center gap-2 px-6 py-3 bg-[#0A84FF] hover:bg-[#007AFF] text-white rounded-full font-bold text-lg transition-all disabled:opacity-50 shadow-lg shadow-blue-900/20"
-          >
-            <Copy size={20} />
-            <span>Kopírovat</span>
-          </button>
+          {hasTranscript && (
+            <button
+              type="button"
+              onClick={copyToClipboard}
+              className="flex items-center gap-2 px-6 py-3 bg-[#0A84FF] hover:bg-[#007AFF] text-white rounded-full font-bold text-lg transition-all shadow-lg shadow-blue-900/20"
+            >
+              <Copy size={20} />
+              <span>Kopírovat</span>
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-8">
+          <RecordButton
+            isRecording={isRecording}
+            isProcessing={isTranscribing}
+            onClick={handleRecordToggle}
+            className={clsx(
+              'shadow-2xl transition-all duration-300 shrink-0 w-28 h-28',
+              isTranscribing ? 'shadow-blue-500/40' : isRecording ? 'shadow-red-500/40' : 'shadow-white/5 hover:shadow-white/10',
+            )}
+          />
+          {(isTranscribing || isRecording) && (
+            <div className="flex flex-col justify-center min-w-[140px]">
+              {isTranscribing ? (
+                <div className="flex flex-col">
+                  <span className="text-[#0A84FF] font-bold text-sm uppercase mb-1 flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" />
+                    Zpracovávám
+                  </span>
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  <span className="text-red-500 font-bold tracking-widest text-sm uppercase mb-1 flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                    Nahrávání
+                  </span>
+                  <span className="font-monospaced text-3xl text-white font-medium">{formatTime(recordingTime)}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* --- MOBILE CONTROLS BAR --- */}
-      <div className="md:hidden flex flex-col px-5 py-4 bg-[#121212] z-20 border-b border-white/5">
-        <div className="flex items-center justify-between pl-1">
-          <div className="flex flex-col">
+      {/* Mobil: menu + email + chat, pod tím mikrofon; horní lišta záložek je u diktování skrytá */}
+      <div className="md:hidden flex flex-col gap-3 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-4 bg-[#121212] z-30 border-b border-white/5">
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Menu — navigace">
+            <Menu size={22} strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={onEmailButton}
+            disabled={!canEmail}
+            className={clsx(armBtnClassMobile(armedAction === 'email'), 'flex-1 min-w-0')}
+          >
+            <Mail size={16} className="shrink-0" />
+            <span className="truncate text-xs sm:text-sm">Napsat email</span>
+          </button>
+          <button
+            type="button"
+            onClick={onChatButton}
+            disabled={!canChat}
+            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'flex-1 min-w-0')}
+          >
+            <MessageSquare size={16} className="shrink-0" />
+            <span className="truncate text-xs sm:text-sm">Zadat chatu</span>
+          </button>
+        </div>
+        <div className="flex justify-center py-1">
+          <RecordButton
+            isRecording={isRecording}
+            isProcessing={isTranscribing}
+            onClick={handleRecordToggle}
+            className="w-24 h-24 shadow-2xl"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-3 pl-1">
+          <div className="flex flex-col min-w-0">
             {isTranscribing ? (
-              <span className="text-[#0A84FF] font-semibold text-lg animate-pulse flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#0A84FF]" />
+              <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin shrink-0" />
                 Zpracovávám
               </span>
             ) : isRecording ? (
-              <span className="text-[#FF453A] font-monospaced font-medium text-xl tracking-wide flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#FF453A] animate-pulse" />
+              <span className="text-[#FF453A] font-mono font-medium text-lg tracking-wide flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#FF453A] animate-pulse shrink-0" />
                 {formatTime(recordingTime)}
               </span>
             ) : (
-              <span className="text-[#8E8E93] font-medium text-lg">Připraveno</span>
+              <span className="text-[#8E8E93] font-medium text-sm">Připraveno k nahrávání</span>
             )}
           </div>
-
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 shrink-0">
             <button
-              onClick={() => setTranscript("")}
+              onClick={() => {
+                setTranscript('');
+                clearArmed();
+              }}
               disabled={!transcript}
-              className="w-12 h-12 rounded-full bg-[#2C2C2E] flex items-center justify-center text-[#8E8E93] hover:text-red-400 disabled:opacity-20 active:scale-95 transition-all"
+              className="w-11 h-11 rounded-full bg-[#2C2C2E] flex items-center justify-center text-[#8E8E93] hover:text-red-400 disabled:opacity-20 active:scale-95 transition-all"
+              title="Vymazat"
             >
-              <Trash2 size={22} />
+              <Trash2 size={20} />
             </button>
-            <button
-              onClick={copyToClipboard}
-              disabled={!transcript}
-              className="w-12 h-12 rounded-full bg-[#0A84FF] flex items-center justify-center text-white disabled:opacity-50 active:scale-95 transition-all shadow-lg shadow-blue-900/20"
-            >
-              <Copy size={22} />
-            </button>
-            <div className="relative ml-2">
-              <RecordButton
-                isRecording={isRecording}
-                isProcessing={isTranscribing}
-                onClick={handleRecordToggle}
-                className="w-16 h-16 shadow-xl"
-              />
-            </div>
+            {hasTranscript && (
+              <button
+                type="button"
+                onClick={copyToClipboard}
+                className="w-11 h-11 rounded-full bg-[#0A84FF] flex items-center justify-center text-white active:scale-95 transition-all shadow-lg shadow-blue-900/20"
+                title="Kopírovat"
+              >
+                <Copy size={20} />
+              </button>
+            )}
           </div>
         </div>
       </div>
 
-      {/* --- MAIN TEXT AREA --- */}
       <div className="flex-1 w-full relative min-h-0 bg-black">
         <textarea
           ref={textareaRef}
@@ -350,53 +443,6 @@ export const DictationTab: React.FC = () => {
           spellCheck={false}
         />
       </div>
-
-      {/* --- RAG SUGGESTION - Floating Card --- */}
-      {ragSuggestion && (
-        <div className="absolute bottom-6 left-6 right-6 md:bottom-8 md:left-8 md:right-8 z-30 animate-in slide-in-from-bottom-4 duration-300">
-          <div className="bg-[#1C1C1E] rounded-2xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden max-h-[50vh]">
-            {/* Header */}
-            <div className="flex items-center justify-between px-5 py-4 bg-gradient-to-r from-[#2C2C2E] to-[#1C1C1E] border-b border-white/5">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-lg">
-                  <Sparkles size={18} className="text-white" />
-                </div>
-                <div>
-                  <p className="text-white font-semibold text-sm">Návrh s obsahem z knihovny</p>
-                  {ragDocTitle && (
-                    <p className="text-[#8E8E93] text-xs flex items-center gap-1 mt-0.5">
-                      <BookOpen size={10} /> {ragDocTitle}
-                    </p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={rejectRagSuggestion}
-                  className="w-10 h-10 rounded-xl bg-[#3A3A3C] hover:bg-red-500/30 flex items-center justify-center text-[#8E8E93] hover:text-red-400 transition-all active:scale-95"
-                  title="Odmítnout"
-                >
-                  <X size={20} />
-                </button>
-                <button
-                  onClick={acceptRagSuggestion}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-[#0A84FF] hover:bg-[#007AFF] text-white rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-lg shadow-blue-900/30"
-                >
-                  <Check size={18} />
-                  Použít tento text
-                </button>
-              </div>
-            </div>
-            
-            {/* RAG Text Preview */}
-            <div className="p-5 max-h-[35vh] overflow-y-auto">
-              <div className="text-[15px] leading-[1.8] text-[#E5E5EA] whitespace-pre-wrap font-normal">
-                {ragSuggestion}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

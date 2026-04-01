@@ -32,6 +32,10 @@ export const router = createBrowserRouter(
       lazy: lazyDefault(() => import('./components/VividAssistantShellPage')),
     },
     {
+      path: '/asistent',
+      lazy: lazyDefault(() => import('./components/VividAssistantShellPage')),
+    },
+    {
       path: '/',
       Component: Root,
       children: [

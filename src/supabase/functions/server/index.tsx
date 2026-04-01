@@ -8296,15 +8296,13 @@ app.delete('/make-server-93a20b6f/rag/delete-source', async (c) => {
   }
 });
 
-/** Sdílená pipeline: pgvector retrieval + Gemini odpověď (stejná logika jako interní /rag/query). */
-async function executeRagQueryPipeline(question: string, topK: number): Promise<{
-  answer: string;
+/** Pouze pgvector retrieval + sestavení kontextu (bez druhé Gemini syntézy). Pro Obchodníka / orchestrátor. */
+async function retrieveRagChunksForQuery(question: string, topK: number): Promise<{
+  context: string;
   sources: any[];
   chunksUsed: number;
-}> {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG neni nastaven');
-
+  ranked: any[];
+} | null> {
   const queryVec = await embedText(question);
   const sb = getDbClient();
   const { data: rankedRows, error: matchError } = await sb.rpc('match_rag_chunks', {
@@ -8326,7 +8324,7 @@ async function executeRagQueryPipeline(question: string, topK: number): Promise<
     score: Number(row.similarity || 0),
   }));
   if (matchError) {
-    console.log(`[RAG query] RPC unavailable, fallback to exact scan: ${matchError.message}`);
+    console.log(`[RAG retrieve] RPC unavailable, fallback to exact scan: ${matchError.message}`);
     const all = await loadAllChunks();
     ranked = all
       .filter((ch: any) => ch.embedding?.length)
@@ -8334,32 +8332,13 @@ async function executeRagQueryPipeline(question: string, topK: number): Promise<
       .sort((a: any, b: any) => b.score - a.score)
       .slice(0, topK);
   }
-  if (!ranked.length) {
-    return {
-      answer: 'Znalostni baze je prazdna. Nejprve indexujte data v Admin → RAG.',
-      sources: [],
-      chunksUsed: 0,
-    };
-  }
+  if (!ranked.length) return null;
 
   const context = ranked
     .map((ch: any, i: number) =>
       `[${i + 1}] (zdroj: ${ch.metadata?.source ?? '?'}, titul: ${ch.metadata?.title ?? ''}, skore: ${ch.score.toFixed(3)})\n${ch.text}`
     )
     .join('\n\n---\n\n');
-
-  const prompt = `Jsi pomocny asistent Vividbooks — ceskych interaktivnich ucebnic a pracovnich sesitu.
-Odpovez na otazku nize pouze na zaklade poskytnuteho kontextu. Pokud kontext neobsahuje odpoved, rici to uprimne.
-Odpovez cesky, strucne a presne.
-
-KONTEXT:
-${context}
-
-OTAZKA: ${question}
-
-ODPOVED:`;
-
-  const answer = await _ragGenerate(prompt, apiKey, 'gemini-3-flash-preview');
 
   const seenSid = new Map<string, any>();
   for (const ch of ranked) {
@@ -8379,8 +8358,65 @@ ODPOVED:`;
       text: ch.text?.slice(0, 200),
     }));
 
-  return { answer, sources, chunksUsed: ranked.length };
+  return { context, sources, chunksUsed: ranked.length, ranked };
 }
+
+/** Sdílená pipeline: pgvector retrieval + Gemini odpověď (stejná logika jako interní /rag/query). */
+async function executeRagQueryPipeline(question: string, topK: number): Promise<{
+  answer: string;
+  sources: any[];
+  chunksUsed: number;
+}> {
+  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG neni nastaven');
+
+  const retrieved = await retrieveRagChunksForQuery(question, topK);
+  if (!retrieved) {
+    return {
+      answer: 'Znalostni baze je prazdna. Nejprve indexujte data v Admin → RAG.',
+      sources: [],
+      chunksUsed: 0,
+    };
+  }
+
+  const { context, sources, chunksUsed } = retrieved;
+
+  const prompt = `Jsi pomocny asistent Vividbooks — ceskych interaktivnich ucebnic a pracovnich sesitu.
+Odpovez na otazku nize pouze na zaklade poskytnuteho kontextu. Pokud kontext neobsahuje odpoved, rici to uprimne.
+Odpovez cesky, strucne a presne.
+
+KONTEXT:
+${context}
+
+OTAZKA: ${question}
+
+ODPOVED:`;
+
+  const answer = await _ragGenerate(prompt, apiKey, 'gemini-3-flash-preview');
+
+  return { answer, sources, chunksUsed };
+}
+
+/* POST /rag/retrieve — jen chunky (bez syntézy odpovědi). Pro Obchodníka / orchestrátor. */
+app.post('/make-server-93a20b6f/rag/retrieve', async (c) => {
+  try {
+    const { question, topK = 10 } = await c.req.json();
+    if (!question?.trim()) return c.json({ error: 'Chybi question' }, 400);
+    const k = Math.min(16, Math.max(1, Number(topK) || 10));
+    const retrieved = await retrieveRagChunksForQuery(String(question).trim(), k);
+    if (!retrieved) {
+      return c.json({ context: '', sources: [], chunksUsed: 0 });
+    }
+    return c.json({
+      context: retrieved.context,
+      sources: retrieved.sources,
+      chunksUsed: retrieved.chunksUsed,
+    });
+  } catch (e: any) {
+    console.log(`[RAG retrieve] ${e.message}`);
+    return c.json({ error: `RAG retrieve error: ${e.message}` }, 500);
+  }
+});
 
 /* POST /rag/query — RAG dotaz přes Gemini 2.0 Flash */
 app.post('/make-server-93a20b6f/rag/query', async (c) => {
@@ -11387,6 +11423,83 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'open_collage_builder', description: 'Otevře Koláž Builder v UI s předvybranými obrázky a stylem. Použij místo generate_blog_image pokud chce uživatel KLASICKÝ styl koláže (scattered = rozházené, grid = mřížka, fan = vějíř) — ne AI generaci. Agent doporučí obrázky a styl, uživatel dokončí koláž v dialogu sám.', parameters: { type: 'OBJECT', properties: { image_urls: { type: 'ARRAY', items: { type: 'STRING' }, description: 'URL obrázků produktů k předvýběru (získej přes get_product_images). Min. 2.' }, style: { type: 'STRING', description: 'scattered (rozházené s rotací) | grid (mřížka) | fan (vějíř). Výchozí: grid' }, note: { type: 'STRING', description: 'Volitelná poznámka uživateli (proč jsi vybral tyto obrázky / tento styl)', nullable: true } }, required: ['image_urls'] } },
 ];
 
+/** Režim „asistent v aplikaci“ (diktování): jen čtení + RAG + textová pomoc — žádné zápisy do CMS ani Mailchimp. */
+const EMBEDDED_ASSISTANT_TOOL_NAMES = new Set([
+  'get_products',
+  'get_broken_products',
+  'get_price_overview',
+  'get_dashboard_summary',
+  'get_newsletter_stats',
+  'search_all',
+  'get_hero_slides',
+  'get_subject_pages',
+  'get_blog_posts',
+  'get_webinars',
+  'get_notifications',
+  'get_novinky',
+  'get_email_drafts',
+  'get_subject_tabs',
+  'get_product_images',
+  'rag_get_stats',
+]);
+
+const EMBEDDED_ASSISTANT_TOOLS = ADMIN_AGENT_TOOLS.filter((t: { name: string }) => EMBEDDED_ASSISTANT_TOOL_NAMES.has(t.name));
+
+/** Obchodník v aplikaci: stejné čtení webu/RAG jako embedded Web operátor + delegace na CRM (Pipedrive). */
+const CRM_ASSISTANT_TOOL_NAMES = new Set([...EMBEDDED_ASSISTANT_TOOL_NAMES, 'sales_crm_orchestrate']);
+
+const CRM_ASSISTANT_TOOLS = [
+  ...EMBEDDED_ASSISTANT_TOOLS,
+  {
+    name: 'sales_crm_orchestrate',
+    description:
+      'Deleguje na CRM backend (Pipedrive): vyhledání škol, organizací, kontaktů, dealů, přístupových kódů; plánování trasy s kontakty po cestě; kontakt ředitele/učitele; úkoly; Google kalendář (schůzka / čtení kalendáře). Použij při takových dotazích — předej přesné znění požadavku uživatele.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        message: {
+          type: 'STRING',
+          description: 'Přesný dotaz uživatele nebo krátké shrnutí požadavku v češtině.',
+        },
+      },
+      required: ['message'],
+    },
+  },
+];
+
+const EMBEDDED_ASSISTANT_SYSTEM = `Jsi **asistent Vividbooks** v mobilní aplikaci (diktování). Tento režim **není** plný Web operátor z administrace.
+
+## Co MÁŠ dělat
+- **Informační dotazy** — odpovídej na základě doplnění „Kontext z RAG“ a případně nástrojů **get_*** (jen čtení dat z katalogu / webu).
+- **Formulace e-mailů** — pomáhej psát a upravovat texty pro školy a zákazníky: předmět, tón, struktura. Výstup: **jedna** finální verze v odpovědi (Markdown) — jeden předmět a jedno tělo. **Nepřidávej druhou variantu** (žádné „A/B“, dvojí předmět ani „krátká vs. dlouhá“ vedle sebe), pokud uživatel výslovně nepožádá o více možností k porovnání. To je **copy v chatu**, ne ukládání do systému.
+- **Ověřování faktů** — pokud potřebuješ ceny, názvy produktů, termíny webinářů, použij příslušný get_* nástroj.
+
+## Co NESMÍŠ (v tomto režimu nejsou nástroje)
+- Neměň **CMS**, **web**, **produkty**, **blog**, **novinky**, **webináře**, **hero**, **taby**, **notifikace**.
+- Nevytvářej **Mailchimp / Email Builder** šablony, nevolaj \`create_email_campaign_draft\`, neukládej HTML kampaní do canvasu — uživatel dostává jen **textovou pomoc** v chatu.
+- Neindexuj ani neměň **RAG** (žádné rag_index_*, rag_remove_*).
+- Nepředávej úkoly „specialistům“ na změny webu — můžeš stručně poradit, ale neprovádět je.
+
+## Když uživatel chce změnit web nebo Mailchimp
+Stručně vysvětli, že kompletní úpravy patří do **administrace → Web operátor** (plná verze), ne do této aplikace.
+
+## Styl
+Česky, stručně, profesionálně. Nevymýšlej si fakta — když nejsou v RAG ani v get_*, řekni to.`;
+
+const CRM_ASSISTANT_SYSTEM = `${EMBEDDED_ASSISTANT_SYSTEM}
+
+## CRM (Pipedrive) — navíc oproti výše
+- Máš nástroj **sales_crm_orchestrate** pro vše, co souvisí s **konkrétními školami v CRM, kontakty, dealy, trasou mezi městy, úkoly a kalendářem**.
+- Do nástroje vždy předej parametr **message** = přesné znění záměru uživatele (nebo stručné shrnutí).
+- Po návratu nástroje uživateli odpověz v **stejném stylu** jako výše (profesionální čeština, Markdown), a využij strukturovaná data z výsledku, pokud jsou k dispozici.
+- Dotazy na **nabídku, webináře, produkty, obecné informace z webu** řeš přednostně **get_*** nástroji a kontextem RAG; **sales_crm_orchestrate** použij, když jde o **CRM akci** nebo konkrétní zákazníky v Pipedrive.
+
+## Jedna verze (Obchodník)
+Při jakékoli formulaci mailu, novinky nebo obchodního textu: **vždy jen jedna** hotová verze. Nedávej dvě varianty v jedné odpovědi.
+
+## Dotazy na školy / CRM výpis
+Když **sales_crm_orchestrate** vrátí \`action: crm_search\` a strukturovaná \`crmData\` (organizace), **nepiš** do textové odpovědi žádné shrnutí dealů — žádné „Ztracené příležitosti“, žádné seznamy škol v Markdownu, žádné A/B. Aplikace zobrazí **klikací karty aktivních zákazníků**; tvoje odpověď má být **prázdná** nebo jedna krátká věta typu „Školy jsou níže.“ Pokud opravdu nemáš co říct, vrať prázdný text.`;
+
 /** Poslední zprávy z Web operátora → chatHistory pro EmailBuilder (Marketing / E-maily). */
 function adminAgentMessagesToEmailChatHistory(msgs: any[]): any[] {
   if (!Array.isArray(msgs) || msgs.length === 0) return [];
@@ -11421,7 +11534,74 @@ async function runAdminTool(
   args: any,
   ctx?: { agentMessages?: any[] },
 ): Promise<{ result: any; action?: any }> {
+  const allowed = (globalThis as any).__adminAgentAllowedTools as Set<string> | undefined;
+  if (allowed && !allowed.has(name)) {
+    return {
+      result: {
+        error:
+          `Nástroj „${name}“ není v tomto režimu dostupný. Pro změny na webu nebo Mailchimp použijte plný Web operátor v administraci.`,
+      },
+    };
+  }
   const ts = new Date().toISOString();
+
+  if (name === 'sales_crm_orchestrate') {
+    const msg = String(args?.message ?? '').trim();
+    if (!msg) {
+      return { result: { error: 'Chybí parametr message.' } };
+    }
+    const reqCtx = (globalThis as any).__crmAgentRequestContext as {
+      googleAccessToken?: string | null;
+      lastRouteData?: { origin?: string; destination?: string; locations?: string[] } | null;
+      conversationHistory?: any[];
+    } | null;
+    const hist = Array.isArray(reqCtx?.conversationHistory)
+      ? reqCtx!.conversationHistory!.slice(-5).map((m: any) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: String(m.content ?? ''),
+        }))
+      : [];
+    const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
+    const jwt =
+      (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim() ||
+      (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
+    if (!base || !jwt) {
+      return { result: { error: 'Chybí SUPABASE_URL nebo klíč pro volání CRM.' } };
+    }
+    try {
+      const res = await fetch(`${base}/functions/v1/make-server-954b19ad/agent/orchestrate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message: msg,
+          conversationHistory: hist,
+          googleAccessToken: reqCtx?.googleAccessToken ?? null,
+          lastRouteData: reqCtx?.lastRouteData ?? null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      (globalThis as any).__lastCrmOrchestratorPayload = data;
+      const crmSearchWithOrgs =
+        data?.action === 'crm_search' &&
+        Array.isArray(data?.crmData?.organizations) &&
+        data.crmData.organizations.length > 0;
+      return {
+        result: {
+          ok: res.ok,
+          orchestrator: data,
+          hint: crmSearchWithOrgs
+            ? 'CRM hledání škol: NEPISUJ textové shrnutí dealů ani „ztracené příležitosti“. Odpověď = prázdný řetězec. Karty aktivních zákazníků už zobrazí aplikace.'
+            : 'Shrň uživateli odpověď z orchestrator.response; strukturovaná data (crmData, routeData) jsou v orchestrator.',
+        },
+      };
+    } catch (e: any) {
+      return { result: { error: e?.message || 'CRM orchestrátor nedostupný.' } };
+    }
+  }
+
   if (name === 'get_products') {
     let products = await getAllProducts();
     if (args.filter_type && args.filter_type !== 'all') products = products.filter((p: any) => p.type === args.filter_type);
@@ -12664,6 +12844,20 @@ const ADMIN_AGENT_SYSTEM = `Jsi webový operátor pro Vividbooks CMS. Tvoje role
 ## ═══ KRITICKÉ PRAVIDLO ═══
 Pokud uživatel požádá o změnu, tvorbu nebo čtení dat, MUSÍŠ zavolat příslušný nástroj. NIKDY jen nepiš text — UDĚLEJ TO.
 
+## ═══ E-MAILY, NEWSLETTERY, DIKTOVÁNÍ — rozliš od CMS úkolů ═══
+Často přijde **text jako odchozí e-mail** nebo krátký koncept z diktování (např. „Dobrý den, posílám informace o plánovaných webinářích… S pozdravem, Vítek“).
+
+**Výchozí výklad:** Uživatel chce **pomoc s psaním a úpravou textu** pro příjemce (copy, doplnění faktů, lepší předmět, struktura), **ne** zadání úkolu „vytvoř záznamy v administraci“ ani „pošli mi údaje kvůli vytvoření v systému a zaindexování do RAG“.
+
+**MUSÍŠ:**
+- Odpovědět jako **editor / copywriter**: navrhni vylepšené znění, předmět e-mailu, krátký perex nebo druhou variantu těla — **přímo v odpovědi** (Markdown).
+- K doplnění faktů použij **kontext RAG** (je v systémovém doplnění) a případně nástroje \`get_webinars\`, \`get_products\`, \`get_novinky\` — jen pokud potřebuješ ověřit reálné termíny, názvy nebo odkazy.
+- **Nežádej** uživatele o seznam polí „pro vytvoření v systému“, pokud sám **neřekl**, že má obsah vzniknout **na webu / v CMS**.
+
+**CMS nástroje** (\`create_webinar\`, \`update_webinar\`, \`rag_index_item\`, …) použij **jen** když uživatel výslovně chce obsah **vytvořit, uložit nebo publikovat** na webu (např. „založ webinář v CMS“, „přidej novinku na web“, „publikuj článek“).
+
+**NIKDY** neinterpretuj obecný koncept e-mailu zmíněný o webinářích jako požadavek na **ruční zadávání webinářů do adminu** — pokud neřekl, že to má být v CMS.
+
 ## Základní workflow
 1. **Čtení** → okamžitě zavolej get_ nástroj, shrň výsledky
 2. **Úprava/tvorba** → zavolej akční nástroj, ulož, pak napiš shrnutí
@@ -12829,13 +13023,37 @@ Vždy popiš co vidíš na obrázku a co jsi s ním udělal.
 🧠 **RAG**: [zda byl obsah zaindexován]
 Odkaz ke kontrole bude zobrazen automaticky.`;
 
+function clearAdminAgentGlobals() {
+  (globalThis as any).__adminAgentRecentMessages = undefined;
+  (globalThis as any).__agentDeadline = undefined;
+  (globalThis as any).__embeddedAssistantMode = undefined;
+  (globalThis as any).__adminAgentAllowedTools = undefined;
+  (globalThis as any).__crmAgentRequestContext = undefined;
+  (globalThis as any).__lastCrmOrchestratorPayload = undefined;
+}
+
 app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
   try {
     const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
     if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
     const body = await c.req.json();
+    const embeddedAssistant = body.embeddedAssistant === true;
+    const crmAssistant = body.crmAssistant === true;
     const { messages } = body;
     if (!messages || !Array.isArray(messages) || messages.length === 0) return c.json({ error: 'Chybí messages.' }, 400);
+    (globalThis as any).__lastCrmOrchestratorPayload = undefined;
+    (globalThis as any).__crmAgentRequestContext = crmAssistant
+      ? {
+          googleAccessToken: body.googleAccessToken ?? null,
+          lastRouteData: body.lastRouteData ?? null,
+          conversationHistory: messages,
+        }
+      : undefined;
+    (globalThis as any).__adminAgentAllowedTools = crmAssistant
+      ? CRM_ASSISTANT_TOOL_NAMES
+      : embeddedAssistant
+        ? EMBEDDED_ASSISTANT_TOOL_NAMES
+        : undefined;
     const ALLOWED_MODELS = ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview'];
     const selectedModel: string = (body.model && ALLOWED_MODELS.includes(body.model)) ? body.model : 'gemini-3.1-pro-preview';
 
@@ -12845,9 +13063,10 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
 
     const lastUserIdx = [...messages].map((m: any, i: number) => m.role === 'user' ? i : -1).filter(i => i >= 0).pop() ?? -1;
     const lastUserMessage = lastUserIdx >= 0 ? messages[lastUserIdx] : null;
-    const forceSubjectPageToolCall = shouldForceAdminToolCall(lastUserMessage);
-    const forceEmailDraftToolCall = userWantsEmailCanvasDraft(lastUserMessage);
-    const routed = inferAdminSpecialistRoute(lastUserMessage);
+    const restrictedMode = embeddedAssistant || crmAssistant;
+    const forceSubjectPageToolCall = restrictedMode ? false : shouldForceAdminToolCall(lastUserMessage);
+    const forceEmailDraftToolCall = restrictedMode ? false : userWantsEmailCanvasDraft(lastUserMessage);
+    const routed = restrictedMode ? { specialist: null as const } : inferAdminSpecialistRoute(lastUserMessage);
     if (routed.specialist) {
       const enrichedContent = `${String(lastUserMessage?.content || '')}${Array.isArray(lastUserMessage?.images) && lastUserMessage.images.length > 0 ? `\n\nUživatel přiložil ${lastUserMessage.images.length} obrázek/obrázky.` : ''}`;
       console.log(`[AdminAgent] Pre-routing → ${routed.specialist} (${routed.reason})`);
@@ -12860,7 +13079,7 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
           model: body.model,
           useRag: true,
         });
-        (globalThis as any).__adminAgentRecentMessages = undefined;
+        clearAdminAgentGlobals();
         return c.json({
           reply: `Předal jsem zadání SEO specialistovi.\n\n${data.reply}`,
           actions: [{
@@ -12880,7 +13099,7 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
           model: body.model,
           useRag: false,
         });
-        (globalThis as any).__adminAgentRecentMessages = undefined;
+        clearAdminAgentGlobals();
         return c.json({
           reply: `Předal jsem zadání image specialistovi.\n\n${data.reply}`,
           actions: [{
@@ -12906,10 +13125,15 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         console.log(`[AdminAgent] RAG supplement skipped: ${ragErr.message}`);
       }
     }
-    const emailCanvasSystemNudge = forceEmailDraftToolCall
-      ? `\n\n## OKAMŽITÝ POŽADAVEK (email → canvas vpravo)\nUživatel chce mail v Email Builderu. **První krok na tomto kole:** volej výhradně \`create_email_campaign_draft\` s plným \`bodyHtml\` z kontextu konverzace a metadaty. Nepíš osnovu ani předmět jen do textu odpovědi — nástroj spustí náhled v panelu.`
-      : '';
-    const systemText = `${ADMIN_AGENT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}${emailCanvasSystemNudge}`;
+    const emailCanvasSystemNudge =
+      !restrictedMode && forceEmailDraftToolCall
+        ? `\n\n## OKAMŽITÝ POŽADAVEK (email → canvas vpravo)\nUživatel chce mail v Email Builderu. **První krok na tomto kole:** volej výhradně \`create_email_campaign_draft\` s plným \`bodyHtml\` z kontextu konverzace a metadaty. Nepíš osnovu ani předmět jen do textu odpovědi — nástroj spustí náhled v panelu.`
+        : '';
+    const systemText = crmAssistant
+      ? `${CRM_ASSISTANT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}`
+      : embeddedAssistant
+        ? `${EMBEDDED_ASSISTANT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}`
+        : `${ADMIN_AGENT_SYSTEM}\n\n## Aktuální datum\n${todayCZ}${ragSupplement}${emailCanvasSystemNudge}`;
 
     // Build Gemini contents — support multimodal (images) only for the LAST user message
     // (older messages were already processed in previous turns, re-fetching all would be too slow)
@@ -12952,7 +13176,13 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
       contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts });
     }
     // CRITICAL: Gemini REST API requires snake_case "function_declarations", NOT camelCase
-    const tools = [{ function_declarations: ADMIN_AGENT_TOOLS }];
+    const tools = [{
+      function_declarations: crmAssistant
+        ? CRM_ASSISTANT_TOOLS
+        : embeddedAssistant
+          ? EMBEDDED_ASSISTANT_TOOLS
+          : ADMIN_AGENT_TOOLS,
+    }];
     const allActions: any[] = [];
     const model = selectedModel;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -12963,16 +13193,22 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
     (globalThis as any).__agentDeadline = AGENT_DEADLINE;
 
     /** Dokud nevznikne create_email_campaign_draft, drž vynucené volání tohoto nástroje (i po opravném kole). */
-    let restrictToEmailDraftTool = forceEmailDraftToolCall;
-    if (forceEmailDraftToolCall) console.log('[AdminAgent] Email/Mailchimp canvas intent — tool lock activates until create_email_campaign_draft');
+    let restrictToEmailDraftTool = !restrictedMode && forceEmailDraftToolCall;
+    if (!restrictedMode && forceEmailDraftToolCall) {
+      console.log('[AdminAgent] Email/Mailchimp canvas intent — tool lock activates until create_email_campaign_draft');
+    }
 
     for (let turn = 0; turn < 16; turn++) {
       const remaining = AGENT_DEADLINE - Date.now();
       if (remaining < 20_000) {
         console.log(`[AdminAgent] Deadline approaching (${remaining}ms left), returning partial result at turn ${turn+1}`);
-        (globalThis as any).__adminAgentRecentMessages = undefined;
-        (globalThis as any).__agentDeadline = undefined;
-        return c.json({ reply: `Provedl jsem ${allActions.length} akcí, ale zbývající operace jsem musel přeskočit kvůli časovému limitu. Zkuste prosím pokračovat v novém dotazu.`, actions: allActions });
+        const crmPartial = (globalThis as any).__lastCrmOrchestratorPayload;
+        clearAdminAgentGlobals();
+        return c.json({
+          reply: `Provedl jsem ${allActions.length} akcí, ale zbývající operace jsem musel přeskočit kvůli časovému limitu. Zkuste prosím pokračovat v novém dotazu.`,
+          actions: allActions,
+          ...(crmAssistant ? { crmPayload: crmPartial } : {}),
+        });
       }
       const geminiBody = {
         system_instruction: { parts: [{ text: systemText }] },
@@ -12980,11 +13216,11 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         tools,
         tool_config: (() => {
           const emailDraftDone = allActions.some((a: any) => a.type === 'create_email_campaign_draft');
-          if (restrictToEmailDraftTool && !emailDraftDone) {
+          if (!restrictedMode && restrictToEmailDraftTool && !emailDraftDone) {
             return { function_calling_config: { mode: 'ANY' as const, allowed_function_names: ['create_email_campaign_draft'] } };
           }
           if (turn !== 0) return { function_calling_config: { mode: 'AUTO' as const } };
-          if (forceSubjectPageToolCall) return { function_calling_config: { mode: 'ANY' as const } };
+          if (!restrictedMode && forceSubjectPageToolCall) return { function_calling_config: { mode: 'ANY' as const } };
           return { function_calling_config: { mode: 'AUTO' as const } };
         })(),
         generationConfig: { temperature: 0.3, maxOutputTokens: 8192 },
@@ -12998,15 +13234,14 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
       } catch (fetchErr: any) {
         clearTimeout(geminiTimer);
         console.log(`[AdminAgent] Gemini fetch failed: ${fetchErr.message}`);
-        (globalThis as any).__adminAgentRecentMessages = undefined;
-        (globalThis as any).__agentDeadline = undefined;
+        clearAdminAgentGlobals();
         return c.json({ reply: `Gemini API timeout. Provedeno ${allActions.length} akcí. Zkuste pokračovat v dalším dotazu.`, actions: allActions });
       }
       clearTimeout(geminiTimer);
       if (!res.ok) {
         const errText = await res.text();
         console.log(`[AdminAgent] Gemini error ${res.status}: ${errText.slice(0, 500)}`);
-        (globalThis as any).__adminAgentRecentMessages = undefined;
+        clearAdminAgentGlobals();
         return c.json({ error: `Gemini chyba (${res.status}): ${errText.slice(0, 200)}` }, 500);
       }
       const data = await res.json();
@@ -13023,13 +13258,15 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
           contents.push({
             role: 'user',
             parts: [{
-              text: 'Nepopisuj plán ani pseudo-volání nástrojů. Okamžitě proveď skutečné volání příslušného get_/update_/create_/delete_ nástroje a až potom napiš stručné potvrzení výsledku.',
+              text: restrictedMode
+                ? 'Odpověz přímo vlastními slovy. Pokud potřebuješ ověřit fakta z katalogu, zavolej jen get_* nástroje; pro CRM školy/trasy/kalendář sales_crm_orchestrate. Neměň web ani nevytvářej e-mailové šablony v systému.'
+                : 'Nepopisuj plán ani pseudo-volání nástrojů. Okamžitě proveď skutečné volání příslušného get_/update_/create_/delete_ nástroje a až potom napiš stručné potvrzení výsledku.',
             }],
           });
           continue;
         }
         const hasEmailDraft = allActions.some((a: any) => a.type === 'create_email_campaign_draft');
-        if (!hasEmailDraft && looksLikeEmailTemplateNarrationWithoutTool(reply) && turn < 15) {
+        if (!restrictedMode && !hasEmailDraft && looksLikeEmailTemplateNarrationWithoutTool(reply) && turn < 15) {
           restrictToEmailDraftTool = true;
           console.log('[AdminAgent] Mailchimp-style text without create_email_campaign_draft — forcing tool round');
           contents.push({
@@ -13041,9 +13278,13 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
           continue;
         }
         console.log(`[AdminAgent] Done turn=${turn+1} actions=${allActions.length} replyLen=${reply.length}`);
-        (globalThis as any).__adminAgentRecentMessages = undefined;
-        (globalThis as any).__agentDeadline = undefined;
-        return c.json({ reply, actions: allActions });
+        const crmPayloadOut = (globalThis as any).__lastCrmOrchestratorPayload;
+        clearAdminAgentGlobals();
+        return c.json({
+          reply,
+          actions: allActions,
+          ...(crmAssistant ? { crmPayload: crmPayloadOut } : {}),
+        });
       }
 
       const funcResults: any[] = [];
@@ -13063,12 +13304,10 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
       }
       contents.push({ role: 'user', parts: funcResults });
     }
-    (globalThis as any).__adminAgentRecentMessages = undefined;
-    (globalThis as any).__agentDeadline = undefined;
+    clearAdminAgentGlobals();
     return c.json({ reply: 'Agent dosáhl maximálního počtu kroků. Zkuste rozdělit úkol.', actions: allActions });
   } catch (e: any) {
-    (globalThis as any).__adminAgentRecentMessages = undefined;
-    (globalThis as any).__agentDeadline = undefined;
+    clearAdminAgentGlobals();
     console.log(`[AdminAgent] Exception: ${e.message}`);
     return c.json({ error: `Chyba: ${e.message}` }, 500);
   }

@@ -1,6 +1,11 @@
-import React from 'react';
-import { Mic, CheckSquare, Settings, Bot, Send, Search, MapPin } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { Mic, Settings, Bot, MapPin, Menu } from 'lucide-react';
 import clsx from 'clsx';
+import { motion } from 'motion/react';
+import { useApp } from '@/app/contexts/AppContext';
+import { AgentOrbAvatar } from './ui/AgentOrbAvatar';
+
+type TabId = 'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings';
 
 interface NavItemProps {
   active: boolean;
@@ -28,8 +33,55 @@ const NavItem: React.FC<NavItemProps> = ({ active, onClick, icon, label }) => (
 
 interface ResponsiveLayoutProps {
   children: React.ReactNode;
-  currentTab: 'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings';
-  onTabChange: (tab: 'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings') => void;
+  currentTab: TabId;
+  onTabChange: (tab: TabId) => void;
+}
+
+function SidebarNav({
+  currentTab,
+  go,
+  agentProcessing,
+}: {
+  currentTab: TabId;
+  go: (t: TabId) => void;
+  agentProcessing: boolean;
+}) {
+  return (
+    <>
+      <nav className="flex-1 flex flex-col items-center gap-4 w-full px-2">
+        <NavItem
+          active={currentTab === 'dictation'}
+          onClick={() => go('dictation')}
+          icon={<Mic size={22} />}
+          label="Diktování"
+        />
+        {agentProcessing && currentTab === 'agent' ? (
+          <AgentOrbAvatar size="sidebar" onClick={() => go('agent')} title="Obchodník pomocník — pracuje…" />
+        ) : (
+          <NavItem
+            active={currentTab === 'agent'}
+            onClick={() => go('agent')}
+            icon={<Bot size={22} />}
+            label="Obchodník pomocník"
+          />
+        )}
+        <NavItem
+          active={currentTab === 'map'}
+          onClick={() => go('map')}
+          icon={<MapPin size={22} />}
+          label="Mapa škol"
+        />
+      </nav>
+      <div className="mt-auto pt-4 w-full flex justify-center pb-2">
+        <NavItem
+          active={currentTab === 'settings'}
+          onClick={() => go('settings')}
+          icon={<Settings size={22} />}
+          label="Nastavení"
+        />
+      </div>
+    </>
+  );
 }
 
 export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({ 
@@ -37,68 +89,72 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
   currentTab, 
   onTabChange
 }) => {
+  const { agentProcessing, sidebarCollapsed, navDrawerOpen, setNavDrawerOpen, toggleLeftNav } = useApp();
+
+  useEffect(() => {
+    setNavDrawerOpen(false);
+  }, [currentTab, setNavDrawerOpen]);
+
+  const goDesktop = (t: TabId) => onTabChange(t);
+  const goMobileDrawer = (t: TabId) => {
+    onTabChange(t);
+    setNavDrawerOpen(false);
+  };
+
   return (
     <div className="flex h-screen bg-black text-white overflow-hidden selection:bg-[#0A84FF]/30">
-      {/* Desktop Sidebar - Mini Version */}
-      <aside className="hidden md:flex flex-col w-[88px] bg-[#1C1C1E] border-r border-white/5 items-center py-6 shrink-0 z-50">
-        {/* Logo Icon Removed */}
-
-
-        {/* Navigation */}
-        <nav className="flex-1 flex flex-col items-center gap-4 w-full px-2">
-          <NavItem 
-            active={currentTab === 'dictation'} 
-            onClick={() => onTabChange('dictation')}
-            icon={<Mic size={22} />}
-            label="Diktování"
-          />
-          <NavItem 
-            active={currentTab === 'agent'} 
-            onClick={() => onTabChange('agent')}
-            icon={<Bot size={22} />}
-            label="Agent"
-          />
-          <NavItem 
-            active={currentTab === 'tasks'} 
-            onClick={() => onTabChange('tasks')}
-            icon={<CheckSquare size={22} />}
-            label="Úkoly"
-          />
-          <NavItem 
-            active={currentTab === 'outreach'} 
-            onClick={() => onTabChange('outreach')}
-            icon={<Send size={22} />}
-            label="Outreach"
-          />
-          <NavItem 
-            active={currentTab === 'scraping'} 
-            onClick={() => onTabChange('scraping')}
-            icon={<Search size={22} />}
-            label="Scraping"
-          />
-          <NavItem 
-            active={currentTab === 'map'} 
-            onClick={() => onTabChange('map')}
-            icon={<MapPin size={22} />}
-            label="Mapa škol"
-          />
-        </nav>
-
-        {/* Settings at Bottom */}
-        <div className="mt-auto pt-4 w-full flex justify-center pb-2">
-          <NavItem 
-            active={currentTab === 'settings'} 
-            onClick={() => onTabChange('settings')}
-            icon={<Settings size={22} />}
-            label="Nastavení"
-          />
-        </div>
+      {/* Desktop Sidebar */}
+      <aside
+        className={clsx(
+          'hidden md:flex flex-col w-[88px] bg-[#1C1C1E] border-r border-white/5 items-center py-6 shrink-0 z-50 transition-[margin,opacity] duration-200',
+          sidebarCollapsed && 'md:hidden',
+        )}
+      >
+        <SidebarNav currentTab={currentTab} go={goDesktop} agentProcessing={agentProcessing} />
       </aside>
+
+      {/* Mobilní výsuvný levý panel (stejné položky jako desktop) */}
+      <>
+        <div
+          role="presentation"
+          className={clsx(
+            'md:hidden fixed inset-0 z-[90] bg-black/65 transition-opacity duration-200',
+            navDrawerOpen ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none',
+          )}
+          onClick={() => setNavDrawerOpen(false)}
+        />
+        <aside
+          className={clsx(
+            'md:hidden fixed left-0 top-0 bottom-0 z-[100] flex w-[88px] flex-col bg-[#1C1C1E] border-r border-white/5 py-6 shadow-2xl transition-transform duration-300 ease-out',
+            navDrawerOpen ? 'translate-x-0' : '-translate-x-full',
+          )}
+          aria-hidden={!navDrawerOpen}
+        >
+          <SidebarNav currentTab={currentTab} go={goMobileDrawer} agentProcessing={agentProcessing} />
+        </aside>
+      </>
 
       {/* Main Content Area */}
       <main className="flex-1 flex flex-col relative min-w-0">
+        {/* Desktop: když je levý panel sbalený, záložky bez vlastního menu (≠ diktování) potřebují odkud otevřít navigaci */}
+        {sidebarCollapsed && currentTab !== 'dictation' && (
+          <button
+            type="button"
+            onClick={toggleLeftNav}
+            title="Zobrazit menu"
+            className="hidden md:flex fixed left-[max(1rem,env(safe-area-inset-left))] top-[max(1rem,env(safe-area-inset-top))] z-[60] h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-[#2C2C2E] text-white shadow-lg hover:bg-[#3C3C3E] active:scale-[0.98]"
+          >
+            <Menu size={22} strokeWidth={2} />
+          </button>
+        )}
+
         {/* Mobile Header with Tabs - ALWAYS VISIBLE */}
-        <div className="md:hidden pt-[calc(env(safe-area-inset-top)+12px)] px-3 pb-3 bg-[#121212] border-b border-white/5 sticky top-0 z-50 shadow-lg shadow-black/40">
+        <div
+          className={clsx(
+            'md:hidden pt-[calc(env(safe-area-inset-top)+12px)] px-3 pb-3 bg-[#121212] border-b border-white/5 sticky top-0 z-50 shadow-lg shadow-black/40',
+            currentTab === 'dictation' && 'hidden',
+          )}
+        >
              {/* Scrollable Tab Bar for mobile */}
              <div className="flex gap-1.5 overflow-x-auto scrollbar-hide -mx-1 px-1">
                 <button
@@ -111,46 +167,31 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                     <Mic size={16} />
                     <span>Diktování</span>
                 </button>
-                <button
+                <motion.button
                     onClick={() => onTabChange('agent')}
+                    animate={
+                      agentProcessing && currentTab === 'agent'
+                        ? { boxShadow: ['0 10px 25px -5px rgba(34,197,94,0.45)', '0 10px 35px -5px rgba(34,197,94,0.65)', '0 10px 25px -5px rgba(34,197,94,0.45)'] }
+                        : {}
+                    }
+                    transition={agentProcessing && currentTab === 'agent' ? { repeat: Infinity, duration: 1.1, ease: 'easeInOut' } : {}}
                     className={clsx(
                         "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
-                        currentTab === 'agent' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
+                        currentTab === 'agent' && agentProcessing
+                          ? "bg-gradient-to-r from-emerald-600 to-green-600 text-white shadow-lg shadow-emerald-500/40"
+                          : currentTab === 'agent'
+                            ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30"
+                            : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
                     )}
                 >
-                    <Bot size={16} />
-                    <span>Agent</span>
-                </button>
-                <button
-                    onClick={() => onTabChange('tasks')}
-                    className={clsx(
-                        "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
-                        currentTab === 'tasks' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
-                    )}
-                >
-                    <CheckSquare size={16} />
-                    <span>Úkoly</span>
-                </button>
-                <button
-                    onClick={() => onTabChange('outreach')}
-                    className={clsx(
-                        "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
-                        currentTab === 'outreach' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
-                    )}
-                >
-                    <Send size={16} />
-                    <span>Outreach</span>
-                </button>
-                <button
-                    onClick={() => onTabChange('scraping')}
-                    className={clsx(
-                        "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
-                        currentTab === 'scraping' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
-                    )}
-                >
-                    <Search size={16} />
-                    <span>Scraping</span>
-                </button>
+                    <span className="relative flex h-4 w-4 items-center justify-center">
+                      {agentProcessing && currentTab === 'agent' ? (
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-40" />
+                      ) : null}
+                      <Bot size={16} className="relative z-10" />
+                    </span>
+                    <span>Obchodník</span>
+                </motion.button>
                 <button
                     onClick={() => onTabChange('map')}
                     className={clsx(

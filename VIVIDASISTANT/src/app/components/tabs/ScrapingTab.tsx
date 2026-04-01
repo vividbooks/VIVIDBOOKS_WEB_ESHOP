@@ -641,7 +641,7 @@ export const ScrapingTab: React.FC = () => {
 
       {/* Job Detail Side Panel - Full screen on mobile */}
       {selectedJob && (
-        <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[380px] xl:w-[480px] h-full bg-[#1C1C1E] lg:border-l border-white/10 flex flex-col shrink-0">
+        <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[300px] h-full bg-[#1C1C1E] lg:border-l border-white/10 flex flex-col shrink-0">
           {/* Header */}
           <div className="shrink-0 p-4 border-b border-white/10">
             <div className="flex items-start justify-between">

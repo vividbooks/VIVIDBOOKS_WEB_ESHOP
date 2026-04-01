@@ -2,7 +2,14 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { MapPin, School, Loader2, RefreshCw, Building2, Database, Eye, EyeOff } from 'lucide-react';
 import { SchoolDetailPanel } from '../ui/SchoolDetailPanel';
 import { toast } from 'sonner';
-import { projectId } from '/utils/supabase/info';
+import { projectId, publicAnonKey } from '/utils/supabase/info';
+
+/** Supabase Edge Functions vyžadují JWT (anon). */
+const FN_AUTH_JSON: HeadersInit = {
+  Authorization: `Bearer ${publicAnonKey}`,
+  'Content-Type': 'application/json',
+};
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -88,7 +95,8 @@ export const MapTab: React.FC = () => {
     setIsLoading(true);
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/school-locations`
+        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/school-locations`,
+        { headers: FN_AUTH }
       );
       
       if (!response.ok) throw new Error('Failed to fetch cache');
@@ -118,7 +126,7 @@ export const MapTab: React.FC = () => {
     try {
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/build-school-cache`,
-        { method: 'POST' }
+        { method: 'POST', headers: FN_AUTH_JSON }
       );
       
       if (!response.ok) throw new Error('Failed to build cache');
@@ -148,7 +156,7 @@ export const MapTab: React.FC = () => {
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/org-detail`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: FN_AUTH_JSON,
           body: JSON.stringify({ orgId: school.id })
         }
       );
@@ -182,9 +190,13 @@ export const MapTab: React.FC = () => {
   const defaultZoom = 7;
 
   return (
-    <div className="w-full h-full flex flex-col lg:flex-row bg-black overflow-hidden relative">
+    <div className="w-full h-full flex flex-col md:flex-row bg-black overflow-hidden relative min-h-0">
       {/* Main Map Area */}
-      <div className={`flex flex-col h-full flex-1 ${selectedSchool && showDetailPanel ? 'lg:min-w-0' : 'w-full'}`}>
+      <div
+        className={`flex flex-col h-full min-w-0 overflow-hidden ${
+          selectedSchool && showDetailPanel ? 'flex-1' : 'w-full flex-1'
+        }`}
+      >
         {/* Header */}
         <div className="shrink-0 p-4 border-b border-white/10 bg-[#1C1C1E]">
           <div className="flex items-center justify-between">
@@ -398,7 +410,13 @@ export const MapTab: React.FC = () => {
       
       {/* Organization Detail Side Panel */}
       {selectedSchool && showDetailPanel && (
-        <div className="fixed inset-0 z-[1000] lg:relative lg:inset-auto lg:z-auto w-full lg:w-[380px] xl:w-[480px] h-full lg:border-l border-white/10 shrink-0 bg-[#1C1C1E]">
+        <div
+          className={
+            'assistant-detail-rail h-full min-h-0 flex flex-col border-white/10 bg-[#1C1C1E] ' +
+            'max-md:fixed max-md:inset-0 max-md:z-[1000] max-md:!w-full max-md:!max-w-none max-md:flex-none max-md:border-0 ' +
+            'md:relative md:z-auto md:inset-auto md:border-l'
+          }
+        >
           <SchoolDetailPanel
             organization={{
               id: selectedSchool.id,

@@ -131,10 +131,15 @@ app.post("/make-server-954b19ad/smart-edit", async (c) => {
 
     const { currentText, newVoiceText, context, selection } = await c.req.json();
 
-    if (!newVoiceText) return c.json({ cleanText: currentText || "", text: currentText || "", detectedTask: null });
+    /** Tlačítko „Doplnit z knihovny“ posílá prázdný hlas — nesmíme skončit před RAG. */
+    const voiceNorm = typeof newVoiceText === "string" ? newVoiceText : "";
+    const manualRagUi = context === "manual_rag_trigger";
+    if (!voiceNorm.trim() && !manualRagUi) {
+      return c.json({ cleanText: currentText || "", text: currentText || "", detectedTask: null });
+    }
 
-    const lowerVoice = newVoiceText.toLowerCase();
-    const fullTextLower = `${currentText || ''} ${newVoiceText}`.toLowerCase();
+    const lowerVoice = voiceNorm.toLowerCase();
+    const fullTextLower = `${currentText || ''} ${voiceNorm}`.toLowerCase();
     
     // If user has text selected - edit only that part
     if (context === "edit_selection" && selection && selection.text) {
@@ -144,7 +149,7 @@ OZNAČENÝ TEXT (který chce změnit):
 "${selection.text}"
 
 UŽIVATELOVA INSTRUKCE:
-"${newVoiceText}"
+"${voiceNorm}"
 
 ÚKOLY:
 1. Přeformuluj/uprav označený text podle instrukce
@@ -219,7 +224,7 @@ STÁVAJÍCÍ TEXT (RAG návrh emailu):
 ${currentText}
 
 UŽIVATELOVA INSTRUKCE:
-${newVoiceText}${productInfo}
+${voiceNorm}${productInfo}
 
 ÚKOLY:
 1. APLIKUJ instrukci na stávající text
@@ -277,7 +282,7 @@ STÁVAJÍCÍ TEXT:
 ${currentText || "(prázdný)"}
 
 NOVÝ VSTUP:
-${newVoiceText}
+${voiceNorm}
 
 Vrať JSON: { "text": "naformátovaný text" }`;
 
@@ -293,9 +298,9 @@ Vrať JSON: { "text": "naformátovaný text" }`;
       if (cleanResp.ok) {
         const cleanData = await cleanResp.json();
         const cleanResult = JSON.parse(cleanData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
-        cleanText = cleanResult.text || newVoiceText;
+        cleanText = cleanResult.text || voiceNorm;
       } else {
-        cleanText = currentText ? `${currentText}\n\n${newVoiceText}` : newVoiceText;
+        cleanText = currentText ? `${currentText}\n\n${voiceNorm}` : voiceNorm;
       }
     }
     
@@ -376,28 +381,97 @@ Vrať JSON:
       });
     }
 
-    // STEP 3: Find relevant RAG document
-    console.log(`[SmartEdit] Proceeding to find RAG document...`);
+    // STEP 3: Web RAG — stejné chunky jako Web operátor (POST …/rag/retrieve), ne syntéza z rag/query
+    const refinedQuery = await refineRagQueryForSmartEdit(cleanText, ragSearchQuery, geminiKey);
+    const ragQuery = refinedQuery.trim() || (ragSearchQuery || cleanText).trim();
+    console.log(
+      `[SmartEdit] Web RAG query (${ragQuery.length} znaků): ${ragQuery.slice(0, 200)}${ragQuery.length > 200 ? "…" : ""}`,
+    );
+    let pgChunks = await fetchPgvectorRagChunksForOrchestrator(ragQuery, { topK: 14 });
+    if (!pgChunks?.context) {
+      const fb = buildSmartEditRetrieveFallbackQuery(cleanText);
+      if (fb && fb.trim() && fb.trim().toLowerCase() !== ragQuery.trim().toLowerCase()) {
+        console.log("[SmartEdit] rag/retrieve prázdné; druhý pokus retrieve:", fb.slice(0, 160));
+        pgChunks = await fetchPgvectorRagChunksForOrchestrator(fb, { topK: 16 });
+      }
+    }
+
+    if (pgChunks?.context) {
+      const sourceTitles = pgChunks.titles.length
+        ? pgChunks.titles
+        : [];
+      const ragPrompt = `Jsi obchodník Vividbooks. Uživatel má ROZEPSANÝ EMAIL a chce ho doplnit o POMOCNÉ, K SOBĚ PATŘÍCÍ informace pro příjemce — ne o náhodné kusy katalogu ani nesouvisející akce.
+
+PŮVODNÍ EMAIL:
+---
+${cleanText}
+---
+
+OVĚŘENÝ ZNALOSTNÍ KONTEKST (plné chunky z pgvector — stejný index jako Web operátor / chat; čti je doslova pro fakta):
+---
+${pgChunks.context}
+---
+${sourceTitles.length ? `Názvy zdrojů (orientační): ${sourceTitles.slice(0, 8).join(", ")}` : ""}
+
+JAK POSTUPOVAT:
+1. Urči hlavní téma emailu (co příjemce řeší). Doplň POUZE informace z kontextu, které tomuto tématu logicky pomáhají (webináře včetně termínů, nabídka, MŠMT/RVP, předmět, balíček).
+2. Pokud kontext obsahuje **konkrétní termíny nebo názvy webinářů**, vlož je do těla e-mailu — **nepiš**, že „nemáme termíny“, pokud jsou v kontextu uvedeny.
+3. Přidej 1–2 krátké věty nebo jeden souvislý odstavec „pomocných informací“ — přirozeně za hlavní větu těla, ne jako odrážkový výčet produktů.
+4. Nepřidávej nesouvisející slevy ani katalog „NOVÝ KATALOG“ jen proto, že se objeví v kontextu, pokud to nesouvisí s tématem emailu.
+5. Zachovej oslovení a podpis uživatele; neměň jeho tón, pokud není nutné pro srozumitelnost.
+6. Piš česky, stručně, profesionálně.
+
+ZAKÁZÁNO:
+- Vymýšlet fakta mimo znalostní kontext
+- Obecné věty typu „na webu najdete přehled…“
+- Protichůdné tvrzení (např. „nemáme termíny“) pokud kontext termíny obsahuje
+- Generické marketingové formulace („přinesou novinky“, „inspiraci od expertů“, „praktické tipy do výuky“, obecné chvály produktu), pokud se v kontextu doslova nevyskytují — to není obsah z knihovny, to je halucinace
+
+Vrať POUZE JSON:
+{ "ragEnhancedText": "kompletní upravený email" }`;
+
+      const ragResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: ragPrompt }] }],
+          generationConfig: { response_mime_type: "application/json" },
+        }),
+      });
+
+      let ragSuggestion: string | null = null;
+      if (ragResp.ok) {
+        const ragData = await ragResp.json();
+        const ragResult = JSON.parse(ragData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+        ragSuggestion = ragResult.ragEnhancedText || null;
+      }
+      if (ragSuggestion) {
+        const ragDocTitle = sourceTitles[0] || "Znalostní knihovna (RAG)";
+        return c.json({ cleanText, text: cleanText, ragSuggestion, ragDocTitle, detectedTask: null });
+      }
+      console.log("[SmartEdit] Sloučení s pgvector kontextem selhalo; zkouším KV zálohu…");
+    }
+
+    console.log(`[SmartEdit] Web RAG returned nothing; falling back to KV library...`);
     const index = await kv.get('rag_document_index') || [];
-    console.log(`[SmartEdit] RAG library has ${index.length} documents`);
-    
+    console.log(`[SmartEdit] KV library has ${index.length} documents`);
+
     if (index.length === 0) {
-      console.log(`[SmartEdit] RAG library is EMPTY - user needs to run seed`);
-      return c.json({ 
-        cleanText, 
-        text: cleanText, 
-        ragSuggestion: null, 
-        ragDocTitle: null, 
+      console.log(`[SmartEdit] No KV documents and web RAG empty`);
+      return c.json({
+        cleanText,
+        text: cleanText,
+        ragSuggestion: null,
+        ragDocTitle: null,
         ragSkipped: true,
-        ragSkipReason: "Knihovna je prázdná. Jdi do Nastavení → Knihovna → Seed produkty",
-        detectedTask: null 
+        ragSkipReason: "Nenalezen relevantní obsah v knihovně (zkuste upřesnit text nebo formulovat dotaz jinak).",
+        detectedTask: null,
       });
     }
 
     const docs = await Promise.all(index.map(async (doc: any) => await kv.get(`rag_doc_${doc.id}`)));
     const allDocs = docs.filter(Boolean);
-    
-    // AI finds best matching document using the search query from decision agent
+
     const searchPrompt = `HLEDANÝ KONTEXT: "${ragSearchQuery || cleanText}"
 
 DOKUMENTY V KNIHOVNĚ:
@@ -429,21 +503,30 @@ Vrať JSON:
       if (searchResp.ok) {
         const searchData = await searchResp.json();
         const result = JSON.parse(searchData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
-        console.log(`[SmartEdit] Search result:`, result);
+        console.log(`[SmartEdit] KV search result:`, result);
         if (result.bestMatchIndex >= 0 && result.confidence > 0.5) {
           bestDoc = allDocs[result.bestMatchIndex];
         }
       }
     } catch (e) {
-      console.error("[SmartEdit] Search failed:", e);
+      console.error("[SmartEdit] KV search failed:", e);
     }
 
     if (!bestDoc) {
-      return c.json({ cleanText, text: cleanText, ragSuggestion: null, ragDocTitle: null, detectedTask: null });
+      return c.json({
+        cleanText,
+        text: cleanText,
+        ragSuggestion: null,
+        ragDocTitle: null,
+        detectedTask: null,
+        ragSkipped: true,
+        ragSkipReason: "V knihovně (KV) nebyl vybrán vhodný dokument.",
+      });
     }
 
-    // STEP 4: Generate RAG-enhanced suggestion
-    const ragPrompt = `PŮVODNÍ EMAIL:
+    const ragPromptKv = `Jsi obchodník Vividbooks. Uživatel má ROZEPSANÝ EMAIL a chce ho doplnit o POMOCNÉ informace z dokumentu — jen takové, které souvisí s tématem emailu.
+
+PŮVODNÍ EMAIL:
 ---
 ${cleanText}
 ---
@@ -453,34 +536,24 @@ DOKUMENT Z KNIHOVNY - "${bestDoc.title}":
 ${bestDoc.content?.substring(0, 2000)}
 ---
 
-TVŮJ ÚKOL:
-Uživatel píše email a chce do něj vložit KONKRÉTNÍ informace z dokumentu.
-
 JAK POSTUPOVAT:
-1. Přečti si dokument a VYBER 2-3 KONKRÉTNÍ fakta (názvy, čísla, termíny, odkazy)
-2. Vlož tyto fakta PŘIROZENĚ do emailu uživatele
-3. Zachovej strukturu emailu (oslovení, tělo, podpis)
-
-PŘÍKLAD - Pokud dokument obsahuje:
-"Aktuální webináře: Představení Českého jazyka, Novinky v matematice"
-"Registrace: www.vividbooks.com/webinare"
-
-Pak VLOŽ do emailu:
-"Aktuálně pořádáme webinář Představení Českého jazyka a Novinky v matematice. Registrace na www.vividbooks.com/webinare"
+1. Urči téma emailu. Vyber z dokumentu jen fakta, která tomuto tématu pomáhají (produkt, stupeň, MŠMT/RVP, balíčky).
+2. Přidej krátký souvislý odstavec nebo věty — ne náhodný výčet nesouvisejících akcí.
+3. Zachovej oslovení a podpis.
 
 ZAKÁZÁNO:
-- Psát obecné fráze jako "Stránka nabízí přehled..."
-- Vymýšlet si informace které nejsou v dokumentu
-- Ignorovat konkrétní data z dokumentu
+- Vymýšlet mimo dokument
+- Obecné fráze bez konkrétních dat z dokumentu
+- Generický marketing stejný pro každý email — pokud dokument nemá konkrétní termíny/data pro téma emailu, uprav email jen minimálně nebo ho nech beze změny (lépe než vymýšlet)
 
 Vrať POUZE JSON:
-{ "ragEnhancedText": "kompletní email s KONKRÉTNÍMI fakty z dokumentu" }`;
+{ "ragEnhancedText": "kompletní upravený email" }`;
 
     const ragResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: ragPrompt }] }],
+        contents: [{ parts: [{ text: ragPromptKv }] }],
         generationConfig: { response_mime_type: "application/json" }
       })
     });
@@ -492,7 +565,14 @@ Vrať POUZE JSON:
       ragSuggestion = ragResult.ragEnhancedText || null;
     }
 
-    return c.json({ cleanText, text: cleanText, ragSuggestion, ragDocTitle: bestDoc?.title || null, detectedTask: null });
+    return c.json({
+      cleanText,
+      text: cleanText,
+      ragSuggestion,
+      ragDocTitle: bestDoc?.title || null,
+      detectedTask: null,
+      ...(ragSuggestion ? {} : { ragSkipped: true, ragSkipReason: "Knihovna (KV) nenašla konkrétní fakta k doplnění." }),
+    });
 
   } catch (error: any) {
     console.error("Smart Edit error:", error);
@@ -1457,6 +1537,34 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
     const activitiesData = await activitiesResp.json();
     const activities = activitiesData.data || [];
 
+    /** Pipedrive vrací user_id / owner_id jako číslo nebo { id, name, value, … } */
+    const pipedriveNumericId = (v: any): number | null => {
+      if (v == null) return null;
+      if (typeof v === 'object' && v !== null) {
+        if ('value' in v && v.value != null && v.value !== '') return Number(v.value);
+        if ('id' in v && v.id != null && v.id !== '') return Number(v.id);
+      }
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    const usersResp = await fetch(`${PIPEDRIVE_BASE}/users?api_token=${pipedriveToken}`);
+    const usersData = await usersResp.json();
+    const userMap: Record<number, string> = {};
+    for (const u of usersData.data || []) {
+      if (u?.id != null) userMap[Number(u.id)] = u.name || u.email || String(u.id);
+    }
+
+    const orgOwnerId = pipedriveNumericId(org.owner_id);
+    const orgOwnerNameEmbed =
+      org.owner_id && typeof org.owner_id === 'object' && (org.owner_id as { name?: string }).name
+        ? String((org.owner_id as { name: string }).name)
+        : null;
+    const orgWithOwner = {
+      ...org,
+      owner_name: orgOwnerNameEmbed ?? (orgOwnerId != null ? userMap[orgOwnerId] ?? null : null),
+    };
+
     // Get deal field definitions for custom field mapping
     const dealFieldsResp = await fetch(`${PIPEDRIVE_BASE}/dealFields?api_token=${pipedriveToken}`);
     const dealFieldsData = await dealFieldsResp.json();
@@ -1530,7 +1638,7 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
     });
 
     return c.json({
-      organization: org,
+      organization: orgWithOwner,
       persons: enhancedPersons,
       deals: deals.map((d: any) => {
         const customFields: Record<string, any> = {};
@@ -1553,13 +1661,29 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
             customFields[fieldName] = resolvedValue;
           }
         }
+        const dealOwnerId = pipedriveNumericId(d.user_id);
+        const ownerNameFromEmbed =
+          d.user_id && typeof d.user_id === 'object' && (d.user_id as { name?: string }).name
+            ? String((d.user_id as { name: string }).name)
+            : null;
         return {
           ...d,
           customFields,
+          owner_name: ownerNameFromEmbed ?? (dealOwnerId != null ? userMap[dealOwnerId] ?? null : null),
           statusColor: d.status === 'won' ? 'green' : d.status === 'lost' ? 'red' : 'yellow'
         };
       }),
-      activities,
+      activities: activities.map((a: any) => {
+        const aid = pipedriveNumericId(a.user_id);
+        const nameFromEmbed =
+          a.user_id && typeof a.user_id === 'object' && (a.user_id as { name?: string }).name
+            ? String((a.user_id as { name: string }).name)
+            : null;
+        return {
+          ...a,
+          user_name: nameFromEmbed ?? (aid != null ? userMap[aid] ?? null : null),
+        };
+      }),
       summary: `${org.name}: ${enhancedPersons.length} kontaktů, ${deals.length} dealů`
     });
 
@@ -2954,6 +3078,262 @@ Vrať JSON:
   }
 });
 
+/**
+ * Stejná znalostní knihovna jako webové RAG (`rag_document_index` + `rag_doc_*`).
+ * Při velkém objemu vybere relevantní dokumenty přes Gemini, jinak pošle celý obsah (do limitu).
+ */
+async function fetchRagContextForSalesAssistant(
+  geminiKey: string,
+  userMessage: string,
+  historySnippet: string,
+): Promise<{ context: string; titles: string[] } | null> {
+  try {
+    const index = await kv.get("rag_document_index") || [];
+    if (!index.length) return null;
+    const docs = (await Promise.all(index.map(async (doc: any) => await kv.get(`rag_doc_${doc.id}`)))).filter(Boolean);
+    if (!docs.length) return null;
+
+    const MAX_TOTAL = 36000;
+    const buildFromDocs = (list: any[]) =>
+      list.map((d: any) => `### ${d.title || "Dokument"}\n${String(d.content || "").trim()}`).join("\n\n");
+
+    const full = buildFromDocs(docs);
+    if (full.length <= MAX_TOTAL) {
+      return { context: full, titles: docs.map((d: any) => d.title || "").filter(Boolean) };
+    }
+
+    const catalog = docs.map((d: any, i: number) =>
+      `[${i}] ${d.title || "Bez názvu"}
+Kategorie: ${d.category || "—"}
+Náhled: ${String(d.content || "").slice(0, 280).replace(/\s+/g, " ")}...`
+    ).join("\n\n");
+
+    const selectPrompt = `Jsi retriever pro obchodního asistenta. Vyber indexy dokumentů (0 až ${docs.length - 1}), které obsahují odpověď nebo souvisí s otázkou.
+
+OTÁZKA: "${userMessage}"
+${historySnippet ? `PŘEDCHOZÍ KONTEXT:\n${historySnippet.slice(0, 1500)}\n` : ""}
+
+KATALOG DOKUMENTŮ:
+${catalog}
+
+Vrať JSON: { "indices": [čísla, max 6], "reason": "jedna věta" }`;
+
+    const selResp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: selectPrompt }] }],
+          generationConfig: { response_mime_type: "application/json" },
+        }),
+      },
+    );
+
+    let indices: number[] = [];
+    if (selResp.ok) {
+      const selData = await selResp.json();
+      const parsed = JSON.parse(selData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+      if (Array.isArray(parsed.indices)) {
+        indices = parsed.indices.filter((i: number) => Number.isInteger(i) && i >= 0 && i < docs.length);
+      }
+    }
+
+    if (indices.length === 0) {
+      const out: any[] = [];
+      let acc = 0;
+      for (const d of docs) {
+        const chunk = `### ${d.title || "Dokument"}\n${String(d.content || "").trim()}`;
+        if (acc + chunk.length > MAX_TOTAL) break;
+        out.push(d);
+        acc += chunk.length;
+      }
+      if (out.length === 0) {
+        return { context: full.slice(0, MAX_TOTAL), titles: docs.map((d: any) => d.title || "").filter(Boolean) };
+      }
+      const joined = buildFromDocs(out);
+      return { context: joined.slice(0, MAX_TOTAL), titles: out.map((d: any) => d.title || "").filter(Boolean) };
+    }
+
+    const selected = [...new Set(indices)].slice(0, 6).map((i) => docs[i]).filter(Boolean);
+    if (!selected.length) return { context: full.slice(0, MAX_TOTAL), titles: [] };
+    let joined = buildFromDocs(selected);
+    if (joined.length > MAX_TOTAL) joined = joined.slice(0, MAX_TOTAL);
+    return { context: joined, titles: selected.map((d: any) => d.title || "").filter(Boolean) };
+  } catch (e) {
+    console.error("[Orchestrator] fetchRagContextForSalesAssistant:", e);
+    return null;
+  }
+}
+
+/** Druhý pokus retrieve: kratší dotaz s klíčovými slovy, když první embeddingové hledání nic nevrátí. */
+function buildSmartEditRetrieveFallbackQuery(cleanText: string): string {
+  const t = (cleanText || "").toLowerCase();
+  const parts: string[] = [];
+  if (/webin|dvpp|školen|workshop|plánovan|akcí/i.test(t)) {
+    parts.push("webináře Vividbooks termíny kalendář rozvrh plánované akce DVPP");
+  }
+  if (/mšmt|příspěv|rvp/i.test(t)) {
+    parts.push("MŠMT příspěvek zakoupení učební materiály");
+  }
+  if (/matemat|prvou|fyzik|chemi|přírodopis/i.test(t)) {
+    parts.push("předmět učebnice ZŠ Vividbooks");
+  }
+  if (parts.length) return parts.join(" ");
+  return (cleanText || "").slice(0, 800).trim();
+}
+
+/**
+ * Z konceptu e-mailu sestaví cílený český dotaz pro pgvector RAG (ne jen copy-paste celého emailu).
+ */
+async function refineRagQueryForSmartEdit(
+  cleanText: string,
+  hintFromDecision: string,
+  geminiKey: string,
+): Promise<string> {
+  const trimmed = cleanText.trim();
+  const hint = hintFromDecision.trim();
+  if (!trimmed) return "";
+  const qPrompt = `Jsi asistent pro obchodníky Vividbooks (digitální interaktivní učebnice pro školy).
+
+ROZEPSANÝ EMAIL (může být krátký):
+"""
+${trimmed}
+"""
+
+${hint ? `NÁPOVĚDA Z ANALÝZY (téma / co hledat): ${hint}` : ""}
+
+ÚKOL: Sestav JEDEN dotaz v češtině pro vyhledávání ve firemní znalostní knihovně (RAG). Dotaz musí:
+- Zacílit na předmět, ročník nebo typ nabídky (např. český jazyk, 1. stupeň, matematika, balíčky).
+- Pokud email zmiňuje **webináře, školení, plánované akce, „tento měsíc“ nebo termíny**: dotaz musí výslovně obsahovat klíčová slova pro vyhledání **webinářů Vividbooks, termínů, data, rozvrh, DVPP** — aby RAG našel stejné chunky jako v chatu (kalendář webinářů), ne jen obecný katalog.
+- Obsahovat klíčová slova pro: nabídku produktů, soulad s MŠMT a RVP, případně související předměty nebo balíčky — jen pokud souvisí s tématem emailu.
+- Být konkrétní — NE kopírovat oslovení, podpis ani celý email jako jeden blok.
+- Pomoci najít POMOCNÉ informace pro příjemce (fakta, která doplní krátký koncept), ne přepsat e-mail.
+
+Vrať POUZE JSON:
+{ "query": "..." }`;
+
+  try {
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: qPrompt }] }],
+          generationConfig: { response_mime_type: "application/json" },
+        }),
+      },
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      const parsed = JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+      const q = String(parsed.query || "").trim();
+      if (q.length >= 10) return q.slice(0, 2000);
+    }
+  } catch (e) {
+    console.error("[SmartEdit] refineRagQueryForSmartEdit:", e);
+  }
+  const fallback = [hint, trimmed].filter(Boolean).join(" ").trim();
+  return fallback.slice(0, 2000);
+}
+
+/**
+ * Stejný RAG jako Web operátor (Admin agent / modal „RAG“): `make-server-93a20b6f` → POST `/rag/query` (pgvector + Gemini).
+ * Odlišné od KV knihovny (`rag_document_index`) v této funkci.
+ */
+async function fetchWebRagAnswer(
+  question: string,
+  opts?: { topK?: number },
+): Promise<{
+  answer: string;
+  sources: any[];
+  chunksUsed: number;
+} | null> {
+  const base = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  const jwt =
+    (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim() ||
+    (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
+  if (!base || !jwt) {
+    console.warn("[Orchestrator] fetchWebRagAnswer: chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY/ANON_KEY");
+    return null;
+  }
+  const topK = Math.min(16, Math.max(4, Number(opts?.topK) || 8));
+  const url = `${base}/functions/v1/make-server-93a20b6f/rag/query`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ question: question.trim(), topK }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("[Orchestrator] fetchWebRagAnswer HTTP", res.status, (data as any)?.error || "");
+      return null;
+    }
+    if ((data as any).error) {
+      console.error("[Orchestrator] fetchWebRagAnswer:", (data as any).error);
+      return null;
+    }
+    const chunksUsed = Number((data as any).chunksUsed) || 0;
+    const answer = String((data as any).answer || "").trim();
+    if (chunksUsed === 0 || !answer) return null;
+    return {
+      answer,
+      sources: Array.isArray((data as any).sources) ? (data as any).sources : [],
+      chunksUsed,
+    };
+  } catch (e) {
+    console.error("[Orchestrator] fetchWebRagAnswer:", e);
+    return null;
+  }
+}
+
+/** Stejný index jako Web operátor — jen chunky (bez rag/query syntézy); odpověď skládá orchestrátor z kontextu. */
+async function fetchPgvectorRagChunksForOrchestrator(
+  question: string,
+  opts?: { topK?: number },
+): Promise<{ context: string; titles: string[] } | null> {
+  const base = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  const jwt =
+    (Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "").trim() ||
+    (Deno.env.get("SUPABASE_ANON_KEY") || "").trim();
+  if (!base || !jwt) {
+    console.warn("[Orchestrator] fetchPgvectorRagChunksForOrchestrator: chybí SUPABASE_URL nebo JWT");
+    return null;
+  }
+  const topK = Math.min(16, Math.max(4, Number(opts?.topK) || 12));
+  const url = `${base}/functions/v1/make-server-93a20b6f/rag/retrieve`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ question: question.trim(), topK }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || (data as any).error) {
+      console.error("[Orchestrator] rag/retrieve HTTP", res.status, (data as any)?.error || "");
+      return null;
+    }
+    const chunksUsed = Number((data as any).chunksUsed) || 0;
+    const context = String((data as any).context || "").trim();
+    if (chunksUsed === 0 || !context) return null;
+    const titles = Array.isArray((data as any).sources)
+      ? (data as any).sources.map((s: any) => String(s?.title || s?.source || "").trim()).filter(Boolean)
+      : [];
+    return { context, titles };
+  } catch (e) {
+    console.error("[Orchestrator] fetchPgvectorRagChunksForOrchestrator:", e);
+    return null;
+  }
+}
+
 // ========== UNIFIED AGENT ORCHESTRATOR ==========
 // Single endpoint that understands intent and executes appropriate action
 app.post("/make-server-954b19ad/agent/orchestrate", async (c) => {
@@ -2993,18 +3373,22 @@ DOSTUPNÉ AKCE:
 3. contact_lookup - hledání KONKRÉTNÍHO kontaktu (ředitel, učitel, osoba) v organizaci
 4. create_task - vytvoření úkolu/připomenutí
 5. create_calendar - naplánování schůzky do kalendáře
-6. read_calendar - zobrazení událostí z kalendáře (co mám v plánu, jaký mám program)
-7. general_response - obecná odpověď/konverzace
+6. read_calendar - **pouze osobní Google kalendář přihlášeného uživatele** („co mám dnes v kalendáři“, „můj plán na čtvrtek“, „jaký mám program“)
+7. general_response - obecná odpověď/konverzace včetně **webinářů, školení a nabídky Vividbooks z webu** (doplní se o firemní RAG — stejně jako Web operátor)
 
 PRAVIDLA:
 - Pokud zpráva NENÍ JASNÁ → nastav needsClarification=true a zeptej se
 - Pokud zmiňuje "mezi X a Y", "přejezd", "po cestě", "na trase" → route_plan (vždy!)
 - Pokud zmiňuje cestu/trasu/jedu/pojedu → route_plan
 - Pokud hledá KONKRÉTNÍ KONTAKT/osobu (ředitel, učitel, email, telefon) → contact_lookup
-- Pokud zmiňuje školy/firmy/dealy BEZ konkrétního kontaktu → crm_search
+- KRITICKÉ — produkt / předmět / nabídka: "co máme na [předmět]", "CO MÁME NA ČESKÝ JAZYK", "jaké máme učebnice na …", "co prodáváme na matematiku" → **general_response** (webový RAG jako Web operátor). **NIKDY crm_search.**
+- crm_search jen když jde o **konkrétní organizaci, město, školu v CRM, kontakt, deal** (např. "školy v Sedlčanech", "ZŠ Dobříš") — ne „co máme za materiály“.
+- Pokud zmiňuje školy/firmy/dealy BEZ konkrétního kontaktu a jde o **lokalitu / název instituce** → crm_search
+- Pokud žádá napsat text, informovat nebo „napiš o…“ k školnímu předmětu, pedagogice nebo obecnému tématu (např. český jazyk, matematika) a NEJDE o konkrétní školu v CRM → general_response (NE crm_search)
 - Pokud chce připomenout/úkol/todo → create_task
 - Pokud chce VYTVOŘIT schůzku/meeting → create_calendar
-- Pokud se PTÁ co má v kalendáři/plánu/programu na den/týden → read_calendar
+- **KRITICKÉ — read_calendar vs. general_response:** \`read_calendar\` **jen** když jde o **uživatelův vlastní** Google kalendář (osobní schůzky, „co mám v kalendáři“, „můj plán“, „jaký mám program dnes“). **NIKDY read_calendar** pro dotazy na **webináře / školení / DVPP / nabídku Vividbooks**, termíny firemních akcí na webu, „informace o webinářích“, „webináře na příští měsíc“ — to je vždy **general_response** (znalostní báze), i když je větě slovo „měsíc“ nebo „příští týden“.
+- Pokud se PTÁ co má **já** v **(mém) kalendáři** / osobním plánu / programu na den/týden → read_calendar
 - Pro CRM vždy extrahuj konkrétní hledaný výraz (město, název školy, osoba)
 
 DŮLEŽITÉ: "školy mezi X a Y" = route_plan (origin=X, destination=Y), NE crm_search!
@@ -3042,6 +3426,9 @@ PŘÍKLADY:
 - "Jaký mám plán na čtvrtek?" → action: "read_calendar", params.calendarDate: YYYY-MM-DD nejbližšího čtvrtka (POUŽIJ AKTUÁLNÍ ROK!)
 - "Co mám 26. ledna?" → action: "read_calendar", params.calendarDate: "${currentYear}-01-26" (VŽDY použij aktuální rok ${currentYear}!)
 - "Co mám tento týden?" → action: "read_calendar", params.calendarDate: "this_week"
+- "Dej mi informace o webinářích na příští měsíc" / "kdy jsou webináře Vividbooks" → action: "general_response" (firemní webináře z RAG, **ne** Google kalendář)
+- "napiš o českém jazyce" / "co je matematika ve 3. třídě" → action: "general_response" (předmět / obsah, ne CRM)
+- "co máme na český jazyk" / "CO MÁME NA ČESKÝ JAZYK" / "jaké máme produkty na matematiku" → action: "general_response" (produktový RAG)
 - "Dej mi info" → needsClarification: true, clarificationQuestion: "O čem přesně chcete informace? Můžu hledat školy, firmy, kontakty..."`;
 
     const intentResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`, {
@@ -3061,6 +3448,40 @@ PŘÍKLADY:
     const intent = JSON.parse(intentData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
 
     console.log("[Orchestrator] Intent:", JSON.stringify(intent));
+
+    const msgNorm = String(message || "").trim();
+    const isProductKnowledgeQuery =
+      /\bco\s+m[aá]me\s+na\b/i.test(msgNorm) ||
+      /\b(?:jak|jaké|jaký)\s+m[aá]me\s+(?:produkty|materiály|učebnice|tituly)\b/i.test(msgNorm) ||
+      /\b(?:máte|máme)\s+(?:něco|n[ěe]co)\s+na\s+(?:česk|matematik|fyzik|chemi|přírodopis|prvouk)/i.test(
+        msgNorm,
+      );
+
+    if (intent.action === "crm_search" && isProductKnowledgeQuery) {
+      console.log("[Orchestrator] Přepínám crm_search → general_response (produktový RAG, ne CRM)");
+      intent.action = "general_response";
+    }
+
+    /** Webináře / školení firmy = RAG, ne osobní Google kalendář */
+    const wantsPersonalGoogleCalendar =
+      /\bco\s+mám\s+(dnes|zítra|tento\s+týden|příští\s+týden|v\s+kalendáři|v\s+plánu)\b/i.test(msgNorm) ||
+      /\bco\s+máme\s+(dnes|zítra|tento\s+týden|příští\s+týden)\b/i.test(msgNorm) ||
+      /\b(jaký|jaké)\s+mám\s+(plán|program)\b/i.test(msgNorm) ||
+      /\bmůj\s+(kalendář|plán|program)\b/i.test(msgNorm) ||
+      /\b(kalendář|plán|program)\s+u\s+mě\b/i.test(msgNorm) ||
+      /\bgoogle\s+kalendář\b/i.test(msgNorm);
+
+    const isCompanyWebinarOrEventsKnowledge =
+      /webin[áa]ř/i.test(msgNorm) ||
+      /\bdvpp\b/i.test(msgNorm) ||
+      /\binformac[ei]\s+o\s+webin/i.test(msgNorm) ||
+      /\binfromac[ei]\b.*webin/i.test(msgNorm) ||
+      /\b(?:školení|akce)\s+(?:firmy|vividbooks|na\s+webu)/i.test(msgNorm);
+
+    if (intent.action === "read_calendar" && isCompanyWebinarOrEventsKnowledge && !wantsPersonalGoogleCalendar) {
+      console.log("[Orchestrator] Přepínám read_calendar → general_response (webináře z RAG, ne osobní kalendář)");
+      intent.action = "general_response";
+    }
 
     // Handle clarification
     if (intent.needsClarification) {
@@ -3706,12 +4127,132 @@ Vrať POUZE JSON pole měst v pořadí jak na ně narazím (max 12):
       });
     }
 
-    // ========== GENERAL RESPONSE ==========
+    // ========== GENERAL RESPONSE: pgvector chunky + Gemini (jako Web operátor / admin RAG), pak záloha KV ==========
+    const pgCtx = await fetchPgvectorRagChunksForOrchestrator(message, { topK: 12 });
+    if (pgCtx?.context) {
+      const answerPromptPg = `Jsi obchodní pomocník Vividbooks (digitální interaktivní učebnice pro školy). Odpověz česky, srozumitelně a profesionálně.
+
+ZNALOSTNÍ KNIHOVNA — obsah z webového RAG (stejný index jako Web operátor; plné chunky z pgvector):
+${pgCtx.context}
+
+${historyText}AKTUÁLNÍ ZPRÁVA UŽIVATELE: "${message}"
+
+${intent.response ? `NÁVRH ODPOVĚDI Z PRVNÍ ANALÝZY (můžeš ho vylepšit nebo ignorovat, pokud je nepřesný): ${intent.response}` : ""}
+
+Pravidla:
+- Vycházej primárně ze znalostní knihovny; uváděj konkrétní fakta (názvy produktů, čísla, termíny, odkazy), pokud tam jsou.
+- Nevymýšlej údaje, které nejsou v knihovně nebo v běžných znalostech o Vividbooks.
+- Pokud uživatel žádá obsahový text o předmětu (např. „napiš o českém jazyce“) a knihovna obsahuje hlavně katalog produktů: stručně shrň z knihovny, co Vividbooks nabízí, a dopln 2–4 věty obecného kontextu o předmětu (běžné vzdělávací znalosti), aby odpověď nebyla jen omluva „nemáme učebnici“ — pokud dotaz zjevně není nákupní.
+- Pokud uživatel chce konkrétní školu, kontakt, kód nebo deal z CRM, stručně řekni, že to vyhledá zadáním města nebo názvu školy do asistenta (nebo v mapě), případně klepnutím na výsledek — ty sám CRM v této odpovědi neprohledáváš.
+- Použij Markdown (tučné, odrážky), kde to zlepší čitelnost.
+
+Vrať POUZE JSON:
+{ "response": "text odpovědi", "voiceSummary": "max 2 krátké věty pro hlasový výstup" }`;
+
+      try {
+        const genRespPg = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: answerPromptPg }] }],
+              generationConfig: { response_mime_type: "application/json" },
+            }),
+          },
+        );
+        if (genRespPg.ok) {
+          const genDataPg = await genRespPg.json();
+          const parsedPg = JSON.parse(genDataPg.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+          const responseTextPg =
+            typeof parsedPg.response === "string" && parsedPg.response.trim()
+              ? parsedPg.response.trim()
+              : intent.response ||
+                "Jak vám mohu pomoci? Mohu hledat v CRM, plánovat trasy, vytvářet úkoly nebo schůzky.";
+          const voiceOutPg =
+            typeof parsedPg.voiceSummary === "string" && parsedPg.voiceSummary.trim()
+              ? parsedPg.voiceSummary.trim()
+              : responseTextPg.slice(0, 280);
+          return c.json({
+            success: true,
+            action: "general_response",
+            response: responseTextPg,
+            voiceSummary: voiceOutPg,
+            ragSourcesUsed: pgCtx.titles,
+            ragPipeline: "pgvector_chunks",
+          });
+        }
+      } catch (e) {
+        console.error("[Orchestrator] general_response pgvector generation failed:", e);
+      }
+    }
+
+    const ragBundle = await fetchRagContextForSalesAssistant(geminiKey, message, historyText);
+
+    if (ragBundle?.context) {
+      const answerPrompt = `Jsi obchodní pomocník Vividbooks (digitální interaktivní učebnice pro školy). Odpověz česky, srozumitelně a profesionálně.
+
+ZNALOSTNÍ KNIHOVNA — obsah z webového RAG (stejný index jako v administraci / synchronizace z webu):
+${ragBundle.context}
+
+${historyText}AKTUÁLNÍ ZPRÁVA UŽIVATELE: "${message}"
+
+${intent.response ? `NÁVRH ODPOVĚDI Z PRVNÍ ANALÝZY (můžeš ho vylepšit nebo ignorovat, pokud je nepřesný): ${intent.response}` : ""}
+
+Pravidla:
+- Vycházej primárně ze znalostní knihovny; uváděj konkrétní fakta (názvy produktů, čísla, termíny, odkazy), pokud tam jsou.
+- Nevymýšlej údaje, které nejsou v knihovně nebo v běžných znalostech o Vividbooks.
+- Pokud uživatel žádá obsahový text o předmětu (např. „napiš o českém jazyce“) a knihovna obsahuje hlavně katalog produktů: stručně shrň z knihovny, co Vividbooks nabízí, a dopln 2–4 věty obecného kontextu o předmětu (běžné vzdělávací znalosti), aby odpověď nebyla jen omluva „nemáme učebnici“ — pokud dotaz zjevně není nákupní.
+- Pokud uživatel chce konkrétní školu, kontakt, kód nebo deal z CRM, stručně řekni, že to vyhledá zadáním města nebo názvu školy do asistenta (nebo v mapě), případně klepnutím na výsledek — ty sám CRM v této odpovědi neprohledáváš.
+- Použij Markdown (tučné, odrážky), kde to zlepší čitelnost.
+
+Vrať POUZE JSON:
+{ "response": "text odpovědi", "voiceSummary": "max 2 krátké věty pro hlasový výstup" }`;
+
+      try {
+        const genResp = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: answerPrompt }] }],
+              generationConfig: { response_mime_type: "application/json" },
+            }),
+          },
+        );
+        if (genResp.ok) {
+          const genData = await genResp.json();
+          const parsed = JSON.parse(genData.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
+          const responseText =
+            typeof parsed.response === "string" && parsed.response.trim()
+              ? parsed.response.trim()
+              : intent.response ||
+                "Jak vám mohu pomoci? Mohu hledat v CRM, plánovat trasy, vytvářet úkoly nebo schůzky.";
+          const voiceOut =
+            typeof parsed.voiceSummary === "string" && parsed.voiceSummary.trim()
+              ? parsed.voiceSummary.trim()
+              : responseText.slice(0, 280);
+          return c.json({
+            success: true,
+            action: "general_response",
+            response: responseText,
+            voiceSummary: voiceOut,
+            ragSourcesUsed: ragBundle.titles,
+          });
+        }
+      } catch (e) {
+        console.error("[Orchestrator] RAG general_response generation failed:", e);
+      }
+    }
+
     return c.json({
       success: true,
-      action: 'general_response',
-      response: intent.response || 'Jak vám mohu pomoci? Mohu hledat v CRM, plánovat trasy, vytvářet úkoly nebo schůzky.',
-      voiceSummary: intent.response || 'Jak vám mohu pomoci?'
+      action: "general_response",
+      response:
+        intent.response ||
+        "Jak vám mohu pomoci? Mohu hledat v CRM, plánovat trasy, vytvářet úkoly nebo schůzky.",
+      voiceSummary: intent.response || "Jak vám mohu pomoci?",
     });
 
   } catch (error: any) {

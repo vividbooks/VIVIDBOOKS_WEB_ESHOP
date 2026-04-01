@@ -7,6 +7,7 @@
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
+ * Bez osoby / bez e-mailu / nulová hodnota: objednávka se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
  * Volitelně: PIPEDRIVE_INBOUND_PIPELINE_IDS (čárkou oddělená ID pipeline, prázdné = všechny).
  *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
@@ -21,6 +22,15 @@ const corsHeaders = {
 
 const DEFAULT_SHIPPING_METHOD = 'dpd';
 const DEFAULT_SHIPPING_PRICE_HALER = 8900;
+
+const ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON =
+  'Pipedrive import: u dealu chybí osoba i kontakt u organizace. Doplňte u objednávky e-mail a kontakt na zákazníka.';
+
+const ADMIN_NOTE_MISSING_EMAIL =
+  'Pipedrive import: u osoby u dealu chybí e-mail. Doplňte platný kontakt v objednávce.';
+
+const ADMIN_NOTE_ZERO_VALUE_FALLBACK =
+  'Pipedrive import: deal měl nulovou částku nebo nešly načíst produkty; použita minimální řádka 1 Kč — zkontrolujte položky.';
 
 function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
@@ -133,6 +143,25 @@ function moneyToHaler(value: unknown): number {
   return Math.max(0, Math.round(n * 100));
 }
 
+/** Pipedrive vrací ID jako číslo, řetězec nebo objekt `{ value, id, … }`. */
+function parsePipedriveEntityId(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const n = Math.trunc(value);
+    return n > 0 ? n : null;
+  }
+  if (typeof value === 'string') {
+    const n = Number.parseInt(value.trim(), 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  if (typeof value === 'object' && value !== null) {
+    const o = value as Record<string, unknown>;
+    const nested = o.value ?? o.id ?? o.person_id ?? o.org_id;
+    if (nested !== undefined && nested !== value) return parsePipedriveEntityId(nested);
+  }
+  return null;
+}
+
 function verifyInboundToken(req: Request, url: URL): boolean {
   const secret = (Deno.env.get('PIPEDRIVE_INBOUND_WEBHOOK_SECRET') || '').trim();
   if (!secret) return false;
@@ -176,6 +205,11 @@ function pipelineAllowed(pipelineId: number): boolean {
   return allowed.has(pipelineId);
 }
 
+/** Viditelné v Supabase → Edge Functions → Logs (ne jen shutdown/boot). */
+function logInbound(event: string, data?: Record<string, unknown>) {
+  console.log(`[pipedrive-inbound] ${event}`, data ? JSON.stringify(data) : '');
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -186,6 +220,7 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
   if (!verifyInboundToken(req, url)) {
+    logInbound('unauthorized', { hint: 'token v URL ?token= nebo hlavička x-pipedrive-inbound-token' });
     return jsonResponse({ error: 'Unauthorized.' }, 401);
   }
 
@@ -208,8 +243,11 @@ Deno.serve(async (req) => {
 
   const dealId = extractDealId(payload);
   if (!dealId) {
+    logInbound('bad_payload', { keys: Object.keys(payload).slice(0, 20) });
     return jsonResponse({ error: 'Could not resolve Pipedrive deal id.' }, 400);
   }
+
+  logInbound('start', { dealId });
 
   const deal = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/deals/${dealId}`);
   if (!deal) {
@@ -218,44 +256,72 @@ Deno.serve(async (req) => {
 
   const status = String(deal.status || '').toLowerCase();
   if (status !== 'won') {
+    logInbound('skipped', { dealId, reason: 'deal_not_won', status });
     return jsonResponse({ skipped: true, reason: 'deal_not_won', dealId, status }, 200);
   }
 
-  const pipelineIdRaw = deal.pipeline_id;
-  const pipelineId = typeof pipelineIdRaw === 'number' ? pipelineIdRaw : Number.parseInt(String(pipelineIdRaw), 10);
-  if (Number.isInteger(pipelineId) && !pipelineAllowed(pipelineId)) {
+  const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
+  if (pipelineId != null && !pipelineAllowed(pipelineId)) {
+    logInbound('skipped', { dealId, reason: 'pipeline_not_allowed', pipelineId });
     return jsonResponse({ skipped: true, reason: 'pipeline_not_allowed', dealId, pipelineId }, 200);
   }
 
-  const personIdRaw = deal.person_id;
-  const personId = typeof personIdRaw === 'number'
-    ? personIdRaw
-    : Number.parseInt(String(personIdRaw ?? '0'), 10);
-  if (!Number.isInteger(personId) || personId <= 0) {
-    return jsonResponse({ error: 'Deal has no linked person.' }, 400);
+  const personIdFromDeal = parsePipedriveEntityId(deal.person_id);
+  let person: Record<string, unknown> | null = null;
+
+  if (personIdFromDeal) {
+    person = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/persons/${personIdFromDeal}`);
   }
 
-  const person = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/persons/${personId}`);
   if (!person) {
-    return jsonResponse({ error: `Person ${personId} not found.` }, 404);
+    const orgIdForPerson = parsePipedriveEntityId(deal.org_id);
+    if (orgIdForPerson) {
+      const list = await pipedriveApiGet<unknown[]>(apiToken, `/organizations/${orgIdForPerson}/persons`, {
+        limit: 100,
+        status: 'all_not_deleted',
+      });
+      const persons = Array.isArray(list) ? list : [];
+      const withEmail = persons.find((p) => readPersonEmail(p as Record<string, unknown>));
+      person = (withEmail as Record<string, unknown>) || (persons[0] as Record<string, unknown>) || null;
+    }
   }
 
-  const email = readPersonEmail(person);
-  const name = String(person.name || '').trim() || 'Zákazník Pipedrive';
-  const phone = readPersonPhone(person);
-  if (!email) {
-    return jsonResponse({ error: 'Person has no email.' }, 400);
+  /** Bez osoby / bez e-mailu — objednávku stejně vytvoříme; v adminu je poznámka + placeholder e-mail. */
+  let missingPipedriveContact = !person;
+  let missingEmailOnly = false;
+
+  let email = '';
+  let name = '';
+  let phone = '';
+  let street = '';
+  let city = '';
+  let zip = '';
+
+  if (person) {
+    email = readPersonEmail(person);
+    name = String(person.name || '').trim() || 'Zákazník Pipedrive';
+    phone = readPersonPhone(person);
+    const line = personPostalLine(person);
+    street = line.street;
+    city = line.city;
+    zip = line.zip;
+    if (!email.trim()) {
+      missingPipedriveContact = true;
+      missingEmailOnly = true;
+      const pid = personIdFromDeal ?? parsePipedriveEntityId(person.id) ?? dealId;
+      email = `pipedrive-person-${pid}@missing-email.invalid`;
+    }
+  } else {
+    email = `pipedrive-deal-${dealId}@missing-contact.invalid`;
+    name = '(Pipedrive — bez osoby)';
+    phone = '';
   }
 
-  let { street, city, zip } = personPostalLine(person);
   let schoolName: string | null = null;
   let ico: string | null = null;
 
-  const orgIdRaw = deal.org_id;
-  const orgId = typeof orgIdRaw === 'number'
-    ? orgIdRaw
-    : Number.parseInt(String(orgIdRaw ?? '0'), 10);
-  if (Number.isInteger(orgId) && orgId > 0) {
+  const orgId = parsePipedriveEntityId(deal.org_id);
+  if (orgId != null && orgId > 0) {
     const org = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/organizations/${orgId}`);
     if (org) {
       schoolName = String(org.name || '').trim() || null;
@@ -303,17 +369,41 @@ Deno.serve(async (req) => {
     });
     subtotal = dealValueHaler;
   }
+  /** Nulová hodnota / prázdné produkty — minimální řádek 1 Kč, ať import nespadne na 400. */
+  let usedZeroValueFallback = false;
   if (subtotal <= 0) {
-    return jsonResponse({ error: 'Deal has no value and no products.' }, 400);
+    usedZeroValueFallback = true;
+    lines.length = 0;
+    lines.push({
+      productId: `pipedrive-deal:${dealId}`,
+      productName: String(deal.title || `Deal ${dealId}`),
+      quantity: 1,
+      unitPriceHaler: 100,
+    });
+    subtotal = 100;
   }
 
   const total = subtotal + shippingPrice;
   const hasIco = Boolean(ico && ico.replace(/\D/g, '').length > 0);
   const dealIdStr = String(dealId);
+  const orderStatus = missingPipedriveContact ? 'processing' : 'paid';
+  const paymentStatus = missingPipedriveContact ? 'pending' : 'paid';
+  let adminNote: string | null = missingPipedriveContact
+    ? (missingEmailOnly ? ADMIN_NOTE_MISSING_EMAIL : ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON)
+    : null;
+  if (usedZeroValueFallback) {
+    adminNote = adminNote
+      ? `${adminNote}\n\n${ADMIN_NOTE_ZERO_VALUE_FALLBACK}`
+      : ADMIN_NOTE_ZERO_VALUE_FALLBACK;
+  }
+
   const note = JSON.stringify({
     source: 'pipedrive_inbound',
     pipedriveDealId: dealId,
     dealTitle: deal.title,
+    missingPipedriveContact,
+    missingEmailOnly,
+    zeroValueFallback: usedZeroValueFallback,
   }).slice(0, 12000);
 
   const sql = postgres(databaseUrl, {
@@ -329,6 +419,11 @@ Deno.serve(async (req) => {
       select id from public.orders where pipedrive_deal_id = ${dealIdStr} limit 1
     `;
     if (existing.length > 0) {
+      logInbound('skipped', {
+        dealId,
+        reason: 'already_imported',
+        orderId: existing[0].id,
+      });
       return jsonResponse({
         skipped: true,
         reason: 'already_imported',
@@ -358,10 +453,11 @@ Deno.serve(async (req) => {
         subtotal,
         total,
         note,
+        admin_note,
         pipedrive_deal_id,
         paid_at
       ) values (
-        'paid',
+        ${orderStatus},
         ${email.trim()},
         ${name},
         ${phone.trim() || null},
@@ -376,12 +472,13 @@ Deno.serve(async (req) => {
         null,
         null,
         'invoice',
-        'paid',
+        ${paymentStatus},
         ${subtotal},
         ${total},
         ${note},
+        ${adminNote},
         ${dealIdStr},
-        now()
+        ${missingPipedriveContact ? null : new Date()}
       )
       returning id, order_number
     `;
@@ -413,49 +510,57 @@ Deno.serve(async (req) => {
       `;
     }
 
-    const customerSnapshot = {
-      email: email.trim(),
-      name,
-      phone: phone.trim() || null,
-      schoolName,
-      ico: hasIco ? ico : null,
-      street: street.trim() || '—',
-      city: city.trim() || '—',
-      zip: zip.trim() || '—',
-    };
-    const shippingSnapshot = { method: shipMethod, price: shippingPrice };
+    if (!missingPipedriveContact) {
+      const customerSnapshot = {
+        email: email.trim(),
+        name,
+        phone: phone.trim() || null,
+        schoolName,
+        ico: hasIco ? ico : null,
+        street: street.trim() || '—',
+        city: city.trim() || '—',
+        zip: zip.trim() || '—',
+      };
+      const shippingSnapshot = { method: shipMethod, price: shippingPrice };
 
-    await sql`
-      insert into public.export_queue (order_id, service, status, payload)
-      values (
-        ${row.id}::uuid,
-        'basecom',
-        'pending',
-        ${JSON.stringify({
-          orderId: row.id,
-          pipedriveDealId: dealId,
-          items: lines.map((l) => ({
-            productId: l.productId,
-            productName: l.productName,
-            quantity: l.quantity,
-            unitPrice: l.unitPriceHaler,
-          })),
-          customer: customerSnapshot,
-          shipping: shippingSnapshot,
-        })}::jsonb
-      )
-    `;
-
-    if (hasIco) {
       await sql`
         insert into public.export_queue (order_id, service, status, payload)
         values (
           ${row.id}::uuid,
-          'idoklad',
+          'basecom',
           'pending',
-          ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
+          ${JSON.stringify({
+            orderId: row.id,
+            pipedriveDealId: dealId,
+            items: lines.map((l) => ({
+              productId: l.productId,
+              productName: l.productName,
+              quantity: l.quantity,
+              unitPrice: l.unitPriceHaler,
+            })),
+            customer: customerSnapshot,
+            shipping: shippingSnapshot,
+          })}::jsonb
         )
       `;
+
+      if (hasIco) {
+        await sql`
+          insert into public.export_queue (order_id, service, status, payload)
+          values (
+            ${row.id}::uuid,
+            'idoklad',
+            'pending',
+            ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
+          )
+        `;
+      }
+
+      try {
+        await invokeProcessExportQueue(req.url);
+      } catch (e) {
+        console.error('[pipedrive-inbound] process-export-queue:', e);
+      }
     }
 
     await sql`
@@ -470,23 +575,34 @@ Deno.serve(async (req) => {
         ${row.id}::uuid,
         'pipedrive_inbound',
         null,
-        'paid',
-        ${JSON.stringify({ pipedriveDealId: dealId })}::jsonb,
+        ${orderStatus},
+        ${JSON.stringify({
+          pipedriveDealId: dealId,
+          missingPipedriveContact,
+        })}::jsonb,
         'pipedrive'
       )
     `;
 
-    try {
-      await invokeProcessExportQueue(req.url);
-    } catch (e) {
-      console.error('[pipedrive-inbound] process-export-queue:', e);
-    }
-
+    logInbound('success', {
+      dealId,
+      orderNumber: row.order_number,
+      orderId: row.id,
+      missingPipedriveContact,
+      missingEmailOnly,
+      usedZeroValueFallback,
+    });
     return jsonResponse({
       success: true,
       orderId: row.id,
       orderNumber: row.order_number,
       dealId,
+      ...(missingPipedriveContact
+        ? {
+          warning:
+            'Objednávka vytvořena bez kontaktu ve Pipedrive — v administraci doplňte zákazníka (admin poznámka + placeholder e-mail).',
+        }
+        : {}),
     }, 200);
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Import failed';

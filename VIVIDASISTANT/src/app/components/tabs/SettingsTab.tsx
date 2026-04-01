@@ -9,6 +9,12 @@ import { toast } from 'sonner';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 
+const FN_AUTH_JSON: HeadersInit = {
+  Authorization: `Bearer ${publicAnonKey}`,
+  'Content-Type': 'application/json',
+};
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
+
 type SectionType = 'general' | 'library' | 'integrations' | 'data';
 
 export const SettingsTab: React.FC = () => {
@@ -42,7 +48,9 @@ export const SettingsTab: React.FC = () => {
     setSelectedDoc(doc);
     setLoadingDoc(true);
     try {
-      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents?includeContent=true`);
+      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents?includeContent=true`, {
+        headers: FN_AUTH,
+      });
       if (resp.ok) {
         const data = await resp.json();
         const fullDoc = data.documents?.find((d: any) => d.id === doc.id);
@@ -71,7 +79,9 @@ export const SettingsTab: React.FC = () => {
 
   const fetchRagStatus = async () => {
     try {
-      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/status`);
+      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/status`, {
+        headers: FN_AUTH,
+      });
       if (resp.ok) {
         const data = await resp.json();
         setRagStatus(data);
@@ -86,7 +96,8 @@ export const SettingsTab: React.FC = () => {
     toast.loading("🌱 Naplňuji knihovnu produkty...");
     try {
       const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/seed`, {
-        method: 'POST'
+        method: 'POST',
+        headers: FN_AUTH_JSON,
       });
       toast.dismiss();
       if (resp.ok) {
@@ -109,7 +120,8 @@ export const SettingsTab: React.FC = () => {
     toast.loading("🌐 Stahuji novinky z webu...");
     try {
       const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/scrape-web`, {
-        method: 'POST'
+        method: 'POST',
+        headers: FN_AUTH_JSON,
       });
       toast.dismiss();
       if (resp.ok) {
@@ -132,7 +144,8 @@ export const SettingsTab: React.FC = () => {
     toast.loading("🔄 Synchronizuji s Webflow CMS...");
     try {
       const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/sync-webflow`, {
-        method: 'POST'
+        method: 'POST',
+        headers: FN_AUTH_JSON,
       });
       toast.dismiss();
       if (resp.ok) {
@@ -177,7 +190,7 @@ export const SettingsTab: React.FC = () => {
     try {
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/reindex`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: FN_AUTH_JSON,
       });
 
       toast.dismiss();
@@ -202,7 +215,9 @@ export const SettingsTab: React.FC = () => {
   const handleExportRag = async () => {
     try {
       toast.loading("📦 Exportuji knihovnu...");
-      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents?includeContent=true`);
+      const resp = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents?includeContent=true`, {
+        headers: FN_AUTH,
+      });
       toast.dismiss();
       if (resp.ok) {
         const data = await resp.json();

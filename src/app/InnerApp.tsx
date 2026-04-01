@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { ResponsiveLayout, type AssistantTabId } from '@/app/components/Layout';
 import { DictationTab } from '@/app/components/tabs/DictationTab';
 import { TasksTab } from '@/app/components/tabs/TasksTab';
@@ -8,15 +9,13 @@ import { ScrapingTab } from '@/app/components/tabs/ScrapingTab';
 import { SettingsTab } from '@/app/components/tabs/SettingsTab';
 import { MapTab } from '@/app/components/tabs/MapTab';
 import { Onboarding } from '@/app/components/Onboarding';
-import { WebOperatorTab } from '@/app/components/tabs/WebOperatorTab';
 
-type PendingMessage = { text: string; nonce: string } | null;
+type PendingAgentMessage = { text: string; nonce: string; fromDictation?: boolean } | null;
 
 export const InnerApp: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<AssistantTabId>('dictation');
   const [showOnboarding, setShowOnboarding] = useState(false);
-  const [crmInitialMessage, setCrmInitialMessage] = useState<PendingMessage>(null);
-  const [webInitialMessage, setWebInitialMessage] = useState<PendingMessage>(null);
+  const [pendingAgentMessage, setPendingAgentMessage] = useState<PendingAgentMessage>(null);
 
   useEffect(() => {
     const captureToken = async () => {
@@ -82,15 +81,32 @@ export const InnerApp: React.FC = () => {
     setShowOnboarding(false);
   };
 
-  const routeTranscript = (target: 'web-operator' | 'agent', text: string) => {
-    const payload = { text, nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}` };
-    if (target === 'web-operator') {
-      setWebInitialMessage(payload);
-      setCurrentTab('web-operator');
-    } else {
-      setCrmInitialMessage(payload);
+  useEffect(() => {
+    if (currentTab !== 'agent') setPendingAgentMessage(null);
+  }, [currentTab]);
+
+  const sendDictationToAssistant = (wrappedMessage: string) => {
+    const payload: NonNullable<PendingAgentMessage> = {
+      text: wrappedMessage,
+      nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      fromDictation: true,
+    };
+    flushSync(() => {
+      setPendingAgentMessage(payload);
       setCurrentTab('agent');
-    }
+    });
+  };
+
+  const sendDictationToChat = (plainText: string) => {
+    const payload: NonNullable<PendingAgentMessage> = {
+      text: plainText,
+      nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      fromDictation: true,
+    };
+    flushSync(() => {
+      setPendingAgentMessage(payload);
+      setCurrentTab('agent');
+    });
   };
 
   if (showOnboarding) return <Onboarding onComplete={handleOnboardingComplete} />;
@@ -98,11 +114,13 @@ export const InnerApp: React.FC = () => {
   return (
     <ResponsiveLayout currentTab={currentTab} onTabChange={setCurrentTab}>
       {currentTab === 'dictation' ? (
-        <DictationTab onRouteTranscript={routeTranscript} />
-      ) : currentTab === 'web-operator' ? (
-        <WebOperatorTab key={webInitialMessage?.nonce || 'web-operator'} initialMessage={webInitialMessage?.text} />
+        <DictationTab onSendToAssistant={sendDictationToAssistant} onSendToChat={sendDictationToChat} />
       ) : currentTab === 'agent' ? (
-        <AgentTab key={crmInitialMessage?.nonce || 'crm-agent'} initialMessage={crmInitialMessage?.text} />
+        <AgentTab
+          key={pendingAgentMessage?.nonce ?? 'agent-default'}
+          initialMessage={pendingAgentMessage?.text}
+          initialMessageFromDictation={pendingAgentMessage?.fromDictation}
+        />
       ) : currentTab === 'tasks' ? (
         <TasksTab />
       ) : currentTab === 'outreach' ? (
