@@ -56,6 +56,8 @@ interface AppContextType {
   // API
   transcribeAudio: (audioBlob: Blob) => Promise<string>;
   smartEdit: (currentText: string, newVoiceText: string, context?: string, googleAccessToken?: string) => Promise<any>;
+  /** Obsáhlý přepis → název, kroky, přesný přepis (server /task-breakdown). */
+  breakdownTaskTranscript: (transcript: string) => Promise<{ title: string; steps: string[]; transcript: string }>;
   
   // RAG Library
   ragDocuments: RagDocument[];
@@ -148,20 +150,41 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return null;
   };
 
-  // Initial Load
+  // Initial Load (merge s cloudem — prázdné [] z API je v JS truthy; nesmí přepsat lokální úkoly při pomalém fetchi)
   useEffect(() => {
+    let cancelled = false;
     const loadData = async () => {
       const [remoteTasks, remoteShortcuts, remoteSettings] = await Promise.all([
         fetchFromStorage('tasks'),
         fetchFromStorage('shortcuts'),
         fetchFromStorage('settings')
       ]);
+      if (cancelled) return;
 
-      if (remoteTasks) setTasks(remoteTasks);
-      if (remoteShortcuts) setShortcuts(remoteShortcuts);
-      if (remoteSettings) setSettings(remoteSettings);
+      if (Array.isArray(remoteTasks)) {
+        setTasks((prev) => {
+          if (remoteTasks.length === 0 && prev.length > 0) return prev;
+          return remoteTasks;
+        });
+      }
+      if (Array.isArray(remoteShortcuts)) {
+        setShortcuts((prev) => {
+          if (remoteShortcuts.length === 0 && prev.length > 0) return prev;
+          return remoteShortcuts;
+        });
+      }
+      if (
+        remoteSettings &&
+        typeof remoteSettings === 'object' &&
+        !Array.isArray(remoteSettings)
+      ) {
+        setSettings((prev) => ({ ...prev, ...remoteSettings }));
+      }
     };
     loadData();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Persistence (Supabase + LocalStorage Backup)
@@ -357,12 +380,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const breakdownTaskTranscript = async (
+    transcript: string,
+  ): Promise<{ title: string; steps: string[]; transcript: string }> => {
+    const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/task-breakdown`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${publicAnonKey}`,
+      },
+      body: JSON.stringify({ transcript }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error((err as { error?: string }).error || `task-breakdown failed: ${response.status}`);
+    }
+    const data = await response.json();
+    return {
+      title: typeof data.title === 'string' ? data.title : '',
+      steps: Array.isArray(data.steps) ? data.steps : [],
+      transcript: typeof data.transcript === 'string' ? data.transcript : transcript,
+    };
+  };
+
   return (
     <AppContext.Provider value={{
       tasks, addTask, updateTask, toggleTask, deleteTask, deleteCompletedTasks,
       shortcuts, addShortcut, updateShortcut, deleteShortcut,
       settings, updateSettings, clearAllData,
-      transcribeAudio, smartEdit,
+      transcribeAudio, smartEdit, breakdownTaskTranscript,
       ragDocuments, loadRagDocuments, addRagDocument, deleteRagDocument, ragLoading,
       agentProcessing, setAgentProcessing,
       sidebarCollapsed, setSidebarCollapsed,

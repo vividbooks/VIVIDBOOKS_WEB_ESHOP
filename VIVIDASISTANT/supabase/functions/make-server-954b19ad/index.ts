@@ -123,6 +123,88 @@ app.post("/make-server-954b19ad/transcribe", async (c) => {
   }
 });
 
+/** Dlouhý přepis z diktování → název úkolu, konkrétní kroky, přesný přepis (pro poznámku). */
+app.post("/make-server-954b19ad/task-breakdown", async (c) => {
+  try {
+    const geminiKey = Deno.env.get("GEMINI_API_KEY_RAG");
+    if (!geminiKey) return c.json({ error: "Missing API Key" }, 500);
+
+    const body = await c.req.json();
+    const transcript = typeof body.transcript === "string" ? body.transcript.trim() : "";
+    if (!transcript) return c.json({ error: "transcript required" }, 400);
+    if (transcript.length > 24000) return c.json({ error: "transcript too long" }, 400);
+
+    const prompt = `Jsi asistent pro úkoly. Uživatel nadiktoval delší text v češtině.
+
+PŘEPIS Z DIKTÁNÍ:
+"""
+${transcript}
+"""
+
+ÚKOLY:
+1. Urči hlavní téma / cíl — zvol krátký výstižný název úkolu (max 90 znaků, bez uvozovek).
+2. Rozlož obsah na 3–14 KONKRÉTNÍCH kroků — každý krok je jedna věc k provedení (sloveso: zavolat, napsat, domluvit, zkontrolovat, …). Bez opakování stejné myšlenky.
+3. Pole "transcript" musí obsahovat PŘESNĚ stejný text jako vstupní přepis (žádné úpravy).
+
+Vrať POUZE JSON:
+{
+  "title": "název úkolu",
+  "steps": ["krok 1", "krok 2"],
+  "transcript": "přesná kopie vstupního přepisu"
+}`;
+
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: { response_mime_type: "application/json", temperature: 0.2, maxOutputTokens: 8192 },
+        }),
+      },
+    );
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error("[task-breakdown] Gemini error:", resp.status, errText.slice(0, 500));
+      return c.json({ error: "task-breakdown failed" }, 502);
+    }
+
+    const data = await resp.json();
+    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+    let parsed: { title?: string; steps?: string[]; transcript?: string };
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      return c.json({ error: "invalid JSON from model" }, 502);
+    }
+
+    const title = typeof parsed.title === "string" ? parsed.title.trim().slice(0, 200) : "";
+    const steps = Array.isArray(parsed.steps)
+      ? parsed.steps
+          .map((s) => (typeof s === "string" ? s.trim() : ""))
+          .filter((s) => s.length > 0)
+      : [];
+    const outTranscript = typeof parsed.transcript === "string" && parsed.transcript.trim()
+      ? parsed.transcript.trim()
+      : transcript;
+
+    if (!title && steps.length === 0) {
+      return c.json({ error: "empty breakdown" }, 502);
+    }
+
+    return c.json({
+      title: title || transcript.split(/\s+/).slice(0, 8).join(" ").slice(0, 90) || "Úkol",
+      steps,
+      transcript: outTranscript,
+    });
+  } catch (error: any) {
+    console.error("[task-breakdown]", error);
+    return c.json({ error: error.message || "task-breakdown failed" }, 500);
+  }
+});
+
 // SMART EDIT - Text cleanup and editing
 app.post("/make-server-954b19ad/smart-edit", async (c) => {
   try {

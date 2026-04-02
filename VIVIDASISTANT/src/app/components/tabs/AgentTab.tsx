@@ -203,7 +203,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
     return sessionInitRef.current.sessions;
   });
   const [activeSessionId, setActiveSessionId] = useState<string>(() => sessionInitRef.current!.activeSessionId);
-  const [showHistoryPanel, setShowHistoryPanel] = useState(true);
+  /** Na mobilu neotevírat historii automaticky (více místa pro chat); od md výš jako dřív otevřená. */
+  const [showHistoryPanel, setShowHistoryPanel] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 768px)').matches;
+  });
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -1478,7 +1482,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
 
   return (
     <div className="flex flex-col md:flex-row h-full min-h-0 w-full max-w-full bg-black overflow-hidden relative">
-      {/* Historie: ~260px (200px +30%); výchozí otevřený */}
+      {/* Historie: mobil max ~42vh, md+ ~260px; na mobilu výchozí zavřená */}
       {showHistoryPanel && (
         <aside className="flex flex-col min-h-0 w-full max-h-[min(42vh,320px)] shrink-0 border-b border-white/5 bg-[#1C1C1E] md:h-full md:max-h-none md:w-[260px] md:min-w-[260px] md:shrink-0 md:border-b-0 md:border-r md:border-white/5">
           <div className="shrink-0 flex items-center justify-between gap-1 px-2 py-2 border-b border-white/10 bg-[#1C1C1E]">
@@ -1572,7 +1576,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
         <button
           type="button"
           onClick={() => setShowHistoryPanel(true)}
-          className="flex shrink-0 w-10 flex-col items-center justify-center gap-1 border-r border-white/5 bg-[#1C1C1E] text-[#8E8E93] hover:text-emerald-400 hover:bg-white/[0.06] transition-colors"
+          className="flex shrink-0 w-11 min-h-[44px] md:min-h-0 md:w-10 flex-col items-center justify-center gap-1 border-r border-white/5 bg-[#1C1C1E] text-[#8E8E93] hover:text-emerald-400 hover:bg-white/[0.06] active:bg-white/10 transition-colors"
           title="Zobrazit historii chatů"
         >
           <History size={20} />

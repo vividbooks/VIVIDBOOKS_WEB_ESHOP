@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu } from 'lucide-react';
+import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu, ListTodo } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
@@ -15,18 +15,43 @@ interface DictationTabProps {
   onSendToAssistant?: (wrappedMessage: string) => void;
   /** Přepne na záložku Obchodník a odešle přesně tento text (bez obalení promptem). */
   onSendToChat?: (plainText: string) => void;
+  /** Po přidání úkolů z diktování (např. přepnutí na záložku Úkoly). */
+  onAfterTodoAdded?: () => void;
 }
 
-export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, onSendToChat }) => {
-  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav } = useApp();
+/** Jednotlivé řádky = samostatné úkoly; prázdné řádky se ignorují. */
+function linesToTaskTexts(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/** Delší přepis → server rozloží na název + kroky + přesný přepis v poznámce. */
+function shouldUseTaskBreakdown(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 140) return false;
+  const words = t.split(/\s+/).filter(Boolean).length;
+  const lines = linesToTaskTexts(t);
+  return words >= 25 || lines.length >= 3 || t.length >= 320;
+}
+
+export const DictationTab: React.FC<DictationTabProps> = ({
+  onSendToAssistant,
+  onSendToChat,
+  onAfterTodoAdded,
+}) => {
+  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav, addTask, breakdownTaskTranscript } = useApp();
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
+  /** AI rozklad obsáhlého textu na kroky (po přepisu, před přidáním úkolu). */
+  const [isTodoAiProcessing, setIsTodoAiProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [recordingTime, setRecordingTime] = useState(0);
-  /** Po kliknutí na Email/Chat bez textu: po dokončení nahrávání se provede daná akce. */
-  const [armedAction, setArmedAction] = useState<'email' | 'chat' | null>(null);
-  const armedActionRef = useRef<'email' | 'chat' | null>(null);
+  /** Po kliknutí na Email/Chat/Todo bez textu: po dokončení nahrávání se provede daná akce. */
+  const [armedAction, setArmedAction] = useState<'email' | 'chat' | 'todo' | null>(null);
+  const armedActionRef = useRef<'email' | 'chat' | 'todo' | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -83,6 +108,70 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
     toast.success('Otevírám chat s textem z diktování');
   };
 
+  const sendToTodoNow = async (text: string) => {
+    const lines = linesToTaskTexts(text);
+    if (lines.length === 0) return;
+
+    const preview = (s: string) => (s.length > 90 ? `${s.slice(0, 90)}…` : s);
+
+    const finishSimpleLineMode = () => {
+      lines.forEach((line) => addTask(line));
+      if (lines.length === 1) {
+        toast.success('Úkol přidán', {
+          description: preview(lines[0]),
+          duration: 5000,
+        });
+      } else {
+        toast.success(`${lines.length} úkolů přidáno`, {
+          description:
+            lines
+              .slice(0, 4)
+              .map(preview)
+              .join(' · ') + (lines.length > 4 ? ` (+${lines.length - 4})` : ''),
+          duration: 5000,
+        });
+      }
+      setTranscript('');
+      onAfterTodoAdded?.();
+    };
+
+    if (!shouldUseTaskBreakdown(text)) {
+      finishSimpleLineMode();
+      return;
+    }
+
+    setIsTodoAiProcessing(true);
+    try {
+      const result = await breakdownTaskTranscript(text.trim());
+      const title = (result.title || lines[0] || 'Úkol').trim().slice(0, 200);
+      const steps = (result.steps || []).map((s) => String(s).trim()).filter(Boolean);
+      const exactTranscript = (result.transcript || text).trim();
+
+      const noteParts: string[] = [];
+      if (steps.length > 0) {
+        noteParts.push('Kroky:\n' + steps.map((s) => `• ${s}`).join('\n'));
+      }
+      noteParts.push('Přepis:\n' + exactTranscript);
+      addTask(title, { note: noteParts.join('\n\n') });
+
+      toast.success('Úkol přidán', {
+        description:
+          steps.length > 0
+            ? `${preview(title)} — ${steps.length} kroků`
+            : preview(title),
+        duration: 5000,
+      });
+      setTranscript('');
+      onAfterTodoAdded?.();
+    } catch (e: unknown) {
+      console.error('task-breakdown', e);
+      toast.warning('Rozklad úkolu selhal — přidáno po řádcích.');
+      finishSimpleLineMode();
+    } finally {
+      setIsTodoAiProcessing(false);
+    }
+  };
+
   /** Má text → odešli hned. Nemá → zvol režim, zapni nahrávání; znovu klik → zruš a zastav nahrávání. */
   const onEmailButton = () => {
     if (!onSendToAssistant) return;
@@ -113,6 +202,24 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
       return;
     }
     const next = armedAction === 'chat' ? null : 'chat';
+    armedActionRef.current = next;
+    setArmedAction(next);
+    if (next === null) {
+      if (isRecording) stopRecording();
+    } else if (!isRecording) {
+      void startRecording();
+    }
+  };
+
+  const onTodoButton = () => {
+    const t = transcript.trim();
+    if (t) {
+      clearArmed();
+      if (isRecording) stopRecording();
+      void sendToTodoNow(t);
+      return;
+    }
+    const next = armedAction === 'todo' ? null : 'todo';
     armedActionRef.current = next;
     setArmedAction(next);
     if (next === null) {
@@ -166,8 +273,8 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
 
           let finalText: string;
 
-          /** Režim „Zadat chatu“: bez smart-edit (ten na serveru doplňuje e-mailovou šablonu). Jen přepis + zkratky. */
-          if (armedActionRef.current === 'chat') {
+          /** Režim „Zadat chatu“ / „Todo“: bez smart-edit. Jen přepis + zkratky. */
+          if (armedActionRef.current === 'chat' || armedActionRef.current === 'todo') {
             if (selectionData?.text != null && selectionData.start != null && selectionData.end != null) {
               finalText =
                 baseText.slice(0, selectionData.start) + newVoiceText + baseText.slice(selectionData.end);
@@ -197,6 +304,10 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
             armedActionRef.current = null;
             setArmedAction(null);
             sendToChatNow(trimmed);
+          } else if (trimmed && armed === 'todo') {
+            armedActionRef.current = null;
+            setArmedAction(null);
+            await sendToTodoNow(trimmed);
           }
         } catch (err: any) {
           console.error('Smart edit error:', err);
@@ -276,13 +387,12 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
             className={armBtnClass(armedAction === 'email')}
             title={
               hasTranscript
-                ? 'Napsat email s asistentem'
+                ? 'Email — Obchodník s asistentem'
                 : 'Spustí nahrávání a po dokončení odešle email přes Obchodníka (klik znovu zruší)'
             }
           >
             <Mail size={18} />
-            <span className="hidden lg:inline">Napsat email s asistentem</span>
-            <span className="lg:hidden">Email</span>
+            <span>Email</span>
           </button>
           <button
             type="button"
@@ -291,13 +401,26 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
             className={armBtnClass(armedAction === 'chat')}
             title={
               hasTranscript
-                ? 'Zadat text do chatu bez úprav'
+                ? 'Zadat — text do chatu bez úprav'
                 : 'Spustí nahrávání a po dokončení odešle text do chatu (klik znovu zruší)'
             }
           >
             <MessageSquare size={18} />
-            <span className="hidden lg:inline">Zadat chatu</span>
-            <span className="lg:hidden">Chat</span>
+            <span>Zadat</span>
+          </button>
+          <button
+            type="button"
+            onClick={onTodoButton}
+            disabled={isTodoAiProcessing}
+            className={armBtnClass(armedAction === 'todo')}
+            title={
+              hasTranscript
+                ? 'Přidat text jako úkol(y) na seznam'
+                : 'Spustí nahrávání a po dokončení přidá přepis do úkolů (klik znovu zruší)'
+            }
+          >
+            <ListTodo size={18} />
+            <span>Todo</span>
           </button>
           <div className="flex flex-1 min-w-[1rem]" />
           <button
@@ -325,16 +448,27 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
         <div className="flex items-center gap-8">
           <RecordButton
             isRecording={isRecording}
-            isProcessing={isTranscribing}
+            isProcessing={isTranscribing || isTodoAiProcessing}
             onClick={handleRecordToggle}
             className={clsx(
               'shadow-2xl transition-all duration-300 shrink-0 w-28 h-28',
-              isTranscribing ? 'shadow-blue-500/40' : isRecording ? 'shadow-red-500/40' : 'shadow-white/5 hover:shadow-white/10',
+              isTranscribing || isTodoAiProcessing
+                ? 'shadow-blue-500/40'
+                : isRecording
+                  ? 'shadow-red-500/40'
+                  : 'shadow-white/5 hover:shadow-white/10',
             )}
           />
-          {(isTranscribing || isRecording) && (
+          {(isTranscribing || isTodoAiProcessing || isRecording) && (
             <div className="flex flex-col justify-center min-w-[140px]">
-              {isTranscribing ? (
+              {isTodoAiProcessing ? (
+                <div className="flex flex-col">
+                  <span className="text-[#0A84FF] font-bold text-sm uppercase mb-1 flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" />
+                    Rozkládám úkol…
+                  </span>
+                </div>
+              ) : isTranscribing ? (
                 <div className="flex flex-col">
                   <span className="text-[#0A84FF] font-bold text-sm uppercase mb-1 flex items-center gap-2">
                     <Loader2 size={14} className="animate-spin" />
@@ -357,7 +491,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
 
       {/* Mobil: menu + email + chat, pod tím mikrofon; horní lišta záložek je u diktování skrytá */}
       <div className="md:hidden flex flex-col gap-3 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-4 bg-[#121212] z-30 border-b border-white/5">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Menu — navigace">
             <Menu size={22} strokeWidth={2} />
           </button>
@@ -365,32 +499,46 @@ export const DictationTab: React.FC<DictationTabProps> = ({ onSendToAssistant, o
             type="button"
             onClick={onEmailButton}
             disabled={!canEmail}
-            className={clsx(armBtnClassMobile(armedAction === 'email'), 'flex-1 min-w-0')}
+            className={clsx(armBtnClassMobile(armedAction === 'email'), 'flex-1 min-w-[6rem]')}
           >
             <Mail size={16} className="shrink-0" />
-            <span className="truncate text-xs sm:text-sm">Napsat email</span>
+            <span className="truncate text-xs sm:text-sm">Email</span>
           </button>
           <button
             type="button"
             onClick={onChatButton}
             disabled={!canChat}
-            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'flex-1 min-w-0')}
+            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'flex-1 min-w-[6rem]')}
           >
             <MessageSquare size={16} className="shrink-0" />
-            <span className="truncate text-xs sm:text-sm">Zadat chatu</span>
+            <span className="truncate text-xs sm:text-sm">Zadat</span>
+          </button>
+          <button
+            type="button"
+            onClick={onTodoButton}
+            disabled={isTodoAiProcessing}
+            className={clsx(armBtnClassMobile(armedAction === 'todo'), 'flex-1 min-w-[6rem] basis-[calc(50%-0.25rem)]')}
+          >
+            <ListTodo size={16} className="shrink-0" />
+            <span className="truncate text-xs sm:text-sm">Todo</span>
           </button>
         </div>
         <div className="flex justify-center py-1">
           <RecordButton
             isRecording={isRecording}
-            isProcessing={isTranscribing}
+            isProcessing={isTranscribing || isTodoAiProcessing}
             onClick={handleRecordToggle}
             className="w-24 h-24 shadow-2xl"
           />
         </div>
         <div className="flex items-center justify-between gap-3 pl-1">
           <div className="flex flex-col min-w-0">
-            {isTranscribing ? (
+            {isTodoAiProcessing ? (
+              <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
+                <Loader2 size={14} className="animate-spin shrink-0" />
+                Rozkládám úkol…
+              </span>
+            ) : isTranscribing ? (
               <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
                 <Loader2 size={14} className="animate-spin shrink-0" />
                 Zpracovávám

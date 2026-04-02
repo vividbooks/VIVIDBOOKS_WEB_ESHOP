@@ -136,7 +136,11 @@ export const InnerApp: React.FC = () => {
       onTabChange={setCurrentTab}
     >
       {currentTab === 'dictation' ? (
-        <DictationTab onSendToAssistant={sendDictationToAssistant} onSendToChat={sendDictationToChat} />
+        <DictationTab
+          onSendToAssistant={sendDictationToAssistant}
+          onSendToChat={sendDictationToChat}
+          onAfterTodoAdded={() => setCurrentTab('tasks')}
+        />
       ) : currentTab === 'agent' ? (
         <AgentTab
           key={pendingAgentMessage?.nonce ?? 'agent-default'}

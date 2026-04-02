@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Plus, Trash2, Calendar, Circle, CheckCircle2, ChevronDown, ChevronRight, 
-  ChevronLeft, Inbox, Loader2, List, CalendarDays, MapPin, Navigation, Clock,
+  ChevronLeft, Inbox, Loader2, MapPin, Navigation, Clock,
   ExternalLink, RefreshCw, FileText, MessageSquare, Flag, Edit3, X, Check, Car,
   Building2, User, Phone, Mail, DollarSign, Tag, Hash, Globe, Briefcase, History,
   PhoneCall, Video, Users, Pencil, Send
@@ -12,8 +12,6 @@ import { RecordButton } from '@/app/components/figma/RecordButton';
 import { toast } from 'sonner';
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
-
-type ViewMode = 'tasks' | 'calendar';
 
 interface CalendarEvent {
   id: string;
@@ -117,7 +115,6 @@ const priorityLabels = {
 export const TasksTab: React.FC = () => {
   const { tasks, addTask, updateTask, toggleTask, deleteTask, deleteCompletedTasks, transcribeAudio, smartEdit, shortcuts } = useApp();
   
-  const [viewMode, setViewMode] = useState<ViewMode>('tasks');
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [showCompleted, setShowCompleted] = useState(false);
   
@@ -356,48 +353,6 @@ export const TasksTab: React.FC = () => {
     }
   };
 
-  // Load calendar events when switching to calendar view
-  useEffect(() => {
-    if (viewMode === 'calendar') {
-      fetchCalendarEvents();
-    }
-  }, [viewMode]);
-
-  // Calculate travel times when events for selected date change
-  useEffect(() => {
-    const fetchTravelTimes = async () => {
-      // Get events with locations for the selected date
-      const eventsWithLoc = eventsForSelectedDate.filter(e => e.location && e.location.trim().length > 0);
-      
-      if (eventsWithLoc.length < 2) {
-        setTravelTimes([]);
-        return;
-      }
-      
-      const locations = eventsWithLoc.map(e => e.location);
-      
-      try {
-        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/travel-times`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ locations })
-        });
-        
-        const data = await response.json();
-        setTravelTimes(data.travelTimes || []);
-      } catch (error) {
-        console.error("Travel times fetch error:", error);
-        setTravelTimes([]);
-      }
-    };
-    
-    if (viewMode === 'calendar' && eventsForSelectedDate.length > 1) {
-      fetchTravelTimes();
-    } else {
-      setTravelTimes([]);
-    }
-  }, [eventsForSelectedDate, viewMode]);
-
   useEffect(() => {
     if (isRecording) {
       timerRef.current = setInterval(() => setRecordingTime(prev => prev + 1), 1000);
@@ -577,10 +532,10 @@ export const TasksTab: React.FC = () => {
               </button>
                 </div>
           ) : task.note ? (
-            <p className="text-[#6B7280] text-sm mt-1.5 flex items-start gap-1.5">
+            <div className="text-[#6B7280] text-sm mt-1.5 flex items-start gap-1.5">
               <MessageSquare size={14} className="shrink-0 mt-0.5" />
-              {task.note}
-            </p>
+              <span className="min-w-0 whitespace-pre-wrap">{task.note}</span>
+            </div>
           ) : null}
           
           {/* Meta row */}
@@ -624,498 +579,170 @@ export const TasksTab: React.FC = () => {
     </motion.div>
   );
 
-  const renderCalendarEvent = (event: CalendarEvent) => (
-    <motion.div
-      key={event.id}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="group flex items-start gap-4 p-4 rounded-xl bg-[#1C1C1E] hover:bg-[#252528] transition-all"
-    >
-      <div className="shrink-0 w-14 text-center">
-        <span className="text-[#3B82F6] font-bold text-lg">
-          {event.allDay ? '🗓️' : formatEventTime(event.start)}
-        </span>
-      </div>
-      
-      <div className="flex-1 min-w-0">
-        <p className="text-white font-medium">{event.title}</p>
-        {event.location && (
-          <p className="text-[#6B7280] text-sm flex items-center gap-1 mt-1">
-            <MapPin size={12} />
-            {event.location}
-          </p>
-        )}
-        {event.description && (
-          <p className="text-[#6B7280] text-sm mt-1 line-clamp-2">{event.description}</p>
-        )}
-      </div>
-      
-      <a 
-        href={event.htmlLink} 
-        target="_blank" 
-        rel="noopener noreferrer"
-        className="p-2 rounded-lg hover:bg-white/5 text-[#6B7280] hover:text-white transition-colors opacity-0 group-hover:opacity-100"
-        title="Otevřít v Google Calendar"
-      >
-        <ExternalLink size={16} />
-      </a>
-    </motion.div>
-  );
-
   return (
-    <div className="w-full h-full flex flex-col lg:flex-row overflow-hidden relative">
-      {/* Main Content - shrinks when side panel is open */}
-      <div className={`flex flex-col lg:flex-row gap-4 lg:gap-8 p-4 lg:p-6 overflow-auto flex-1 ${selectedEvent ? 'lg:flex-1 lg:min-w-0' : 'w-full'}`}>
-      {/* Left Sidebar - becomes top bar on mobile */}
-      <div className="w-full lg:w-[340px] shrink-0 space-y-4">
-        {/* View Toggle */}
-        <div className="flex items-center gap-1 bg-[#1C1C1E] rounded-xl p-1">
-          <button
-            onClick={() => setViewMode('tasks')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              viewMode === 'tasks' ? 'bg-[#3B82F6] text-white' : 'text-[#6B7280] hover:text-white'
-            }`}
-          >
-            <List size={16} />
-            Úkoly
-          </button>
-          <button
-            onClick={() => setViewMode('calendar')}
-            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              viewMode === 'calendar' ? 'bg-[#3B82F6] text-white' : 'text-[#6B7280] hover:text-white'
-            }`}
-          >
-            <CalendarDays size={16} />
-            Kalendář
-          </button>
-                </div>
-
-        {/* Monthly Calendar - only in calendar mode */}
-        {viewMode === 'calendar' && (
-          <div className="bg-[#1C1C1E] rounded-2xl p-4">
-            {/* Month header */}
-            <div className="flex items-center justify-between mb-4">
-                <button 
-                onClick={() => setCurrentMonth(prev => {
-                  const newMonth = prev.month - 1;
-                  if (newMonth < 0) return { year: prev.year - 1, month: 11 };
-                  return { ...prev, month: newMonth };
-                })} 
-                className="p-1.5 rounded-lg hover:bg-white/5 text-[#6B7280] hover:text-white transition-colors"
-              >
-                <ChevronLeft size={20} />
-                </button>
-              <span className="text-[#3B82F6] font-semibold text-lg">
-                {new Date(currentMonth.year, currentMonth.month).toLocaleDateString('cs-CZ', { month: 'long' })}
-              </span>
-              <button 
-                onClick={() => setCurrentMonth(prev => {
-                  const newMonth = prev.month + 1;
-                  if (newMonth > 11) return { year: prev.year + 1, month: 0 };
-                  return { ...prev, month: newMonth };
-                })} 
-                className="p-1.5 rounded-lg hover:bg-white/5 text-[#6B7280] hover:text-white transition-colors"
-              >
-                <ChevronRight size={20} />
-              </button>
-            </div>
-            
-            {/* Day names header */}
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['P', 'Ú', 'S', 'Č', 'P', 'S', 'N'].map((day, i) => (
-                <div key={i} className="text-center text-[#6B7280] text-xs font-medium py-1">
-                  {day}
-                </div>
-              ))}
-            </div>
-            
-            {/* Days grid */}
-            <div className="grid grid-cols-7 gap-1">
-              {monthDays.map((day, i) => {
-                if (!day) {
-                  return <div key={i} className="aspect-square" />;
-                }
-                
-                const isSelected = formatDate(day) === selectedDateStr;
-                const isToday = formatDate(day) === formatDate(new Date());
-                const eventCount = getEventCountForDate(day);
-                
-                return (
-                <button 
-                    key={i}
-                    onClick={() => setSelectedDate(day)}
-                    className={`aspect-square flex flex-col items-center justify-center rounded-full transition-all relative ${
-                      isSelected 
-                        ? 'bg-[#3B82F6] text-white' 
-                        : isToday 
-                          ? 'bg-red-500 text-white' 
-                          : 'hover:bg-white/5 text-white'
-                    }`}
-                  >
-                    <span className="text-sm font-medium">
-                      {day.getDate()}
-                    </span>
-                    {eventCount > 0 && !isSelected && !isToday && (
-                      <div className="absolute bottom-1 w-1 h-1 rounded-full bg-[#3B82F6]" />
-                    )}
-                </button>
-                );
-              })}
-        </div>
-
-            <button 
-              onClick={() => {
-                const today = new Date();
-                setCurrentMonth({ year: today.getFullYear(), month: today.getMonth() });
-                setSelectedDate(today);
-              }}
-              className="w-full mt-4 py-2 text-sm text-[#3B82F6] hover:bg-[#3B82F6]/10 rounded-lg transition-colors font-medium"
-            >
-              Přejít na dnes
-            </button>
-          </div>
-        )}
-
-        {/* Quick Add - only in tasks mode */}
-        {viewMode === 'tasks' && (
-          <div className="bg-[#1C1C1E] rounded-2xl p-4">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="relative">
-                {isRecording && <div className="absolute inset-0 rounded-full bg-red-500/30 animate-ping" />}
-                <RecordButton 
+    <div className="relative flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden lg:flex-row">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-hidden p-4 lg:p-6">
+        {/* Kalendář v UI zatím skrytý — znovu zapněte přepínač + větev viewMode === 'calendar' níže */}
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:min-h-0 md:grid-cols-2 md:gap-6">
+            {/* VLEVO: zadávání úkolů */}
+            <aside className="flex min-h-0 min-w-0 flex-col overflow-y-auto rounded-2xl border border-white/10 bg-[#1C1C1E] p-4 md:p-5">
+              <h2 className="mb-1 text-lg font-semibold text-white">Zadání úkolu</h2>
+              <p className="mb-4 text-sm text-[#6B7280]">Napište nebo nadiktujte</p>
+              <div className="flex items-center gap-3 mb-4">
+                <div className="relative">
+                  {isRecording && <div className="absolute inset-0 rounded-full bg-red-500/30 animate-ping" />}
+                  <RecordButton
                     isRecording={isRecording}
                     isProcessing={isTranscribing}
                     onClick={handleRecordToggle}
-                  className="w-12 h-12 z-10 relative"
-                />
-            </div>
-              <div>
-                <span className="text-white font-medium block">Nový úkol</span>
-                <span className="text-[#6B7280] text-sm">
-                {isRecording ? (
-                    <span className="text-red-400">{formatTime(recordingTime)}</span>
-                ) : isTranscribing ? (
-                    <span className="text-blue-400">Zpracovávám...</span>
-                ) : (
-                    "Napište nebo nadiktujte"
-                )}
-                </span>
+                    className="relative z-10 h-12 w-12"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <span className="block font-medium text-white">Hlas / přepis</span>
+                  <span className="text-sm text-[#6B7280]">
+                    {isRecording ? (
+                      <span className="text-red-400">{formatTime(recordingTime)}</span>
+                    ) : isTranscribing ? (
+                      <span className="text-blue-400">Zpracovávám...</span>
+                    ) : (
+                      'Klikněte na červené kolečko'
+                    )}
+                  </span>
+                </div>
               </div>
-        </div>
-
-            <form onSubmit={handleAddTask} className="space-y-3">
-            <input 
-                type="text"
-                value={newTaskText}
-                onChange={(e) => setNewTaskText(e.target.value)}
-                placeholder="Co potřebujete udělat?"
-                className="w-full bg-[#0A0E17] border border-white/5 rounded-xl px-4 py-3 text-white text-sm placeholder-[#6B7280] focus:outline-none focus:ring-2 focus:ring-[#3B82F6] transition-all"
-            />
-              
-              {/* Advanced options toggle */}
-            {newTaskText.trim() && (
-                <button 
-                  type="button"
-                  onClick={() => setShowAdvancedForm(!showAdvancedForm)}
-                  className="flex items-center gap-1.5 text-[#6B7280] hover:text-white text-sm transition-colors"
-                >
-                  {showAdvancedForm ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                  Přidat detaily
-                </button>
-            )}
-              
-              {/* Advanced form */}
-              <AnimatePresence>
-                {showAdvancedForm && newTaskText.trim() && (
-                    <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="space-y-3 overflow-hidden"
+              <form onSubmit={handleAddTask} className="space-y-3">
+                <input
+                  type="text"
+                  value={newTaskText}
+                  onChange={(e) => setNewTaskText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleAddTask();
+                    }
+                  }}
+                  placeholder="Co potřebujete udělat?"
+                  className="w-full rounded-xl border border-white/5 bg-[#0A0E17] px-4 py-3 text-sm text-white placeholder-[#6B7280] transition-all focus:outline-none focus:ring-2 focus:ring-[#3B82F6]"
+                />
+                {newTaskText.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedForm(!showAdvancedForm)}
+                    className="flex items-center gap-1.5 text-sm text-[#6B7280] transition-colors hover:text-white"
                   >
-                    {/* Note */}
-                    <textarea
-                      value={newTaskNote}
-                      onChange={(e) => setNewTaskNote(e.target.value)}
-                      placeholder="Poznámka (volitelné)..."
-                      rows={2}
-                      className="w-full bg-[#0A0E17] border border-white/5 rounded-xl px-4 py-3 text-white text-sm placeholder-[#6B7280] focus:outline-none focus:ring-2 focus:ring-[#3B82F6] resize-none"
-                    />
-                    
-                    {/* Priority */}
-                    <div className="flex gap-2">
-                      {(['low', 'medium', 'high'] as const).map(p => (
-                            <button 
-                          key={p}
-                          type="button"
-                          onClick={() => setNewTaskPriority(newTaskPriority === p ? undefined : p)}
-                          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-all ${
-                            newTaskPriority === p 
-                              ? priorityColors[p] + ' ring-1 ring-current'
-                              : 'bg-[#0A0E17] text-[#6B7280] hover:text-white'
-                          }`}
-                        >
-                          <Flag size={12} />
-                          {priorityLabels[p]}
-                            </button>
-                      ))}
-                    </div>
-                  </motion.div>
+                    {showAdvancedForm ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    Přidat detaily
+                  </button>
                 )}
-              </AnimatePresence>
-              
-            {newTaskText.trim() && (
-                <button 
-                    type="submit" 
-                  className="w-full py-3 bg-[#3B82F6] hover:bg-[#2563EB] rounded-xl text-white text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                <AnimatePresence>
+                  {showAdvancedForm && newTaskText.trim() && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="space-y-3 overflow-hidden"
+                    >
+                      <textarea
+                        value={newTaskNote}
+                        onChange={(e) => setNewTaskNote(e.target.value)}
+                        placeholder="Poznámka (volitelné)..."
+                        rows={2}
+                        className="w-full resize-none rounded-xl border border-white/5 bg-[#0A0E17] px-4 py-3 text-sm text-white placeholder-[#6B7280] focus:outline-none focus:ring-2 focus:ring-[#3B82F6]"
+                      />
+                      <div className="flex gap-2">
+                        {(['low', 'medium', 'high'] as const).map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setNewTaskPriority(newTaskPriority === p ? undefined : p)}
+                            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium transition-all ${
+                              newTaskPriority === p
+                                ? priorityColors[p] + ' ring-1 ring-current'
+                                : 'bg-[#0A0E17] text-[#6B7280] hover:text-white'
+                            }`}
+                          >
+                            <Flag size={12} />
+                            {priorityLabels[p]}
+                          </button>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+                <button
+                  type="submit"
+                  disabled={!newTaskText.trim()}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#3B82F6] py-3 text-sm font-medium text-white transition-colors hover:bg-[#2563EB] disabled:pointer-events-none disabled:opacity-40 enabled:active:scale-[0.99]"
                 >
                   <Plus size={16} />
                   Přidat úkol
                 </button>
-            )}
-        </form>
-          </div>
-        )}
+              </form>
+            </aside>
 
-        {/* Route button (calendar mode with events that have locations) */}
-        {viewMode === 'calendar' && eventsWithLocation.length > 0 && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            onClick={openGoogleMapsRoute}
-            className="w-full flex items-center justify-center gap-3 px-4 py-4 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-2xl font-bold transition-all shadow-lg shadow-blue-500/20"
-          >
-            <Navigation size={18} />
-            <span>Naplánovat trasu ({eventsWithLocation.length} {eventsWithLocation.length === 1 ? 'místo' : eventsWithLocation.length < 5 ? 'místa' : 'míst'})</span>
-          </motion.button>
-        )}
-      </div>
-
-      {/* Main Content */}
-      <div className={`flex-1 min-w-0 ${!selectedEvent ? 'max-w-4xl' : ''}`}>
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h1 className="text-2xl font-bold text-white">
-              {viewMode === 'tasks' ? 'Moje úkoly' : formatDisplayDate(selectedDate)}
-            </h1>
-            <p className="text-[#6B7280] text-sm mt-0.5">
-              {viewMode === 'tasks' 
-                ? `${activeTasks.length} aktivních, ${completedTasks.length} hotových`
-                : `${eventsForSelectedDate.length} událostí`
-              }
-            </p>
-          </div>
-          
-          {viewMode === 'calendar' && (
-                                    <button 
-              onClick={fetchCalendarEvents}
-              disabled={loadingEvents}
-              className="flex items-center gap-1.5 text-[#6B7280] hover:text-white transition-colors text-sm font-medium"
-            >
-              <RefreshCw size={14} className={loadingEvents ? 'animate-spin' : ''} />
-              Obnovit
-                                    </button>
-          )}
-                                    
-          {viewMode === 'tasks' && completedTasks.length > 0 && (
-                                    <button 
-              onClick={deleteCompletedTasks}
-              className="flex items-center gap-1.5 text-[#6B7280] hover:text-red-400 transition-colors text-xs font-medium uppercase tracking-wide"
-                                    >
-              <Trash2 size={14} />
-              Vyčistit
-                                    </button>
-          )}
-                                </div>
-
-        {/* Content */}
-        <div className="space-y-3">
-          {viewMode === 'tasks' ? (
-            // Tasks view
-            <AnimatePresence mode="popLayout">
-              {activeTasks.length > 0 ? (
-                activeTasks.map(task => renderTaskCard(task))
-              ) : (
-                <div className="bg-[#1C1C1E] rounded-2xl text-center py-16 text-[#6B7280]">
-                  <Inbox size={48} className="mx-auto mb-3 opacity-30" />
-                  <p className="font-medium">Žádné úkoly</p>
-                  <p className="text-sm mt-1 opacity-70">Použijte formulář vlevo pro přidání</p>
-                            </div>
-              )}
-            </AnimatePresence>
-          ) : (
-            // Calendar Timeline View
-            loadingEvents ? (
-              <div className="bg-[#1C1C1E] rounded-2xl text-center py-16">
-                <Loader2 size={32} className="mx-auto mb-3 animate-spin text-[#3B82F6]" />
-                <p className="text-[#6B7280]">Načítám kalendář...</p>
-                        </div>
-            ) : eventsForSelectedDate.length > 0 ? (
-              <div className="bg-[#1C1C1E] rounded-2xl overflow-hidden">
-                {/* Timeline */}
-                <div className="relative flex">
-                  {/* Hour labels */}
-                  <div className="w-14 shrink-0 border-r border-white/5">
-                    {Array.from({ length: TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1 }, (_, i) => {
-                      const hour = TIMELINE_START_HOUR + i;
-                      return (
-                        <div 
-                          key={hour} 
-                          className="h-[60px] flex items-start justify-end pr-2 pt-0 text-[#6B7280] text-xs font-medium"
-                        >
-                          {hour}:00
-                        </div>
-                      );
-                    })}
-                  </div>
-                  
-                  {/* Events container */}
-                  <div className="flex-1 relative" style={{ height: (TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1) * HOUR_HEIGHT }}>
-                    {/* Hour grid lines */}
-                    {Array.from({ length: TIMELINE_END_HOUR - TIMELINE_START_HOUR + 1 }, (_, i) => (
-                      <div 
-                        key={i} 
-                        className="absolute left-0 right-0 border-t border-white/5"
-                        style={{ top: i * HOUR_HEIGHT }}
-                      />
-                    ))}
-                    
-                    {/* Current time indicator */}
-                    {formatDate(selectedDate) === formatDate(new Date()) && (
-                      <div 
-                        className="absolute left-0 right-0 flex items-center z-20"
-                        style={{ top: getTimePosition(new Date().toISOString()) }}
-                      >
-                        <div className="w-2 h-2 rounded-full bg-red-500" />
-                        <div className="flex-1 h-[2px] bg-red-500" />
-                 </div>
-            )}
-
-                    {/* Events */}
-                    {eventsForSelectedDate.filter(e => !e.allDay).map((event, index) => {
-                      const top = getTimePosition(event.start);
-                      const height = getEventDuration(event.start, event.end);
-                      
-                      // Find travel time to this event
-                      const eventsWithLoc = eventsForSelectedDate.filter(e => e.location && e.location.trim().length > 0 && !e.allDay);
-                      const currentLocIndex = eventsWithLoc.findIndex(e => e.id === event.id);
-                      const travelTime = currentLocIndex > 0 ? travelTimes[currentLocIndex - 1] : null;
-                      
-                      // Calculate travel block height based on duration
-                      const travelBlockHeight = travelTime ? Math.min(travelTime.durationMinutes, 60) : 0;
-                      
-                      return (
-                        <React.Fragment key={event.id}>
-                          {/* Travel time block */}
-                          {travelTime && event.location && (
-                            <div 
-                              className="absolute left-1 right-2 rounded-lg bg-[#F97316] flex items-center gap-2 px-3 z-5"
-                              style={{ 
-                                top: top - travelBlockHeight - 4,
-                                height: Math.max(travelBlockHeight, 24),
-                                minHeight: 24
-                              }}
-                            >
-                              <Car size={14} className="text-white shrink-0" />
-                              <span className="text-white text-xs font-bold">{travelTime.durationText}</span>
-                            </div>
-                          )}
-                          
-                          {/* Event block - solid fill */}
-                          <motion.div
-                            onClick={() => fetchPipedriveData(event)}
-                            initial={{ opacity: 0, scale: 0.95 }}
-                            animate={{ opacity: 1, scale: 1 }}
-                            className="absolute left-1 right-2 rounded-lg bg-[#3B82F6] p-2 overflow-hidden hover:bg-[#2563EB] transition-colors cursor-pointer group z-10 shadow-lg"
-                            style={{ 
-                              top,
-                              height: Math.max(height, 40),
-                              minHeight: 40
-                            }}
-                          >
-                            <div className="flex items-start gap-2">
-                              <span className="text-white/80 text-xs font-bold shrink-0">
-                                {formatEventTime(event.start)}
-                              </span>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-white text-sm font-semibold truncate">{event.title}</p>
-                                {event.location && height > 50 && (
-                                  <p className="text-white/70 text-xs truncate flex items-center gap-1 mt-0.5">
-                                    <MapPin size={10} />
-                                    {event.location}
-                                  </p>
-                                )}
-                            </div>
-                        </div>
-                    </motion.div>
-                        </React.Fragment>
-                      );
-                    })}
-                    
-                    {/* All day events at the top */}
-                    {eventsForSelectedDate.filter(e => e.allDay).length > 0 && (
-                      <div className="absolute -top-1 left-1 right-2 p-2 bg-[#9333EA] rounded-lg shadow-lg z-20">
-                        {eventsForSelectedDate.filter(e => e.allDay).map(event => (
-                          <a
-                            key={event.id}
-                            href={event.htmlLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block text-white text-sm font-semibold hover:text-white/80 transition-colors"
-                          >
-                            🗓️ {event.title}
-                          </a>
-                        ))}
-                 </div>
-                    )}
-                  </div>
+            {/* VPRAVO: seznam úkolů */}
+            <section className="flex min-h-0 min-w-0 flex-1 flex-[1_1_0%] flex-col overflow-y-auto rounded-2xl border border-white/5 bg-[#121212] p-4 md:p-5">
+              <div className="mb-4 flex shrink-0 items-center justify-between gap-2">
+                <div>
+                  <h1 className="text-2xl font-bold text-white">Moje úkoly</h1>
+                  <p className="mt-0.5 text-sm text-[#6B7280]">
+                    {activeTasks.length} aktivních, {completedTasks.length} hotových
+                  </p>
                 </div>
-              </div>
-            ) : (
-              <div className="bg-[#1C1C1E] rounded-2xl text-center py-16 text-[#6B7280]">
-                <CalendarDays size={48} className="mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Žádné události pro tento den</p>
-                <p className="text-sm mt-1 opacity-70">
-                  {localStorage.getItem('google_provider_token') 
-                    ? 'Vaše události se zobrazí zde'
-                    : 'Připojte Google Kalendář v Nastavení'
-                  }
-                </p>
-              </div>
-            )
-          )}
-
-          {/* Completed Tasks (only in tasks mode) */}
-          {viewMode === 'tasks' && completedTasks.length > 0 && (
-            <div className="mt-6">
-                    <button 
-                        onClick={() => setShowCompleted(!showCompleted)}
-                className="flex items-center gap-2 text-[#6B7280] hover:text-white transition-colors text-sm font-medium mb-3"
-                    >
-                        {showCompleted ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                Hotové ({completedTasks.length})
-                    </button>
-
-                    <AnimatePresence>
-                        {showCompleted && (
-                            <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                    className="space-y-2 overflow-hidden"
+                {completedTasks.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={deleteCompletedTasks}
+                    className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-[#6B7280] transition-colors hover:text-red-400"
                   >
-                    {completedTasks.map(task => renderTaskCard(task))}
-                            </motion.div>
-                        )}
+                    <Trash2 size={14} />
+                    Vyčistit
+                  </button>
+                )}
+              </div>
+              <div className="space-y-3">
+                <AnimatePresence mode="popLayout">
+                  {activeTasks.length > 0 ? (
+                    activeTasks.map((task) => renderTaskCard(task))
+                  ) : (
+                    <div className="rounded-2xl bg-[#1C1C1E] py-16 text-center text-[#6B7280]">
+                      <Inbox size={48} className="mx-auto mb-3 opacity-30" />
+                      <p className="font-medium">Žádné úkoly</p>
+                      <p className="mt-1 text-sm opacity-70">Použijte sloupec vlevo pro přidání</p>
+                    </div>
+                  )}
+                </AnimatePresence>
+                {completedTasks.length > 0 && (
+                  <div className="mt-6">
+                    <button
+                      type="button"
+                      onClick={() => setShowCompleted(!showCompleted)}
+                      className="mb-3 flex items-center gap-2 text-sm font-medium text-[#6B7280] transition-colors hover:text-white"
+                    >
+                      {showCompleted ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      Hotové ({completedTasks.length})
+                    </button>
+                    <AnimatePresence>
+                      {showCompleted && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          className="space-y-2 overflow-hidden"
+                        >
+                          {completedTasks.map((task) => renderTaskCard(task))}
+                        </motion.div>
+                      )}
                     </AnimatePresence>
-                </div>
-            )}
-        </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+
       </div>
-      
-      </div>
-      
+
       {/* Side Panel for Event Detail with Pipedrive Data - Full screen modal on mobile */}
       {selectedEvent && (
         <div className="fixed inset-0 z-50 lg:relative lg:inset-auto lg:z-auto w-full lg:w-[300px] h-full bg-[#1C1C1E] lg:border-l border-white/10 flex flex-col shrink-0">

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Mic, Settings, Bot, MapPin, Menu } from 'lucide-react';
+import { Mic, Settings, Bot, MapPin, Menu, ListChecks } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
 import { useApp } from '@/app/contexts/AppContext';
@@ -54,6 +54,12 @@ function SidebarNav({
           onClick={() => go('dictation')}
           icon={<Mic size={22} />}
           label="Diktování"
+        />
+        <NavItem
+          active={currentTab === 'tasks'}
+          onClick={() => go('tasks')}
+          icon={<ListChecks size={22} />}
+          label="Úkoly"
         />
         {agentProcessing && currentTab === 'agent' ? (
           <AgentOrbAvatar size="sidebar" onClick={() => go('agent')} title="Obchodník pomocník — pracuje…" />
@@ -167,6 +173,16 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                     <Mic size={16} />
                     <span>Diktování</span>
                 </button>
+                <button
+                    onClick={() => onTabChange('tasks')}
+                    className={clsx(
+                        "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
+                        currentTab === 'tasks' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
+                    )}
+                >
+                    <ListChecks size={16} />
+                    <span>Úkoly</span>
+                </button>
                 <motion.button
                     onClick={() => onTabChange('agent')}
                     animate={
@@ -221,8 +237,8 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
           (currentTab === 'dictation' || currentTab === 'agent' || currentTab === 'tasks' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "overflow-hidden" : "overflow-y-auto scrollbar-hide"
         )}>
           <div className={clsx(
-            "w-full flex-1 flex flex-col",
-            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "h-full" : "",
+            "w-full flex min-h-0 flex-1 flex-col",
+            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "h-full min-h-0" : "",
             currentTab === 'dictation' ? "h-full max-w-5xl mx-auto" : "",
             currentTab === 'settings' ? "max-w-5xl mx-auto p-5 md:p-10 pb-[100px] md:pb-10" : ""
           )}>
