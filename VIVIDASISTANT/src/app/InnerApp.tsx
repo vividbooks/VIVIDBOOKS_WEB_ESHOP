@@ -1,76 +1,53 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { flushSync } from 'react-dom';
+import { Loader2 } from 'lucide-react';
+import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { useApp } from '@/app/contexts/AppContext';
-import { ResponsiveLayout } from '@/app/components/Layout';
+import { ResponsiveLayout, type AssistantTabId } from '@/app/components/Layout';
 import { DictationTab } from '@/app/components/tabs/DictationTab';
-
-type PendingAgentMessage = { text: string; nonce: string; fromDictation?: boolean } | null;
 import { TasksTab } from '@/app/components/tabs/TasksTab';
 import { AgentTab } from '@/app/components/tabs/AgentTab';
 import { OutreachTab } from '@/app/components/tabs/OutreachTab';
 import { ScrapingTab } from '@/app/components/tabs/ScrapingTab';
 import { SettingsTab } from '@/app/components/tabs/SettingsTab';
 import { MapTab } from '@/app/components/tabs/MapTab';
+import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
 import { Onboarding } from '@/app/components/Onboarding';
+import { isAssistantEmailAllowed } from '@/config/assistantAllowlist';
+
+type PendingAgentMessage = { text: string; nonce: string; fromDictation?: boolean } | null;
+
+const ACCESS_DENIED_MSG = 'Tento účet nemá přístup k asistentovi.';
 
 export const InnerApp: React.FC = () => {
-  const { settings } = useApp();
-  const [currentTab, setCurrentTab] = useState<'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings'>('dictation');
-  const [showOnboarding, setShowOnboarding] = useState(false);
+  const { user, authReady, signOut } = useApp();
+  const [currentTab, setCurrentTab] = useState<AssistantTabId>('dictation');
   const [pendingAgentMessage, setPendingAgentMessage] = useState<PendingAgentMessage>(null);
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
-  // Capture Google provider_token from OAuth callback
+  // Sync Google provider tokens from Supabase session only — never strip the OAuth
+  // callback hash here; doing so before supabase.auth.initialize() runs prevents
+  // the sb-*-auth-token session from being created (user stays null).
   useEffect(() => {
-    const captureToken = async () => {
-      // Method 1: From URL hash (implicit flow)
-      const hash = window.location.hash;
-      if (hash && hash.includes('provider_token=')) {
-        const params = new URLSearchParams(hash.substring(1));
-        const providerToken = params.get('provider_token');
-        const providerRefreshToken = params.get('provider_refresh_token');
-        
-        if (providerToken) {
-          localStorage.setItem('google_provider_token', providerToken);
-          console.log('✅ Google provider_token saved from hash');
-        }
-        if (providerRefreshToken) {
-          localStorage.setItem('google_provider_refresh_token', providerRefreshToken);
-        }
-        
-        window.history.replaceState({}, document.title, window.location.pathname);
-        return;
-      }
-
-      // Method 2: From Supabase session (PKCE flow)
+    if (!authReady) return;
+    const syncProviderTokens = async () => {
       try {
-        const { createClient } = await import('@supabase/supabase-js');
-        const { projectId, publicAnonKey } = await import('/utils/supabase/info');
-        const supabase = createClient(`https://${projectId}.supabase.co`, publicAnonKey);
-        
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.provider_token) {
-          localStorage.setItem('google_provider_token', session.provider_token);
-          console.log('✅ Google provider_token saved from session');
-        }
-        if (session?.provider_refresh_token) {
-          localStorage.setItem('google_provider_refresh_token', session.provider_refresh_token);
-        }
+        const supabase = getSupabaseBrowser();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.provider_token) localStorage.setItem('google_provider_token', session.provider_token);
+        if (session?.provider_refresh_token) localStorage.setItem('google_provider_refresh_token', session.provider_refresh_token);
       } catch (e) {
         console.log('Session check skipped:', e);
       }
     };
-
-    captureToken();
-  }, []);
+    void syncProviderTokens();
+  }, [authReady, user?.id]);
 
   useEffect(() => {
-    const hasOnboarded = localStorage.getItem('dictation_app_onboarded');
-    if (!hasOnboarded) {
-      setShowOnboarding(true);
-    }
-
-    // Add Apple PWA meta tags
     const metaCapable = document.createElement('meta');
     metaCapable.name = 'apple-mobile-web-app-capable';
     metaCapable.content = 'yes';
@@ -83,7 +60,7 @@ export const InnerApp: React.FC = () => {
 
     const linkIcon = document.createElement('link');
     linkIcon.rel = 'apple-touch-icon';
-    linkIcon.href = 'icon.png';
+    linkIcon.href = `${import.meta.env.BASE_URL}icon.png`;
     document.head.appendChild(linkIcon);
 
     return () => {
@@ -93,14 +70,31 @@ export const InnerApp: React.FC = () => {
     };
   }, []);
 
-  const handleOnboardingComplete = () => {
-    localStorage.setItem('dictation_app_onboarded', 'true');
+  useEffect(() => {
+    if (!authReady) return;
+    if (!user?.email) {
+      setShowOnboarding(false);
+      return;
+    }
+    if (isAssistantEmailAllowed(user.email)) {
+      setAccessDeniedMessage(null);
+      const hasOnboarded = localStorage.getItem('dictation_app_onboarded');
+      setShowOnboarding(!hasOnboarded);
+      return;
+    }
+    setAccessDeniedMessage(ACCESS_DENIED_MSG);
     setShowOnboarding(false);
-  };
+    void signOut();
+  }, [authReady, user, signOut]);
 
   useEffect(() => {
     if (currentTab !== 'agent') setPendingAgentMessage(null);
   }, [currentTab]);
+
+  const handleOnboardingComplete = () => {
+    localStorage.setItem('dictation_app_onboarded', 'true');
+    setShowOnboarding(false);
+  };
 
   const sendDictationToAssistant = (wrappedMessage: string) => {
     const payload: NonNullable<PendingAgentMessage> = {
@@ -126,15 +120,28 @@ export const InnerApp: React.FC = () => {
     });
   };
 
+  if (!authReady) {
+    return (
+      <div className="min-h-[100dvh] w-full bg-black flex items-center justify-center">
+        <Loader2 className="w-10 h-10 text-white/50 animate-spin" aria-label="Načítání" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AssistantLoginScreen accessDeniedMessage={accessDeniedMessage} />;
+  }
+
+  if (!isAssistantEmailAllowed(user.email)) {
+    return <AssistantLoginScreen accessDeniedMessage={accessDeniedMessage ?? ACCESS_DENIED_MSG} />;
+  }
+
   if (showOnboarding) {
     return <Onboarding onComplete={handleOnboardingComplete} />;
   }
 
   return (
-    <ResponsiveLayout
-      currentTab={currentTab}
-      onTabChange={setCurrentTab}
-    >
+    <ResponsiveLayout currentTab={currentTab} onTabChange={setCurrentTab}>
       {currentTab === 'dictation' ? (
         <DictationTab
           onSendToAssistant={sendDictationToAssistant}

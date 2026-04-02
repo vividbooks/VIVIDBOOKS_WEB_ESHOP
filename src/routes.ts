@@ -1,6 +1,23 @@
 import type { ComponentType } from 'react';
+import React from 'react';
+import type { RouteObject } from 'react-router';
 import { createBrowserRouter } from 'react-router';
+import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
+
+/** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
+function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
+  return nodes.map((node) => {
+    const patched: RouteObject = { ...node };
+    if (node.lazy != null && patched.hydrateFallbackElement == null) {
+      patched.hydrateFallbackElement = React.createElement(RouteHydrateFallback);
+    }
+    if (node.children?.length) {
+      patched.children = withLazyHydrateFallbacks(node.children as RouteObject[]);
+    }
+    return patched;
+  });
+}
 
 /** Default export → RouteObject.lazy */
 function lazyDefault(importer: () => Promise<{ default: ComponentType<unknown> }>) {
@@ -22,7 +39,7 @@ function lazyNamed<T extends Record<string, ComponentType<unknown>>>(
 }
 
 export const router = createBrowserRouter(
-  [
+  withLazyHydrateFallbacks([
     {
       path: '/hub',
       lazy: lazyNamed(() => import('./components/AgentHubPage'), 'AgentHubPage'),
@@ -162,6 +179,6 @@ export const router = createBrowserRouter(
         { path: 'rag', lazy: lazyDefault(() => import('./components/admin/RagPage')) },
       ],
     },
-  ],
+  ]),
   { basename: import.meta.env.BASE_URL },
 );

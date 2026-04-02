@@ -10,8 +10,7 @@ import {
 import { useApp, Task } from '@/app/contexts/AppContext';
 import { RecordButton } from '@/app/components/figma/RecordButton';
 import { toast } from 'sonner';
-import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId } from '/utils/supabase/info';
 
 interface CalendarEvent {
   id: string;

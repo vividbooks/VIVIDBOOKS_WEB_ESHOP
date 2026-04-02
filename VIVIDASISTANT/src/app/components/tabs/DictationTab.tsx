@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu, ListTodo } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/app/contexts/AppContext';
@@ -27,6 +28,19 @@ function linesToTaskTexts(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Křestní jméno / první část z Google profilu nebo e-mailu. */
+function userFirstName(user: User | null): string | null {
+  if (!user) return null;
+  const m = user.user_metadata as { full_name?: string; name?: string; given_name?: string } | undefined;
+  const full = m?.full_name?.trim();
+  if (full) return full.split(/\s+/)[0] ?? '';
+  if (m?.given_name) return m.given_name;
+  const n = m?.name?.trim();
+  if (n) return n.split(/\s+/)[0] ?? '';
+  const local = user.email?.split('@')[0];
+  return local || null;
+}
+
 /** Delší přepis → server rozloží na název + kroky + přesný přepis v poznámce. */
 function shouldUseTaskBreakdown(text: string): boolean {
   const t = text.trim();
@@ -41,7 +55,8 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   onSendToChat,
   onAfterTodoAdded,
 }) => {
-  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav, addTask, breakdownTaskTranscript } = useApp();
+  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav, addTask, breakdownTaskTranscript, user, authReady } =
+    useApp();
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -52,6 +67,12 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   /** Po kliknutí na Email/Chat/Todo bez textu: po dokončení nahrávání se provede daná akce. */
   const [armedAction, setArmedAction] = useState<'email' | 'chat' | 'todo' | null>(null);
   const armedActionRef = useRef<'email' | 'chat' | 'todo' | null>(null);
+  /**
+   * Záměr u tohoto nahrávání (uloží se při startu).
+   * armedActionRef se může před dokončením onstop vynulovat (např. druhý klik na Zadat = zrušení režimu),
+   * pak by se text neposlal do chatu ani nešel správnou větví bez smart-edit.
+   */
+  const recordingIntentRef = useRef<'email' | 'chat' | 'todo' | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -237,6 +258,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingIntentRef.current = armedActionRef.current;
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -250,6 +272,9 @@ export const DictationTab: React.FC<DictationTabProps> = ({
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+
+        const intent = recordingIntentRef.current;
+        recordingIntentRef.current = null;
 
         setIsTranscribing(true);
         try {
@@ -274,7 +299,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           let finalText: string;
 
           /** Režim „Zadat chatu“ / „Todo“: bez smart-edit. Jen přepis + zkratky. */
-          if (armedActionRef.current === 'chat' || armedActionRef.current === 'todo') {
+          if (intent === 'chat' || intent === 'todo') {
             if (selectionData?.text != null && selectionData.start != null && selectionData.end != null) {
               finalText =
                 baseText.slice(0, selectionData.start) + newVoiceText + baseText.slice(selectionData.end);
@@ -295,16 +320,15 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           setTranscript(finalText);
 
           const trimmed = finalText.trim();
-          const armed = armedActionRef.current;
-          if (trimmed && armed === 'email' && onSendToAssistant) {
+          if (trimmed && intent === 'email' && onSendToAssistant) {
             armedActionRef.current = null;
             setArmedAction(null);
             sendToAssistantNow(trimmed);
-          } else if (trimmed && armed === 'chat' && onSendToChat) {
+          } else if (trimmed && intent === 'chat' && onSendToChat) {
             armedActionRef.current = null;
             setArmedAction(null);
             sendToChatNow(trimmed);
-          } else if (trimmed && armed === 'todo') {
+          } else if (trimmed && intent === 'todo') {
             armedActionRef.current = null;
             setArmedAction(null);
             await sendToTodoNow(trimmed);
@@ -352,6 +376,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   const hasTranscript = !!transcript.trim();
   const canEmail = !!onSendToAssistant;
   const canChat = !!onSendToChat;
+  const greetingName = authReady && user ? userFirstName(user) : null;
 
   const armBtnClass = (armed: boolean) =>
     clsx(
@@ -445,7 +470,15 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-8 flex-wrap">
+          {greetingName && (
+            <p
+              className="text-white leading-tight max-w-[min(100%,16rem)] truncate"
+              style={{ fontFamily: "'Cooper Light', serif", fontWeight: 300, fontSize: 'clamp(1.35rem, 2.4vw, 2rem)' }}
+            >
+              Ahoj, {greetingName}
+            </p>
+          )}
           <RecordButton
             isRecording={isRecording}
             isProcessing={isTranscribing || isTodoAiProcessing}
@@ -523,7 +556,15 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             <span className="truncate text-xs sm:text-sm">Todo</span>
           </button>
         </div>
-        <div className="flex justify-center py-1">
+        <div className="flex flex-col items-center gap-2 py-1">
+          {greetingName && (
+            <p
+              className="text-white text-center max-w-[90vw] truncate px-2"
+              style={{ fontFamily: "'Cooper Light', serif", fontWeight: 300, fontSize: 'clamp(1.2rem, 4.5vw, 1.65rem)' }}
+            >
+              Ahoj, {greetingName}
+            </p>
+          )}
           <RecordButton
             isRecording={isRecording}
             isProcessing={isTranscribing || isTodoAiProcessing}

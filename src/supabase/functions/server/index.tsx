@@ -13187,8 +13187,8 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
     const model = selectedModel;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-    // Deadline guard — Supabase Edge Functions have ~150s wall clock. Reserve 25s for safety.
-    const AGENT_DEADLINE = Date.now() + 120_000;
+    // Deadline guard — Supabase Edge Functions have ~150s wall clock. Reserve ~20s for safety.
+    const AGENT_DEADLINE = Date.now() + 130_000;
     // Expose deadline so runAdminTool can skip RAG when time is tight
     (globalThis as any).__agentDeadline = AGENT_DEADLINE;
 
@@ -13226,18 +13226,54 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         generationConfig: { temperature: 0.3, maxOutputTokens: 8192 },
       };
       console.log(`[AdminAgent] Turn ${turn+1} — contents=${contents.length} parts, remaining=${remaining}ms`);
-      const geminiController = new AbortController();
-      const geminiTimer = setTimeout(() => geminiController.abort(), Math.min(45_000, remaining - 10_000));
-      let res: Response;
-      try {
-        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(geminiBody), signal: geminiController.signal });
-      } catch (fetchErr: any) {
-        clearTimeout(geminiTimer);
-        console.log(`[AdminAgent] Gemini fetch failed: ${fetchErr.message}`);
-        clearAdminAgentGlobals();
-        return c.json({ reply: `Gemini API timeout. Provedeno ${allActions.length} akcí. Zkuste pokračovat v dalším dotazu.`, actions: allActions });
+      // Jedno volání Gemini: dříve max 45s — u RAG + function calling často nestačilo. Až 90s, s 1× retry při timeoutu.
+      let res: Response | undefined;
+      const GEMINI_FETCH_ATTEMPTS = 2;
+      for (let attempt = 0; attempt < GEMINI_FETCH_ATTEMPTS; attempt++) {
+        const remainingNow = AGENT_DEADLINE - Date.now();
+        if (remainingNow < 12_000) {
+          console.log(`[AdminAgent] Turn ${turn + 1}: deadline too tight (${remainingNow}ms), stopping Gemini fetch`);
+          clearAdminAgentGlobals();
+          return c.json({
+            reply: `Časový limit agenta (zbývalo málo času). Provedeno ${allActions.length} akcí. Zkuste pokračovat v dalším dotazu.`,
+            actions: allActions,
+          });
+        }
+        const perRequestMs = Math.min(90_000, Math.max(15_000, remainingNow - 12_000));
+        const geminiController = new AbortController();
+        const geminiTimer = setTimeout(() => geminiController.abort(), perRequestMs);
+        try {
+          res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(geminiBody),
+            signal: geminiController.signal,
+          });
+          clearTimeout(geminiTimer);
+          break;
+        } catch (fetchErr: any) {
+          clearTimeout(geminiTimer);
+          const isAbort = fetchErr?.name === 'AbortError' || /abort/i.test(String(fetchErr?.message || ''));
+          if (isAbort && attempt < GEMINI_FETCH_ATTEMPTS - 1) {
+            console.log(`[AdminAgent] Gemini fetch timeout (attempt ${attempt + 1}/${GEMINI_FETCH_ATTEMPTS}), retrying once…`);
+            await new Promise((r) => setTimeout(r, 500));
+            continue;
+          }
+          console.log(`[AdminAgent] Gemini fetch failed: ${fetchErr.message}`);
+          clearAdminAgentGlobals();
+          return c.json({
+            reply: `Gemini nedostála včas (${isAbort ? 'timeout' : 'síť'}). Provedeno ${allActions.length} akcí. Zkuste stejný dotaz znovu nebo zkrátit zadání.`,
+            actions: allActions,
+          });
+        }
       }
-      clearTimeout(geminiTimer);
+      if (!res) {
+        clearAdminAgentGlobals();
+        return c.json({
+          reply: `Gemini API timeout. Provedeno ${allActions.length} akcí. Zkuste pokračovat v dalším dotazu.`,
+          actions: allActions,
+        });
+      }
       if (!res.ok) {
         const errText = await res.text();
         console.log(`[AdminAgent] Gemini error ${res.status}: ${errText.slice(0, 500)}`);

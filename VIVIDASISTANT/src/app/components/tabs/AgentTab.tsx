@@ -61,7 +61,9 @@ interface AgentTabProps {
   initialMessageFromDictation?: boolean;
 }
 
-const AGENT_SESSIONS_KEY = 'vividassistant_agent_sessions_v2';
+function chatSessionsStorageKey(userId: string | null | undefined): string {
+  return userId ? `vividassistant_agent_sessions_v2:${userId}` : 'vividassistant_agent_sessions_v2';
+}
 const LEGACY_CHAT_KEY = 'vividassistant_agent_chat_v1';
 const LEGACY_ROUTE_KEY = 'vividassistant_agent_last_route_v1';
 const MAX_STORED_MESSAGES = 100;
@@ -88,7 +90,7 @@ function deriveSessionTitle(msgs: Message[]): string {
   return 'Nový chat';
 }
 
-function loadSessionsBootstrap(): { sessions: ChatSession[]; activeSessionId: string } {
+function loadSessionsBootstrap(storageKey: string): { sessions: ChatSession[]; activeSessionId: string } {
   if (typeof window === 'undefined') {
     const id = `sess-${Date.now()}`;
     return {
@@ -97,7 +99,7 @@ function loadSessionsBootstrap(): { sessions: ChatSession[]; activeSessionId: st
     };
   }
   try {
-    const raw = localStorage.getItem(AGENT_SESSIONS_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (raw) {
       const data = JSON.parse(raw) as {
         activeSessionId: string;
@@ -176,8 +178,11 @@ function newSessionId(): string {
   return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function getInitialSessionState(opts: { initialMessage?: string; initialMessageFromDictation?: boolean }) {
-  const b = loadSessionsBootstrap();
+function getInitialSessionState(
+  opts: { initialMessage?: string; initialMessageFromDictation?: boolean },
+  storageKey: string,
+) {
+  const b = loadSessionsBootstrap(storageKey);
   if (opts.initialMessageFromDictation && opts.initialMessage) {
     const id = newSessionId();
     const empty: ChatSession = {
@@ -196,10 +201,11 @@ function getInitialSessionState(opts: { initialMessage?: string; initialMessageF
 }
 
 export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessageFromDictation }) => {
-  const { smartEdit, transcribeAudio, addTask, setAgentProcessing } = useApp();
+  const { smartEdit, transcribeAudio, addTask, setAgentProcessing, user } = useApp();
+  const sessionsKey = chatSessionsStorageKey(user?.id);
   const sessionInitRef = useRef<ReturnType<typeof getInitialSessionState> | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
-    sessionInitRef.current = getInitialSessionState({ initialMessage, initialMessageFromDictation });
+    sessionInitRef.current = getInitialSessionState({ initialMessage, initialMessageFromDictation }, sessionsKey);
     return sessionInitRef.current.sessions;
   });
   const [activeSessionId, setActiveSessionId] = useState<string>(() => sessionInitRef.current!.activeSessionId);
@@ -462,11 +468,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
             })),
         })),
       };
-      localStorage.setItem(AGENT_SESSIONS_KEY, JSON.stringify(payload));
+      localStorage.setItem(sessionsKey, JSON.stringify(payload));
     } catch (e) {
       console.warn('[AgentTab] Ukládání historie chatů selhalo:', e);
     }
-  }, [sessions, activeSessionId]);
+  }, [sessions, activeSessionId, sessionsKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

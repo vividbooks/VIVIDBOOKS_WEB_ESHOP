@@ -1,6 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import type { Session, User } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { getSupabaseBrowser, resetSupabaseBrowserClient, signInWithGoogleOAuth } from '@/lib/supabaseBrowser';
+import { prepareWebStorageForAuth } from '@/lib/prepareWebStorageForAuth';
 
 // Types
 export interface Task {
@@ -76,6 +79,13 @@ interface AppContextType {
   navDrawerOpen: boolean;
   setNavDrawerOpen: (v: boolean) => void;
   toggleLeftNav: () => void;
+
+  /** Přihlášení Google (Supabase Auth). */
+  user: User | null;
+  session: Session | null;
+  authReady: boolean;
+  signInWithGoogle: () => Promise<void>;
+  signOut: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -91,8 +101,21 @@ const safeParse = (key: string, fallback: any) => {
   }
 };
 
+function lsTasksKey(uid: string | null) {
+  return uid ? `dictation_app_tasks:${uid}` : 'dictation_app_tasks';
+}
+function lsShortcutsKey(uid: string | null) {
+  return uid ? `dictation_app_shortcuts:${uid}` : 'dictation_app_shortcuts';
+}
+function lsSettingsKey(uid: string | null) {
+  return uid ? `dictation_app_settings:${uid}` : 'dictation_app_settings';
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Initial state from local storage or defaults
+  const [user, setUser] = useState<User | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+
   const [tasks, setTasks] = useState<Task[]>(() => safeParse('dictation_app_tasks', []));
 
   const [shortcuts, setShortcuts] = useState<Shortcut[]>(() => safeParse('dictation_app_shortcuts', [
@@ -117,15 +140,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  // Supabase Storage Helpers
+  const getAuthHeaders = useCallback(async (includeJson = false): Promise<Record<string, string>> => {
+    const { data: { session: s } } = await getSupabaseBrowser().auth.getSession();
+    const token = s?.access_token;
+    const h: Record<string, string> = {
+      Authorization: `Bearer ${token ?? publicAnonKey}`,
+    };
+    if (includeJson) h['Content-Type'] = 'application/json';
+    return h;
+  }, []);
+
   const saveToStorage = async (key: string, value: any) => {
     try {
+      const headers = await getAuthHeaders(true);
       await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/storage`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
         body: JSON.stringify({ key, value }),
       });
     } catch (error) {
@@ -135,10 +165,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const fetchFromStorage = async (key: string) => {
     try {
+      const headers = await getAuthHeaders();
       const res = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/storage/${key}`, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
       });
       if (res.ok) {
         const data = await res.json();
@@ -150,8 +179,118 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return null;
   };
 
+  useEffect(() => {
+    let subscription: { unsubscribe: () => void } | undefined;
+
+    const hydrateFromLocal = (uid: string | null) => {
+      setTasks(safeParse(lsTasksKey(uid), []));
+      setShortcuts(
+        safeParse(lsShortcutsKey(uid), [
+          { id: '1', trigger: 'podpis', replacement: 'S pozdravem,\nJan Novák\nCEO' },
+          { id: '2', trigger: 'ičo', replacement: '12345678' },
+        ]),
+      );
+      setSettings(safeParse(lsSettingsKey(uid), { openaiKey: '', language: 'cs' }));
+    };
+
+    const applySession = (s: Session | null) => {
+      setSession(s);
+      setUser(s?.user ?? null);
+      hydrateFromLocal(s?.user?.id ?? null);
+    };
+
+    const initAuth = async () => {
+      // Návrat z Google: úložiště musí mít volné místo na uložení session (jinak QuotaExceededError).
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        const hashLooksOAuth =
+          !!url.hash && /access_token|refresh_token|provider_token|error|error_description/i.test(url.hash);
+        const hasOAuthCode = url.searchParams.has('code');
+        if (hashLooksOAuth || hasOAuthCode) {
+          await prepareWebStorageForAuth('oauthReturn');
+          resetSupabaseBrowserClient();
+        }
+      }
+
+      const supabase = getSupabaseBrowser();
+
+      const {
+        data: { subscription: sub },
+      } = supabase.auth.onAuthStateChange((_event, session) => {
+        applySession(session);
+      });
+      subscription = sub;
+
+      await supabase.auth.initialize();
+
+      let {
+        data: { session: s },
+      } = await supabase.auth.getSession();
+      if (!s && typeof window !== 'undefined') {
+        await new Promise((r) => setTimeout(r, 200));
+        ({
+          data: { session: s },
+        } = await supabase.auth.getSession());
+      }
+
+      if (!s && typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        const code = url.searchParams.get('code');
+        if (code) {
+          const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+          if (!error && data.session) {
+            s = data.session;
+          } else if (error) {
+            console.warn('[auth] exchangeCodeForSession(code):', error.message);
+          }
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href);
+        const hashLooksOAuth =
+          !!url.hash && /access_token|refresh_token|provider_token|error|error_description/i.test(url.hash);
+        const hadOAuthParams =
+          url.searchParams.has('code') || url.searchParams.has('error') || hashLooksOAuth;
+        if (hadOAuthParams && !s) {
+          url.searchParams.delete('code');
+          url.searchParams.delete('state');
+          url.searchParams.delete('error');
+          url.searchParams.delete('error_description');
+          if (hashLooksOAuth) {
+            window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}`);
+          } else {
+            window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+          }
+          console.warn(
+            '[auth] OAuth návrat bez session. Zkontrolujte Redirect URLs v Supabase a Google provider. Při plné kvótě: DevTools → Application → Clear site data (localhost).',
+          );
+        }
+      }
+
+      applySession(s);
+      setAuthReady(true);
+    };
+
+    void initAuth();
+
+    const onVisible = () => {
+      if (typeof document === 'undefined' || document.visibilityState !== 'visible') return;
+      void getSupabaseBrowser().auth.getSession().then(({ data: { session: s } }) => applySession(s));
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+
+    return () => {
+      subscription?.unsubscribe();
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, []);
+
   // Initial Load (merge s cloudem — prázdné [] z API je v JS truthy; nesmí přepsat lokální úkoly při pomalém fetchi)
   useEffect(() => {
+    if (!authReady) return;
     let cancelled = false;
     const loadData = async () => {
       const [remoteTasks, remoteShortcuts, remoteSettings] = await Promise.all([
@@ -185,32 +324,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [authReady, user?.id]);
 
-  // Persistence (Supabase + LocalStorage Backup)
+  // Persistence (Supabase + LocalStorage Backup, klíče podle uživatele)
   useEffect(() => {
-    localStorage.setItem('dictation_app_tasks', JSON.stringify(tasks));
-    if (tasks.length > 0) saveToStorage('tasks', tasks); // Avoid overwriting cloud with empty on init if fetch is slow?
-    // Actually, init happens once. If fetch returns data, tasks is updated. 
-    // To be safe, we might want a "isLoaded" flag, but for now simple approach:
-    // We only save if we have data or after some interaction. 
-    // But hooks run on mount. If tasks is default empty, we might overwrite cloud.
-    // However, the initial state is from localStorage safeParse. So we have local data.
-    // Then we fetch cloud. Cloud overwrites local. Then we save cloud.
-    // This is "Last write wins" but slightly racy on startup.
-    // Given the simplicity, let's just save.
+    if (!authReady) return;
+    const uid = user?.id ?? null;
+    localStorage.setItem(lsTasksKey(uid), JSON.stringify(tasks));
     saveToStorage('tasks', tasks);
-  }, [tasks]);
+  }, [tasks, user?.id, authReady]);
 
   useEffect(() => {
-    localStorage.setItem('dictation_app_shortcuts', JSON.stringify(shortcuts));
+    if (!authReady) return;
+    const uid = user?.id ?? null;
+    localStorage.setItem(lsShortcutsKey(uid), JSON.stringify(shortcuts));
     saveToStorage('shortcuts', shortcuts);
-  }, [shortcuts]);
+  }, [shortcuts, user?.id, authReady]);
 
   useEffect(() => {
-    localStorage.setItem('dictation_app_settings', JSON.stringify(settings));
+    if (!authReady) return;
+    const uid = user?.id ?? null;
+    localStorage.setItem(lsSettingsKey(uid), JSON.stringify(settings));
     saveToStorage('settings', settings);
-  }, [settings]);
+  }, [settings, user?.id, authReady]);
 
   // Actions
   const addTask = (text: string, options?: { duration?: string; note?: string; priority?: 'low' | 'medium' | 'high' }) => {
@@ -265,14 +401,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.clear();
   };
 
+  const signInWithGoogle = async () => {
+    if (typeof window === 'undefined') return;
+    const redirectTo = `${window.location.origin}${window.location.pathname}${window.location.search}`;
+    const { error } = await signInWithGoogleOAuth(redirectTo);
+    if (error) {
+      console.error('[auth] Google sign-in', error);
+      window.alert(
+        `${error.message}\n\nZkontrolujte v Supabase → Authentication → URL Configuration, že Redirect URLs obsahují ${redirectTo} nebo http://localhost:3000/**`,
+      );
+    }
+  };
+
+  const signOut = async () => {
+    await getSupabaseBrowser().auth.signOut();
+  };
+
   // RAG Library functions
   const loadRagDocuments = async () => {
     setRagLoading(true);
     try {
+      const headers = await getAuthHeaders();
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents`, {
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
       });
       
       if (response.ok) {
@@ -288,13 +439,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addRagDocument = async (title: string, content: string, type: 'text' | 'notes' | 'news' = 'text'): Promise<RagDocument> => {
     const id = uuidv4();
-    
+    const headers = await getAuthHeaders(true);
     const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${publicAnonKey}`,
-      },
+      headers,
       body: JSON.stringify({ id, title, content, type }),
     });
 
@@ -310,11 +458,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteRagDocument = async (id: string): Promise<void> => {
+    const headers = await getAuthHeaders();
     const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/rag/documents/${id}`, {
       method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${publicAnonKey}`,
-      },
+      headers,
     });
 
     if (!response.ok) {
@@ -324,10 +471,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRagDocuments(prev => prev.filter(doc => doc.id !== id));
   };
 
-  // Load RAG documents on mount
   useEffect(() => {
+    if (!authReady) return;
     loadRagDocuments();
-  }, []);
+  }, [authReady]);
 
   const transcribeAudio = async (audioBlob: Blob): Promise<string> => {
     try {
@@ -335,11 +482,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // The file extension matters for OpenAI Whisper
       formData.append('file', audioBlob, 'recording.webm');
 
+      const headers = await getAuthHeaders();
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/transcribe`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
         body: formData,
       });
 
@@ -358,12 +504,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const smartEdit = async (currentText: string, newVoiceText: string, context?: string, googleAccessToken?: string, selection?: { start: number; end: number; text: string }): Promise<any> => {
     try {
+      const headers = await getAuthHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/smart-edit`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
         body: JSON.stringify({ currentText, newVoiceText, context, googleAccessToken, selection }),
       });
 
@@ -383,12 +527,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const breakdownTaskTranscript = async (
     transcript: string,
   ): Promise<{ title: string; steps: string[]; transcript: string }> => {
+    const headers = await getAuthHeaders(true);
     const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/task-breakdown`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${publicAnonKey}`,
-      },
+      headers,
       body: JSON.stringify({ transcript }),
     });
     if (!response.ok) {
@@ -413,7 +555,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       agentProcessing, setAgentProcessing,
       sidebarCollapsed, setSidebarCollapsed,
       navDrawerOpen, setNavDrawerOpen,
-      toggleLeftNav
+      toggleLeftNav,
+      user, session, authReady, signInWithGoogle, signOut,
     }}>
       {children}
     </AppContext.Provider>

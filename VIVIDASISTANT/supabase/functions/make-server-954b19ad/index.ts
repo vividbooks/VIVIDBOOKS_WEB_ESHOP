@@ -14,6 +14,66 @@ const kvClient = () => createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
 );
 
+/** Ověří JWT z Authorization a vrátí user id, jinak null (anonymní / sdílený klíč). */
+async function getUserIdFromRequestAuth(c: { req: { header: (name: string) => string | undefined } }): Promise<string | null> {
+  const authHeader = c.req.header("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!token) return null;
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  if (!token || token === anon) return null;
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  if (!supabaseUrl || !anon) return null;
+  const supabase = createClient(supabaseUrl, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user?.id) return null;
+  return user.id;
+}
+
+/**
+ * Pokud je v Supabase secrets nastaveno ASSISTANT_ALLOWED_EMAILS, ověří e-mail z JWT.
+ * ASSISTANT_ALLOWLIST_OFF=true — kontrolu vypne (např. vývoj).
+ * Když ASSISTANT_ALLOWED_EMAILS chybí, nekontroluje (zpětná kompatibilita).
+ */
+async function assistantEmailForbiddenIfConfigured(c: {
+  req: { header: (name: string) => string | undefined };
+  json: (body: unknown, status?: number) => Response;
+}): Promise<Response | null> {
+  if (Deno.env.get("ASSISTANT_ALLOWLIST_OFF") === "true" || Deno.env.get("ASSISTANT_ALLOWLIST_OFF") === "1") {
+    return null;
+  }
+  const raw = Deno.env.get("ASSISTANT_ALLOWED_EMAILS")?.trim();
+  if (!raw) return null;
+
+  const authHeader = c.req.header("Authorization") || "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  if (!token || token === anon) return null;
+
+  const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
+  if (!supabaseUrl || !anon) return null;
+  const supabase = createClient(supabaseUrl, anon, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error || !user?.email) {
+    return c.json({ error: "assistant_access_denied" }, 403);
+  }
+  const allow = new Set(
+    raw.split(/[,;\n]+/).map((s) => s.trim().toLowerCase()).filter(Boolean),
+  );
+  if (allow.size === 0 || !allow.has(user.email.trim().toLowerCase())) {
+    return c.json({ error: "assistant_access_denied" }, 403);
+  }
+  return null;
+}
+
+function scopedStorageKey(rawKey: string, userId: string | null): string {
+  if (!userId) return rawKey;
+  return `user:${userId}:${rawKey}`;
+}
+
 const kv = {
   get: async (key: string): Promise<any> => {
     const supabase = kvClient();
@@ -38,27 +98,35 @@ app.get("/make-server-954b19ad/health", (c) => {
   return c.json({ status: "ok", time: new Date().toISOString() });
 });
 
-// Storage Endpoints
+// Storage Endpoints (s JWT = klíče per uživatel: user:<id>:tasks …)
 app.get("/make-server-954b19ad/storage/:key", async (c) => {
-  const key = c.req.param("key");
+  const rawKey = c.req.param("key");
   try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const userId = await getUserIdFromRequestAuth(c);
+    const key = scopedStorageKey(rawKey, userId);
     const value = await kv.get(key);
     return c.json({ value });
   } catch (error: any) {
-    console.error(`Error fetching key ${key}:`, error);
+    console.error(`Error fetching key ${rawKey}:`, error);
     return c.json({ error: "Failed to fetch data" }, 500);
   }
 });
 
 app.post("/make-server-954b19ad/storage", async (c) => {
   try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
     const body = await c.req.json();
-    const { key, value } = body;
+    const { key: rawKey, value } = body;
     
-    if (!key) {
+    if (!rawKey) {
       return c.json({ error: "Key is required" }, 400);
     }
 
+    const userId = await getUserIdFromRequestAuth(c);
+    const key = scopedStorageKey(rawKey, userId);
     await kv.set(key, value);
     return c.json({ success: true });
   } catch (error: any) {
