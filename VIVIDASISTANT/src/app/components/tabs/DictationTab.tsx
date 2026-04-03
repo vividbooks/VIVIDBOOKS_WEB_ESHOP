@@ -574,9 +574,9 @@ export const DictationTab: React.FC<DictationTabProps> = ({
         </div>
       </div>
 
-      {/* Mobil: menu + email + chat, pod tím mikrofon; horní lišta záložek je u diktování skrytá */}
+      {/* Mobil: menu + akce v jednom řádku (scroll na úzkém displeji); pod tím mikrofon */}
       <div className="md:hidden flex flex-col gap-3 px-4 pt-[calc(env(safe-area-inset-top)+12px)] pb-4 bg-[#121212] z-30 border-b border-white/5">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5 [-webkit-overflow-scrolling:touch] scrollbar-thin scrollbar-thumb-white/10">
           <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Menu — navigace">
             <Menu size={22} strokeWidth={2} />
           </button>
@@ -584,37 +584,37 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             type="button"
             onClick={onEmailButton}
             disabled={!canEmail}
-            className={clsx(armBtnClassMobile(armedAction === 'email'), 'flex-1 min-w-[6rem]')}
+            className={clsx(armBtnClassMobile(armedAction === 'email'), 'shrink-0 px-4')}
           >
             <Mail size={16} className="shrink-0" />
-            <span className="truncate text-xs sm:text-sm">Email</span>
+            <span className="truncate text-xs">Email</span>
           </button>
           <button
             type="button"
             onClick={onChatButton}
             disabled={!canChat}
-            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'flex-1 min-w-[6rem]')}
+            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'shrink-0 px-4')}
           >
             <MessageSquare size={16} className="shrink-0" />
-            <span className="truncate text-xs sm:text-sm">Zadat</span>
+            <span className="truncate text-xs">Zadat</span>
           </button>
           <button
             type="button"
             onClick={onTodoButton}
             disabled={isTodoAiProcessing}
-            className={clsx(armBtnClassMobile(armedAction === 'todo'), 'flex-1 min-w-[6rem] basis-[calc(50%-0.25rem)]')}
+            className={clsx(armBtnClassMobile(armedAction === 'todo'), 'shrink-0 px-4')}
           >
             <ListTodo size={16} className="shrink-0" />
-            <span className="truncate text-xs sm:text-sm">Todo</span>
+            <span className="truncate text-xs">Todo</span>
           </button>
           {showRagWebTab ? (
             <button
               type="button"
               onClick={onWebButton}
-              className={clsx(armBtnClassMobile(armedAction === 'web'), 'flex-1 min-w-[6rem]')}
+              className={clsx(armBtnClassMobile(armedAction === 'web'), 'shrink-0 px-4')}
             >
               <Globe size={16} className="shrink-0" />
-              <span className="truncate text-xs sm:text-sm">Web</span>
+              <span className="truncate text-xs">Web</span>
             </button>
           ) : null}
         </div>
@@ -634,27 +634,32 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             className="w-24 h-24 shadow-2xl"
           />
         </div>
-        <div className="flex items-center justify-between gap-3 pl-1">
-          <div className="flex flex-col min-w-0">
-            {isTodoAiProcessing ? (
-              <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin shrink-0" />
-                Rozkládám úkol…
-              </span>
-            ) : isTranscribing ? (
-              <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
-                <Loader2 size={14} className="animate-spin shrink-0" />
-                Zpracovávám
-              </span>
-            ) : isRecording ? (
-              <span className="text-[#FF453A] font-mono font-medium text-lg tracking-wide flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#FF453A] animate-pulse shrink-0" />
-                {formatTime(recordingTime)}
-              </span>
-            ) : (
-              <span className="text-[#8E8E93] font-medium text-sm">Připraveno k nahrávání</span>
-            )}
-          </div>
+        <div
+          className={clsx(
+            'flex items-center gap-3 pl-1',
+            isTodoAiProcessing || isTranscribing || isRecording ? 'justify-between' : 'justify-end',
+          )}
+        >
+          {(isTodoAiProcessing || isTranscribing || isRecording) && (
+            <div className="flex flex-col min-w-0">
+              {isTodoAiProcessing ? (
+                <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin shrink-0" />
+                  Rozkládám úkol…
+                </span>
+              ) : isTranscribing ? (
+                <span className="text-[#0A84FF] font-semibold text-sm flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin shrink-0" />
+                  Zpracovávám
+                </span>
+              ) : (
+                <span className="text-[#FF453A] font-mono font-medium text-lg tracking-wide flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#FF453A] animate-pulse shrink-0" />
+                  {formatTime(recordingTime)}
+                </span>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => {
