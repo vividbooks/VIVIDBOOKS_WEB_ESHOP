@@ -161,6 +161,10 @@ export const router = createBrowserRouter(
           path: 'registrace',
           lazy: lazyDefault(() => import('./components/admin/WebinarRegistraceAdmin')),
         },
+        {
+          path: 'kontakty',
+          lazy: lazyDefault(() => import('./components/admin/MarketingContactsPage')),
+        },
         { path: 'skoly', lazy: lazyDefault(() => import('./components/admin/SchoolsUploadPage')) },
         {
           path: 'growth-agent',

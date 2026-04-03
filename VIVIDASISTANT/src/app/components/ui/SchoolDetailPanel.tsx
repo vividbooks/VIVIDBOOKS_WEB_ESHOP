@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { 
-  Building2, User, DollarSign, Phone, Mail, MapPin, X, 
+  User, DollarSign, Phone, Mail, MapPin, X, 
   Briefcase, Hash, ExternalLink, Loader2, Activity,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Navigation, BookOpen, Copy, Check,
 } from 'lucide-react';
 
 // ... existing interfaces ...
@@ -86,6 +86,14 @@ const PIPEDRIVE_APP_BASE = 'https://app.pipedrive.com';
 function pipedriveOrganizationUrl(orgId: number) {
   return `${PIPEDRIVE_APP_BASE}/organization/${orgId}`;
 }
+
+/** Google Maps — navigace k cíli (stejné chování jako „Navigovat“ v mapách). */
+function googleMapsDirectionsUrl(destination: string) {
+  const q = encodeURIComponent(destination.trim());
+  return `https://www.google.com/maps/dir/?api=1&destination=${q}`;
+}
+
+type DetailTabId = 'zakladni' | 'lidi' | 'aktivity' | 'deals';
 
 /** Krátké hodnoty jako bobánky; dlouhé texty a poznámky zvlášť pod nimi. */
 function isLongNoteField(fieldLabel: string, value: unknown): boolean {
@@ -296,18 +304,58 @@ export const SchoolDetailPanel: React.FC<SchoolDetailPanelProps> = ({
   onLoadDetail,
   showButtons
 }) => {
+  const [tab, setTab] = useState<DetailTabId>('zakladni');
+  const [copiedRole, setCopiedRole] = useState<'teacher' | 'student' | null>(null);
+  const copyResetRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setTab('zakladni');
+  }, [organization.id]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+    };
+  }, []);
+
+  const copyAccessCode = async (text: string, role: 'teacher' | 'student') => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedRole(role);
+      if (copyResetRef.current) clearTimeout(copyResetRef.current);
+      copyResetRef.current = setTimeout(() => setCopiedRole(null), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const addressLine =
+    (detail?.label && String(detail.label).trim()) ||
+    organization.address ||
+    detail?.organization?.address ||
+    '';
+
+  const openMapsNavigation = () => {
+    if (showButtons?.navigate) {
+      showButtons.navigate();
+      return;
+    }
+    if (!addressLine.trim()) return;
+    window.open(googleMapsDirectionsUrl(addressLine), '_blank', 'noopener,noreferrer');
+  };
+
+  const purchasedList = [
+    ...(detail?.purchasedSubjects || []),
+    ...(detail?.productCategories || []),
+  ];
+  const purchasedUnique = Array.from(new Set(purchasedList.map((s) => String(s).trim()).filter(Boolean)));
+
   return (
     <div className="h-full min-h-0 w-full min-w-0 max-w-full flex flex-col overflow-hidden bg-[#1C1C1E]">
       {/* Header */}
       <div className="bg-[#10B981] p-4 flex items-start justify-between shrink-0">
         <div className="flex-1 min-w-0">
           <h2 className="text-white text-lg font-bold truncate">{organization.name}</h2>
-          {(detail?.label || organization.address) && (
-            <p className="text-white/80 text-sm mt-1 flex items-start gap-1 min-w-0 break-words">
-              <MapPin size={14} className="shrink-0 mt-0.5" />
-              <span className="min-w-0">{organization.address}</span>
-            </p>
-          )}
         </div>
         <button 
           onClick={onClose}
@@ -316,33 +364,6 @@ export const SchoolDetailPanel: React.FC<SchoolDetailPanelProps> = ({
           <X size={20} className="text-white" />
         </button>
       </div>
-
-      {(detail?.teacherCode || detail?.studentCode) && (
-        <div className="shrink-0 px-4 py-3 border-b border-white/10 bg-[#10B981]/12">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6EE7B7] mb-2 flex items-center gap-1.5">
-            <Hash size={12} className="shrink-0" />
-            Přístupové kódy (Pipedrive)
-          </p>
-          <div className="flex flex-wrap gap-3 min-w-0">
-            {detail.teacherCode && (
-              <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
-                <span className="text-[#94A3B8] text-xs">Učitel</span>
-                <code className="block font-mono text-base text-white tracking-wider mt-0.5 break-all">
-                  {detail.teacherCode}
-                </code>
-              </div>
-            )}
-            {detail.studentCode && (
-              <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
-                <span className="text-[#94A3B8] text-xs">Žák</span>
-                <code className="block font-mono text-base text-white tracking-wider mt-0.5 break-all">
-                  {detail.studentCode}
-                </code>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {detail?.organization?.owner_name && (
         <div className="shrink-0 px-4 py-2.5 bg-[#252528] border-b border-white/10">
@@ -392,112 +413,301 @@ export const SchoolDetailPanel: React.FC<SchoolDetailPanelProps> = ({
         </div>
       )}
 
+      <div className="shrink-0 border-b border-white/10 bg-[#1C1C1E] px-2 pt-2">
+        <div className="flex gap-1 overflow-x-auto pb-2 [-webkit-overflow-scrolling:touch] scrollbar-thin scrollbar-thumb-white/10">
+          {(
+            [
+              { id: 'zakladni' as const, label: 'Základní' },
+              { id: 'lidi' as const, label: 'Lidi', count: detail?.persons?.length },
+              { id: 'aktivity' as const, label: 'Aktivity', count: detail?.activities?.length },
+              { id: 'deals' as const, label: 'Deals', count: detail?.deals?.length },
+            ] as const
+          ).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setTab(item.id)}
+              className={`shrink-0 rounded-t-lg px-3 py-2 text-[13px] font-semibold transition-colors ${
+                tab === item.id
+                  ? 'bg-[#252528] text-emerald-300 border border-b-0 border-white/10'
+                  : 'text-[#8E8E93] hover:text-white/90'
+              }`}
+            >
+              {item.label}
+              {item.count != null && item.count > 0 ? (
+                <span className="ml-1 text-[11px] font-medium text-[#6B7280]">({item.count})</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Content — overflow-x skryté, aby široký obsah neroztáhl panel (flex min-width) */}
-      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 break-words">
+      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 break-words bg-[#252528]/30">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 size={32} className="animate-spin text-[#10B981]" />
             <span className="ml-3 text-[#6B7280]">Načítám data z Pipedrive...</span>
           </div>
-        ) : detail ? (
-          <>
-            {/* Contacts */}
-            {detail.persons && detail.persons.length > 0 && (
-              <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full">
-                <h3 className="text-[#8B5CF6] font-semibold mb-3 flex items-center gap-2">
-                  <User size={16} />
-                  Kontakty ({detail.persons.length})
+        ) : !detail ? (
+          tab === 'zakladni' ? (
+            <div className="space-y-4">
+              <div className="bg-[#252528] rounded-xl p-4 min-w-0 border border-white/10">
+                <h3 className="text-[#6EE7B7] font-semibold mb-3 flex items-center gap-2 text-sm">
+                  <MapPin size={16} />
+                  Adresa
                 </h3>
-                <div className="grid grid-cols-1 gap-4 min-w-0">
-                  {detail.persons.map((person: PersonData) => (
-                    <PersonContactCard key={person.id} person={person} />
-                  ))}
-                </div>
+                {addressLine ? (
+                  <p className="text-white/90 text-sm flex items-start gap-2 min-w-0 break-words">
+                    <MapPin size={14} className="shrink-0 mt-0.5 text-emerald-400/80" />
+                    <span>{addressLine}</span>
+                  </p>
+                ) : (
+                  <p className="text-[#6B7280] text-sm">Adresa není k dispozici.</p>
+                )}
+                <button
+                  type="button"
+                  onClick={openMapsNavigation}
+                  disabled={!addressLine.trim()}
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#F97316] py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#EA580C] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Navigation size={16} />
+                  Navigovat
+                </button>
               </div>
-            )}
-
-            {/* Aktivity obchodníka (Pipedrive) — před dealy */}
-            {detail.activities && detail.activities.length > 0 && (
-              <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full border border-white/10">
-                <h3 className="text-sky-400 font-semibold mb-3 flex items-center gap-2">
-                  <Activity size={16} />
-                  Aktivity obchodníka ({detail.activities.length})
-                </h3>
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {detail.activities.map((activity: ActivityData & { add_time?: string }) => (
-                    <div
-                      key={activity.id}
-                      className="bg-[#1C1C1E] rounded-lg p-2.5 text-sm min-w-0 border border-white/5"
-                    >
-                      <div className="flex items-start gap-2 min-w-0">
-                        <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${activity.done ? 'bg-[#10B981]' : 'bg-[#F59E0B]'}`} />
-                        <div className="min-w-0 flex-1">
-                          <span className="text-white break-words font-medium leading-snug">
-                            {activity.subject || activityTypeCs(activity.type) || 'Aktivita'}
-                          </span>
-                          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[11px] text-[#8E8E93]">
-                            {activity.type && (
-                              <span className="text-[#64748B]">{activityTypeCs(activity.type)}</span>
-                            )}
-                            {activity.user_name && (
-                              <span className="text-[#A5B4FC]">
-                                Obchodník: <span className="text-[#C7D2FE]">{activity.user_name}</span>
-                              </span>
-                            )}
-                          </div>
-                          {(activity.due_date || activity.add_time) && (
-                            <span className="text-[#6B7280] text-[11px] block mt-1">
-                              {activity.due_date ? `Termín: ${activity.due_date}` : ''}
-                              {activity.due_date && activity.add_time ? ' · ' : ''}
-                              {activity.add_time &&
-                                !Number.isNaN(Date.parse(String(activity.add_time))) &&
-                                `Vytvořeno: ${new Date(activity.add_time).toLocaleString('cs-CZ')}`}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="text-center py-8 rounded-xl border border-dashed border-white/10 bg-[#1C1C1E]/50">
+                <Briefcase size={40} className="mx-auto mb-3 text-[#6B7280] opacity-40" />
+                <p className="text-[#6B7280] text-sm mb-4">Pro kódy, předměty, lidi a CRM údaje načtěte data z Pipedrive.</p>
+                {onLoadDetail && (
+                  <button
+                    onClick={onLoadDetail}
+                    className="px-4 py-2 bg-[#10B981] text-white rounded-lg hover:bg-[#059669] transition-colors text-sm font-medium"
+                  >
+                    Načíst data
+                  </button>
+                )}
               </div>
-            )}
-
-            {/* Deals */}
-            {detail.deals && detail.deals.length > 0 && (
-              <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full">
-                <h3 className="text-[#F59E0B] font-semibold mb-3 flex items-center gap-2">
-                  <DollarSign size={16} />
-                  Dealy ({detail.deals.length})
-                </h3>
-                <div className="space-y-2">
-                  {detail.deals.map((deal: any) => (
-                    <DealItem key={deal.id} deal={deal} />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* No data */}
-            {!detail.persons?.length && !detail.deals?.length && !detail.activities?.length && (
-              <div className="text-center py-8 text-[#6B7280]">
-                <Building2 size={32} className="mx-auto mb-2 opacity-30" />
-                <p>Žádné kontakty, dealy ani aktivity nenalezeny</p>
-              </div>
-            )}
-          </>
+            </div>
+          ) : (
+            <div className="text-center py-12 text-[#6B7280] text-sm">
+              Nejprve načtěte data z Pipedrive (záložka Základní).
+            </div>
+          )
         ) : (
-          <div className="text-center py-12">
-            <Briefcase size={48} className="mx-auto mb-4 text-[#6B7280] opacity-30" />
-            <p className="text-[#6B7280] mb-4">Klikněte pro načtení dat z Pipedrive</p>
-            {onLoadDetail && (
-              <button
-                onClick={onLoadDetail}
-                className="px-4 py-2 bg-[#10B981] text-white rounded-lg hover:bg-[#059669] transition-colors"
-              >
-                Načíst data
-              </button>
+          <>
+            {tab === 'zakladni' && (
+              <div className="space-y-4">
+                <div className="bg-[#252528] rounded-xl p-4 min-w-0 border border-white/10">
+                  <h3 className="text-[#6EE7B7] font-semibold mb-3 flex items-center gap-2 text-sm">
+                    <MapPin size={16} />
+                    Adresa
+                  </h3>
+                  {addressLine ? (
+                    <p className="text-white/90 text-sm flex items-start gap-2 min-w-0 break-words">
+                      <MapPin size={14} className="shrink-0 mt-0.5 text-emerald-400/80" />
+                      <span>{addressLine}</span>
+                    </p>
+                  ) : (
+                    <p className="text-[#6B7280] text-sm">Adresa není k dispozici.</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={openMapsNavigation}
+                    disabled={!addressLine.trim()}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-[#F97316] py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#EA580C] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Navigation size={16} />
+                    Navigovat
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-white/10 bg-[#10B981]/12 px-4 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6EE7B7] mb-2 flex items-center gap-1.5">
+                    <Hash size={12} className="shrink-0" />
+                    Kódy
+                  </p>
+                  {detail.teacherCode || detail.studentCode ? (
+                    <div className="flex flex-wrap gap-3 min-w-0">
+                      {detail.teacherCode && (
+                        <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
+                          <span className="text-[#94A3B8] text-xs block">Učitel</span>
+                          <div className="mt-1 flex items-center gap-2 min-w-0">
+                            <code className="min-w-0 flex-1 font-mono text-base text-white tracking-wider break-all">
+                              {detail.teacherCode}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() => void copyAccessCode(detail.teacherCode!, 'teacher')}
+                              className="shrink-0 rounded-lg p-2 text-emerald-300/90 hover:bg-white/10 hover:text-emerald-200 transition-colors"
+                              title="Kopírovat"
+                              aria-label="Kopírovat kód učitele"
+                            >
+                              {copiedRole === 'teacher' ? (
+                                <Check size={22} strokeWidth={2.25} className="text-emerald-400" aria-hidden />
+                              ) : (
+                                <Copy size={22} strokeWidth={2.25} aria-hidden />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {detail.studentCode && (
+                        <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
+                          <span className="text-[#94A3B8] text-xs block">Žák</span>
+                          <div className="mt-1 flex items-center gap-2 min-w-0">
+                            <code className="min-w-0 flex-1 font-mono text-base text-white tracking-wider break-all">
+                              {detail.studentCode}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() => void copyAccessCode(detail.studentCode!, 'student')}
+                              className="shrink-0 rounded-lg p-2 text-emerald-300/90 hover:bg-white/10 hover:text-emerald-200 transition-colors"
+                              title="Kopírovat"
+                              aria-label="Kopírovat kód žáka"
+                            >
+                              {copiedRole === 'student' ? (
+                                <Check size={22} strokeWidth={2.25} className="text-emerald-400" aria-hidden />
+                              ) : (
+                                <Copy size={22} strokeWidth={2.25} aria-hidden />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-[#6B7280] text-sm leading-relaxed">
+                      V dealu ani u organizace/kontaktů jsme nenašli pole typu trial / teacher code / student code.
+                    </p>
+                  )}
+                </div>
+
+                <div className="bg-[#252528] rounded-xl p-4 min-w-0 border border-white/10">
+                  <h3 className="text-amber-200/90 font-semibold mb-3 flex items-center gap-2 text-sm">
+                    <BookOpen size={16} />
+                    Zakoupené předměty
+                  </h3>
+                  {purchasedUnique.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {purchasedUnique.map((name) => (
+                        <span
+                          key={name}
+                          className="inline-flex rounded-full border border-white/12 bg-white/[0.06] px-2.5 py-1 text-[11px] text-white/90"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-[#6B7280] text-sm leading-relaxed">
+                      Žádné produkty u dealů ani hodnoty v polích typu předmět / kategorie u dealu nebo organizace.
+                    </p>
+                  )}
+                </div>
+              </div>
             )}
-          </div>
+
+            {tab === 'lidi' && (
+              <>
+                {detail.persons && detail.persons.length > 0 ? (
+                  <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full border border-white/10">
+                    <h3 className="text-[#8B5CF6] font-semibold mb-3 flex items-center gap-2">
+                      <User size={16} />
+                      Lidi ({detail.persons.length})
+                    </h3>
+                    <div className="grid grid-cols-1 gap-4 min-w-0">
+                      {detail.persons.map((person: PersonData) => (
+                        <PersonContactCard key={person.id} person={person} />
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-10 text-[#6B7280] text-sm rounded-xl border border-white/5 bg-[#252528]/50">
+                    <User size={28} className="mx-auto mb-2 opacity-30" />
+                    Žádné kontakty u této školy.
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'aktivity' && (
+              <>
+                {detail.activities && detail.activities.length > 0 ? (
+                  <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full border border-white/10">
+                    <h3 className="text-sky-400 font-semibold mb-3 flex items-center gap-2">
+                      <Activity size={16} />
+                      Aktivity obchodníka ({detail.activities.length})
+                    </h3>
+                    <div className="space-y-2 max-h-[min(28rem,70vh)] overflow-y-auto pr-1">
+                      {detail.activities.map((activity: ActivityData & { add_time?: string }) => (
+                        <div
+                          key={activity.id}
+                          className="bg-[#1C1C1E] rounded-lg p-2.5 text-sm min-w-0 border border-white/5"
+                        >
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${activity.done ? 'bg-[#10B981]' : 'bg-[#F59E0B]'}`} />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-white break-words font-medium leading-snug">
+                                {activity.subject || activityTypeCs(activity.type) || 'Aktivita'}
+                              </span>
+                              <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[11px] text-[#8E8E93]">
+                                {activity.type && (
+                                  <span className="text-[#64748B]">{activityTypeCs(activity.type)}</span>
+                                )}
+                                {activity.user_name && (
+                                  <span className="text-[#A5B4FC]">
+                                    Obchodník: <span className="text-[#C7D2FE]">{activity.user_name}</span>
+                                  </span>
+                                )}
+                              </div>
+                              {(activity.due_date || activity.add_time) && (
+                                <span className="text-[#6B7280] text-[11px] block mt-1">
+                                  {activity.due_date ? `Termín: ${activity.due_date}` : ''}
+                                  {activity.due_date && activity.add_time ? ' · ' : ''}
+                                  {activity.add_time &&
+                                    !Number.isNaN(Date.parse(String(activity.add_time))) &&
+                                    `Vytvořeno: ${new Date(activity.add_time).toLocaleString('cs-CZ')}`}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-10 text-[#6B7280] text-sm rounded-xl border border-white/5 bg-[#252528]/50">
+                    <Activity size={28} className="mx-auto mb-2 opacity-30" />
+                    Žádné aktivity obchodníka.
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'deals' && (
+              <>
+                {detail.deals && detail.deals.length > 0 ? (
+                  <div className="bg-[#252528] rounded-xl p-4 min-w-0 max-w-full border border-white/10">
+                    <h3 className="text-[#F59E0B] font-semibold mb-3 flex items-center gap-2">
+                      <DollarSign size={16} />
+                      Deals ({detail.deals.length})
+                    </h3>
+                    <div className="space-y-2">
+                      {detail.deals.map((deal: any) => (
+                        <DealItem key={deal.id} deal={deal} />
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-10 text-[#6B7280] text-sm rounded-xl border border-white/5 bg-[#252528]/50">
+                    <DollarSign size={28} className="mx-auto mb-2 opacity-30" />
+                    Žádné dealy.
+                  </div>
+                )}
+              </>
+            )}
+
+          </>
         )}
       </div>
     </div>

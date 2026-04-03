@@ -2480,36 +2480,703 @@ app.post('/make-server-93a20b6f/webinar-checkin', async (c) => {
   }
 });
 
-/* ── Admin: registrace prehled vsech webinaru ──────��────────────── */
+/**
+ * Jedna audience pro admin (číslo jako v Mailchimp UI — nesčítat newsletter + bez newsletteru).
+ * MAILCHIMP_AUDIENCE_PRIMARY = přesně ten list (např. Vividbooks - Czech & Slovak), jinak NEWSLETTER.
+ */
+function getMailchimpAdminListId(): string | null {
+  const primary = Deno.env.get('MAILCHIMP_AUDIENCE_PRIMARY')?.trim();
+  if (primary) return primary;
+  const nl = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER')?.trim();
+  if (nl) return nl;
+  return Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER')?.trim() || null;
+}
+
+async function mailchimpFetchTagsByPrefix(
+  listId: string,
+  prefix: string,
+  mcBase: string,
+  mcAuth: string,
+): Promise<Array<{ id: number; name: string }>> {
+  const url = `${mcBase}/lists/${listId}/tag-search?name=${encodeURIComponent(prefix)}`;
+  const res = await fetch(url, { headers: { Authorization: `Basic ${mcAuth}` } });
+  if (!res.ok) {
+    const errText = await res.text();
+    console.log(`[Mailchimp] tag-search list=${listId} prefix="${prefix.slice(0, 48)}": ${res.status} ${errText.slice(0, 220)}`);
+    return [];
+  }
+  const j = await res.json();
+  return (j.tags || []) as Array<{ id: number; name: string }>;
+}
+
+/** Tag = statický segment — id z tag-search odpovídá segment_id. */
+async function mailchimpResolveTagSegmentHit(
+  listId: string,
+  tagName: string,
+  mcBase: string,
+  mcAuth: string,
+): Promise<{ id: number; name: string } | null> {
+  let tags = await mailchimpFetchTagsByPrefix(listId, tagName, mcBase, mcAuth);
+  let hit = tags.find((t) => t.name === tagName);
+  if (!hit && tagName.length > 1) {
+    tags = await mailchimpFetchTagsByPrefix(listId, tagName.slice(0, Math.min(60, tagName.length)), mcBase, mcAuth);
+    hit = tags.find((t) => t.name === tagName);
+  }
+  if (!hit && tagName.startsWith('webinar-')) {
+    tags = await mailchimpFetchTagsByPrefix(listId, 'webinar-', mcBase, mcAuth);
+    hit = tags.find((t) => t.name === tagName);
+  }
+  if (!hit) {
+    console.log(`[Mailchimp] žádný tag přesné jméno v listu ${listId}: "${tagName}"`);
+    return null;
+  }
+  return hit;
+}
+
+/**
+ * Počet kontaktů s tagem v jedné audience.
+ * Tagy = statické segmenty: tag-search → GET /segments/{id} → member_count.
+ */
+async function mailchimpMemberCountForTag(listId: string, tagName: string, mcBase: string, mcAuth: string): Promise<number | null> {
+  const headers = { Authorization: `Basic ${mcAuth}` };
+  const hit = await mailchimpResolveTagSegmentHit(listId, tagName, mcBase, mcAuth);
+  if (!hit) return null;
+  const segRes = await fetch(`${mcBase}/lists/${listId}/segments/${hit.id}?fields=member_count`, { headers });
+  if (!segRes.ok) {
+    const t = await segRes.text();
+    console.log(`[Mailchimp] GET segment ${hit.id} list ${listId}: ${segRes.status} ${t.slice(0, 220)}`);
+    return null;
+  }
+  const seg = await segRes.json();
+  return typeof seg.member_count === 'number' ? seg.member_count : null;
+}
+
+/** MD5 hash přihlášení — musí odpovídat Mailchimp subscriber_hash (lowercase e-mail). */
+function mailchimpSubscriberHash(member: any): string {
+  const e = String(member?.email_address ?? member?.email ?? '').trim().toLowerCase();
+  return md5(e);
+}
+
+/** Tagy z těla člena (GET /members/{hash} vrací tags[] s { name }). */
+function tagsFromMemberObject(member: any): string[] {
+  const raw = member?.tags;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((x: any) => (typeof x === 'string' ? x : x?.name)).filter(Boolean);
+}
+
+/** Popisky merge polí (MMERGEn → „Škola“) — jednou na audience. */
+async function mailchimpFetchMergeFieldLabels(
+  listId: string,
+  mcBase: string,
+  mcAuth: string,
+): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  let offset = 0;
+  const count = 100;
+  const headers = { Authorization: `Basic ${mcAuth}` };
+  while (true) {
+    const res = await fetch(
+      `${mcBase}/lists/${listId}/merge-fields?count=${count}&offset=${offset}`,
+      { headers },
+    );
+    if (!res.ok) break;
+    const j = await res.json();
+    const fields = j.merge_fields || [];
+    for (const f of fields) {
+      if (f.tag && f.name) out[String(f.tag)] = String(f.name);
+    }
+    if (fields.length < count) break;
+    offset += count;
+  }
+  return out;
+}
+
+/** Škola / další merge pole (FNAME, LNAME, PHONE zobrazujeme zvlášť). */
+function mergeFieldsSchoolAndExtra(
+  mf: Record<string, unknown>,
+  labelByTag?: Record<string, string>,
+): { school: string; extra: string } {
+  const skip = new Set(['FNAME', 'LNAME', 'PHONE']);
+  const schoolBits: string[] = [];
+  const extraBits: string[] = [];
+  const schoolRe =
+    /school|skol|škola|instit|company|zaměst|zamest|ico|ičo|i[čc]o|org|firma|instituce|organizace|pozice|funkce|titul|role|učitel|ucitel|gymn|zš|zs|střední|stredni|ss|mateřsk|matersk|mš|ms/i;
+
+  for (const [k, v] of Object.entries(mf)) {
+    if (skip.has(k)) continue;
+    const s = String(v ?? '').trim();
+    if (!s) continue;
+    const label = (labelByTag && labelByTag[k]) ? String(labelByTag[k]) : '';
+    const combined = `${label} ${k}`.toLowerCase();
+    if (schoolRe.test(combined)) {
+      schoolBits.push(label ? `${label}: ${s}` : s);
+    } else {
+      extraBits.push(label ? `${label}: ${s}` : `${k}: ${s}`);
+    }
+  }
+  return {
+    school: schoolBits.join(' · '),
+    extra: extraBits.join(' · '),
+  };
+}
+
+async function mailchimpMemberTagNames(
+  listId: string,
+  member: any,
+  mcBase: string,
+  mcAuth: string,
+): Promise<string[]> {
+  const fromObj = tagsFromMemberObject(member);
+  if (fromObj.length > 0) return fromObj;
+  const hash = mailchimpSubscriberHash(member);
+  if (!hash) return [];
+  const res = await fetch(`${mcBase}/lists/${listId}/members/${hash}/tags`, {
+    headers: { Authorization: `Basic ${mcAuth}` },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    if (res.status !== 404) {
+      console.log(`[Mailchimp] member tags ${hash.slice(0, 8)}…: ${res.status} ${t.slice(0, 120)}`);
+    }
+    return [];
+  }
+  const j = await res.json();
+  return (j.tags || []).map((x: any) => x.name).filter(Boolean);
+}
+
+async function mailchimpEnrichMembersForAdmin(
+  listId: string,
+  raw: any[],
+  mcBase: string,
+  mcAuth: string,
+): Promise<any[]> {
+  const labelByTag = await mailchimpFetchMergeFieldLabels(listId, mcBase, mcAuth);
+  const batch = 8;
+  const out: any[] = [];
+  const headers = { Authorization: `Basic ${mcAuth}` };
+  for (let i = 0; i < raw.length; i += batch) {
+    const slice = raw.slice(i, i + batch);
+    const part = await Promise.all(slice.map(async (m: any) => {
+      const hash = mailchimpSubscriberHash(m);
+      let full: any = m;
+      try {
+        const res = await fetch(`${mcBase}/lists/${listId}/members/${hash}`, { headers });
+        if (res.ok) full = await res.json();
+      } catch {
+        /* segment data only */
+      }
+      const segMf = (m.merge_fields && typeof m.merge_fields === 'object')
+        ? m.merge_fields as Record<string, unknown>
+        : {};
+      const fullMf = (full.merge_fields && typeof full.merge_fields === 'object')
+        ? full.merge_fields as Record<string, unknown>
+        : {};
+      const mf = { ...segMf, ...fullMf };
+      const { school, extra } = mergeFieldsSchoolAndExtra(mf, labelByTag);
+      let tags = tagsFromMemberObject(full);
+      if (tags.length === 0) {
+        tags = await mailchimpMemberTagNames(listId, { ...full, email_address: full.email_address || m.email_address }, mcBase, mcAuth);
+      }
+      return {
+        email: String(full.email_address || m.email_address || ''),
+        firstName: String(mf.FNAME || ''),
+        lastName: String(mf.LNAME || ''),
+        phone: String(mf.PHONE || ''),
+        status: String(full.status || m.status || ''),
+        school,
+        mergeExtra: extra,
+        tags,
+      };
+    }));
+    out.push(...part);
+  }
+  return out;
+}
+
+async function mailchimpFetchAllSegmentMembers(
+  listId: string,
+  segmentId: number,
+  mcBase: string,
+  mcAuth: string,
+): Promise<any[]> {
+  const headers = { Authorization: `Basic ${mcAuth}` };
+  const all: any[] = [];
+  let offset = 0;
+  const page = 1000;
+  while (true) {
+    /** Bez `fields` — omezené fields umí u některých účtů vracet prázdná merge_fields / chybu. */
+    const url = `${mcBase}/lists/${listId}/segments/${segmentId}/members?count=${page}&offset=${offset}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const t = await res.text();
+      console.log(`[Mailchimp] segment members ${segmentId}: ${res.status} ${t.slice(0, 220)}`);
+      break;
+    }
+    const j = await res.json();
+    const members = j.members || [];
+    all.push(...members);
+    if (members.length < page) break;
+    offset += page;
+  }
+  return all;
+}
+
+function stripDiacriticsCs(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '').replace(/[’ʼ]/g, "'").replace(/[–—]/g, '-');
+}
+
+/**
+ * Kandidátní názvy tagů v Mailchimp: explicitní z CMS, webinar-{slug},
+ * a tagy nalezené podle prefixu titulku + roku (kampaně často používají
+ * „Název – datum“ místo technického webinar-slug).
+ */
+async function mailchimpCollectCandidateTagNamesForWebinar(
+  w: any,
+  listId: string,
+  mcBase: string,
+  mcAuth: string,
+): Promise<string[]> {
+  const slug = String(w.slug || w.id || '').trim() || w.id;
+  const set = new Set<string>();
+  const explicit = w.mailchimpTagName && String(w.mailchimpTagName).trim();
+  if (explicit) set.add(explicit);
+  set.add(`webinar-${slug}`);
+
+  const title = stripDiacriticsCs(String(w.title || '')).replace(/\s+/g, ' ').trim();
+  if (title.length >= 4) {
+    const prefix = title.slice(0, 48);
+    const res = await fetch(
+      `${mcBase}/lists/${listId}/tag-search?name=${encodeURIComponent(prefix)}`,
+      { headers: { Authorization: `Basic ${mcAuth}` } },
+    );
+    if (res.ok) {
+      const j = await res.json();
+      const tags = (j.tags || []) as Array<{ name: string }>;
+      const y = String(w.year);
+      const frag = title.slice(0, 16).toLowerCase();
+      for (const t of tags) {
+        if (!t.name.includes(y)) continue;
+        const tn = stripDiacriticsCs(t.name).toLowerCase();
+        if (tn.startsWith(frag.slice(0, 8)) || tn.includes(frag.slice(0, 12))) {
+          set.add(t.name);
+        }
+      }
+    }
+  }
+  return [...set];
+}
+
+/** Vybere tag s nejvyšším počtem v **jedné** admin audience (shoda s MC UI). */
+async function mailchimpBestTagForWebinar(w: any): Promise<{ count: number | null; tag: string }> {
+  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const adminListId = getMailchimpAdminListId();
+  const slug = String(w.slug || w.id || '').trim() || w.id;
+  const fallbackTag = `webinar-${slug}`;
+  if (!mcApiKey || !adminListId) {
+    return { count: null, tag: (w.mailchimpTagName && String(w.mailchimpTagName).trim()) || fallbackTag };
+  }
+  const dc = mcApiKey.split('-').pop() || 'us19';
+  const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+  const mcAuth = btoa(`anystring:${mcApiKey}`);
+  const names = await mailchimpCollectCandidateTagNamesForWebinar(w, adminListId, mcBase, mcAuth);
+  let bestTag = (w.mailchimpTagName && String(w.mailchimpTagName).trim()) || fallbackTag;
+  let bestCount = -1;
+  for (const name of names) {
+    const total = await mailchimpTagCountOnAdminList(name);
+    if (total == null) continue;
+    if (total > bestCount) {
+      bestCount = total;
+      bestTag = name;
+    }
+  }
+  if (bestCount < 0) return { count: null, tag: bestTag };
+  return { count: bestCount, tag: bestTag };
+}
+
+/** Počet kontaktů s tagem jen v admin audience (nesčítat dva listy). */
+async function mailchimpTagCountOnAdminList(tagName: string): Promise<number | null> {
+  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const listId = getMailchimpAdminListId();
+  if (!mcApiKey || !listId) return null;
+  const dc = mcApiKey.split('-').pop() || 'us19';
+  const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+  const mcAuth = btoa(`anystring:${mcApiKey}`);
+  return mailchimpMemberCountForTag(listId, tagName, mcBase, mcAuth);
+}
+
+const MAILCHIMP_WEBINAR_TAG_CACHE_MS = 5 * 60 * 1000;
+
+async function mailchimpWebinarTagCountCached(w: any): Promise<{ count: number | null; tag: string }> {
+  const slug = String(w.slug || w.id || '').trim() || w.id;
+  const cacheKey = `mailchimp_webinar_tag_best_v4_${slug}`;
+  try {
+    const cached = await kv.get(cacheKey) as { count?: number; tag?: string; expiresAt?: number } | null;
+    if (
+      cached && typeof cached.count === 'number' && typeof cached.tag === 'string' &&
+      typeof cached.expiresAt === 'number' && cached.expiresAt > Date.now()
+    ) {
+      return { count: cached.count, tag: cached.tag };
+    }
+  } catch {
+    /* ignore */
+  }
+  const { count, tag } = await mailchimpBestTagForWebinar(w);
+  if (count != null) {
+    try {
+      await kv.set(cacheKey, { count, tag, expiresAt: Date.now() + MAILCHIMP_WEBINAR_TAG_CACHE_MS });
+    } catch {
+      /* ignore */
+    }
+  }
+  return { count, tag };
+}
+
+const CS_MONTH_NAMES_ADMIN = [
+  'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen', 'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
+];
+
+/** Jednotný čas začátku webináře pro řazení (den + měsíc + rok + volitelně čas). */
+function webinarEventTimestampMs(w: {
+  year: number;
+  monthNum?: number;
+  day: number;
+  monthName?: string;
+  time?: string;
+}): number {
+  let monthIdx = 0;
+  if (typeof w.monthNum === 'number' && w.monthNum >= 1 && w.monthNum <= 12) {
+    monthIdx = w.monthNum - 1;
+  } else if (w.monthName) {
+    const mn = String(w.monthName).trim().toLowerCase();
+    const idx = CS_MONTH_NAMES_ADMIN.findIndex((m) => m.toLowerCase() === mn);
+    if (idx >= 0) monthIdx = idx;
+  }
+  const d = new Date(w.year, monthIdx, Number(w.day) || 1);
+  const t = w.time ? String(w.time).match(/^(\d{1,2}):(\d{2})/) : null;
+  if (t) d.setHours(parseInt(t[1], 10), parseInt(t[2], 10), 0, 0);
+  return d.getTime();
+}
+
+/* ── Admin: registrace prehled (zatím jen plánované — Mailchimp × N minulých = timeout) ─ */
 app.get('/make-server-93a20b6f/admin/registrace', async (c) => {
   try {
-    const webinars = await getCollection(WEBINARS_KEY);
-    const results = await Promise.all(
-      webinars.map(async (w: any) => {
-        const prefix = `webinar_reg_${w.id}_`;
-        const regs = await kv.getByPrefix(prefix);
-        const attended = regs.filter((r: any) => r.attended).length;
-        const withTrial = regs.filter((r: any) => r.trialToken).length;
-        return {
-          webinarId: w.id,
-          webinarTitle: w.title,
-          day: w.day, monthName: w.monthName, year: w.year, time: w.time,
-          isPast: w.isPast,
-          total: regs.length,
-          attended,
-          withTrial,
-          registrations: regs,
-        };
-      })
-    );
-    results.sort((a: any, b: any) => {
-      if (a.isPast !== b.isPast) return a.isPast ? 1 : -1;
-      return 0;
-    });
-    return c.json({ webinars: results });
+    const webinarsAll = await getCollection(WEBINARS_KEY);
+    const webinars = (webinarsAll as any[]).filter((w) => !w.isPast);
+    const results: any[] = [];
+    for (const w of webinars) {
+      const prefix = `webinar_reg_${w.id}_`;
+      const regs = await kv.getByPrefix(prefix);
+      const attended = regs.filter((r: any) => r.attended).length;
+      const withTrial = regs.filter((r: any) => r.trialToken).length;
+      const slug = String(w.slug || w.id || '').trim() || w.id;
+      let mailchimpTag = `webinar-${slug}`;
+      let mailchimpTagCount: number | null = null;
+      try {
+        const mc = await mailchimpWebinarTagCountCached(w);
+        mailchimpTagCount = mc.count;
+        mailchimpTag = mc.tag;
+      } catch (e: any) {
+        console.log(`[Admin] Mailchimp tag count webinar ${slug}: ${e?.message || e}`);
+      }
+      results.push({
+        webinarId: w.id,
+        webinarTitle: w.title,
+        day: w.day,
+        monthName: w.monthName,
+        monthNum: w.monthNum,
+        year: w.year,
+        time: w.time,
+        isPast: w.isPast,
+        total: regs.length,
+        attended,
+        withTrial,
+        registrations: regs,
+        mailchimpTag,
+        mailchimpTagCount,
+      });
+    }
+    results.sort((a: any, b: any) => webinarEventTimestampMs(a) - webinarEventTimestampMs(b));
+    return c.json({ webinars: results, scope: 'upcoming_only' });
   } catch (err: any) {
     console.log(`[Admin] Registrace prehled chyba: ${err.message}`);
     return c.json({ error: `Chyba: ${err.message}` }, 500);
+  }
+});
+
+/** CSV kontaktů z Mailchimp — stejný tag a **jedna** audience jako číslo (MAILCHIMP_AUDIENCE_PRIMARY nebo NEWSLETTER). */
+app.get('/make-server-93a20b6f/admin/registrace/mailchimp-csv/:webinarId', async (c) => {
+  try {
+    const webinarId = c.req.param('webinarId');
+    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const adminListId = getMailchimpAdminListId();
+    if (!mcApiKey || !adminListId) {
+      return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
+    }
+    const webinarsAll = await getCollection(WEBINARS_KEY);
+    const w = (webinarsAll as any[]).find((x) => String(x.id) === String(webinarId));
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+
+    const dc = mcApiKey.split('-').pop() || 'us19';
+    const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+    const mcAuth = btoa(`anystring:${mcApiKey}`);
+
+    const { tag } = await mailchimpWebinarTagCountCached(w);
+    const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
+    if (!hit) {
+      return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
+    }
+
+    const members = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+    const rows: string[][] = [
+      ['E-mail', 'Jméno', 'Příjmení', 'Telefon', 'Stav'],
+      ...members.map((m: any) => {
+        const mf = m.merge_fields || {};
+        return [
+          m.email_address || '',
+          String(mf.FNAME || ''),
+          String(mf.LNAME || ''),
+          String(mf.PHONE || ''),
+          String(m.status || ''),
+        ];
+      }),
+    ];
+    const csvContent = '\uFEFF' + rows.map((row) =>
+      row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+    ).join('\n');
+    const safeName = String(w.slug || w.id).replace(/[^a-z0-9]+/gi, '-').slice(0, 80) || 'webinar';
+    c.header('Content-Type', 'text/csv; charset=utf-8');
+    c.header('Content-Disposition', `attachment; filename="mailchimp-${safeName}.csv"`);
+    return c.body(csvContent);
+  } catch (err: any) {
+    console.log(`[Admin] Mailchimp CSV chyba: ${err.message}`);
+    return c.json({ error: `Chyba: ${err.message}` }, 500);
+  }
+});
+
+/** JSON kontaktů v Mailchimp (stejný tag + audience jako číslo) — pro zobrazení v admin dlaždici. */
+app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', async (c) => {
+  try {
+    const webinarId = c.req.param('webinarId');
+    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const adminListId = getMailchimpAdminListId();
+    if (!mcApiKey || !adminListId) {
+      return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
+    }
+    const webinarsAll = await getCollection(WEBINARS_KEY);
+    const w = (webinarsAll as any[]).find((x) => String(x.id) === String(webinarId));
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+
+    const dc = mcApiKey.split('-').pop() || 'us19';
+    const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+    const mcAuth = btoa(`anystring:${mcApiKey}`);
+
+    const { tag } = await mailchimpWebinarTagCountCached(w);
+    const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
+    if (!hit) {
+      return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
+    }
+
+    const raw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+    const members = await mailchimpEnrichMembersForAdmin(adminListId, raw, mcBase, mcAuth);
+    return c.json({ tag, members });
+  } catch (err: any) {
+    console.log(`[Admin] Mailchimp members JSON chyba: ${err.message}`);
+    return c.json({ error: err?.message ? String(err.message) : 'Neznámá chyba při načítání Mailchimp kontaktů.' }, 500);
+  }
+});
+
+const MARKETING_CONTACTS_TABLE = 'marketing_contacts_93a20b6f';
+const MARKETING_CONTACTS_META_KEY = 'marketing_contacts_sync_meta_v1';
+const MARKETING_CONTACTS_PROGRESS_KEY = 'marketing_contacts_sync_progress_v1';
+
+/**
+ * Import audience z Mailchimp po dávkách (max 5 stránek / volání ≈ 5k řádků),
+ * aby Edge funkce neskončila 504. Klient nebo cron volá opakovaně, dokud `done: true`.
+ */
+async function marketingContactsSyncFromMailchimp(opts: { reset?: boolean }): Promise<{
+  synced: number;
+  syncedThisRun: number;
+  listId: string;
+  done: boolean;
+  offset: number;
+}> {
+  if (opts.reset) {
+    try {
+      await kv.del(MARKETING_CONTACTS_PROGRESS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const listId = getMailchimpAdminListId();
+  const sb = getServiceSupabaseClient();
+  if (!mcApiKey || !listId) throw new Error('Mailchimp nebo audience není nastaveno.');
+  if (!sb) throw new Error('SUPABASE_SERVICE_ROLE_KEY není nakonfigurován.');
+
+  const dc = mcApiKey.split('-').pop() || 'us19';
+  const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+  const mcAuth = btoa(`anystring:${mcApiKey}`);
+  const labelByTag = await mailchimpFetchMergeFieldLabels(listId, mcBase, mcAuth);
+  const headers = { Authorization: `Basic ${mcAuth}` };
+
+  const page = 1000;
+  const maxPagesPerInvocation = 5;
+
+  const prev = (opts.reset ? null : (await kv.get(MARKETING_CONTACTS_PROGRESS_KEY)) as {
+    offset: number;
+    totalLoaded: number;
+    listId: string;
+  } | null);
+
+  let offset = prev?.offset ?? 0;
+  let totalLoaded = prev?.totalLoaded ?? 0;
+  let syncedThisRun = 0;
+  let pagesThisRun = 0;
+
+  while (pagesThisRun < maxPagesPerInvocation) {
+    const res = await fetch(
+      `${mcBase}/lists/${listId}/members?count=${page}&offset=${offset}`,
+      { headers },
+    );
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(`Mailchimp members ${res.status}: ${t.slice(0, 400)}`);
+    }
+    const j = await res.json();
+    const members = j.members || [];
+    const rows = members.map((m: any) => {
+      const mf = (m.merge_fields && typeof m.merge_fields === 'object')
+        ? m.merge_fields as Record<string, unknown>
+        : {};
+      const { school, extra } = mergeFieldsSchoolAndExtra(mf, labelByTag);
+      const tags = tagsFromMemberObject(m);
+      const email = String(m.email_address || '').toLowerCase().trim();
+      const schoolText = [school, extra].filter(Boolean).join(' · ').slice(0, 4000) || null;
+      return {
+        email_hash: md5(email),
+        email,
+        list_id: listId,
+        status: String(m.status || ''),
+        merge_fields: mf,
+        tags,
+        school: schoolText,
+        synced_at: new Date().toISOString(),
+      };
+    });
+    if (rows.length) {
+      const chunk = 400;
+      for (let i = 0; i < rows.length; i += chunk) {
+        const slice = rows.slice(i, i + chunk);
+        const { error } = await sb.from(MARKETING_CONTACTS_TABLE).upsert(slice, { onConflict: 'email_hash' });
+        if (error) throw new Error(error.message);
+      }
+    }
+    syncedThisRun += rows.length;
+    totalLoaded += rows.length;
+
+    if (members.length < page) {
+      await kv.set(MARKETING_CONTACTS_META_KEY, {
+        lastSyncedAt: new Date().toISOString(),
+        totalRows: totalLoaded,
+        listId,
+      });
+      try {
+        await kv.del(MARKETING_CONTACTS_PROGRESS_KEY);
+      } catch {
+        /* ignore */
+      }
+      return {
+        synced: totalLoaded,
+        syncedThisRun,
+        listId,
+        done: true,
+        offset: 0,
+      };
+    }
+
+    offset += page;
+    pagesThisRun++;
+  }
+
+  await kv.set(MARKETING_CONTACTS_PROGRESS_KEY, {
+    offset,
+    totalLoaded,
+    listId,
+  });
+  return {
+    synced: totalLoaded,
+    syncedThisRun,
+    listId,
+    done: false,
+    offset,
+  };
+}
+
+/** Meta posledního syncu (KV). */
+app.get('/make-server-93a20b6f/admin/marketing/contacts/meta', async (c) => {
+  try {
+    const meta = (await kv.get(MARKETING_CONTACTS_META_KEY)) as {
+      lastSyncedAt?: string;
+      totalRows?: number;
+      listId?: string;
+    } | null;
+    return c.json(meta || { lastSyncedAt: null, totalRows: 0, listId: null });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+/** Ruční / cron sync z Mailchimp — jedno volání = max ~5k řádků; opakujte, dokud `done: true`. Body: `{ "reset": true }` = začít znovu od offsetu 0. */
+app.post('/make-server-93a20b6f/admin/marketing/contacts/sync', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const reset = !!(body as { reset?: boolean }).reset;
+    const r = await marketingContactsSyncFromMailchimp({ reset });
+    console.log(
+      `[Marketing contacts] Sync batch: +${r.syncedThisRun} (celkem ${r.synced}), done=${r.done}, list ${r.listId}`,
+    );
+    return c.json({
+      ok: true,
+      synced: r.synced,
+      syncedThisRun: r.syncedThisRun,
+      listId: r.listId,
+      done: r.done,
+      offset: r.offset,
+    });
+  } catch (e: any) {
+    console.log(`[Marketing contacts] Sync chyba: ${e.message}`);
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+/** Filtrovaný výpis lokální kopie kontaktů. */
+app.get('/make-server-93a20b6f/admin/marketing/contacts', async (c) => {
+  try {
+    const sb = getServiceSupabaseClient();
+    if (!sb) return c.json({ error: 'Supabase service role není nakonfigurován.' }, 503);
+    const q = (c.req.query('q') || '').trim();
+    const school = (c.req.query('school') || '').trim();
+    const tag = (c.req.query('tag') || '').trim();
+    const status = (c.req.query('status') || '').trim().toLowerCase();
+    const limit = Math.min(200, Math.max(1, parseInt(c.req.query('limit') || '50', 10) || 50));
+    const offset = Math.max(0, parseInt(c.req.query('offset') || '0', 10) || 0);
+
+    let query = sb.from(MARKETING_CONTACTS_TABLE).select('*', { count: 'exact' });
+    if (q) query = query.ilike('email', `%${q}%`);
+    if (school) query = query.ilike('school', `%${school}%`);
+    if (tag) query = query.contains('tags', [tag]);
+    if (status === 'subscribed') {
+      query = query.in('status', ['subscribed', 'SUBSCRIBED']);
+    } else if (status === 'unsubscribed') {
+      query = query.in('status', ['unsubscribed', 'UNSUBSCRIBED']);
+    }
+    query = query.order('email', { ascending: true }).range(offset, offset + limit - 1);
+    const { data, error, count } = await query;
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ rows: data || [], total: count ?? 0, limit, offset });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
   }
 });
 

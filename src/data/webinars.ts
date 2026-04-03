@@ -28,6 +28,11 @@ export interface Webinar {
   tags?: string[];
   /** Krátká citátová věta na kartu ve slideru; jinak se bere z popisu. */
   highlightQuote?: string;
+  /**
+   * Přesný název tagu v Mailchimp (jako v Audience), pokud se liší od `webinar-{slug}`.
+   * Např. „Jak na zlomky… – 7. 4. 2026 od 18.00“.
+   */
+  mailchimpTagName?: string;
 }
 
 const AVATAR = 'https://images.unsplash.com/photo-1769628027250-d2a7a5a4eb64?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiZWFyZGVkJTIwbWFsZSUyMHRlYWNoZXIlMjBwcm9mZXNzaW9uYWwlMjBwb3J0cmFpdHxlbnwxfHx8fDE3NzIzNTYzMDR8MA&ixlib=rb-4.1.0&q=80&w=200';

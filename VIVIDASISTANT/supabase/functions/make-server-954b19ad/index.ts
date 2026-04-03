@@ -1848,27 +1848,134 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
       if (Array.isArray(v)) return String(v[0] ?? '').trim();
       return String(v).trim();
     };
-    const teacherCode =
-      pickStr(pickOrgFieldValue(organizationCustomFields, ['kod ucitel', 'učitel'])) || undefined;
-    const studentCode =
-      pickStr(pickOrgFieldValue(organizationCustomFields, ['kod zak', 'kod žák', 'student'])) || undefined;
 
-    return c.json({
-      organization: orgWithOwner,
-      persons: enhancedPersons,
-      deals: deals.map((d: any) => {
+    const pickStrFlexible = (v: unknown): string => {
+      if (v == null) return '';
+      if (Array.isArray(v)) {
+        return v.map((x) => String(x).trim()).filter(Boolean).join(', ');
+      }
+      return String(v).trim();
+    };
+
+    /** Hodnota vypadá jako přístupový kód (ne e-mail, ne dlouhá věta). */
+    const looksLikeAccessCode = (s: string): boolean => {
+      const t = s.trim();
+      if (t.length < 3 || t.length > 96) return false;
+      if (/@|http|www\.|^\d{1,2}[./]\d/.test(t)) return false;
+      return /^[A-Za-z0-9\-_.]+$/.test(t);
+    };
+
+    const scoreTeacherFieldName = (nk: string): number => {
+      if (/pocet|počet|celkem|total|statist|sum|number|cislo|číslo|email|mail|@|telefon|phone|www|http|ico|dic|adresa|address/.test(nk)) {
+        return -10;
+      }
+      let s = 0;
+      if (/ucitel|učitel|teacher|pedagog|vyucuj|vyučuj/.test(nk)) s += 8;
+      if (/kod|code|pristup|access|login|heslo|password|token|pin|klíč|klic/.test(nk)) s += 5;
+      if (/trial/.test(nk) && /(teacher|ucitel|učitel)/.test(nk)) s += 14;
+      if (/zak|student|ziak|zák|pupil|dite|děti/.test(nk) && !/ucitel|učitel|teacher/.test(nk)) s -= 12;
+      return s;
+    };
+
+    const scoreStudentFieldName = (nk: string): number => {
+      if (/pocet|počet|celkem|total|statist|sum|email|mail|@|telefon|phone|www|http/.test(nk)) return -10;
+      let s = 0;
+      if (/zak|student|ziak|zák|pupil|dite|děti|ziaci|žáci/.test(nk)) s += 8;
+      if (/kod|code|pristup|access|login|heslo|password|token|pin|klíč|klic/.test(nk)) s += 5;
+      if (/trial/.test(nk) && /(student|zak|ziak|zák)/.test(nk)) s += 14;
+      if (/ucitel|učitel|teacher|pedagog/.test(nk) && !/(zak|student|ziak|zák)/.test(nk)) s -= 12;
+      return s;
+    };
+
+    const pickBestCodeFromFields = (
+      fields: Record<string, unknown>,
+      scoreFn: (nk: string) => number,
+    ): string | undefined => {
+      let best: { val: string; score: number } | null = null;
+      for (const [key, value] of Object.entries(fields)) {
+        const val = pickStrFlexible(value);
+        if (!val || !looksLikeAccessCode(val)) continue;
+        const nk = removeDiacritics(key);
+        const sc = scoreFn(nk);
+        if (sc <= 0) continue;
+        if (!best || sc > best.score || (sc === best.score && val.length > best.val.length)) {
+          best = { val, score: sc };
+        }
+      }
+      return best?.val;
+    };
+
+    const teacherHintsWide = [
+      'kod ucitel',
+      'kod učitel',
+      'kod ucitele',
+      'kód učitel',
+      'kod pro ucitele',
+      'teacher code',
+      'teachercode',
+      'trial teacher',
+      'access teacher',
+      'pristup ucitel',
+      'ucitel kod',
+      'učitel kód',
+      'helix',
+      'vividbooks ucitel',
+    ];
+    const studentHintsWide = [
+      'kod zak',
+      'kod žák',
+      'kod zaka',
+      'kod student',
+      'student code',
+      'studentcode',
+      'trial student',
+      'access student',
+      'pristup zak',
+      'zak kod',
+      'žiák kód',
+      'vividbooks student',
+    ];
+
+    const collectTokensFromOrgFields = (
+      fields: Record<string, unknown>,
+      keyTest: (nk: string) => boolean,
+    ): string[] => {
+      const out: string[] = [];
+      for (const [key, value] of Object.entries(fields)) {
+        const nk = removeDiacritics(key);
+        if (!keyTest(nk)) continue;
+        const raw = pickStrFlexible(value);
+        if (!raw) continue;
+        for (const part of raw.split(/[,;\n|]/).map((x) => x.trim()).filter(Boolean)) {
+          if (part.length > 1 && part.length < 200) out.push(part);
+        }
+      }
+      return out;
+    };
+
+    const subjectLikeKeys = (nk: string) =>
+      /(purchased|predmet|predmety|předmět|subject|produkty|objedn|licence|license|vivid|skupina|balik|balíček|sluzby|služby)/.test(
+        nk,
+      );
+    const categoryLikeKeys = (nk: string) =>
+      /(kategorie|kategoria|category|segment|typ zakaznik|typ zákazník|obor)/.test(nk);
+
+    const productNamesFromOrg = collectTokensFromOrgFields(organizationCustomFields, subjectLikeKeys);
+    const productCategoriesFromOrg = collectTokensFromOrgFields(organizationCustomFields, categoryLikeKeys);
+
+    const dealsWithProducts = await Promise.all(
+      deals.map(async (d: any) => {
         const customFields: Record<string, any> = {};
         for (const [key, value] of Object.entries(d)) {
           if (key.match(/^[a-f0-9]{40}$/) && value) {
             const fieldDef = dealFieldMap[key];
             const fieldName = fieldDef?.name || key;
-            
-            // Resolve value
+
             let resolvedValue = value;
             if (fieldDef) {
               if (typeof value === 'string' && value.includes(',')) {
-                const ids = value.split(',').map(v => v.trim());
-                resolvedValue = ids.map(id => fieldDef.options[id] || id);
+                const ids = value.split(',').map((v: string) => v.trim());
+                resolvedValue = ids.map((id: string) => fieldDef.options[id] || id);
               } else {
                 const strVal = String(value);
                 resolvedValue = fieldDef.options[strVal] || value;
@@ -1877,6 +1984,28 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
             customFields[fieldName] = resolvedValue;
           }
         }
+
+        let products: Array<{ name: string; quantity: number | null }> = [];
+        const did = pipedriveNumericId(d.id);
+        if (did != null) {
+          try {
+            const pr = await fetch(
+              `${PIPEDRIVE_BASE}/deals/${did}/products?limit=100&api_token=${pipedriveToken}`,
+            );
+            if (pr.ok) {
+              const pj = await pr.json();
+              products = (pj.data || [])
+                .map((item: any) => ({
+                  name: String(item?.name || '').trim(),
+                  quantity: Number(item?.quantity) || null,
+                }))
+                .filter((x: { name: string }) => Boolean(x.name));
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+
         const dealOwnerId = pipedriveNumericId(d.user_id);
         const ownerNameFromEmbed =
           d.user_id && typeof d.user_id === 'object' && (d.user_id as { name?: string }).name
@@ -1885,10 +2014,102 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
         return {
           ...d,
           customFields,
+          products,
           owner_name: ownerNameFromEmbed ?? (dealOwnerId != null ? userMap[dealOwnerId] ?? null : null),
-          statusColor: d.status === 'won' ? 'green' : d.status === 'lost' ? 'red' : 'yellow'
+          statusColor: d.status === 'won' ? 'green' : d.status === 'lost' ? 'red' : 'yellow',
         };
       }),
+    );
+
+    /** Nejdřív kódy z dealů (vyhrané první), pak doplnění z organizace a kontaktů. */
+    let teacherCode: string | undefined;
+    let studentCode: string | undefined;
+
+    /** Kódy a předměty často žijí ve vlastních polích dealu (např. TRIAL – TEACHER CODE, PURCHASED SUBJECT). */
+    const dealsOrdered = [...dealsWithProducts].sort((a: any, b: any) => {
+      const rank = (s: string) => (s === 'won' ? 3 : s === 'open' ? 2 : s === 'lost' ? 0 : 1);
+      const dr = rank(String(a.status || '')) - rank(String(b.status || ''));
+      if (dr !== 0) return -dr;
+      return String(b.won_time || b.add_time || '').localeCompare(String(a.won_time || a.add_time || ''));
+    });
+
+    for (const row of dealsOrdered) {
+      const cf = row.customFields as Record<string, unknown> | undefined;
+      if (!cf || typeof cf !== 'object') continue;
+      if (!teacherCode) {
+        const t =
+          pickBestCodeFromFields(cf, scoreTeacherFieldName) ||
+          pickStr(pickOrgFieldValue(cf, teacherHintsWide)) ||
+          undefined;
+        if (t) teacherCode = t;
+      }
+      if (!studentCode) {
+        const t =
+          pickBestCodeFromFields(cf, scoreStudentFieldName) ||
+          pickStr(pickOrgFieldValue(cf, studentHintsWide)) ||
+          undefined;
+        if (t) studentCode = t;
+      }
+      if (teacherCode && studentCode) break;
+    }
+
+    if (!teacherCode) {
+      teacherCode =
+        pickBestCodeFromFields(organizationCustomFields, scoreTeacherFieldName) ||
+        pickStr(pickOrgFieldValue(organizationCustomFields, teacherHintsWide)) ||
+        undefined;
+    }
+    if (!studentCode) {
+      studentCode =
+        pickBestCodeFromFields(organizationCustomFields, scoreStudentFieldName) ||
+        pickStr(pickOrgFieldValue(organizationCustomFields, studentHintsWide)) ||
+        undefined;
+    }
+    if (!teacherCode || !studentCode) {
+      for (const p of enhancedPersons) {
+        const cf = (p as { customFields?: Record<string, unknown> }).customFields;
+        if (!cf) continue;
+        if (!teacherCode) {
+          teacherCode =
+            pickBestCodeFromFields(cf, scoreTeacherFieldName) ||
+            pickStr(pickOrgFieldValue(cf, teacherHintsWide)) ||
+            teacherCode;
+        }
+        if (!studentCode) {
+          studentCode =
+            pickBestCodeFromFields(cf, scoreStudentFieldName) ||
+            pickStr(pickOrgFieldValue(cf, studentHintsWide)) ||
+            studentCode;
+        }
+        if (teacherCode && studentCode) break;
+      }
+    }
+
+    const productNamesFromDeals = new Set<string>();
+    const subjectHintsFromDeals: string[] = [];
+    const categoryHintsFromDeals: string[] = [];
+    for (const row of dealsWithProducts) {
+      for (const p of row.products || []) {
+        if (p.name) productNamesFromDeals.add(p.name);
+      }
+      const cf = row.customFields as Record<string, unknown> | undefined;
+      if (cf && typeof cf === 'object') {
+        subjectHintsFromDeals.push(...collectTokensFromOrgFields(cf, subjectLikeKeys));
+        categoryHintsFromDeals.push(...collectTokensFromOrgFields(cf, categoryLikeKeys));
+      }
+    }
+
+    const purchasedSubjects = Array.from(
+      new Set([...productNamesFromDeals, ...productNamesFromOrg, ...subjectHintsFromDeals]),
+    ).sort((a, b) => a.localeCompare(b, 'cs'));
+    const productCategories = Array.from(
+      new Set([...productCategoriesFromOrg, ...categoryHintsFromDeals]),
+    ).sort((a, b) => a.localeCompare(b, 'cs'));
+
+    return c.json({
+      organization: orgWithOwner,
+      persons: enhancedPersons,
+      deals: dealsWithProducts,
       activities: activities.map((a: any) => {
         const aid = pipedriveNumericId(a.user_id);
         const nameFromEmbed =
@@ -1903,6 +2124,8 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
       summary: `${org.name}: ${enhancedPersons.length} kontaktů, ${deals.length} dealů`,
       teacherCode,
       studentCode,
+      purchasedSubjects,
+      productCategories,
     });
 
   } catch (error: any) {

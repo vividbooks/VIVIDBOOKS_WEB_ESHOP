@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TiptapImage from '@tiptap/extension-image';
@@ -14,6 +14,7 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebinars } from '../../contexts/WebinarsContext';
 import type { Webinar } from '../../data/webinars';
 import { ImagePicker } from './ImagePicker';
+import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -32,6 +33,7 @@ function emptyWebinar(): Partial<Webinar> {
     time: '18:00', lecturer: '', lecturerAvatar: '', coverImage: '',
     description: '', perks: '', targetAudience: '', zoomLink: '',
     relatedSubjects: [], tags: [], highlightQuote: '',
+    mailchimpTagName: '',
     thumbnailVariant: 1, isPast: false,
   };
 }
@@ -229,14 +231,17 @@ export default function WebinareEditor() {
     perksEditor.commands.setContent(perksHtml, false);
   }, [selected?.id, descEditor, perksEditor]);
 
-  const now = new Date();
-  const filtered = items.filter(w => {
-    const ms = !search || (w.title || '').toLowerCase().includes(search.toLowerCase());
-    const mf = timeFilter === 'all'
-      || (timeFilter === 'upcoming' && !w.isPast)
-      || (timeFilter === 'past' && !!w.isPast);
-    return ms && mf;
-  });
+  const filtered = useMemo(() => {
+    const rows = items.filter((w) => {
+      const ms = !search || (w.title || '').toLowerCase().includes(search.toLowerCase());
+      const mf =
+        timeFilter === 'all' ||
+        (timeFilter === 'upcoming' && !w.isPast) ||
+        (timeFilter === 'past' && !!w.isPast);
+      return ms && mf;
+    });
+    return [...rows].sort(compareWebinarsBySchedule);
+  }, [items, search, timeFilter]);
 
   function handleSelect(item: Webinar) {
     setSelected({ ...item });
@@ -499,6 +504,21 @@ export default function WebinareEditor() {
                     <label className="text-[11px] font-bold text-gray-500 block mb-1">Slug (URL)</label>
                     <input type="text" value={selected.slug || ''} onChange={e => { setSlugManual(true); updateField('slug', e.target.value); }}
                       className="w-full px-3 py-2 text-[13px] font-mono border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                      {'Mailchimp tag (voliteln\u00e9)'}
+                    </label>
+                    <input
+                      type="text"
+                      value={selected.mailchimpTagName ?? ''}
+                      onChange={e => updateField('mailchimpTagName', e.target.value)}
+                      placeholder={'P\u0159esn\u011b jako tag v Audience, pokud nen\u00ed webinar-{slug}'}
+                      className="w-full px-3 py-2 text-[13px] font-mono border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      {'Pokud v Mailchimp pou\u017e\u00edv\u00e1te dlouh\u00fd n\u00e1zev s datem, zkop\u00edrujte ho sem. Jinak se hled\u00e1 tag webinar-{slug} a tagy podle titulku.'}
+                    </p>
                   </div>
 
                   {/* Live link */}

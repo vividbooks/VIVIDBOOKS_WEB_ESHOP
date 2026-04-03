@@ -40,6 +40,7 @@ export default function MarketingDashboard() {
         } catch {}
         setStats([
           { label: 'Webináře', icon: Radio, count: webinare.length, path: '/marketing/webinare', color: '#10b981', bgColor: '#ecfdf5' },
+          { label: 'Kontakty', icon: Users, count: '\u2192', path: '/marketing/kontakty', color: '#6366f1', bgColor: '#eef2ff' },
           { label: 'E-maily', icon: Mail, count: '\u2192', path: '/marketing/emaily', color: '#7C3AED', bgColor: '#f5f3ff' },
           { label: 'Galerie', icon: Image, count: '\u2192', path: '/marketing/galerie', color: '#f97316', bgColor: '#fff7ed' },
           { label: 'Popup Manager', icon: Megaphone, count: '\u2192', path: '/marketing/popupy', color: '#f59e0b', bgColor: '#fffbeb' },
@@ -72,9 +73,9 @@ export default function MarketingDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 mb-8">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => (
+          Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="bg-white rounded-2xl p-6 border border-gray-100 animate-pulse">
               <div className="h-12 w-12 bg-gray-100 rounded-xl mb-4" />
               <div className="h-8 w-16 bg-gray-100 rounded mb-2" />

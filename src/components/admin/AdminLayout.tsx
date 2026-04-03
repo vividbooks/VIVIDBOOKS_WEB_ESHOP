@@ -5,7 +5,7 @@ import {
   Home, ChevronRight, Settings, Sparkles, Eye, LogOut,
   Database, FileText, Newspaper, Radio, Package, LayoutGrid,
   BookOpen, Layers, Bot, Brain, Trash2, Upload, Image, GraduationCap, Bell, Megaphone, Users, School,
-  Monitor, BarChart3, Mail,
+  Monitor, BarChart3, Mail, Contact,
   Calendar, Menu, X, ChevronDown, Palette,
 } from 'lucide-react';
 import { fetchAdminAlertSummary, type AdminAlertSummary } from '../../utils/adminApi';
@@ -92,6 +92,7 @@ const MARKETING_SIDEBAR = [
     section: 'Audience',
     items: [
       { label: 'Registrace', icon: Users, path: '/marketing/registrace' },
+      { label: 'Kontakty', icon: Contact, path: '/marketing/kontakty' },
       { label: 'Rejstřík škol', icon: School, path: '/marketing/skoly' },
     ],
   },
