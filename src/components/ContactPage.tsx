@@ -6,6 +6,7 @@ import { Send, Bot, User, Loader2, Sparkles, ShoppingCart, Calendar, FileText, R
 import imgVitekSkop from '../assets/team/vitek-skop.png';
 import imgFrantisekCab from '../assets/team/frantisek-cab.png';
 import { CONTACT_REPRESENTATIVES } from '../data/contactRepresentatives';
+import { openCookieSettings } from '@/lib/cookieConsentStorage';
 
 /* ─── Obchodní zástupci ─────────────────────────────────────────── */
 const REPRESENTATIVES = CONTACT_REPRESENTATIVES;
@@ -601,6 +602,16 @@ export function ContactPage() {
             <DistributorCard key={dist.id} dist={dist} />
           ))}
         </div>
+
+        <p className="mt-14 text-center">
+          <button
+            type="button"
+            onClick={() => openCookieSettings()}
+            className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/60 underline underline-offset-2 hover:text-[#001161]"
+          >
+            {'Nastavení cookies'}
+          </button>
+        </p>
       </section>
     </div>
   );

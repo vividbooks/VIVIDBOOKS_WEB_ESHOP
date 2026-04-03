@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
+import clsx from 'clsx';
 import {
   Send, Loader2, Bot, User, Sparkles, Plus, Trash2,
   ChevronRight, ExternalLink, CheckCircle, Package,
   Image, FileText, Radio, Bell, Newspaper, Copy,
-  RotateCcw, MessageSquare, ChevronDown, ChevronUp, Mail,
+  RotateCcw, ChevronDown, ChevronUp, Mail,
   Brain, DatabaseZap, Trash, RefreshCw, ChevronLeft,
   Activity, AlertCircle, Wand2, Layers, Eye, ThumbsUp, ThumbsDown, Clock, Tag, User as UserIcon,
-  Paperclip, X, ImageIcon, ZoomIn, GalleryHorizontal, PanelTop, Pencil, PanelLeft,
+  Paperclip, X, ImageIcon, ZoomIn, GalleryHorizontal, PanelTop, Pencil,
+  History, PanelLeftClose,
 } from 'lucide-react';
+import { AgentOrbAvatar } from '@/components/ui/AgentOrbAvatar';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridgeContext';
@@ -328,6 +331,9 @@ function escapeHtml(s: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+/** Snapshot konverzace Web operátora v asistentovi (hub) — přežije přepnutí záložky. */
+const WEB_OPERATOR_HUB_SNAPSHOT_KEY = 'vividbooks_web_operator_hub_messages_v1';
 
 function normalizeLoadedMessages(msgs: unknown): Msg[] {
   if (!Array.isArray(msgs)) return [];
@@ -787,7 +793,7 @@ function ActionCard({ action, navigate, onOpenCollageBuilder, onOpenCanvas, onSe
   );
 }
 
-function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenCollageBuilder, onOpenCanvas, onOpenStructuredCanvas, onSendPrompt, onMailchimpFromText, mailchimpBusy, mailchimpAllowed = true }: {
+function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenCollageBuilder, onOpenCanvas, onOpenStructuredCanvas, onSendPrompt, onMailchimpFromText, mailchimpBusy, mailchimpAllowed = true, hubTheme = false }: {
   msg: Msg;
   navigate: (p: string) => void;
   onApproveAction?: (actionIdx: number, savedId: string) => void;
@@ -801,6 +807,8 @@ function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenC
   mailchimpBusy?: boolean;
   /** Alespoň jedna zpráva uživatele v chatu — neslibuj Mailchimp u úvodního welcome */
   mailchimpAllowed?: boolean;
+  /** Web operátor (/asistent) — tmavý chat, bílý canvas zůstává */
+  hubTheme?: boolean;
 }) {
   const isUser = msg.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -817,6 +825,141 @@ function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenC
   };
 
   const bubbleMax = 'max-w-[min(92%,42rem)]';
+
+  /** Stejný layout jako AgentTab — tmavé bubliny, modrá uživatel, orb + Kopírovat */
+  if (hubTheme) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.15 }}
+        className="w-full min-w-0 shrink-0"
+      >
+        <div className={clsx('flex gap-3', isUser ? 'justify-end' : 'justify-start')}>
+          {!isUser && <AgentOrbAvatar size="sm" />}
+          <div
+            className={clsx(
+              'flex flex-col gap-1.5 min-w-0 max-w-[85%]',
+              isUser ? 'items-end' : 'items-start',
+            )}
+          >
+            <div
+              className={clsx(
+                'w-full rounded-2xl px-4 py-3 text-left break-words [overflow-wrap:anywhere]',
+                isUser ? 'bg-[#0A84FF] text-white' : 'bg-[#1C1C1E] text-white',
+              )}
+            >
+              {msg.loading ? (
+                <div className="flex items-center gap-2 py-0.5">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#8E8E93]" />
+                  <span style={FF} className="text-[14px] text-[#8E8E93]">Agent přemýšlí…</span>
+                </div>
+              ) : (
+                <>
+                  {!isUser && mailchimpAllowed && onMailchimpFromText && msg.content.trim().length >= 40 && !/^\s*❌/.test(msg.content) && (
+                    <div className="mb-3 pb-2 flex flex-wrap items-center gap-2 border-b border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => onMailchimpFromText(msg.content.trim())}
+                        disabled={!!mailchimpBusy}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-[10px] bg-[#7C3AED] text-white text-[12px] font-bold hover:bg-[#6D28D9] transition-colors cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed shadow-[0_2px_8px_rgba(124,58,237,0.2)]"
+                        style={FF}
+                        title="Pošle tento text do Mailchimp generátoru a otevře šablonu v canvasu"
+                      >
+                        {mailchimpBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
+                        Mailchimp
+                      </button>
+                      <span style={FF} className="text-[10px] text-[#8E8E93]">z textu níže → e-mail šablona</span>
+                    </div>
+                  )}
+                  {msg.content && (
+                    <div
+                      style={{ ...FF, lineHeight: '1.6', wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                      className={`whitespace-pre-wrap text-sm [&_code]:break-all [&_strong]:break-words [&_em]:break-words [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:break-words [&_p]:break-words ${
+                        isUser ? '[&_code]:!bg-white/15 [&_code]:!text-white' : ''
+                      }`}
+                      dangerouslySetInnerHTML={{
+                        __html: formatMarkdown(isUser ? escapeHtml(msg.content) : msg.content, !isUser),
+                      }}
+                    />
+                  )}
+                  {isUser && msg.images && msg.images.length > 0 && (
+                    <div className={`flex flex-wrap gap-2 ${msg.content ? 'mt-2' : ''}`}>
+                      {msg.images.map((url, i) => (
+                        <ChatImage key={i} src={url} />
+                      ))}
+                    </div>
+                  )}
+                  {!isUser && (() => {
+                    const imgs = extractImagesFromText(msg.content);
+                    if (imgs.length === 0) return null;
+                    return (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {imgs.map((url, i) => (
+                          <ChatImage key={i} src={url} />
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+
+            {visibleActions.length > 0 && (
+              <div className={clsx('w-full min-w-0 flex flex-col gap-1', bubbleMax)}>
+                {visibleActions.map((action, i) => (
+                  action.type === 'blog_draft_preview' && action.draft
+                    ? <BlogDraftPreviewCard
+                        key={i}
+                        draft={action.draft}
+                        onApprove={(savedId) => onApproveAction?.(i, savedId)}
+                        onReject={() => onRejectAction?.(i)}
+                        onOpenCanvas={onOpenCanvas}
+                      />
+                    : <ActionCard key={i} action={action} navigate={navigate} onOpenCollageBuilder={onOpenCollageBuilder} onOpenCanvas={onOpenStructuredCanvas} onSendPrompt={onSendPrompt} />
+                ))}
+              </div>
+            )}
+
+            {!msg.loading && msg.content.trim() && (
+              <button
+                type="button"
+                onClick={copy}
+                className="inline-flex items-center justify-center gap-2 rounded-xl min-h-[44px] px-4 py-2.5 text-sm font-semibold text-white bg-[#2C2C2E] border border-white/15 hover:bg-[#3A3A3C] active:scale-[0.99] transition-colors"
+                title="Kopírovat text zprávy"
+              >
+                {copied ? <CheckCircle className="w-[18px] h-[18px] text-emerald-400 shrink-0" /> : <Copy className="w-[18px] h-[18px] shrink-0 text-emerald-400" />}
+                Kopírovat
+              </button>
+            )}
+
+            <div className={clsx('flex flex-wrap items-center gap-2 px-0.5', isUser ? 'justify-end' : 'justify-start')}>
+              <span style={FF} className="text-[10px] text-[#8E8E93]">
+                {new Date(msg.ts).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+              {!isUser && onOpenCanvas && isCanvasWorthy(msg.content) && (
+                <button
+                  type="button"
+                  onClick={() => onOpenCanvas(msg.content)}
+                  style={{ ...FF, fontSize: 10, fontWeight: 800 }}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-violet-500/20 text-violet-300 hover:bg-violet-500/30 transition-all cursor-pointer"
+                >
+                  <Layers className="w-2.5 h-2.5" />
+                  Canvas
+                </button>
+              )}
+            </div>
+          </div>
+
+          {isUser && (
+            <div className="w-8 h-8 rounded-full bg-[#3C3C3E] flex items-center justify-center shrink-0">
+              <User className="w-4 h-4 text-white" />
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -946,11 +1089,14 @@ function MessageBubble({ msg, navigate, onApproveAction, onRejectAction, onOpenC
   );
 }
 
-function formatMarkdown(text: string): string {
+function formatMarkdown(text: string, darkAssistant = false): string {
+  const codeStyle = darkAssistant
+    ? 'background:#27272a;color:#e4e4e7;padding:1px 5px;border-radius:4px;font-size:12px;font-family:monospace'
+    : 'background:#f0f2f8;padding:1px 5px;border-radius:4px;font-size:12px;font-family:monospace';
   return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code style="background:#f0f2f8;padding:1px 5px;border-radius:4px;font-size:12px;font-family:monospace">$1</code>')
+    .replace(/`(.+?)`/g, `<code style="${codeStyle}">$1</code>`)
     .replace(/^#{1,3} (.+)$/gm, '<strong style="font-size:15px">$1</strong>')
     .replace(/^[-*] (.+)$/gm, '• $1')
     .replace(/\n/g, '<br/>');
@@ -1197,19 +1343,167 @@ function RagStatusPanel({ onSendPrompt }: { onSendPrompt: (t: string) => void })
   );
 }
 
+/** Historie Web operátora — stejný vzor jako AgentTab (asistent) */
+function WebOperatorHistoryPanel({
+  chatIndex,
+  currentChatId,
+  indexLoading,
+  chatLoading,
+  loadChat,
+  deleteChat,
+  newChat,
+  onMailClick,
+  onCollapse,
+}: {
+  chatIndex: ChatIndex[];
+  currentChatId: string;
+  indexLoading: boolean;
+  chatLoading: boolean;
+  loadChat: (id: string) => void;
+  deleteChat: (id: string, e: React.MouseEvent) => void;
+  newChat: () => void;
+  onMailClick: () => void;
+  onCollapse: () => void;
+}) {
+  return (
+    <>
+      <div className="shrink-0 flex items-center justify-between gap-1 px-2 py-2 border-b border-white/10 bg-[#1C1C1E]">
+        <h2 style={FF} className="text-white font-semibold text-xs truncate pr-1">
+          Historie
+        </h2>
+        <div className="flex items-center shrink-0">
+          <button
+            type="button"
+            onClick={onMailClick}
+            className="p-1.5 rounded-lg text-[#8E8E93] hover:text-purple-400 hover:bg-white/5"
+            title="Marketing → E-maily"
+          >
+            <Mail size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm('Začít nový chat? Neuložená konverzace zůstane v seznamu.')) newChat();
+            }}
+            className="p-1.5 rounded-lg text-[#8E8E93] hover:text-red-400 hover:bg-white/5"
+            title="Nový chat"
+          >
+            <Trash2 size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={onCollapse}
+            className="p-1.5 rounded-lg text-[#8E8E93] hover:text-white hover:bg-white/10"
+            title="Sbalit historii"
+          >
+            <PanelLeftClose size={18} />
+          </button>
+        </div>
+      </div>
+      <div className="shrink-0 p-3 border-b border-white/10 bg-[#1C1C1E]">
+        <button
+          type="button"
+          onClick={() => newChat()}
+          className="w-full flex items-center justify-center gap-2 rounded-xl py-3 px-4 text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-500 transition-colors"
+          style={FF}
+        >
+          <Plus size={18} />
+          Nový chat
+        </button>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1 bg-[#1C1C1E]">
+        {indexLoading && chatIndex.length === 0 ? (
+          <p style={FF} className="text-[13px] text-[#8E8E93] px-2">
+            Načítám…
+          </p>
+        ) : chatIndex.length === 0 ? (
+          <p style={FF} className="text-[13px] text-[#8E8E93] px-2 leading-relaxed">
+            Zatím žádné uložené konverzace. Po první odpovědi agenta se chat uloží automaticky — pak ho najdeš tady.
+          </p>
+        ) : (
+          chatIndex.map(chat => (
+            <div
+              key={chat.id}
+              className={clsx(
+                'flex items-stretch gap-1 rounded-xl border transition-colors',
+                chat.id === currentChatId
+                  ? 'border-emerald-500/60 bg-[#2C2C2E]'
+                  : 'border-white/5 bg-[#252528] hover:bg-[#2C2C2E]',
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => void loadChat(chat.id)}
+                disabled={chatLoading}
+                className="flex-1 min-w-0 text-left py-3 px-3 cursor-pointer disabled:opacity-50"
+              >
+                <p style={FF} className="text-white text-sm font-medium truncate">
+                  {chat.title}
+                </p>
+                <p style={FF} className="text-[#AEAEB2] text-[11px] mt-0.5">
+                  {new Date(chat.updatedAt).toLocaleString('cs-CZ', {
+                    day: 'numeric',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                  {typeof chat.messageCount === 'number' ? ` · ${chat.messageCount} zpráv` : ''}
+                </p>
+              </button>
+              <button
+                type="button"
+                onClick={e => deleteChat(chat.id, e)}
+                className="shrink-0 px-3 text-[#8E8E93] hover:text-red-400 hover:bg-black/20 rounded-r-xl"
+                title="Smazat konverzaci"
+              >
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+}
+
 const MODEL_OPTIONS = [
   { id: 'gemini-3.1-pro-preview',        label: 'Pro',  color: '#FF6B1A' },
   { id: 'gemini-3.1-flash-lite-preview', label: 'Lite', color: '#10b981' },
 ] as const;
 type AgentModelId = typeof MODEL_OPTIONS[number]['id'];
 
-export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSheet }: { model?: string; hubMode?: boolean; onOpenAgentSheet?: () => void }) {
+export function AdminAgentPage({
+  model: _ignored,
+  hubMode = false,
+  onOpenAgentSheet,
+  queuedFromDictation,
+  onQueuedFromDictationConsumed,
+}: {
+  model?: string;
+  hubMode?: boolean;
+  onOpenAgentSheet?: () => void;
+  /** Předání z diktování (/asistent) — odešle se jako první uživatelská zpráva do plného Web operátora. */
+  queuedFromDictation?: { text: string; nonce: string } | null;
+  onQueuedFromDictationConsumed?: () => void;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const agentBridgeEnabled = location.pathname === '/admin/agent';
   const bridge = useWebOperatorChatsBridge();
   const [model, setModel] = useState<AgentModelId>('gemini-3.1-flash-lite-preview');
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [messages, setMessages] = useState<Msg[]>(() => {
+    if (typeof window === 'undefined' || !hubMode) return [];
+    try {
+      const raw = sessionStorage.getItem(WEB_OPERATOR_HUB_SNAPSHOT_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) return normalizeLoadedMessages(parsed);
+      }
+    } catch {
+      /* ignore */
+    }
+    return [];
+  });
   const [loading, setLoading] = useState(false);
   const [chatIndex, setChatIndex] = useState<ChatIndex[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string>(genId());
@@ -1224,7 +1518,11 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Msg[]>([]);
   const currentChatIdRef = useRef(currentChatId);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  /** Stejně jako AgentTab: na md+ otevřená historie, na mobilu zavřená (více místa pro chat) */
+  const [showHubHistoryPanel, setShowHubHistoryPanel] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 768px)').matches;
+  });
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768);
@@ -1411,16 +1709,31 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     setCollageOpen(true);
   };
 
-  // Welcome message
+  // Welcome message (v hubu obnov stav ze sessionStorage, aby nepřišel o konverzaci při přepnutí záložky)
   useEffect(() => {
-    setMessages([{
-      id: genId(),
-      role: 'assistant',
-      content: 'Ahoj! Jsem váš **Web operátor** pro Vividbooks.\n\n📋 **Moje role**:\n• Číst a zapisovat produkty, předměty, blog, novinky, webináře a další obsah v CMS\n• Spravovat publikaci, notifikace, taby předmětů a RAG indexaci\n• **Delegovat** texty marketing specialistovi, SEO briefy SEO specialistovi a vizuály image specialistovi\n\nZkus: *„Uprav hero text u Matematiky 2"* nebo *„Uprav cenu u písanek o 10 %"*.\n\nCo pro vás mohu udělat? 👇',
-      ts: Date.now(),
-    }]);
+    setMessages((prev) => {
+      if (prev.length > 0) return prev;
+      return [
+        {
+          id: genId(),
+          role: 'assistant',
+          content:
+            'Ahoj! Jsem váš **Web operátor** pro Vividbooks.\n\n📋 **Moje role**:\n• Číst a zapisovat produkty, předměty, blog, novinky, webináře a další obsah v CMS\n• Spravovat publikaci, notifikace, taby předmětů a RAG indexaci\n• **Delegovat** texty marketing specialistovi, SEO briefy SEO specialistovi a vizuály image specialistovi\n\nZkus: *„Uprav hero text u Matematiky 2"* nebo *„Uprav cenu u písanek o 10 %"*.\n\nCo pro vás mohu udělat? 👇',
+          ts: Date.now(),
+        },
+      ];
+    });
     loadChatIndex();
   }, []);
+
+  useEffect(() => {
+    if (!hubMode) return;
+    try {
+      sessionStorage.setItem(WEB_OPERATOR_HUB_SNAPSHOT_KEY, JSON.stringify(messages));
+    } catch {
+      /* ignore */
+    }
+  }, [hubMode, messages]);
 
   useEffect(() => {
     const el = messagesScrollRef.current;
@@ -1480,7 +1793,6 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
       setMessages(normalizeLoadedMessages(chat.messages));
       clearComposer();
       setPendingImages([]);
-      if (hubMode) setHistoryOpen(false);
     } catch (e) {
       console.error('[AdminAgent] Load chat error:', e);
       toast.error('Nepodařilo se načíst chat');
@@ -1635,6 +1947,27 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     }
   };
 
+  const sendRef = useRef(send);
+  sendRef.current = send;
+  const onDictationConsumedRef = useRef(onQueuedFromDictationConsumed);
+  onDictationConsumedRef.current = onQueuedFromDictationConsumed;
+  const dictationQueueHandledRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!queuedFromDictation?.text?.trim()) return;
+    if (messages.length === 0) return;
+    const nonce = queuedFromDictation.nonce;
+    if (dictationQueueHandledRef.current === nonce) return;
+    dictationQueueHandledRef.current = nonce;
+    const t = queuedFromDictation.text.trim();
+    const id = window.setTimeout(() => {
+      void sendRef.current(t).finally(() => {
+        onDictationConsumedRef.current?.();
+      });
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [queuedFromDictation?.nonce, queuedFromDictation?.text, messages.length]);
+
   const canSend = (hasComposerText || pendingImages.length > 0) && !loading;
 
   const handleKey = (e: React.KeyboardEvent) => {
@@ -1648,52 +1981,74 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
     <div
       ref={scrollAreaRef}
       onScroll={syncAdminShellScroll}
-      className={`h-full min-h-0 flex-1 min-w-0 w-full overflow-y-hidden bg-[#f7f8fc] relative ${
-        desktopCanvasOpen ? 'overflow-x-auto' : 'overflow-x-hidden'
-      }`}
+      className={`h-full min-h-0 flex-1 min-w-0 w-full overflow-y-hidden relative ${
+        hubMode ? 'bg-black' : 'bg-[#f7f8fc]'
+      } ${desktopCanvasOpen ? 'overflow-x-auto' : 'overflow-x-hidden'}`}
     >
       <div
         className={`flex h-full min-h-0 flex-nowrap ${
           desktopCanvasOpen ? 'w-max min-w-full' : 'w-full min-w-0'
         }`}
       >
+        {/* Hub: historie — stejný vzor jako AgentTab (asistent) */}
+        {hubMode && showHubHistoryPanel && (
+          <aside className="flex flex-col min-h-0 w-full max-h-[min(42vh,320px)] shrink-0 border-b border-white/5 bg-[#1C1C1E] md:h-full md:max-h-none md:w-[260px] md:min-w-[260px] md:shrink-0 md:border-b-0 md:border-r md:border-white/5">
+            <WebOperatorHistoryPanel
+              chatIndex={chatIndex}
+              currentChatId={currentChatId}
+              indexLoading={indexLoading}
+              chatLoading={chatLoading}
+              loadChat={loadChat}
+              deleteChat={deleteChat}
+              newChat={newChat}
+              onMailClick={() => navigate(MARKETING_EMAILS_PATH)}
+              onCollapse={() => setShowHubHistoryPanel(false)}
+            />
+          </aside>
+        )}
+        {hubMode && !showHubHistoryPanel && (
+          <button
+            type="button"
+            onClick={() => setShowHubHistoryPanel(true)}
+            className="flex shrink-0 w-11 min-h-[44px] md:min-h-0 md:w-10 flex-col items-center justify-center gap-1 border-r border-white/5 bg-[#1C1C1E] text-[#8E8E93] hover:text-emerald-400 hover:bg-white/[0.06] active:bg-white/10 transition-colors"
+            title="Zobrazit historii chatů"
+          >
+            <History size={20} />
+          </button>
+        )}
 
       {/* ── CHAT COLUMN — flex-1 + min-w-0 zabrání horizontálnímu „nafukování“ od dlouhých zpráv; s canvasem fixní 760px ── */}
       <div
-        className={`flex flex-col h-full min-h-0 md:border-r border-gray-200 transition-[width] duration-300 ${
-          desktopCanvasOpen ? 'w-[760px] max-w-[760px] shrink-0' : 'w-full min-w-0 flex-1 max-w-full'
+        className={`flex flex-col h-full min-h-0 transition-[width] duration-300 ${
+          hubMode
+            ? `md:border-r border-white/5 ${desktopCanvasOpen ? 'w-[760px] max-w-[760px] shrink-0' : 'w-full min-w-0 flex-1 max-w-full'} bg-black`
+            : `md:border-r border-gray-200 ${desktopCanvasOpen ? 'w-[760px] max-w-[760px] shrink-0' : 'w-full min-w-0 flex-1 max-w-full'}`
         }`}
       >
 
         {/* Header */}
-        <div className="h-12 bg-white border-b border-gray-200 flex items-center px-3 md:px-4 gap-2 md:gap-3 shrink-0 min-w-0">
-          {hubMode && (
-            <button
-              type="button"
-              onClick={() => setHistoryOpen(true)}
-              className="flex items-center gap-1.5 pl-1.5 pr-2.5 py-1.5 rounded-lg text-[#001161] hover:bg-[#001161]/8 border border-[#001161]/12 transition-colors cursor-pointer shrink-0"
-              title="Uložené konverzace"
-            >
-              <PanelLeft className="w-4 h-4 shrink-0 text-[#7C3AED]" />
-              <span style={FF} className="text-[12px] font-extrabold tracking-tight whitespace-nowrap">
-                Historie
-              </span>
-              {chatIndex.length > 0 && (
-                <span
-                  style={FF}
-                  className="text-[10px] font-bold min-w-[1.125rem] h-[1.125rem] rounded-full bg-[#7C3AED] text-white flex items-center justify-center px-1"
-                >
-                  {chatIndex.length > 99 ? '99+' : chatIndex.length}
-                </span>
-              )}
-            </button>
-          )}
+        <div
+          className={`h-12 flex items-center px-3 md:px-4 gap-2 md:gap-3 shrink-0 min-w-0 ${
+            hubMode
+              ? 'bg-[#1C1C1E] border-b border-white/10'
+              : 'bg-white border-b border-gray-200'
+          }`}
+        >
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8] flex items-center justify-center shadow-sm shrink-0">
-              <Bot className="w-4 h-4 text-white" />
-            </div>
+            {hubMode ? (
+              <AgentOrbAvatar size="sm" className="shrink-0" />
+            ) : (
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8] flex items-center justify-center shadow-sm shrink-0 ring-1 ring-white/10">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+            )}
             <div>
-              <p style={FF} className={`${isMobile ? 'text-[15px]' : 'text-[13px]'} font-bold text-[#001161] leading-none`}>Web operátor</p>
+              <p
+                style={FF}
+                className={`${isMobile ? 'text-[15px]' : 'text-[13px]'} font-bold leading-none ${hubMode ? 'text-zinc-100' : 'text-[#001161]'}`}
+              >
+                Web operátor
+              </p>
               {/* Model switcher — inline PRO / LITE pills */}
               <div className="flex items-center gap-1 mt-0.5">
                 {MODEL_OPTIONS.map(m => {
@@ -1710,8 +2065,8 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
                         letterSpacing: '0.06em',
                         padding: '1px 6px',
                         borderRadius: 999,
-                        background: active ? m.color : 'rgba(0,17,97,0.07)',
-                        color: active ? '#fff' : 'rgba(0,17,97,0.35)',
+                        background: active ? m.color : hubMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,17,97,0.07)',
+                        color: active ? '#fff' : hubMode ? 'rgba(255,255,255,0.45)' : 'rgba(0,17,97,0.35)',
                         border: 'none',
                         cursor: 'pointer',
                         transition: 'all 0.15s',
@@ -1722,7 +2077,16 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
                     </button>
                   );
                 })}
-                <span style={{ ...FF, fontSize: 9, color: 'rgba(0,17,97,0.28)', marginLeft: 2 }}>· orchestrace CMS</span>
+                <span
+                  style={{
+                    ...FF,
+                    fontSize: 9,
+                    color: hubMode ? 'rgba(255,255,255,0.28)' : 'rgba(0,17,97,0.28)',
+                    marginLeft: 2,
+                  }}
+                >
+                  · orchestrace CMS
+                </span>
               </div>
             </div>
           </div>
@@ -1732,7 +2096,9 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           <button
             type="button"
             onClick={() => navigate(MARKETING_EMAILS_PATH)}
-            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all cursor-pointer shrink-0 text-[#7C3AED] hover:bg-[#7C3AED]/10"
+            className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold transition-all cursor-pointer shrink-0 ${
+              hubMode ? 'text-violet-300 hover:bg-violet-500/15' : 'text-[#7C3AED] hover:bg-[#7C3AED]/10'
+            }`}
             style={FF}
             title="Marketing → E-maily (editor šablon)"
           >
@@ -1742,7 +2108,11 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           <button
             type="button"
             onClick={() => navigate(MARKETING_EMAILS_PATH)}
-            className="md:hidden flex items-center justify-center w-9 h-9 rounded-xl border shrink-0 border-[#7C3AED]/25 text-[#7C3AED] bg-[#7C3AED]/6"
+            className={`md:hidden flex items-center justify-center w-9 h-9 rounded-xl border shrink-0 ${
+              hubMode
+                ? 'border-violet-500/30 text-violet-300 bg-violet-500/10'
+                : 'border-[#7C3AED]/25 text-[#7C3AED] bg-[#7C3AED]/6'
+            }`}
             title="Marketing → E-maily"
           >
             <Mail className="w-4 h-4" />
@@ -1751,7 +2121,9 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           {hubMode && onOpenAgentSheet && (
             <button
               onClick={onOpenAgentSheet}
-              className="md:hidden flex items-center justify-center w-9 h-9 rounded-full bg-[#001161]/6 hover:bg-[#001161]/10 text-[#001161] transition-colors cursor-pointer"
+              className={`md:hidden flex items-center justify-center w-9 h-9 rounded-full transition-colors cursor-pointer ${
+                hubMode ? 'bg-white/10 hover:bg-white/15 text-zinc-100' : 'bg-[#001161]/6 hover:bg-[#001161]/10 text-[#001161]'
+              }`}
               title="Agenti"
             >
               <Layers className="w-4 h-4" />
@@ -1760,7 +2132,11 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
 
           <button
             onClick={newChat}
-            className={`flex items-center justify-center gap-1.5 ${isMobile ? 'w-9 h-9 rounded-full px-0 py-0' : 'px-3 py-1.5 rounded-lg'} bg-[#001161] hover:bg-[#001161]/85 text-white text-[12px] font-bold transition-colors cursor-pointer`}
+            className={`flex items-center justify-center gap-1.5 ${isMobile ? 'w-9 h-9 rounded-full px-0 py-0' : 'px-3 py-1.5 rounded-lg'} ${
+              hubMode
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/30'
+                : 'bg-[#001161] hover:bg-[#001161]/85'
+            } text-white text-[12px] font-bold transition-colors cursor-pointer`}
             style={FF}
             title="Nový chat"
           >
@@ -1769,10 +2145,16 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
         </div>
 
         {/* Messages */}
-        <div ref={messagesScrollRef} className="flex-1 min-h-0 min-w-0 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain px-3 md:px-4 py-4 md:py-5 flex flex-col gap-4">
+        <div
+          ref={messagesScrollRef}
+          className={`flex-1 min-h-0 min-w-0 max-w-full overflow-y-auto overflow-x-hidden overscroll-contain flex flex-col gap-4 ${
+            hubMode ? 'bg-black p-4 md:p-6' : 'px-3 md:px-4 py-4 md:py-5'
+          }`}
+        >
           {messages.map((msg, msgIdx) => (
             <MessageBubble
               key={msg.id}
+              hubTheme={hubMode}
               msg={msg}
               navigate={navigate}
               onOpenCollageBuilder={handleOpenCollageBuilder}
@@ -1807,8 +2189,21 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
           {/* Suggestions — show only when 1 message (welcome) */}
           {messages.length === 1 && (
             <div className="flex flex-col gap-2 mt-2 w-full min-w-0 max-w-full">
-              <p style={FF} className={`${isMobile ? 'text-[12px]' : 'text-[11px]'} text-[#001161]/40 uppercase tracking-wider font-bold px-1`}>Návrhy úkolů</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full min-w-0 max-w-full">
+              <p
+                style={FF}
+                className={`${isMobile ? 'text-[12px]' : 'text-[11px]'} uppercase tracking-wider font-bold px-1 ${
+                  hubMode ? 'text-[#8E8E93]' : 'text-[#001161]/40'
+                }`}
+              >
+                Návrhy úkolů
+              </p>
+              <div
+                className={
+                  hubMode
+                    ? 'flex flex-wrap gap-2 w-full min-w-0'
+                    : 'grid grid-cols-1 sm:grid-cols-2 gap-2 w-full min-w-0 max-w-full'
+                }
+              >
                 {SUGGESTIONS.map((s, i) => (
                   <motion.button
                     key={i}
@@ -1816,11 +2211,25 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.05 }}
                     onClick={() => send(s.label)}
-                    className="flex items-center gap-2.5 px-3 py-2.5 bg-white border border-[#001161]/10 hover:border-[#7C3AED]/30 hover:bg-[#7C3AED]/4 rounded-[12px] text-left transition-all cursor-pointer group"
+                    className={
+                      hubMode
+                        ? 'px-3 py-2 bg-[#1C1C1E] text-[#8E8E93] rounded-lg text-sm hover:bg-[#2C2C2E] hover:text-white transition-colors text-left max-w-full'
+                        : 'flex items-center gap-2.5 px-3 py-2.5 rounded-[12px] text-left transition-all cursor-pointer group bg-white border border-[#001161]/10 hover:border-[#7C3AED]/30 hover:bg-[#7C3AED]/4'
+                    }
                   >
-                    <s.icon className="w-4 h-4 text-[#7C3AED]/70 shrink-0" />
-                    <span style={FF} className={`${isMobile ? 'text-[14px]' : 'text-[13px]'} text-[#001161]/70 group-hover:text-[#001161] leading-tight min-w-0 break-words`}>{s.label}</span>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#001161]/20 ml-auto shrink-0" />
+                    {hubMode ? (
+                      <span style={FF} className="break-words">
+                        {s.label}
+                      </span>
+                    ) : (
+                      <>
+                        <s.icon className="w-4 h-4 shrink-0 text-[#7C3AED]/70" />
+                        <span style={FF} className={`${isMobile ? 'text-[14px]' : 'text-[13px]'} leading-tight min-w-0 break-words text-[#001161]/70 group-hover:text-[#001161]`}>
+                          {s.label}
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 ml-auto shrink-0 text-[#001161]/20" />
+                      </>
+                    )}
                   </motion.button>
                 ))}
               </div>
@@ -1830,7 +2239,12 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
         </div>
 
         {/* Input bar */}
-        <div className="border-t border-gray-200 bg-white p-3 shrink-0" style={{ paddingBottom: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : undefined }}>
+        <div
+          className={`shrink-0 border-t ${
+            hubMode ? 'border-white/10 bg-black p-4' : 'border-gray-200 bg-white p-3'
+          }`}
+          style={{ paddingBottom: isMobile ? 'max(12px, env(safe-area-inset-bottom))' : undefined }}
+        >
           {/* Pending images preview */}
           <AnimatePresence>
             {pendingImages.length > 0 && (
@@ -1857,7 +2271,10 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
                       </div>
                     </div>
                   ))}
-                  <div style={FF} className="text-[10px] text-[#7C3AED] self-end pb-1 font-bold">
+                  <div
+                    style={FF}
+                    className={`text-[10px] self-end pb-1 font-bold ${hubMode ? 'text-violet-400' : 'text-[#7C3AED]'}`}
+                  >
                     {pendingImages.length} obrázek{pendingImages.length > 1 ? 'y' : ''} připraven{pendingImages.length > 1 ? 'y' : ''}
                   </div>
                 </div>
@@ -1865,7 +2282,7 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
             )}
           </AnimatePresence>
 
-          <div className="flex items-end gap-2 bg-[#f7f8fc] rounded-[16px] border border-[#001161]/10 focus-within:border-[#7C3AED]/40 transition-colors px-3 py-2">
+          <div className={hubMode ? 'flex items-end gap-3' : 'flex items-end gap-2 rounded-[16px] border border-[#001161]/10 bg-[#f7f8fc] focus-within:border-[#7C3AED]/40 transition-colors px-3 py-2'}>
             {/* Upload button */}
             <input
               ref={fileInputRef}
@@ -1879,32 +2296,77 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
               onClick={() => fileInputRef.current?.click()}
               disabled={loading || uploading}
               title="Nahrát obrázek"
-              className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer mb-0.5 ${uploading ? 'bg-[#7C3AED]/20 animate-pulse' : 'hover:bg-[#7C3AED]/10 text-[#001161]/40 hover:text-[#7C3AED]'}`}
+              className={
+                hubMode
+                  ? clsx(
+                      'w-12 h-12 rounded-full flex items-center justify-center transition-all shrink-0',
+                      uploading
+                        ? 'bg-[#2C2C2E] text-[#8E8E93] animate-pulse'
+                        : 'bg-[#1C1C1E] text-[#0A84FF] hover:bg-[#2C2C2E]',
+                    )
+                  : 'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors cursor-pointer mb-0.5 hover:bg-[#7C3AED]/10 text-[#001161]/40 hover:text-[#7C3AED]'
+              }
             >
-              {uploading ? <Loader2 className="w-4 h-4 text-[#7C3AED] animate-spin" /> : <Paperclip className="w-4 h-4" />}
+              {uploading ? (
+                <Loader2 className={hubMode ? 'w-5 h-5 animate-spin text-[#0A84FF]' : 'w-4 h-4 animate-spin text-[#7C3AED]'} />
+              ) : (
+                <Paperclip className={hubMode ? 'w-5 h-5' : 'w-4 h-4'} />
+              )}
             </button>
 
-            <textarea
-              ref={inputRef}
-              onChange={e => syncComposerUi(e.currentTarget)}
-              onKeyDown={handleKey}
-              placeholder={pendingImages.length ? 'Co chcete s obrázkem/y udělat? (Enter = odeslat)' : 'Zadejte úkol pro agenta… (Enter = odeslat, Shift+Enter = nový řádek)'}
-              rows={1}
-              style={{ ...FF, fontSize: isMobile ? '16px' : '14px', resize: 'none', minHeight: isMobile ? '42px' : '36px', maxHeight: '120px' }}
-              className="flex-1 bg-transparent outline-none text-[#001161] placeholder:text-[#001161]/35 leading-relaxed overflow-auto"
-              onInput={e => syncComposerUi(e.currentTarget)}
-              disabled={loading}
-            />
+            <div className={hubMode ? 'flex-1 relative' : 'flex-1'}>
+              <textarea
+                ref={inputRef}
+                onChange={e => syncComposerUi(e.currentTarget)}
+                onKeyDown={handleKey}
+                placeholder={
+                  pendingImages.length
+                    ? 'Co chcete s obrázkem/y udělat? (Enter = odeslat)'
+                    : hubMode
+                      ? 'Např: Jedu do Sedlčan, jaké školy jsou po cestě?'
+                      : 'Zadejte úkol pro agenta… (Enter = odeslat, Shift+Enter = nový řádek)'
+                }
+                rows={1}
+                style={{ ...FF, fontSize: isMobile ? '16px' : '14px', resize: 'none', minHeight: hubMode ? '48px' : isMobile ? '42px' : '36px', maxHeight: '120px' }}
+                className={
+                  hubMode
+                    ? 'w-full bg-[#1C1C1E] text-white rounded-2xl px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#0A84FF]/50 placeholder-[#8E8E93] text-sm'
+                    : 'flex-1 bg-transparent outline-none text-[#001161] placeholder:text-[#001161]/35 leading-relaxed overflow-auto w-full'
+                }
+                onInput={e => syncComposerUi(e.currentTarget)}
+                disabled={loading}
+              />
+            </div>
+
             <button
               onClick={() => send()}
               disabled={!canSend}
-              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ${canSend ? 'bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8] hover:opacity-90 shadow-[0_2px_8px_rgba(124,58,237,0.3)]' : 'bg-gray-200'}`}
+              className={
+                hubMode
+                  ? clsx(
+                      'w-12 h-12 rounded-full flex items-center justify-center transition-all shrink-0',
+                      canSend
+                        ? 'bg-gradient-to-r from-purple-500 to-blue-500 text-white shadow-lg'
+                        : 'bg-[#2C2C2E] text-[#8E8E93]',
+                    )
+                  : 'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-all cursor-pointer ' +
+                    (canSend
+                      ? 'bg-gradient-to-br from-[#7C3AED] to-[#5B4FD8] hover:opacity-90 shadow-[0_2px_8px_rgba(124,58,237,0.3)]'
+                      : 'bg-gray-200')
+              }
             >
-              {loading ? <Loader2 className="w-4 h-4 text-white animate-spin" /> : <Send className="w-4 h-4 text-white" />}
+              {loading ? (
+                <Loader2 className={hubMode ? 'w-5 h-5 text-white animate-spin' : 'w-4 h-4 text-white animate-spin'} />
+              ) : (
+                <Send className={hubMode ? 'w-5 h-5 text-white' : 'w-4 h-4 text-white'} />
+              )}
             </button>
           </div>
 
-          <p style={FF} className="hidden md:block text-[10px] text-[#001161]/30 text-center mt-2">
+          <p
+            style={FF}
+            className={`hidden md:block text-[10px] text-center mt-2 ${hubMode ? 'text-[#8E8E93]' : 'text-[#001161]/30'}`}
+          >
             Agent může přímo zapisovat do CMS. Vždy zkontrolujte provedené změny. · 📎 nahraj obrázek a přidej ho k produktu nebo do AI koláže
           </p>
         </div>
@@ -1951,81 +2413,6 @@ export function AdminAgentPage({ model: _ignored, hubMode = false, onOpenAgentSh
 
       </div>
     </div>{/* end scroll port + inner row */}
-
-      <AnimatePresence>
-        {hubMode && historyOpen && (
-          <motion.div className="fixed inset-0 z-[90]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <button
-              type="button"
-              aria-label="Zavřít historii"
-              className="absolute inset-0 bg-[#001161]/25 cursor-default border-0 p-0"
-              onClick={() => setHistoryOpen(false)}
-            />
-            <motion.div
-              initial={{ x: '-100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '-100%' }}
-              transition={{ duration: 0.22, ease: 'easeOut' }}
-              className="absolute inset-y-0 left-0 w-[86vw] max-w-[340px] bg-white border-r border-gray-200 shadow-xl flex flex-col"
-            >
-              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between shrink-0">
-                <div className="min-w-0">
-                  <p style={FF} className="text-[14px] font-bold text-[#001161]">Historie chatů</p>
-                  <p style={FF} className="text-[11px] text-[#001161]/40">Uložené konverzace</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen(false)}
-                  className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-[#001161]/50 hover:bg-gray-200 shrink-0 cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-              <div className="flex-1 min-h-0 overflow-y-auto p-3">
-                {indexLoading && chatIndex.length === 0 ? (
-                  <p style={FF} className="text-[13px] text-[#001161]/40 px-2">Načítám…</p>
-                ) : chatIndex.length === 0 ? (
-                  <p style={FF} className="text-[13px] text-[#001161]/45 px-2 leading-relaxed">
-                    Zatím žádné uložené konverzace. Po první odpovědi agenta se chat uloží automaticky — pak ho najdeš tady.
-                  </p>
-                ) : (
-                  chatIndex.map(chat => (
-                    <div
-                      key={chat.id}
-                      className={`group relative rounded-xl px-3 py-2.5 mb-1.5 border ${
-                        chat.id === currentChatId ? 'border-[#7C3AED]/40 bg-[#7C3AED]/5' : 'border-transparent hover:bg-gray-50'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => loadChat(chat.id)}
-                        disabled={chatLoading}
-                        className="w-full text-left cursor-pointer disabled:opacity-50"
-                      >
-                        <p style={FF} className="text-[13px] font-bold text-[#001161] truncate pr-8">
-                          {chat.title}
-                        </p>
-                        <p style={FF} className="text-[11px] text-[#001161]/35 mt-0.5">
-                          {new Date(chat.updatedAt).toLocaleString('cs-CZ')}
-                          {typeof chat.messageCount === 'number' ? ` · ${chat.messageCount} zpráv` : ''}
-                        </p>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={e => deleteChat(chat.id, e)}
-                        className="absolute top-2 right-2 p-1.5 rounded-lg text-[#001161]/25 hover:text-red-600 hover:bg-red-50 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity cursor-pointer"
-                        title="Smazat chat"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Koláž Builder Modal — outside scroll area, fixed overlay */}
       <CollageModal

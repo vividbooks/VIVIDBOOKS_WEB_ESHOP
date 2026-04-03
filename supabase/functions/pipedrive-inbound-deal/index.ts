@@ -5,6 +5,7 @@
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
  *   Tělo = standardní JSON webhooku (meta.id / current.id = deal ID).
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
+ * - GET/HEAD se stejným ?token= → 200 (kontrola dostupnosti Pipedrive; dříve jen POST → 405).
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
  * Bez osoby / bez e-mailu / nulová hodnota: objednávka se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
@@ -17,7 +18,8 @@ import postgres from 'npm:postgres';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-pipedrive-inbound-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  /** GET/HEAD: Pipedrive při kontrole dostupnosti webhooku volá URL v prohlížeči nebo HEAD requestem — dříve jen POST → 405 → „inaccessible“. */
+  'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
 };
 
 const DEFAULT_SHIPPING_METHOD = 'dpd';
@@ -214,11 +216,32 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const url = new URL(req.url);
+
+  /** Kontrola dostupnosti (Pipedrive / prohlížeč) — stejný token jako u POST, bez zpracování dealu. */
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (!verifyInboundToken(req, url)) {
+      logInbound('probe_unauthorized', { method: req.method });
+      return jsonResponse({ error: 'Unauthorized.' }, 401);
+    }
+    if (req.method === 'HEAD') {
+      return new Response(null, {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    return jsonResponse({
+      ok: true,
+      service: 'pipedrive-inbound-deal',
+      hint: 'Webhook accepts POST with Pipedrive JSON or { "deal_id": number }.',
+    }, 200);
+  }
+
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
   }
 
-  const url = new URL(req.url);
   if (!verifyInboundToken(req, url)) {
     logInbound('unauthorized', { hint: 'token v URL ?token= nebo hlavička x-pipedrive-inbound-token' });
     return jsonResponse({ error: 'Unauthorized.' }, 401);

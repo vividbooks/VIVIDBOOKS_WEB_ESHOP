@@ -1787,6 +1787,72 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
       return { ...p, customFields };
     });
 
+    // Přístupové kódy učitel/žák — vlastní pole organizace (viz admin school-pipedrive-check)
+    const orgFieldsResp = await fetch(`${PIPEDRIVE_BASE}/organizationFields?api_token=${pipedriveToken}`);
+    const orgFieldsData = await orgFieldsResp.json();
+    const orgFieldsRaw = orgFieldsData.data || [];
+    const orgFieldMap: Record<string, { name: string; options: Record<string, string> }> = {};
+    for (const field of orgFieldsRaw) {
+      if (field.key && field.name) {
+        const optionsMap: Record<string, string> = {};
+        if (field.options && Array.isArray(field.options)) {
+          for (const opt of field.options) {
+            if (opt.id !== undefined && opt.label) {
+              optionsMap[String(opt.id)] = opt.label;
+            }
+          }
+        }
+        orgFieldMap[field.key] = { name: field.name, options: optionsMap };
+      }
+    }
+
+    const removeDiacritics = (s: string) =>
+      s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+    const mapOrgCustomFields = (
+      record: Record<string, unknown>,
+      m: Record<string, { name: string; options: Record<string, string> }>,
+    ) => {
+      const customFields: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(record)) {
+        if (!/^[a-f0-9]{40}$/.test(key) || value == null || value === '') continue;
+        const fieldDef = m[key];
+        const fieldName = fieldDef?.name || key;
+        let resolvedValue: unknown = value;
+        if (fieldDef) {
+          if (typeof value === 'string' && value.includes(',')) {
+            const ids = value.split(',').map((v) => v.trim());
+            resolvedValue = ids.map((id) => fieldDef.options[id] || id);
+          } else {
+            const strVal = String(value);
+            resolvedValue = fieldDef.options[strVal] || value;
+          }
+        }
+        customFields[fieldName] = resolvedValue;
+      }
+      return customFields;
+    };
+
+    const pickOrgFieldValue = (customFields: Record<string, unknown>, nameHints: string[]) => {
+      const normalizedHints = nameHints.map((hint) => removeDiacritics(hint));
+      for (const [key, value] of Object.entries(customFields)) {
+        const normalizedKey = removeDiacritics(key);
+        if (normalizedHints.some((hint) => normalizedKey.includes(hint))) return value;
+      }
+      return undefined;
+    };
+
+    const organizationCustomFields = mapOrgCustomFields(org, orgFieldMap);
+    const pickStr = (v: unknown): string => {
+      if (v == null) return '';
+      if (Array.isArray(v)) return String(v[0] ?? '').trim();
+      return String(v).trim();
+    };
+    const teacherCode =
+      pickStr(pickOrgFieldValue(organizationCustomFields, ['kod ucitel', 'učitel'])) || undefined;
+    const studentCode =
+      pickStr(pickOrgFieldValue(organizationCustomFields, ['kod zak', 'kod žák', 'student'])) || undefined;
+
     return c.json({
       organization: orgWithOwner,
       persons: enhancedPersons,
@@ -1834,7 +1900,9 @@ app.post("/make-server-954b19ad/crm/org-detail", async (c) => {
           user_name: nameFromEmbed ?? (aid != null ? userMap[aid] ?? null : null),
         };
       }),
-      summary: `${org.name}: ${enhancedPersons.length} kontaktů, ${deals.length} dealů`
+      summary: `${org.name}: ${enhancedPersons.length} kontaktů, ${deals.length} dealů`,
+      teacherCode,
+      studentCode,
     });
 
   } catch (error: any) {

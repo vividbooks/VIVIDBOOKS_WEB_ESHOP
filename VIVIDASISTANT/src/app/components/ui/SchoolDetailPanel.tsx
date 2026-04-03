@@ -317,6 +317,33 @@ export const SchoolDetailPanel: React.FC<SchoolDetailPanelProps> = ({
         </button>
       </div>
 
+      {(detail?.teacherCode || detail?.studentCode) && (
+        <div className="shrink-0 px-4 py-3 border-b border-white/10 bg-[#10B981]/12">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6EE7B7] mb-2 flex items-center gap-1.5">
+            <Hash size={12} className="shrink-0" />
+            Přístupové kódy (Pipedrive)
+          </p>
+          <div className="flex flex-wrap gap-3 min-w-0">
+            {detail.teacherCode && (
+              <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
+                <span className="text-[#94A3B8] text-xs">Učitel</span>
+                <code className="block font-mono text-base text-white tracking-wider mt-0.5 break-all">
+                  {detail.teacherCode}
+                </code>
+              </div>
+            )}
+            {detail.studentCode && (
+              <div className="min-w-0 flex-1 rounded-lg border border-emerald-500/25 bg-[#1C1C1E] px-3 py-2">
+                <span className="text-[#94A3B8] text-xs">Žák</span>
+                <code className="block font-mono text-base text-white tracking-wider mt-0.5 break-all">
+                  {detail.studentCode}
+                </code>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {detail?.organization?.owner_name && (
         <div className="shrink-0 px-4 py-2.5 bg-[#252528] border-b border-white/10">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-[#94A3B8] mb-0.5">Vlastník organizace (Pipedrive)</p>
@@ -446,30 +473,6 @@ export const SchoolDetailPanel: React.FC<SchoolDetailPanelProps> = ({
                   {detail.deals.map((deal: any) => (
                     <DealItem key={deal.id} deal={deal} />
                   ))}
-                </div>
-              </div>
-            )}
-
-            {/* Access Codes */}
-            {(detail.teacherCode || detail.studentCode) && (
-              <div className="bg-[#10B981]/10 rounded-xl p-4 min-w-0 max-w-full">
-                <h3 className="text-[#10B981] font-semibold mb-3 flex items-center gap-2">
-                  <Hash size={16} />
-                  Přístupové kódy
-                </h3>
-                <div className="grid grid-cols-1 gap-3 min-w-0">
-                  {detail.teacherCode && (
-                    <div className="bg-[#1C1C1E] rounded-lg p-3 min-w-0">
-                      <span className="text-[#6B7280] text-sm">Učitel:</span>
-                      <code className="block text-white font-mono text-base mt-1 break-all">{detail.teacherCode}</code>
-                    </div>
-                  )}
-                  {detail.studentCode && (
-                    <div className="bg-[#1C1C1E] rounded-lg p-3 min-w-0">
-                      <span className="text-[#6B7280] text-sm">Žák:</span>
-                      <code className="block text-white font-mono text-base mt-1 break-all">{detail.studentCode}</code>
-                    </div>
-                  )}
                 </div>
               </div>
             )}

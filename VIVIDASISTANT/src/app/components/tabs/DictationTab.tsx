@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu, ListTodo } from 'lucide-react';
+import { Copy, Trash2, Loader2, Mail, MessageSquare, Menu, ListTodo, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
 import { RecordButton } from '@/app/components/figma/RecordButton';
+import { isAssistantRagWebDictation } from '@/config/assistantAllowlist';
 
 /** Stejný text jako v chatu s operátorem — obalí nadiktovaný koncept. */
 export function buildAssistantEmailPrompt(draftBody: string): string {
@@ -16,6 +17,8 @@ interface DictationTabProps {
   onSendToAssistant?: (wrappedMessage: string) => void;
   /** Přepne na záložku Obchodník a odešle přesně tento text (bez obalení promptem). */
   onSendToChat?: (plainText: string) => void;
+  /** Přepne na Web operátora a odešle zadání do jeho chatu (plný agent / CMS). */
+  onSendToWebOperator?: (plainText: string) => void;
   /** Po přidání úkolů z diktování (např. přepnutí na záložku Úkoly). */
   onAfterTodoAdded?: () => void;
 }
@@ -53,10 +56,21 @@ function shouldUseTaskBreakdown(text: string): boolean {
 export const DictationTab: React.FC<DictationTabProps> = ({
   onSendToAssistant,
   onSendToChat,
+  onSendToWebOperator,
   onAfterTodoAdded,
 }) => {
-  const { shortcuts, transcribeAudio, smartEdit, toggleLeftNav, addTask, breakdownTaskTranscript, user, authReady } =
-    useApp();
+  const {
+    shortcuts,
+    transcribeAudio,
+    smartEdit,
+    toggleLeftNav,
+    addTask,
+    breakdownTaskTranscript,
+    user,
+    authReady,
+  } = useApp();
+
+  const showRagWebTab = isAssistantRagWebDictation(user?.email ?? null) && !!onSendToWebOperator;
 
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -65,14 +79,14 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   const [transcript, setTranscript] = useState('');
   const [recordingTime, setRecordingTime] = useState(0);
   /** Po kliknutí na Email/Chat/Todo bez textu: po dokončení nahrávání se provede daná akce. */
-  const [armedAction, setArmedAction] = useState<'email' | 'chat' | 'todo' | null>(null);
-  const armedActionRef = useRef<'email' | 'chat' | 'todo' | null>(null);
+  const [armedAction, setArmedAction] = useState<'email' | 'chat' | 'todo' | 'web' | null>(null);
+  const armedActionRef = useRef<'email' | 'chat' | 'todo' | 'web' | null>(null);
   /**
    * Záměr u tohoto nahrávání (uloží se při startu).
    * armedActionRef se může před dokončením onstop vynulovat (např. druhý klik na Zadat = zrušení režimu),
    * pak by se text neposlal do chatu ani nešel správnou větví bez smart-edit.
    */
-  const recordingIntentRef = useRef<'email' | 'chat' | 'todo' | null>(null);
+  const recordingIntentRef = useRef<'email' | 'chat' | 'todo' | 'web' | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -250,6 +264,25 @@ export const DictationTab: React.FC<DictationTabProps> = ({
     }
   };
 
+  const onWebButton = () => {
+    if (!showRagWebTab || !onSendToWebOperator) return;
+    const t = transcript.trim();
+    if (t) {
+      clearArmed();
+      if (isRecording) stopRecording();
+      onSendToWebOperator(t);
+      return;
+    }
+    const next = armedAction === 'web' ? null : 'web';
+    armedActionRef.current = next;
+    setArmedAction(next);
+    if (next === null) {
+      if (isRecording) stopRecording();
+    } else if (!isRecording) {
+      void startRecording();
+    }
+  };
+
   const startRecording = async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       toast.error('Váš prohlížeč nepodporuje nahrávání zvuku.');
@@ -298,8 +331,8 @@ export const DictationTab: React.FC<DictationTabProps> = ({
 
           let finalText: string;
 
-          /** Režim „Zadat chatu“ / „Todo“: bez smart-edit. Jen přepis + zkratky. */
-          if (intent === 'chat' || intent === 'todo') {
+          /** Režim „Zadat chatu“ / „Todo“ / „Web“: bez smart-edit. Jen přepis + zkratky; Web pak předá operátorovi. */
+          if (intent === 'chat' || intent === 'todo' || intent === 'web') {
             if (selectionData?.text != null && selectionData.start != null && selectionData.end != null) {
               finalText =
                 baseText.slice(0, selectionData.start) + newVoiceText + baseText.slice(selectionData.end);
@@ -332,6 +365,10 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             armedActionRef.current = null;
             setArmedAction(null);
             await sendToTodoNow(trimmed);
+          } else if (trimmed && intent === 'web' && onSendToWebOperator) {
+            armedActionRef.current = null;
+            setArmedAction(null);
+            onSendToWebOperator(trimmed);
           }
         } catch (err: any) {
           console.error('Smart edit error:', err);
@@ -447,6 +484,21 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             <ListTodo size={18} />
             <span>Todo</span>
           </button>
+          {showRagWebTab ? (
+            <button
+              type="button"
+              onClick={onWebButton}
+              className={armBtnClass(armedAction === 'web')}
+              title={
+                hasTranscript
+                  ? 'Web — odeslat zadání Web operátorovi (CMS, ceny, …)'
+                  : 'Nahrát a odeslat přepis Web operátorovi'
+              }
+            >
+              <Globe size={18} />
+              <span>Web</span>
+            </button>
+          ) : null}
           <div className="flex flex-1 min-w-[1rem]" />
           <button
             onClick={() => {
@@ -555,6 +607,16 @@ export const DictationTab: React.FC<DictationTabProps> = ({
             <ListTodo size={16} className="shrink-0" />
             <span className="truncate text-xs sm:text-sm">Todo</span>
           </button>
+          {showRagWebTab ? (
+            <button
+              type="button"
+              onClick={onWebButton}
+              className={clsx(armBtnClassMobile(armedAction === 'web'), 'flex-1 min-w-[6rem]')}
+            >
+              <Globe size={16} className="shrink-0" />
+              <span className="truncate text-xs sm:text-sm">Web</span>
+            </button>
+          ) : null}
         </div>
         <div className="flex flex-col items-center gap-2 py-1">
           {greetingName && (

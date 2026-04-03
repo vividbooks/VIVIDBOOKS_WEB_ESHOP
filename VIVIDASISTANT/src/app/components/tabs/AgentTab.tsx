@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { Send, User, Loader2, Building2, Mail, Phone, MapPin, Trash2, Mic, Navigation, CheckCircle2, Circle, AlertCircle, Volume2, VolumeX, ExternalLink, X, Hash, DollarSign, ChevronRight, Briefcase, BookOpen, Plus, FileText, Copy, History, PanelLeftClose } from 'lucide-react';
 import { SchoolDetailPanel } from '../ui/SchoolDetailPanel';
 import { AgentOrbAvatar } from '../ui/AgentOrbAvatar';
@@ -7,6 +8,7 @@ import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 
 /** Supabase Edge Functions vyžadují JWT (anon) — bez toho 401. */
 const FN_AUTH_JSON: HeadersInit = {
@@ -59,10 +61,27 @@ interface AgentTabProps {
   initialMessage?: string;
   /** Příchozí text z diktafonu — vždy nová konverzace (prázdná session + první zpráva). */
   initialMessageFromDictation?: boolean;
+  /** Jednorázový id předání z diktafonu — zpracuje se jen při nové hodnotě. */
+  initialMessageNonce?: string | null;
 }
 
 function chatSessionsStorageKey(userId: string | null | undefined): string {
   return userId ? `vividassistant_agent_sessions_v2:${userId}` : 'vividassistant_agent_sessions_v2';
+}
+
+const ANON_SESSIONS_KEY = 'vividassistant_agent_sessions_v2';
+
+/** Po přihlášení zkopíruj anonymní historii do per-user klíče, aby cloud sync neviděl prázdný soubor. */
+function maybeMigrateAnonSessionsToUser(userId: string) {
+  const userKey = chatSessionsStorageKey(userId);
+  try {
+    if (localStorage.getItem(userKey)) return;
+    const anon = localStorage.getItem(ANON_SESSIONS_KEY);
+    if (!anon) return;
+    localStorage.setItem(userKey, anon);
+  } catch {
+    /* ignore */
+  }
 }
 const LEGACY_CHAT_KEY = 'vividassistant_agent_chat_v1';
 const LEGACY_ROUTE_KEY = 'vividassistant_agent_last_route_v1';
@@ -75,6 +94,71 @@ interface ChatSession {
   updatedAt: string;
   messages: Message[];
   lastRouteData: RouteResult | null;
+}
+
+/** Cloud sync historie chatů (per uživatel přes JWT) — stejný mechanismus jako úkoly v AppContext. */
+const ASSISTANT_FN = `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad`;
+const CLOUD_AGENT_SESSIONS_KEY = 'agent_chat_sessions';
+
+type ChatSessionPersist = Omit<ChatSession, 'messages'> & {
+  messages: Array<Omit<Message, 'timestamp'> & { timestamp: string }>;
+};
+
+async function getUserAuthHeadersJson(): Promise<HeadersInit> {
+  const { data: { session } } = await getSupabaseBrowser().auth.getSession();
+  const token = session?.access_token ?? publicAnonKey;
+  return {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+async function fetchAgentChatSessionsFromCloud(): Promise<{
+  activeSessionId: string;
+  updatedAt?: string;
+  sessions: ChatSessionPersist[];
+} | null> {
+  try {
+    const headers = await getUserAuthHeadersJson();
+    const res = await fetch(`${ASSISTANT_FN}/storage/${encodeURIComponent(CLOUD_AGENT_SESSIONS_KEY)}`, { headers });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { value?: unknown };
+    const v = data?.value as { activeSessionId?: string; sessions?: ChatSessionPersist[]; updatedAt?: string } | null;
+    if (!v || typeof v !== 'object' || !Array.isArray(v.sessions) || !v.sessions.length) return null;
+    if (typeof v.activeSessionId !== 'string') return null;
+    return { activeSessionId: v.activeSessionId, updatedAt: v.updatedAt, sessions: v.sessions };
+  } catch {
+    return null;
+  }
+}
+
+async function saveAgentChatSessionsToCloud(payload: {
+  activeSessionId: string;
+  updatedAt: string;
+  sessions: ChatSessionPersist[];
+}): Promise<void> {
+  try {
+    const headers = await getUserAuthHeadersJson();
+    const res = await fetch(`${ASSISTANT_FN}/storage`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ key: CLOUD_AGENT_SESSIONS_KEY, value: payload }),
+    });
+    if (!res.ok) console.warn('[AgentTab] Cloud uložení chatů:', res.status);
+  } catch (e) {
+    console.warn('[AgentTab] Cloud sync selhalo:', e);
+  }
+}
+
+function localStorageSessionsUpdatedAt(key: string): number {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return 0;
+    const p = JSON.parse(raw) as { updatedAt?: string };
+    return p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+  } catch {
+    return 0;
+  }
 }
 
 function hydrateMessage(m: Omit<Message, 'timestamp'> & { timestamp: string }): Message {
@@ -179,29 +263,19 @@ function newSessionId(): string {
 }
 
 function getInitialSessionState(
-  opts: { initialMessage?: string; initialMessageFromDictation?: boolean },
+  _opts: { initialMessage?: string; initialMessageFromDictation?: boolean },
   storageKey: string,
 ) {
   const b = loadSessionsBootstrap(storageKey);
-  if (opts.initialMessageFromDictation && opts.initialMessage) {
-    const id = newSessionId();
-    const empty: ChatSession = {
-      id,
-      title: 'Nový chat',
-      updatedAt: new Date().toISOString(),
-      messages: [],
-      lastRouteData: null,
-    };
-    return {
-      sessions: [empty, ...b.sessions].slice(0, MAX_SESSIONS),
-      activeSessionId: id,
-    };
-  }
   return { sessions: b.sessions, activeSessionId: b.activeSessionId };
 }
 
-export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessageFromDictation }) => {
-  const { smartEdit, transcribeAudio, addTask, setAgentProcessing, user } = useApp();
+export const AgentTab: React.FC<AgentTabProps> = ({
+  initialMessage,
+  initialMessageFromDictation,
+  initialMessageNonce,
+}) => {
+  const { smartEdit, transcribeAudio, addTask, setAgentProcessing, user, authReady } = useApp();
   const sessionsKey = chatSessionsStorageKey(user?.id);
   const sessionInitRef = useRef<ReturnType<typeof getInitialSessionState> | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
@@ -275,10 +349,15 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
   const [newRagContent, setNewRagContent] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const cloudSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Po přihlášení nejdřív stáhnout cloud, až pak ukládat nahoru (ochrana před přepsáním novější historie). */
+  const [chatCloudReady, setChatCloudReady] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const speechSynthRef = useRef<SpeechSynthesisUtterance | null>(null);
+  /** Zpracuje předání z diktafonu jen jednou na kombinaci nonce + text. */
+  const processedIncomingDictationRef = useRef<string | null>(null);
 
   // RAG functions
   const fetchRagDocuments = async () => {
@@ -409,6 +488,31 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
     }
   };
 
+  /** Kódy z API + případně z CRM karty v seznamu (během načítání nebo doplnění). */
+  const mergedOrgDetail = useMemo(() => {
+    if (!selectedOrg) return null;
+    if (orgDetail != null) {
+      return {
+        ...orgDetail,
+        teacherCode: orgDetail.teacherCode ?? selectedOrg.teacherCode,
+        studentCode: orgDetail.studentCode ?? selectedOrg.studentCode,
+      };
+    }
+    if (loadingOrgDetail) {
+      return {
+        teacherCode: selectedOrg.teacherCode,
+        studentCode: selectedOrg.studentCode,
+      };
+    }
+    if (selectedOrg.teacherCode || selectedOrg.studentCode) {
+      return {
+        teacherCode: selectedOrg.teacherCode,
+        studentCode: selectedOrg.studentCode,
+      };
+    }
+    return null;
+  }, [selectedOrg, orgDetail, loadingOrgDetail]);
+
   // Text-to-Speech function
   const speak = (text: string) => {
     if (!('speechSynthesis' in window)) {
@@ -443,20 +547,16 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
   };
 
   useEffect(() => {
-    if (initialMessage) {
-      sendMessage(initialMessage);
-    }
-  }, [initialMessage]);
-
-  useEffect(() => {
     setAgentProcessing(isProcessing || isTranscribing);
     return () => setAgentProcessing(false);
   }, [isProcessing, isTranscribing, setAgentProcessing]);
 
   useEffect(() => {
+    const updatedAt = new Date().toISOString();
     try {
       const payload = {
         activeSessionId,
+        updatedAt,
         sessions: sessions.map((s) => ({
           ...s,
           messages: s.messages
@@ -472,7 +572,64 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
     } catch (e) {
       console.warn('[AgentTab] Ukládání historie chatů selhalo:', e);
     }
-  }, [sessions, activeSessionId, sessionsKey]);
+
+    if (!authReady || !user?.id || !chatCloudReady) return;
+    if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+    cloudSaveTimerRef.current = setTimeout(() => {
+      const persist: Parameters<typeof saveAgentChatSessionsToCloud>[0] = {
+        activeSessionId,
+        updatedAt,
+        sessions: sessions.map((s) => ({
+          ...s,
+          messages: s.messages
+            .filter((m) => !m.isLoading)
+            .slice(-MAX_STORED_MESSAGES)
+            .map((m) => ({
+              ...m,
+              timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : String(m.timestamp),
+            })),
+        })),
+      };
+      void saveAgentChatSessionsToCloud(persist);
+    }, 650);
+    return () => {
+      if (cloudSaveTimerRef.current) clearTimeout(cloudSaveTimerRef.current);
+    };
+  }, [sessions, activeSessionId, sessionsKey, authReady, user?.id, chatCloudReady]);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (!user?.id) {
+      setChatCloudReady(true);
+      return;
+    }
+    setChatCloudReady(false);
+    let cancelled = false;
+    void (async () => {
+      maybeMigrateAnonSessionsToUser(user.id);
+      const remote = await fetchAgentChatSessionsFromCloud();
+      if (cancelled) return;
+      // Po await znovu přečti lokální čas — nesmí přepsat čerstvou historii jen kvůli prázdnému user klíči (0).
+      const localTs = localStorageSessionsUpdatedAt(sessionsKey);
+      const anonTs = localStorageSessionsUpdatedAt(ANON_SESSIONS_KEY);
+      const effectiveLocalTs = Math.max(localTs, anonTs);
+      const remoteTs = remote?.updatedAt ? new Date(remote.updatedAt).getTime() : 0;
+      if (remote?.sessions?.length && remoteTs > effectiveLocalTs) {
+        const hydrated: ChatSession[] = remote.sessions.map((s) => ({
+          ...s,
+          messages: s.messages.map(hydrateMessage).slice(-MAX_STORED_MESSAGES),
+        }));
+        let active = remote.activeSessionId;
+        if (!hydrated.some((s) => s.id === active)) active = hydrated[0].id;
+        setSessions(hydrated.slice(0, MAX_SESSIONS));
+        setActiveSessionId(active);
+      }
+      if (!cancelled) setChatCloudReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, user?.id, sessionsKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -859,6 +1016,35 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
       setIsProcessing(false);
     }
   };
+
+  // Předání z diktafonu (bez remountu AgentTab) — nová session jen u fromDictation
+  useEffect(() => {
+    const text = initialMessage?.trim();
+    if (!text) return;
+    const incomingKey = `${initialMessageNonce ?? ''}|${text}`;
+    if (processedIncomingDictationRef.current === incomingKey) return;
+    processedIncomingDictationRef.current = incomingKey;
+
+    if (initialMessageFromDictation) {
+      const id = newSessionId();
+      const empty: ChatSession = {
+        id,
+        title: 'Nový chat',
+        updatedAt: new Date().toISOString(),
+        messages: [],
+        lastRouteData: null,
+      };
+      flushSync(() => {
+        setSessions((prev) => [empty, ...prev].slice(0, MAX_SESSIONS));
+        setActiveSessionId(id);
+      });
+      // Další tick — sendMessage musí vidět novou session v historyMessages
+      setTimeout(() => void sendMessage(text), 0);
+      return;
+    }
+    void sendMessage(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sendMessage je stabilní v rámci session; jen vstup z rodiče
+  }, [initialMessage, initialMessageFromDictation, initialMessageNonce]);
 
   // Voice recording
   const startRecording = async () => {
@@ -1764,7 +1950,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({ initialMessage, initialMessa
               name: selectedOrg.name,
               address: orgDetail?.organization?.address || orgDetail?.address || selectedOrg.address
             }}
-            detail={orgDetail}
+            detail={mergedOrgDetail}
             loading={loadingOrgDetail}
             onClose={() => { setSelectedOrg(null); setOrgDetail(null); }}
           />

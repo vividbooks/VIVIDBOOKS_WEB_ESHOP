@@ -58,7 +58,14 @@ interface AppContextType {
   
   // API
   transcribeAudio: (audioBlob: Blob) => Promise<string>;
-  smartEdit: (currentText: string, newVoiceText: string, context?: string, googleAccessToken?: string) => Promise<any>;
+  smartEdit: (
+    currentText: string,
+    newVoiceText: string,
+    context?: string,
+    googleAccessToken?: string,
+    selection?: { start: number; end: number; text: string },
+    opts?: { signal?: AbortSignal; noFallback?: boolean },
+  ) => Promise<any>;
   /** Obsáhlý přepis → název, kroky, přesný přepis (server /task-breakdown). */
   breakdownTaskTranscript: (transcript: string) => Promise<{ title: string; steps: string[]; transcript: string }>;
   
@@ -502,24 +509,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const smartEdit = async (currentText: string, newVoiceText: string, context?: string, googleAccessToken?: string, selection?: { start: number; end: number; text: string }): Promise<any> => {
+  const smartEdit = async (
+    currentText: string,
+    newVoiceText: string,
+    context?: string,
+    googleAccessToken?: string,
+    selection?: { start: number; end: number; text: string },
+    opts?: { signal?: AbortSignal; noFallback?: boolean },
+  ): Promise<any> => {
     try {
       const headers = await getAuthHeaders(true);
+      headers.apikey = publicAnonKey;
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/smart-edit`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ currentText, newVoiceText, context, googleAccessToken, selection }),
+        signal: opts?.signal,
       });
 
       if (!response.ok) {
-        throw new Error(`Smart Edit failed with status ${response.status}`);
+        const errJson = await response.json().catch(() => ({}));
+        const msg = (errJson as { error?: string }).error || `Smart Edit failed (${response.status})`;
+        throw new Error(msg);
       }
 
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error("Smart Edit error:", error);
-      // Fallback: just append if smart edit fails
+      console.error('Smart Edit error:', error);
+      if (opts?.noFallback) throw error;
+      // Fallback: jen doplnění textu (ne pro ruční Web RAG — ten volá s noFallback)
       return { text: currentText ? `${currentText} ${newVoiceText}` : newVoiceText };
     }
   };

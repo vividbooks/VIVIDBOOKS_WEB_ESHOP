@@ -8433,17 +8433,117 @@ app.post('/make-server-93a20b6f/rag/query', async (c) => {
 });
 
 /**
- * Externí partner (např. Ninjabot): POST JSON { "query": "..." }, hlavička X-API-Key.
+ * Externí partner (např. Ninjabot): POST JSON { "query": "..." }.
+ * Hlavičky: (1) Supabase gateway — Authorization: Bearer <SUPABASE_ANON_KEY> a/nebo apikey: <stejné>
+ *           (2) aplikace — X-API-Key: hodnota z NINJABOT_RAG_API_KEY (Edge secrets)
  * Odpověď: { "answer": "..." }. Vyžaduje secret NINJABOT_RAG_API_KEY nebo RAG_EXTERNAL_API_KEY.
+ *
+ * GET (stejná URL): veřejná dokumentace — JSON nebo HTML (?format=html nebo Accept: text/html).
  */
+app.get('/make-server-93a20b6f/external/rag-query', async (c) => {
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
+  const postUrl = supabaseUrl
+    ? `${supabaseUrl}/functions/v1/make-server-93a20b6f/external/rag-query`
+    : '';
+  const accept = (c.req.header('Accept') || '').toLowerCase();
+  const wantsHtml =
+    c.req.query('format') !== 'json' && (c.req.query('format') === 'html' || accept.includes('text/html'));
+
+  const doc = {
+    title: 'Vividbooks - external RAG API (partner)',
+    method: 'POST',
+    url: postUrl,
+    documentationGetUrl: postUrl,
+    note:
+      'Send POST with JSON body. Supabase Edge requires Authorization: Bearer <anon public key> from Dashboard -> Settings -> API. X-API-Key must match the secret shared with you (NINJABOT_RAG_API_KEY on our side).',
+    headers: {
+      Authorization:
+        'Bearer <SUPABASE_ANON_PUBLIC_KEY> - Project Settings -> API -> Project API keys -> anon / public',
+      apikey: '<optional - same value as anon public key>',
+      'Content-Type': 'application/json',
+      'X-API-Key': '<partner secret - provided out of band>',
+    },
+    body: {
+      query: 'string (required) - user question in Czech or English',
+      question: 'optional alias for query',
+      topK: 'optional number 1-16, default 5',
+    },
+    response: { answer: 'string' },
+    httpErrors: {
+      '401': 'Missing/invalid X-API-Key or missing Supabase Authorization',
+      '503': 'External RAG not configured on server',
+      '500': 'RAG pipeline error (e.g. upstream)',
+    },
+  };
+
+  if (wantsHtml) {
+    const escAttr = (s: string) =>
+      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    /** Only & and < for text inside <pre> (keep " copy-paste friendly). */
+    const escPre = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const curl = [
+      `curl -sS '${postUrl}' \\`,
+      `  -H 'Content-Type: application/json' \\`,
+      `  -H "Authorization: Bearer YOUR_SUPABASE_ANON_KEY" \\`,
+      `  -H "apikey: YOUR_SUPABASE_ANON_KEY" \\`,
+      `  -H "X-API-Key: YOUR_PARTNER_KEY" \\`,
+      `  -d '{"query":"What does Vividbooks offer?"}'`,
+    ].join('\n');
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>${escAttr(doc.title)}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; color: #111; }
+    h1 { font-size: 1.25rem; }
+    code, pre { background: #f4f4f5; padding: 0.15em 0.35em; border-radius: 4px; font-size: 0.9em; }
+    pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+    .muted { color: #555; font-size: 0.95rem; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h1>${escAttr(doc.title)}</h1>
+  <p class="muted">POST <code>${escAttr(postUrl)}</code></p>
+  <p>${escAttr(doc.note)}</p>
+  <p><strong>Headers:</strong> <code>Authorization</code> (Bearer anon from Supabase), optional <code>apikey</code>, <code>Content-Type: application/json</code>, <code>X-API-Key</code> (shared secret).</p>
+  <p><strong>JSON body:</strong> <code>{"query":"..."}</code>, optional <code>topK</code> (1-16).</p>
+  <p><strong>Response:</strong> <code>{"answer":"..."}</code></p>
+  <h2>curl example</h2>
+  <pre>${escPre(curl)}</pre>
+  <p class="muted">JSON docs: <a href="?format=json">?format=json</a> or header <code>Accept: application/json</code></p>
+</body>
+</html>`;
+    return new Response(html, {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    });
+  }
+
+  return c.json(doc);
+});
+
 app.post('/make-server-93a20b6f/external/rag-query', async (c) => {
   const secret = (Deno.env.get('NINJABOT_RAG_API_KEY') || Deno.env.get('RAG_EXTERNAL_API_KEY') || '').trim();
   if (!secret) {
     return c.json({ error: 'External RAG API is not configured (missing NINJABOT_RAG_API_KEY).' }, 503);
   }
   const clientKey = c.req.header('X-API-Key') || c.req.header('x-api-key') || '';
+  if (!clientKey) {
+    return c.json(
+      {
+        error: 'Missing X-API-Key',
+        hint:
+          'Supabase Edge requires Authorization: Bearer <anon public key> (and optionally apikey). Also send X-API-Key matching NINJABOT_RAG_API_KEY in project secrets.',
+      },
+      401,
+    );
+  }
   if (clientKey !== secret) {
-    return c.json({ error: 'Unauthorized' }, 401);
+    return c.json({ error: 'Invalid X-API-Key' }, 401);
   }
   let body: Record<string, unknown>;
   try {

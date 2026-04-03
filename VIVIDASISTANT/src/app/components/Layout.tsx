@@ -1,11 +1,21 @@
 import React, { useEffect } from 'react';
-import { Mic, Settings, Bot, MapPin, Menu, ListChecks } from 'lucide-react';
+import { Mic, Settings, Bot, MapPin, Menu, ListChecks, Send, Globe, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
 import { useApp } from '@/app/contexts/AppContext';
 import { AgentOrbAvatar } from './ui/AgentOrbAvatar';
 
-type TabId = 'dictation' | 'tasks' | 'agent' | 'outreach' | 'scraping' | 'map' | 'settings';
+export type AssistantTabId =
+  | 'dictation'
+  | 'tasks'
+  | 'agent'
+  | 'webOperator'
+  | 'outreach'
+  | 'scraping'
+  | 'map'
+  | 'settings';
+
+type TabId = AssistantTabId;
 
 interface NavItemProps {
   active: boolean;
@@ -35,16 +45,24 @@ interface ResponsiveLayoutProps {
   children: React.ReactNode;
   currentTab: TabId;
   onTabChange: (tab: TabId) => void;
+  /** Záložky Outreach + Scraping (jen vybrané účty). */
+  extendedUi?: boolean;
+  /** Plný Web operátor (admin chat + canvas) — stejné účty jako záložka Web v diktování. */
+  webOperatorNav?: boolean;
 }
 
 function SidebarNav({
   currentTab,
   go,
   agentProcessing,
+  extendedUi,
+  webOperatorNav,
 }: {
   currentTab: TabId;
   go: (t: TabId) => void;
   agentProcessing: boolean;
+  extendedUi: boolean;
+  webOperatorNav: boolean;
 }) {
   return (
     <>
@@ -71,6 +89,30 @@ function SidebarNav({
             label="Obchodník pomocník"
           />
         )}
+        {webOperatorNav ? (
+          <NavItem
+            active={currentTab === 'webOperator'}
+            onClick={() => go('webOperator')}
+            icon={<Sparkles size={22} />}
+            label="Web operátor"
+          />
+        ) : null}
+        {extendedUi ? (
+          <>
+            <NavItem
+              active={currentTab === 'outreach'}
+              onClick={() => go('outreach')}
+              icon={<Send size={22} />}
+              label="Outreach"
+            />
+            <NavItem
+              active={currentTab === 'scraping'}
+              onClick={() => go('scraping')}
+              icon={<Globe size={22} />}
+              label="Scraping"
+            />
+          </>
+        ) : null}
         <NavItem
           active={currentTab === 'map'}
           onClick={() => go('map')}
@@ -90,10 +132,12 @@ function SidebarNav({
   );
 }
 
-export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({ 
-  children, 
-  currentTab, 
-  onTabChange
+export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
+  children,
+  currentTab,
+  onTabChange,
+  extendedUi = false,
+  webOperatorNav = false,
 }) => {
   const { agentProcessing, sidebarCollapsed, navDrawerOpen, setNavDrawerOpen, toggleLeftNav } = useApp();
 
@@ -116,7 +160,13 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
           sidebarCollapsed && 'md:hidden',
         )}
       >
-        <SidebarNav currentTab={currentTab} go={goDesktop} agentProcessing={agentProcessing} />
+        <SidebarNav
+          currentTab={currentTab}
+          go={goDesktop}
+          agentProcessing={agentProcessing}
+          extendedUi={extendedUi}
+          webOperatorNav={webOperatorNav}
+        />
       </aside>
 
       {/* Mobilní výsuvný levý panel (stejné položky jako desktop) */}
@@ -136,7 +186,13 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
           )}
           aria-hidden={!navDrawerOpen}
         >
-          <SidebarNav currentTab={currentTab} go={goMobileDrawer} agentProcessing={agentProcessing} />
+          <SidebarNav
+            currentTab={currentTab}
+            go={goMobileDrawer}
+            agentProcessing={agentProcessing}
+            extendedUi={extendedUi}
+            webOperatorNav={webOperatorNav}
+          />
         </aside>
       </>
 
@@ -208,6 +264,51 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                     </span>
                     <span>Obchodník</span>
                 </motion.button>
+                {webOperatorNav ? (
+                  <button
+                    type="button"
+                    onClick={() => onTabChange('webOperator')}
+                    className={clsx(
+                      'shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2',
+                      currentTab === 'webOperator'
+                        ? 'bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30'
+                        : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
+                    )}
+                  >
+                    <Sparkles size={16} />
+                    <span>Web</span>
+                  </button>
+                ) : null}
+                {extendedUi ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => onTabChange('outreach')}
+                      className={clsx(
+                        'shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2',
+                        currentTab === 'outreach'
+                          ? 'bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30'
+                          : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
+                      )}
+                    >
+                      <Send size={16} />
+                      <span>Outreach</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onTabChange('scraping')}
+                      className={clsx(
+                        'shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2',
+                        currentTab === 'scraping'
+                          ? 'bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30'
+                          : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
+                      )}
+                    >
+                      <Globe size={16} />
+                      <span>Scraping</span>
+                    </button>
+                  </>
+                ) : null}
                 <button
                     onClick={() => onTabChange('map')}
                     className={clsx(
@@ -234,11 +335,11 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
         {/* Scrollable Content */}
         <div className={clsx(
           "flex-1 flex flex-col",
-          (currentTab === 'dictation' || currentTab === 'agent' || currentTab === 'tasks' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "overflow-hidden" : "overflow-y-auto scrollbar-hide"
+          (currentTab === 'dictation' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'tasks' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "overflow-hidden" : "overflow-y-auto scrollbar-hide"
         )}>
           <div className={clsx(
             "w-full flex min-h-0 flex-1 flex-col",
-            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "h-full min-h-0" : "",
+            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "h-full min-h-0" : "",
             currentTab === 'dictation' ? "h-full max-w-5xl mx-auto" : "",
             currentTab === 'settings' ? "max-w-5xl mx-auto p-5 md:p-10 pb-[100px] md:pb-10" : ""
           )}>

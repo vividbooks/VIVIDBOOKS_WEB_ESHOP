@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { useApp } from '@/app/contexts/AppContext';
 import { ResponsiveLayout, type AssistantTabId } from '@/app/components/Layout';
@@ -13,9 +14,14 @@ import { SettingsTab } from '@/app/components/tabs/SettingsTab';
 import { MapTab } from '@/app/components/tabs/MapTab';
 import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
 import { Onboarding } from '@/app/components/Onboarding';
-import { isAssistantEmailAllowed } from '@/config/assistantAllowlist';
+import { isAssistantEmailAllowed, isAssistantExtendedUi, isAssistantRagWebDictation } from '@/config/assistantAllowlist';
+
+const WebOperatorPage = lazy(() =>
+  import('@/components/admin/AdminAgentPage').then((m) => ({ default: m.AdminAgentPage })),
+);
 
 type PendingAgentMessage = { text: string; nonce: string; fromDictation?: boolean } | null;
+type PendingWebOperatorMessage = { text: string; nonce: string } | null;
 
 const ACCESS_DENIED_MSG = 'Tento účet nemá přístup k asistentovi.';
 
@@ -23,6 +29,7 @@ export const InnerApp: React.FC = () => {
   const { user, authReady, signOut } = useApp();
   const [currentTab, setCurrentTab] = useState<AssistantTabId>('dictation');
   const [pendingAgentMessage, setPendingAgentMessage] = useState<PendingAgentMessage>(null);
+  const [pendingWebOperatorMessage, setPendingWebOperatorMessage] = useState<PendingWebOperatorMessage>(null);
   const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -91,6 +98,30 @@ export const InnerApp: React.FC = () => {
     if (currentTab !== 'agent') setPendingAgentMessage(null);
   }, [currentTab]);
 
+  const extendedUi = user?.email ? isAssistantExtendedUi(user.email) : false;
+  const ragWeb = user?.email ? isAssistantRagWebDictation(user.email) : false;
+
+  useEffect(() => {
+    if (extendedUi) return;
+    if (currentTab === 'outreach' || currentTab === 'scraping') {
+      setCurrentTab('dictation');
+    }
+  }, [extendedUi, currentTab]);
+
+  useEffect(() => {
+    if (ragWeb) return;
+    if (currentTab === 'webOperator') setCurrentTab('dictation');
+  }, [ragWeb, currentTab]);
+
+  const prevTabRef = useRef<AssistantTabId>(currentTab);
+  useEffect(() => {
+    const prev = prevTabRef.current;
+    prevTabRef.current = currentTab;
+    if (prev === 'webOperator' && currentTab !== 'webOperator') {
+      setPendingWebOperatorMessage(null);
+    }
+  }, [currentTab]);
+
   const handleOnboardingComplete = () => {
     localStorage.setItem('dictation_app_onboarded', 'true');
     setShowOnboarding(false);
@@ -120,6 +151,19 @@ export const InnerApp: React.FC = () => {
     });
   };
 
+  const sendDictationToWebOperator = useCallback((plainText: string) => {
+    const t = plainText.trim();
+    if (!t) return;
+    flushSync(() => {
+      setPendingWebOperatorMessage({
+        text: t,
+        nonce: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      });
+      setCurrentTab('webOperator');
+    });
+    toast.success('Otevírám Web operátora se zadáním…');
+  }, []);
+
   if (!authReady) {
     return (
       <div className="min-h-[100dvh] w-full bg-black flex items-center justify-center">
@@ -141,19 +185,39 @@ export const InnerApp: React.FC = () => {
   }
 
   return (
-    <ResponsiveLayout currentTab={currentTab} onTabChange={setCurrentTab}>
+    <ResponsiveLayout
+      currentTab={currentTab}
+      onTabChange={setCurrentTab}
+      extendedUi={extendedUi}
+      webOperatorNav={ragWeb}
+    >
       {currentTab === 'dictation' ? (
         <DictationTab
           onSendToAssistant={sendDictationToAssistant}
           onSendToChat={sendDictationToChat}
+          onSendToWebOperator={ragWeb ? sendDictationToWebOperator : undefined}
           onAfterTodoAdded={() => setCurrentTab('tasks')}
         />
       ) : currentTab === 'agent' ? (
         <AgentTab
-          key={pendingAgentMessage?.nonce ?? 'agent-default'}
           initialMessage={pendingAgentMessage?.text}
           initialMessageFromDictation={pendingAgentMessage?.fromDictation}
+          initialMessageNonce={pendingAgentMessage?.nonce ?? null}
         />
+      ) : currentTab === 'webOperator' ? (
+        <Suspense
+          fallback={
+            <div className="flex h-full min-h-[50dvh] w-full items-center justify-center bg-[#f7f8fc]">
+              <Loader2 className="h-10 w-10 animate-spin text-[#7C3AED]/50" aria-label="Načítání Web operátora" />
+            </div>
+          }
+        >
+          <WebOperatorPage
+            hubMode
+            queuedFromDictation={pendingWebOperatorMessage}
+            onQueuedFromDictationConsumed={() => setPendingWebOperatorMessage(null)}
+          />
+        </Suspense>
       ) : currentTab === 'tasks' ? (
         <TasksTab />
       ) : currentTab === 'outreach' ? (
