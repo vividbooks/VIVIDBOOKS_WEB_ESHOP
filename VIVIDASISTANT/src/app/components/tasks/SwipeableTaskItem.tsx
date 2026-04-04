@@ -3,7 +3,8 @@ import { motion, PanInfo } from 'motion/react';
 import { Check, Trash2, Calendar, Loader2 } from 'lucide-react';
 import { Task } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 import { toast } from 'sonner';
 
 interface SwipeableTaskItemProps {
@@ -82,12 +83,10 @@ export const SwipeableTaskItem: React.FC<SwipeableTaskItemProps> = ({ task, onTo
     setIsProcessingCalendar(true);
     
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/parse-task`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
-        },
+        headers,
         body: JSON.stringify({ text: task.text }),
       });
 

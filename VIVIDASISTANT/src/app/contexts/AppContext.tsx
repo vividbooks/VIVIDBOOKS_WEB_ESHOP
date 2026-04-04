@@ -1,7 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Session, User } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 import { getSupabaseBrowser, resetSupabaseBrowserClient, signInWithGoogleOAuth } from '@/lib/supabaseBrowser';
 import { prepareWebStorageForAuth } from '@/lib/prepareWebStorageForAuth';
 
@@ -147,15 +148,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, []);
 
-  const getAuthHeaders = useCallback(async (includeJson = false): Promise<Record<string, string>> => {
-    const { data: { session: s } } = await getSupabaseBrowser().auth.getSession();
-    const token = s?.access_token;
-    const h: Record<string, string> = {
-      Authorization: `Bearer ${token ?? publicAnonKey}`,
-    };
-    if (includeJson) h['Content-Type'] = 'application/json';
-    return h;
-  }, []);
+  const getAuthHeaders = useCallback(
+    (includeJson = false) => getEdgeFunctionHeaders(includeJson),
+    [],
+  );
 
   const saveToStorage = async (key: string, value: any) => {
     try {
@@ -519,7 +515,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ): Promise<any> => {
     try {
       const headers = await getAuthHeaders(true);
-      headers.apikey = publicAnonKey;
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/smart-edit`, {
         method: 'POST',
         headers,

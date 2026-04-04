@@ -11,9 +11,10 @@ import { projectId, publicAnonKey } from '/utils/supabase/info';
 
 const FN_AUTH_JSON: HeadersInit = {
   Authorization: `Bearer ${publicAnonKey}`,
+  apikey: publicAnonKey,
   'Content-Type': 'application/json',
 };
-const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey };
 
 type SectionType = 'account' | 'general' | 'library' | 'integrations' | 'data';
 

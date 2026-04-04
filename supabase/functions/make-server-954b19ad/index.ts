@@ -6,7 +6,11 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const app = new Hono();
 
 // Enable CORS
-app.use("/*", cors({ origin: "*", allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"] }));
+app.use("/*", cors({
+  origin: "*",
+  allowHeaders: ["Content-Type", "Authorization", "apikey", "x-client-info", "x-user-access-token"],
+  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+}));
 
 // Inline KV store
 const kvClient = () => createClient(
@@ -14,13 +18,25 @@ const kvClient = () => createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "",
 );
 
-/** Ověří JWT z Authorization a vrátí user id, jinak null (anonymní / sdílený klíč). */
-async function getUserIdFromRequestAuth(c: { req: { header: (name: string) => string | undefined } }): Promise<string | null> {
+/**
+ * Uživatelský JWT: brána Edge Functions ověřuje jen `Authorization` — musí tam být anon JWT (401 jinak).
+ * Klient tedy posílá Bearer anon + volitelně `X-User-Access-Token` s access_token uživatele.
+ */
+function getUserJwtFromRequest(c: { req: { header: (name: string) => string | undefined } }): string {
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
+  const fromX = c.req.header("X-User-Access-Token")?.trim();
+  if (fromX && fromX !== anon) return fromX;
   const authHeader = c.req.header("Authorization") || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (token && token !== anon) return token;
+  return "";
+}
+
+/** Ověří JWT uživatele (viz getUserJwtFromRequest) a vrátí user id, jinak null. */
+async function getUserIdFromRequestAuth(c: { req: { header: (name: string) => string | undefined } }): Promise<string | null> {
+  const token = getUserJwtFromRequest(c);
   if (!token) return null;
   const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  if (!token || token === anon) return null;
   const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
   if (!supabaseUrl || !anon) return null;
   const supabase = createClient(supabaseUrl, anon, {
@@ -46,11 +62,10 @@ async function assistantEmailForbiddenIfConfigured(c: {
   const raw = Deno.env.get("ASSISTANT_ALLOWED_EMAILS")?.trim();
   if (!raw) return null;
 
-  const authHeader = c.req.header("Authorization") || "";
-  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
-  const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
-  if (!token || token === anon) return null;
+  const token = getUserJwtFromRequest(c);
+  if (!token) return null;
 
+  const anon = Deno.env.get("SUPABASE_ANON_KEY") || "";
   const supabaseUrl = (Deno.env.get("SUPABASE_URL") || "").replace(/\/$/, "");
   if (!supabaseUrl || !anon) return null;
   const supabase = createClient(supabaseUrl, anon, {
@@ -3977,6 +3992,17 @@ PŘÍKLADY:
     const params = intent.params || {};
 
     // ========== CRM SEARCH ==========
+    if (action === 'crm_search' && !pipedriveToken) {
+      return c.json({
+        success: false,
+        action: 'crm_search',
+        response:
+          'CRM není na serveru nakonfigurováno (chybí PIPEDRIVE_API_TOKEN v Supabase Secrets u Edge Functions).',
+        voiceSummary: 'CRM není připojeno.',
+        crmData: { organizations: [], persons: [], deals: [] },
+      });
+    }
+
     if (action === 'crm_search' && pipedriveToken) {
       const searchQuery = params.searchQuery || message;
       console.log("[Orchestrator] CRM Search:", searchQuery);
@@ -3990,15 +4016,30 @@ PŘÍKLADY:
         `${PIPEDRIVE_BASE}/itemSearch?term=${encodeURIComponent(searchQuery)}&item_types=organization,person,deal&api_token=${pipedriveToken}&limit=50`
       );
 
-      if (searchResp.ok) {
-        const searchData = await searchResp.json();
-        const items = searchData.data?.items || [];
+      if (!searchResp.ok) {
+        const errJson = await searchResp.json().catch(() => ({}));
+        const errStr = JSON.stringify(errJson);
+        const isAuth =
+          searchResp.status === 401 ||
+          /unauthorized|invalid.*token|oauth/i.test(errStr);
+        return c.json({
+          success: false,
+          action: 'crm_search',
+          response: isAuth
+            ? 'Připojení k Pipedrive CRM selhalo: neplatný nebo zneplatněný API token. V Supabase → Project Settings → Edge Functions → Secrets nastavte platný PIPEDRIVE_API_TOKEN (Personal preferences → API v Pipedrive).'
+            : `CRM vyhledávání dočasně nedostupné (Pipedrive HTTP ${searchResp.status}).`,
+          voiceSummary: isAuth ? 'Neplatný token Pipedrive.' : 'Chyba CRM.',
+          crmData: { organizations: [], persons: [], deals: [] },
+        });
+      }
 
-        for (const item of items) {
-          if (item.item?.type === 'organization') allOrgs.push(item.item);
-          if (item.item?.type === 'person') allPersons.push(item.item);
-          if (item.item?.type === 'deal') allDeals.push(item.item);
-        }
+      const searchData = await searchResp.json();
+      const items = searchData.data?.items || [];
+
+      for (const item of items) {
+        if (item.item?.type === 'organization') allOrgs.push(item.item);
+        if (item.item?.type === 'person') allPersons.push(item.item);
+        if (item.item?.type === 'deal') allDeals.push(item.item);
       }
 
       // ========== DEDUPLICATION AGENT ==========

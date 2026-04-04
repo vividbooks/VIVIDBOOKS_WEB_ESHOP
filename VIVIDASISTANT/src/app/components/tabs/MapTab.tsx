@@ -4,12 +4,13 @@ import { SchoolDetailPanel } from '../ui/SchoolDetailPanel';
 import { toast } from 'sonner';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 
-/** Supabase Edge Functions vyžadují JWT (anon). */
+/** Supabase Edge Functions: Bearer anon + apikey (brána); uživatel přes X-User-Access-Token u dynamických volání. */
 const FN_AUTH_JSON: HeadersInit = {
   Authorization: `Bearer ${publicAnonKey}`,
+  apikey: publicAnonKey,
   'Content-Type': 'application/json',
 };
-const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey };
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';

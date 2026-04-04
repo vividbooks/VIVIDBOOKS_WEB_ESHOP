@@ -11,6 +11,7 @@ import { useApp, Task } from '@/app/contexts/AppContext';
 import { RecordButton } from '@/app/components/figma/RecordButton';
 import { toast } from 'sonner';
 import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 
 interface CalendarEvent {
   id: string;
@@ -206,9 +207,10 @@ export const TasksTab: React.FC = () => {
       const monthAhead = new Date(now);
       monthAhead.setDate(monthAhead.getDate() + 30);
 
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/calendar/events`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           googleAccessToken: googleToken,
           timeMin: now.toISOString(),
@@ -254,9 +256,10 @@ export const TasksTab: React.FC = () => {
     
     try {
       // Use AI agent to intelligently match event with CRM
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/calendar/match-crm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           eventTitle: event.title,
           eventLocation: event.location,
@@ -334,9 +337,10 @@ export const TasksTab: React.FC = () => {
     
     setLoadingActivities(orgId);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/org-activities`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ orgId })
       });
       

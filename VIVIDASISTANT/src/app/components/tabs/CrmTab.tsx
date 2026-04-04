@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Search, Building2, User, Phone, Mail, Briefcase, Loader2, Mic, Send, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '/utils/supabase/info';
+import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 import { RecordButton } from '@/app/components/figma/RecordButton';
 import { useApp } from '@/app/contexts/AppContext';
 
@@ -58,9 +59,10 @@ export const CrmTab: React.FC = () => {
 
     setIsLoading(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/query`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ query: query.trim() })
       });
 

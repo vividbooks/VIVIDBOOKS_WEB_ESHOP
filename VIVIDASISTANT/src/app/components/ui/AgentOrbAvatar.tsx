@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bot } from 'lucide-react';
+import { MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
 
@@ -22,7 +22,7 @@ const SIZE: Record<
   sidebar: { box: 'w-12 h-12', icon: 20 },
 };
 
-/** Zelené soustředné kruhy + robot — stejný vizuál jako aktivní Obchodník v levém menu. */
+/** Zelené soustředné kruhy + bublina — stejný vizuál jako aktivní Obchodník v levém menu. */
 export const AgentOrbAvatar: React.FC<{
   size?: AgentOrbAvatarSize;
   className?: string;
@@ -62,7 +62,7 @@ export const AgentOrbAvatar: React.FC<{
         className="absolute rounded-full bg-gradient-to-br from-emerald-600 to-green-700 flex items-center justify-center shadow-md shadow-black/25"
         style={{ width: '56%', height: '56%' }}
       >
-        <Bot size={icon} className="text-white" strokeWidth={2} />
+        <MessageSquare size={icon} className="text-white" strokeWidth={2} />
       </motion.div>
     </>
   );

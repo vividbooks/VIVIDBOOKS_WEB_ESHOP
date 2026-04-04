@@ -1,0 +1,9 @@
+# Supabase CLI — per-function Edge nastavení.
+# Bez verify_jwt u make-server-954b19ad brána často vrací 401 i při funkce→funkce fetchi se správným anon JWT;
+# Hono uvnitř dál řeší přístup (X-User-Access-Token, allowlist, …).
+[functions.make-server-954b19ad]
+verify_jwt = false
+
+# Stejně jako scripts/supabase-deploy-eshop-functions.sh — admin API volané z aplikace s anon + apikey.
+[functions.make-server-93a20b6f]
+verify_jwt = false

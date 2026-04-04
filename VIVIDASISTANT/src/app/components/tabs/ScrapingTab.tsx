@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 
 interface SchoolRecord {
   id: string;
@@ -280,8 +281,10 @@ export const ScrapingTab: React.FC = () => {
 
   const loadJobs = useCallback(async () => {
     try {
+      const headers = await getEdgeFunctionHeaders(false);
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/jobs`
+        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/jobs`,
+        { headers },
       );
       if (response.ok) {
         const data = await response.json();
@@ -296,8 +299,10 @@ export const ScrapingTab: React.FC = () => {
     if (!selectedJob) return;
     
     try {
+      const headers = await getEdgeFunctionHeaders(false);
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/status/${selectedJob.id}`
+        `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/status/${selectedJob.id}`,
+        { headers },
       );
       if (response.ok) {
         const job = await response.json();
@@ -316,11 +321,12 @@ export const ScrapingTab: React.FC = () => {
 
     setLoading(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/start`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ query: query.trim() })
         }
       );
@@ -344,9 +350,10 @@ export const ScrapingTab: React.FC = () => {
 
   const cancelJob = async (jobId: string) => {
     try {
+      const headers = await getEdgeFunctionHeaders(false);
       await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/scraping/cancel/${jobId}`,
-        { method: 'POST' }
+        { method: 'POST', headers }
       );
       toast.success('Úloha zrušena');
       loadJobs();

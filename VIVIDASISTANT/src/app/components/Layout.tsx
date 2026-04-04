@@ -1,5 +1,15 @@
 import React, { useEffect } from 'react';
-import { Mic, Settings, Bot, MapPin, Menu, ListChecks, Send, Globe, Sparkles } from 'lucide-react';
+import {
+  Mic,
+  MessageSquare,
+  ListTodo,
+  Globe,
+  Database,
+  Settings,
+  MapPin,
+  Menu,
+  Send,
+} from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
 import { useApp } from '@/app/contexts/AppContext';
@@ -76,7 +86,7 @@ function SidebarNav({
         <NavItem
           active={currentTab === 'tasks'}
           onClick={() => go('tasks')}
-          icon={<ListChecks size={22} />}
+          icon={<ListTodo size={22} />}
           label="Úkoly"
         />
         {agentProcessing && currentTab === 'agent' ? (
@@ -85,7 +95,7 @@ function SidebarNav({
           <NavItem
             active={currentTab === 'agent'}
             onClick={() => go('agent')}
-            icon={<Bot size={22} />}
+            icon={<MessageSquare size={22} />}
             label="Obchodník pomocník"
           />
         )}
@@ -93,7 +103,7 @@ function SidebarNav({
           <NavItem
             active={currentTab === 'webOperator'}
             onClick={() => go('webOperator')}
-            icon={<Sparkles size={22} />}
+            icon={<Globe size={22} />}
             label="Web operátor"
           />
         ) : null}
@@ -108,7 +118,7 @@ function SidebarNav({
             <NavItem
               active={currentTab === 'scraping'}
               onClick={() => go('scraping')}
-              icon={<Globe size={22} />}
+              icon={<Database size={22} />}
               label="Scraping"
             />
           </>
@@ -236,7 +246,7 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                         currentTab === 'tasks' ? "bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30" : "bg-[#252525] text-[#8E8E93] active:bg-[#353535]"
                     )}
                 >
-                    <ListChecks size={16} />
+                    <ListTodo size={16} />
                     <span>Úkoly</span>
                 </button>
                 <motion.button
@@ -260,7 +270,7 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                       {agentProcessing && currentTab === 'agent' ? (
                         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300 opacity-40" />
                       ) : null}
-                      <Bot size={16} className="relative z-10" />
+                      <MessageSquare size={16} className="relative z-10" />
                     </span>
                     <span>Obchodník</span>
                 </motion.button>
@@ -275,7 +285,7 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                         : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
                     )}
                   >
-                    <Sparkles size={16} />
+                    <Globe size={16} />
                     <span>Web</span>
                   </button>
                 ) : null}
@@ -304,7 +314,7 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                           : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
                       )}
                     >
-                      <Globe size={16} />
+                      <Database size={16} />
                       <span>Scraping</span>
                     </button>
                   </>

@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Mail, Search, Send, RefreshCw, Inbox, Star, Clock, Loader2, ArrowLeft, Reply, Mic, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 import { RecordButton } from '@/app/components/figma/RecordButton';
 import { useApp } from '@/app/contexts/AppContext';
 
@@ -52,9 +53,10 @@ export const GmailTab: React.FC = () => {
 
     setIsLoading(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/gmail/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ googleAccessToken: token, maxResults: 20, query })
       });
 
@@ -87,9 +89,10 @@ export const GmailTab: React.FC = () => {
     setSelectedEmail(email);
 
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/gmail/message/${email.id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ googleAccessToken: token })
       });
 
@@ -120,9 +123,10 @@ export const GmailTab: React.FC = () => {
 
     setIsSearching(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/gmail/search`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ googleAccessToken: token, query: searchQuery })
       });
 
@@ -153,9 +157,10 @@ export const GmailTab: React.FC = () => {
 
     setIsSending(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/gmail/send`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           googleAccessToken: token,
           to: composeTo,

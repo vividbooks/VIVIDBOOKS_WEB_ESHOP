@@ -8,14 +8,15 @@ import { useApp } from '@/app/contexts/AppContext';
 import clsx from 'clsx';
 import { motion, AnimatePresence } from 'motion/react';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
-import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 
-/** Supabase Edge Functions vyžadují JWT (anon) — bez toho 401. */
+/** Statické hlavičky (anon + apikey); u přihlášeného uživatele doplnit X-User-Access-Token přes getEdgeFunctionHeaders. */
 const FN_AUTH_JSON: HeadersInit = {
   Authorization: `Bearer ${publicAnonKey}`,
+  apikey: publicAnonKey,
   'Content-Type': 'application/json',
 };
-const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}` };
+const FN_AUTH: HeadersInit = { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey };
 
 /** Stejný backend jako Web operátor (admin agent) + CRM vrstva Pipedrive přes nástroj sales_crm_orchestrate. */
 const ADMIN_FN = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -105,12 +106,7 @@ type ChatSessionPersist = Omit<ChatSession, 'messages'> & {
 };
 
 async function getUserAuthHeadersJson(): Promise<HeadersInit> {
-  const { data: { session } } = await getSupabaseBrowser().auth.getSession();
-  const token = session?.access_token ?? publicAnonKey;
-  return {
-    Authorization: `Bearer ${token}`,
-    'Content-Type': 'application/json',
-  };
+  return getEdgeFunctionHeaders(true);
 }
 
 async function fetchAgentChatSessionsFromCloud(): Promise<{
@@ -358,6 +354,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({
   const speechSynthRef = useRef<SpeechSynthesisUtterance | null>(null);
   /** Zpracuje předání z diktafonu jen jednou na kombinaci nonce + text. */
   const processedIncomingDictationRef = useRef<string | null>(null);
+  /** Vždy poslední sendMessage — po flushSync nové session musí setTimeout volat novou verzi (jinak starý activeSessionId). */
+  const sendMessageRef = useRef<(text?: string) => Promise<void>>(async () => {});
 
   // RAG functions
   const fetchRagDocuments = async () => {
@@ -898,9 +896,10 @@ export const AgentTab: React.FC<AgentTabProps> = ({
         { role: 'user' as const, content: messageText },
       ];
 
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(`${ADMIN_FN}/admin/admin-agent`, {
         method: 'POST',
-        headers: FN_AUTH_JSON,
+        headers,
         body: JSON.stringify({
           messages: historyMessages,
           model: 'gemini-3.1-pro-preview',
@@ -925,6 +924,7 @@ export const AgentTab: React.FC<AgentTabProps> = ({
       const data = await response.json() as {
         reply?: string;
         crmPayload?: {
+          success?: boolean;
           needsClarification?: boolean;
           clarificationQuestion?: string;
           response?: string;
@@ -955,7 +955,10 @@ export const AgentTab: React.FC<AgentTabProps> = ({
         return;
       }
 
-      const replyText = data.reply || cp?.response || 'Hotovo!';
+      const replyText =
+        cp?.success === false && cp?.response?.trim()
+          ? cp.response.trim()
+          : data.reply || cp?.response || 'Hotovo!';
       const voiceOut = cp?.voiceSummary;
 
       const isCrmSchoolSearch =
@@ -988,7 +991,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({
       } else if (act === 'calendar_created') {
         toast.success('📅 Schůzka přidána do kalendáře');
       } else if (act === 'crm_search') {
-        toast.success(`🏢 Nalezeno ${cp?.crmData?.deals?.length || cp?.crmData?.organizations?.length || 0} výsledků`);
+        if (cp?.success === false) {
+          toast.error(cp?.response?.trim() ? 'CRM: chyba — viz zpráva výše' : 'CRM: požadavek se nepodařilo dokončit');
+        } else {
+          toast.success(`🏢 Nalezeno ${cp?.crmData?.deals?.length || cp?.crmData?.organizations?.length || 0} výsledků`);
+        }
       } else if (act === 'route_planned') {
         toast.success('🗺️ Trasa naplánována!');
       } else if (act === 'analyze_potential') {
@@ -1017,6 +1024,8 @@ export const AgentTab: React.FC<AgentTabProps> = ({
     }
   };
 
+  sendMessageRef.current = sendMessage;
+
   // Předání z diktafonu (bez remountu AgentTab) — nová session jen u fromDictation
   useEffect(() => {
     const text = initialMessage?.trim();
@@ -1034,15 +1043,20 @@ export const AgentTab: React.FC<AgentTabProps> = ({
         messages: [],
         lastRouteData: null,
       };
-      flushSync(() => {
-        setSessions((prev) => [empty, ...prev].slice(0, MAX_SESSIONS));
-        setActiveSessionId(id);
+      // flushSync přímo v useEffect spouští varování React 18 — odložit mimo synchronní fázi efektu
+      queueMicrotask(() => {
+        flushSync(() => {
+          setSessions((prev) => [empty, ...prev].slice(0, MAX_SESSIONS));
+          setActiveSessionId(id);
+        });
+        // Po flushSync je další render se správným activeSessionId — ref má aktuální sendMessage
+        setTimeout(() => {
+          void sendMessageRef.current(text);
+        }, 0);
       });
-      // Další tick — sendMessage musí vidět novou session v historyMessages
-      setTimeout(() => void sendMessage(text), 0);
       return;
     }
-    void sendMessage(text);
+    void sendMessageRef.current(text);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sendMessage je stabilní v rámci session; jen vstup z rodiče
   }, [initialMessage, initialMessageFromDictation, initialMessageNonce]);
 
@@ -1858,11 +1872,11 @@ export const AgentTab: React.FC<AgentTabProps> = ({
                 <button
                   type="button"
                   onClick={() => copyMessageToClipboard(message)}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl min-h-[44px] px-4 py-2.5 text-sm font-semibold text-white bg-[#2C2C2E] border border-white/15 hover:bg-[#3A3A3C] active:scale-[0.99] transition-colors"
+                  className="inline-flex items-center justify-center rounded-xl min-h-[44px] min-w-[44px] p-2.5 text-white bg-[#2C2C2E] border border-white/15 hover:bg-[#3A3A3C] active:scale-[0.99] transition-colors"
                   title="Kopírovat text zprávy"
+                  aria-label="Kopírovat text zprávy"
                 >
-                  <Copy size={18} className="shrink-0 text-emerald-400" />
-                  Kopírovat
+                  <Copy size={22} className="shrink-0 text-emerald-400" strokeWidth={2.25} aria-hidden />
                 </button>
               ) : null}
             </div>

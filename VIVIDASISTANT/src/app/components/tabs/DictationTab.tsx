@@ -44,6 +44,22 @@ function userFirstName(user: User | null): string | null {
   return local || null;
 }
 
+/** Hover / title u horních „bobánků“ (stejný serif jako pozdrav). */
+const AGENT_HOVER_TEXT: Record<'email' | 'chat' | 'todo' | 'web', string> = {
+  email: 'Znám vše o Vividbooks, pomohu ti napsat text.',
+  chat: 'Znám školy, pomůžu ti najít informace.',
+  todo: 'Ulož si ke mě úkol',
+  web: 'Změním cokoliv na webu',
+};
+
+const pillTooltipClass =
+  'pointer-events-none absolute left-1/2 top-full z-[60] mt-2 hidden w-max max-w-[min(18rem,92vw)] -translate-x-1/2 rounded-xl border border-white/10 bg-[#2C2C2E] px-4 py-3 text-center text-sm leading-snug text-white/95 shadow-2xl opacity-0 transition-opacity duration-200 md:block md:group-hover:opacity-100';
+
+const serifHeroStyle: React.CSSProperties = {
+  fontFamily: "'Cooper Light', serif",
+  fontWeight: 300,
+};
+
 /** Delší přepis → server rozloží na název + kroky + přesný přepis v poznámce. */
 function shouldUseTaskBreakdown(text: string): boolean {
   const t = text.trim();
@@ -78,18 +94,20 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   const [isTodoAiProcessing, setIsTodoAiProcessing] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [recordingTime, setRecordingTime] = useState(0);
-  /** Po kliknutí na Email/Chat/Todo bez textu: po dokončení nahrávání se provede daná akce. */
+  /** Po kliknutí na Marketing / Obchodník / Úkolníček bez textu: po dokončení nahrávání se provede daná akce. */
   const [armedAction, setArmedAction] = useState<'email' | 'chat' | 'todo' | 'web' | null>(null);
   const armedActionRef = useRef<'email' | 'chat' | 'todo' | 'web' | null>(null);
   /**
    * Záměr u tohoto nahrávání (uloží se při startu).
-   * armedActionRef se může před dokončením onstop vynulovat (např. druhý klik na Zadat = zrušení režimu),
+   * armedActionRef se může před dokončením onstop vynulovat (např. druhý klik na Obchodníka = zrušení režimu),
    * pak by se text neposlal do chatu ani nešel správnou větví bez smart-edit.
    */
   const recordingIntentRef = useRef<'email' | 'chat' | 'todo' | 'web' | null>(null);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  /** Synchronní stav nahrávání — stopRecording nesmí záviset na isRecording (na mobilu může být zastaralý a stop() se nezavolá). */
+  const recordingActiveRef = useRef(false);
   const audioChunksRef = useRef<Blob[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const selectionRef = useRef<{ start: number; end: number; text: string } | null>(null);
@@ -134,7 +152,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   const sendToAssistantNow = (text: string) => {
     if (!onSendToAssistant) return;
     onSendToAssistant(buildAssistantEmailPrompt(text));
-    toast.success('Otevírám Obchodníka pomocníka se zprávou');
+    toast.success('Otevírám Marketing se zprávou');
   };
 
   const sendToChatNow = (text: string) => {
@@ -284,6 +302,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   };
 
   const startRecording = async () => {
+    if (recordingActiveRef.current) return;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       toast.error('Váš prohlížeč nepodporuje nahrávání zvuku.');
       return;
@@ -292,7 +311,16 @@ export const DictationTab: React.FC<DictationTabProps> = ({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       recordingIntentRef.current = armedActionRef.current;
-      const mediaRecorder = new MediaRecorder(stream);
+      const pickRecorderMime = (): string | undefined => {
+        for (const m of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']) {
+          if (MediaRecorder.isTypeSupported(m)) return m;
+        }
+        return undefined;
+      };
+      const recMime = pickRecorderMime();
+      const mediaRecorder = recMime
+        ? new MediaRecorder(stream, { mimeType: recMime })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
@@ -304,7 +332,8 @@ export const DictationTab: React.FC<DictationTabProps> = ({
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((track) => track.stop());
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const blobType = audioChunksRef.current[0]?.type || mediaRecorder.mimeType || 'audio/webm';
+        const audioBlob = new Blob(audioChunksRef.current, { type: blobType });
 
         const intent = recordingIntentRef.current;
         recordingIntentRef.current = null;
@@ -312,6 +341,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
         setIsTranscribing(true);
         try {
           let newVoiceText = await transcribeAudio(audioBlob);
+          if (typeof newVoiceText !== 'string') newVoiceText = String(newVoiceText ?? '');
 
           shortcuts.forEach((s) => {
             const regex = new RegExp(`\\b${s.trigger}\\b`, 'gi');
@@ -331,7 +361,7 @@ export const DictationTab: React.FC<DictationTabProps> = ({
 
           let finalText: string;
 
-          /** Režim „Zadat chatu“ / „Todo“ / „Web“: bez smart-edit. Jen přepis + zkratky; Web pak předá operátorovi. */
+          /** Režim Obchodník / Úkolníček / Web: bez smart-edit. Jen přepis + zkratky; Web pak předá operátorovi. */
           if (intent === 'chat' || intent === 'todo' || intent === 'web') {
             if (selectionData?.text != null && selectionData.start != null && selectionData.end != null) {
               finalText =
@@ -353,6 +383,10 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           setTranscript(finalText);
 
           const trimmed = finalText.trim();
+          if (!trimmed && !newVoiceText.trim()) {
+            toast.info('Přepis je prázdný — zkuste mluvit déle nebo zkontrolujte mikrofon.');
+          }
+
           if (trimmed && intent === 'email' && onSendToAssistant) {
             armedActionRef.current = null;
             setArmedAction(null);
@@ -379,7 +413,9 @@ export const DictationTab: React.FC<DictationTabProps> = ({
         }
       };
 
-      mediaRecorder.start();
+      /** Časové řezy — na iOS/Safari jinak občas nepřijde žádný chunk při krátkém stop(). */
+      mediaRecorder.start(250);
+      recordingActiveRef.current = true;
       setIsRecording(true);
       setRecordingTime(0);
     } catch (err: any) {
@@ -394,15 +430,21 @@ export const DictationTab: React.FC<DictationTabProps> = ({
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== 'inactive') {
+      try {
+        mr.stop();
+      } catch (e) {
+        console.error('MediaRecorder.stop', e);
+      }
     }
+    recordingActiveRef.current = false;
+    setIsRecording(false);
   };
 
   const handleRecordToggle = () => {
-    if (isRecording) stopRecording();
-    else startRecording();
+    if (recordingActiveRef.current) stopRecording();
+    else void startRecording();
   };
 
   const copyToClipboard = () => {
@@ -442,62 +484,66 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Zobrazit / skrýt levý panel">
             <Menu size={22} strokeWidth={2} />
           </button>
-          <button
-            type="button"
-            onClick={onEmailButton}
-            disabled={!canEmail}
-            className={armBtnClass(armedAction === 'email')}
-            title={
-              hasTranscript
-                ? 'Email — Obchodník s asistentem'
-                : 'Spustí nahrávání a po dokončení odešle email přes Obchodníka (klik znovu zruší)'
-            }
-          >
-            <Mail size={18} />
-            <span>Email</span>
-          </button>
-          <button
-            type="button"
-            onClick={onChatButton}
-            disabled={!canChat}
-            className={armBtnClass(armedAction === 'chat')}
-            title={
-              hasTranscript
-                ? 'Zadat — text do chatu bez úprav'
-                : 'Spustí nahrávání a po dokončení odešle text do chatu (klik znovu zruší)'
-            }
-          >
-            <MessageSquare size={18} />
-            <span>Zadat</span>
-          </button>
-          <button
-            type="button"
-            onClick={onTodoButton}
-            disabled={isTodoAiProcessing}
-            className={armBtnClass(armedAction === 'todo')}
-            title={
-              hasTranscript
-                ? 'Přidat text jako úkol(y) na seznam'
-                : 'Spustí nahrávání a po dokončení přidá přepis do úkolů (klik znovu zruší)'
-            }
-          >
-            <ListTodo size={18} />
-            <span>Todo</span>
-          </button>
-          {showRagWebTab ? (
+          <span className="relative inline-flex group">
             <button
               type="button"
-              onClick={onWebButton}
-              className={armBtnClass(armedAction === 'web')}
-              title={
-                hasTranscript
-                  ? 'Web — odeslat zadání Web operátorovi (CMS, ceny, …)'
-                  : 'Nahrát a odeslat přepis Web operátorovi'
-              }
+              onClick={onEmailButton}
+              disabled={!canEmail}
+              className={armBtnClass(armedAction === 'email')}
+              title={AGENT_HOVER_TEXT.email}
             >
-              <Globe size={18} />
-              <span>Web</span>
+              <Mail size={18} />
+              <span>Marketing</span>
             </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.email}
+            </span>
+          </span>
+          <span className="relative inline-flex group">
+            <button
+              type="button"
+              onClick={onChatButton}
+              disabled={!canChat}
+              className={armBtnClass(armedAction === 'chat')}
+              title={AGENT_HOVER_TEXT.chat}
+            >
+              <MessageSquare size={18} />
+              <span>Obchodník</span>
+            </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.chat}
+            </span>
+          </span>
+          <span className="relative inline-flex group">
+            <button
+              type="button"
+              onClick={onTodoButton}
+              disabled={isTodoAiProcessing}
+              className={armBtnClass(armedAction === 'todo')}
+              title={AGENT_HOVER_TEXT.todo}
+            >
+              <ListTodo size={18} />
+              <span>Úkolníček</span>
+            </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.todo}
+            </span>
+          </span>
+          {showRagWebTab ? (
+            <span className="relative inline-flex group">
+              <button
+                type="button"
+                onClick={onWebButton}
+                className={armBtnClass(armedAction === 'web')}
+                title={AGENT_HOVER_TEXT.web}
+              >
+                <Globe size={18} />
+                <span>Web</span>
+              </button>
+              <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+                {AGENT_HOVER_TEXT.web}
+              </span>
+            </span>
           ) : null}
           <div className="flex flex-1 min-w-[1rem]" />
           <button
@@ -523,14 +569,16 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           )}
         </div>
         <div className="flex items-center gap-8 flex-wrap">
-          {greetingName && (
-            <p
-              className="text-white leading-tight max-w-[min(100%,16rem)] truncate"
-              style={{ fontFamily: "'Cooper Light', serif", fontWeight: 300, fontSize: 'clamp(1.35rem, 2.4vw, 2rem)' }}
-            >
-              Ahoj, {greetingName}
-            </p>
-          )}
+          <div className="flex flex-col justify-center min-w-0 max-w-[min(100%,22rem)]">
+            {greetingName && (
+              <p
+                className="text-white leading-tight truncate"
+                style={{ ...serifHeroStyle, fontSize: 'clamp(1.35rem, 2.4vw, 2rem)' }}
+              >
+                Ahoj, {greetingName}
+              </p>
+            )}
+          </div>
           <RecordButton
             isRecording={isRecording}
             isProcessing={isTranscribing || isTodoAiProcessing}
@@ -580,49 +628,73 @@ export const DictationTab: React.FC<DictationTabProps> = ({
           <button type="button" onClick={toggleLeftNav} className={menuBtnClass} title="Menu — navigace">
             <Menu size={22} strokeWidth={2} />
           </button>
-          <button
-            type="button"
-            onClick={onEmailButton}
-            disabled={!canEmail}
-            className={clsx(armBtnClassMobile(armedAction === 'email'), 'shrink-0 px-4')}
-          >
-            <Mail size={16} className="shrink-0" />
-            <span className="truncate text-xs">Email</span>
-          </button>
-          <button
-            type="button"
-            onClick={onChatButton}
-            disabled={!canChat}
-            className={clsx(armBtnClassMobile(armedAction === 'chat'), 'shrink-0 px-4')}
-          >
-            <MessageSquare size={16} className="shrink-0" />
-            <span className="truncate text-xs">Zadat</span>
-          </button>
-          <button
-            type="button"
-            onClick={onTodoButton}
-            disabled={isTodoAiProcessing}
-            className={clsx(armBtnClassMobile(armedAction === 'todo'), 'shrink-0 px-4')}
-          >
-            <ListTodo size={16} className="shrink-0" />
-            <span className="truncate text-xs">Todo</span>
-          </button>
-          {showRagWebTab ? (
+          <span className="relative inline-flex shrink-0 group">
             <button
               type="button"
-              onClick={onWebButton}
-              className={clsx(armBtnClassMobile(armedAction === 'web'), 'shrink-0 px-4')}
+              onClick={onEmailButton}
+              disabled={!canEmail}
+              className={clsx(armBtnClassMobile(armedAction === 'email'), 'px-4')}
+              title={AGENT_HOVER_TEXT.email}
             >
-              <Globe size={16} className="shrink-0" />
-              <span className="truncate text-xs">Web</span>
+              <Mail size={16} className="shrink-0" />
+              <span className="truncate text-xs">Marketing</span>
             </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.email}
+            </span>
+          </span>
+          <span className="relative inline-flex shrink-0 group">
+            <button
+              type="button"
+              onClick={onChatButton}
+              disabled={!canChat}
+              className={clsx(armBtnClassMobile(armedAction === 'chat'), 'px-4')}
+              title={AGENT_HOVER_TEXT.chat}
+            >
+              <MessageSquare size={16} className="shrink-0" />
+              <span className="truncate text-xs">Obchodník</span>
+            </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.chat}
+            </span>
+          </span>
+          <span className="relative inline-flex shrink-0 group">
+            <button
+              type="button"
+              onClick={onTodoButton}
+              disabled={isTodoAiProcessing}
+              className={clsx(armBtnClassMobile(armedAction === 'todo'), 'px-4')}
+              title={AGENT_HOVER_TEXT.todo}
+            >
+              <ListTodo size={16} className="shrink-0" />
+              <span className="truncate text-xs">Úkolníček</span>
+            </button>
+            <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+              {AGENT_HOVER_TEXT.todo}
+            </span>
+          </span>
+          {showRagWebTab ? (
+            <span className="relative inline-flex shrink-0 group">
+              <button
+                type="button"
+                onClick={onWebButton}
+                className={clsx(armBtnClassMobile(armedAction === 'web'), 'px-4')}
+                title={AGENT_HOVER_TEXT.web}
+              >
+                <Globe size={16} className="shrink-0" />
+                <span className="truncate text-xs">Web</span>
+              </button>
+              <span className={pillTooltipClass} style={serifHeroStyle} aria-hidden>
+                {AGENT_HOVER_TEXT.web}
+              </span>
+            </span>
           ) : null}
         </div>
         <div className="flex flex-col items-center gap-2 py-1">
           {greetingName && (
             <p
               className="text-white text-center max-w-[90vw] truncate px-2"
-              style={{ fontFamily: "'Cooper Light', serif", fontWeight: 300, fontSize: 'clamp(1.2rem, 4.5vw, 1.65rem)' }}
+              style={{ ...serifHeroStyle, fontSize: 'clamp(1.2rem, 4.5vw, 1.65rem)' }}
             >
               Ahoj, {greetingName}
             </p>

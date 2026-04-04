@@ -8,6 +8,7 @@ import {
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { projectId } from '/utils/supabase/info';
+import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
 
 // School registry record from localStorage
 interface SchoolRecord {
@@ -206,11 +207,12 @@ export const OutreachTab: React.FC = () => {
     setScrapingProgress(30);
 
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/outreach/scrape-schools`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             query: scrapingQuery,
             region: scrapingRegion,
@@ -305,13 +307,12 @@ export const OutreachTab: React.FC = () => {
   const loadOrganizations = useCallback(async () => {
     setLoadingOrgs(true);
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/outreach/organizations`,
         {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-          },
+          headers,
           body: JSON.stringify({
             search: searchTerm,
             filter: filterType,
@@ -353,11 +354,12 @@ export const OutreachTab: React.FC = () => {
     setOrgDetailData(null);
     
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/crm/org-detail`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({ orgId: org.id })
         }
       );
@@ -392,11 +394,12 @@ export const OutreachTab: React.FC = () => {
     setGeneratingEmails(true);
     
     try {
+      const headers = await getEdgeFunctionHeaders(true);
       const response = await fetch(
         `https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/outreach/generate-emails`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify({
             goal: campaignGoal,
             organizations: orgsToUse.map(org => ({

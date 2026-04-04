@@ -12265,7 +12265,10 @@ const CRM_ASSISTANT_SYSTEM = `${EMBEDDED_ASSISTANT_SYSTEM}
 Při jakékoli formulaci mailu, novinky nebo obchodního textu: **vždy jen jedna** hotová verze. Nedávej dvě varianty v jedné odpovědi.
 
 ## Dotazy na školy / CRM výpis
-Když **sales_crm_orchestrate** vrátí \`action: crm_search\` a strukturovaná \`crmData\` (organizace), **nepiš** do textové odpovědi žádné shrnutí dealů — žádné „Ztracené příležitosti“, žádné seznamy škol v Markdownu, žádné A/B. Aplikace zobrazí **klikací karty aktivních zákazníků**; tvoje odpověď má být **prázdná** nebo jedna krátká věta typu „Školy jsou níže.“ Pokud opravdu nemáš co říct, vrať prázdný text.`;
+Když **sales_crm_orchestrate** vrátí \`action: crm_search\` a strukturovaná \`crmData\` (organizace), **nepiš** do textové odpovědi žádné shrnutí dealů — žádné „Ztracené příležitosti“, žádné seznamy škol v Markdownu, žádné A/B. Aplikace zobrazí **klikací karty aktivních zákazníků**; tvoje odpověď má být **prázdná** nebo jedna krátká věta typu „Školy jsou níže.“ Pokud opravdu nemáš co říct, vrať prázdný text.
+
+## Chyby z CRM orchestrátoru
+Když výsledek nástroje obsahuje \`orchestrator.success === false\` a neprázdné \`orchestrator.response\`, **převezměň tento text uživateli** (můžeš ho mírně srovnat do souvětí). **Nevymýšlej** obecné věty typu „nedaří se mi připojit k CRM (chyba autorizace)“ nebo „zkontrolujte Pipedrive“, pokud přesně to v \`orchestrator.response\` není.`;
 
 /** Poslední zprávy z Web operátora → chatHistory pro EmailBuilder (Marketing / E-maily). */
 function adminAgentMessagesToEmailChatHistory(msgs: any[]): any[] {
@@ -12329,17 +12332,22 @@ async function runAdminTool(
         }))
       : [];
     const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
-    const jwt =
-      (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim() ||
-      (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
-    if (!base || !jwt) {
-      return { result: { error: 'Chybí SUPABASE_URL nebo klíč pro volání CRM.' } };
+    const anon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
+    const service = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    /**
+     * Brána `/functions/v1` musí dostat **souladné** hlavičky: `Authorization` a `apikey` musí být **stejný** JWT (ověřeno proti produkci).
+     * Kombinace `Bearer <service_role>` + `apikey: <anon>` vrací HTTP 401. Preferujeme veřejný anon (stejně jako klientské volání).
+     */
+    const gate = anon || service;
+    if (!base || !gate) {
+      return { result: { error: 'Chybí SUPABASE_URL nebo SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY pro volání CRM.' } };
     }
     try {
       const res = await fetch(`${base}/functions/v1/make-server-954b19ad/agent/orchestrate`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${jwt}`,
+          Authorization: `Bearer ${gate}`,
+          apikey: gate,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -12350,18 +12358,52 @@ async function runAdminTool(
         }),
       });
       const data = await res.json().catch(() => ({}));
+      const emptyCrm = { organizations: [] as any[], persons: [] as any[], deals: [] as any[] };
+
+      if (!res.ok) {
+        const apiMsg =
+          typeof (data as any)?.message === 'string'
+            ? (data as any).message
+            : typeof (data as any)?.msg === 'string'
+              ? (data as any).msg
+              : '';
+        const payload = {
+          success: false,
+          action: 'crm_search',
+          response:
+            res.status === 401
+              ? `Volání CRM backendu selhalo (HTTP 401). Nasazení: \`supabase functions deploy make-server-954b19ad --no-verify-jwt\` (brána), případně zkontrolujte SUPABASE_URL a klíče u funkcí.`
+              : `Volání CRM backendu selhalo (HTTP ${res.status}). ${apiMsg || 'Zkuste to prosím znovu.'}`,
+          voiceSummary: 'CRM backend nedostupný.',
+          crmData: emptyCrm,
+        };
+        (globalThis as any).__lastCrmOrchestratorPayload = payload;
+        return {
+          result: {
+            ok: false,
+            orchestrator: payload,
+            hint: 'Přepiš uživateli přesně orchestrator.response. Nevymýšlej vlastní omluvy za „autorizaci Pipedrive“ ani obecné technické fráze.',
+          },
+        };
+      }
+
       (globalThis as any).__lastCrmOrchestratorPayload = data;
       const crmSearchWithOrgs =
         data?.action === 'crm_search' &&
         Array.isArray(data?.crmData?.organizations) &&
         data.crmData.organizations.length > 0;
+      const orchestratorFailed =
+        data?.success === false && typeof (data as any)?.response === 'string' && String((data as any).response).trim();
+      const hint = crmSearchWithOrgs
+        ? 'CRM hledání škol: NEPISUJ textové shrnutí dealů ani „ztracené příležitosti“. Odpověď = prázdný řetězec. Karty aktivních zákazníků už zobrazí aplikace.'
+        : orchestratorFailed
+          ? 'Orchestrátor vrátil success=false — přepiš uživateli přesně orchestrator.response. Nevymýšlej obecné omluvy za autorizaci CRM ani Pipedrive, pokud to není v orchestrator.response.'
+          : 'Shrň uživateli odpověď z orchestrator.response; strukturovaná data (crmData, routeData) jsou v orchestrator.';
       return {
         result: {
-          ok: res.ok,
+          ok: true,
           orchestrator: data,
-          hint: crmSearchWithOrgs
-            ? 'CRM hledání škol: NEPISUJ textové shrnutí dealů ani „ztracené příležitosti“. Odpověď = prázdný řetězec. Karty aktivních zákazníků už zobrazí aplikace.'
-            : 'Shrň uživateli odpověď z orchestrator.response; strukturovaná data (crmData, routeData) jsou v orchestrator.',
+          hint,
         },
       };
     } catch (e: any) {
@@ -14082,9 +14124,19 @@ app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
         }
         console.log(`[AdminAgent] Done turn=${turn+1} actions=${allActions.length} replyLen=${reply.length}`);
         const crmPayloadOut = (globalThis as any).__lastCrmOrchestratorPayload;
+        let replyOut = reply;
+        if (
+          crmAssistant &&
+          crmPayloadOut &&
+          crmPayloadOut.success === false &&
+          typeof crmPayloadOut.response === 'string' &&
+          crmPayloadOut.response.trim()
+        ) {
+          replyOut = crmPayloadOut.response.trim();
+        }
         clearAdminAgentGlobals();
         return c.json({
-          reply,
+          reply: replyOut,
           actions: allActions,
           ...(crmAssistant ? { crmPayload: crmPayloadOut } : {}),
         });
