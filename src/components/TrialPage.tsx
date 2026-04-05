@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink, Play } from 'lucide-react';
+import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
 import { SEOHead } from './SEOHead';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { flashInvalidField } from '../utils/formFieldHighlight';
+import {
+  submitFreeTrialAjax,
+  type FreeTrialFields,
+  type FreeTrialSubmitResult,
+} from '../utils/trialSubmit';
+import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
@@ -34,160 +40,6 @@ function showPipedriveIcoDebugControls(): boolean {
   if (import.meta.env.VITE_SHOW_PIPEDRIVE_ICO_DEBUG === 'true') return true;
   if (typeof window !== 'undefined' && /(?:^|[?&])pipedriveDebug=1(?:&|$)/.test(window.location.search)) return true;
   return false;
-}
-
-/** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
-const FREE_TRIAL_AJAX_URL = 'https://api.vividbooks.com/web/free-trial-ajax';
-
-/** Miniškolení (YouTube) — po odeslání trial formuláře */
-const TRIAL_TRAINING_VIDEOS = [
-  'https://www.youtube.com/watch?v=H_L7V4iu228&t=66s',
-  'https://www.youtube.com/watch?v=sMXor8VBlE8&t=2s',
-  'https://www.youtube.com/watch?v=8qruYt57TC8&t=3s',
-] as const;
-
-type FreeTrialFields = {
-  name: string;
-  email: string;
-  phone: string;
-  position: string;
-  schoolName: string;
-  vat: string;
-  gdpr: boolean;
-  newsletter: boolean;
-  teacherSubjects: string[];
-  schoolStages: string[];
-};
-
-/** Rozdělení „Jméno Příjmení“ pro API (FirstName / LastName / FullName). */
-function splitFullNameForTrial(full: string): { firstName: string; lastName: string; fullName: string } {
-  const t = full.trim();
-  if (!t) return { firstName: '', lastName: '', fullName: '' };
-  const parts = t.split(/\s+/);
-  if (parts.length === 1) return { firstName: parts[0], lastName: '', fullName: t };
-  return { firstName: parts[0] ?? '', lastName: parts.slice(1).join(' '), fullName: t };
-}
-
-/**
- * Parametry přesně podle API (velikost písmen).
- * Checkbox-NL: při souhlasu s newsletterem hodnota `yes`.
- */
-function buildFreeTrialFormBody(fields: FreeTrialFields): URLSearchParams {
-  const p = new URLSearchParams();
-  const { firstName, lastName, fullName } = splitFullNameForTrial(fields.name);
-
-  p.append('FirstName', firstName);
-  p.append('LastName', lastName);
-  p.append('FullName', fullName);
-  p.append('Email', fields.email);
-  p.append('Phone', fields.phone);
-  p.append('flexdatalist-School', fields.schoolName);
-  p.append('School', fields.schoolName);
-  p.append('Position', fields.position);
-  p.append('Whence', '');
-  p.append('Region', '');
-  if (fields.newsletter) {
-    p.append('Checkbox-NL', 'yes');
-  }
-  p.append('CountryCode', 'cz');
-  p.append('CountryCodeSelect', '');
-  p.append('Version', '');
-  p.append('Dealer', '');
-  p.append('Vat', fields.vat);
-
-  fields.teacherSubjects.forEach((v) => p.append('TeacherSubjects', v));
-  fields.schoolStages.forEach((v) => p.append('SchoolStages', v));
-
-  return p;
-}
-
-/** Výsledek odeslání — kódy i u `success: false` při aktivním trialu školy. */
-type FreeTrialSubmitResult =
-  | {
-      status: 'codes';
-      studentCode: string;
-      teacherCode: string;
-      /** Nově vytvořený trial vs. škola už trial má — stejné zobrazení kódů, jiná poznámka */
-      kind: 'created' | 'existing_trial';
-    }
-  | { status: 'thank_only' }
-  | { status: 'error'; message: string };
-
-function parseTrialCodes(data: Record<string, unknown> | null): { student: string; teacher: string } | null {
-  if (!data) return null;
-  const s = data.studentCode;
-  const t = data.teacherCode;
-  if (typeof s === 'string' && s.trim() && typeof t === 'string' && t.trim()) {
-    return { student: s.trim(), teacher: t.trim() };
-  }
-  return null;
-}
-
-function freeTrialErrorMessage(data: Record<string, unknown> | null): string {
-  const reason = typeof data?.reason === 'string' ? data.reason : '';
-  if (reason === 'Email is used yet.') {
-    return 'Tento e-mail je už evidovaný u školy v databázi.';
-  }
-  if (reason === 'You have active subscription trial yet.') {
-    return 'Vaše škola už má aktivní předplatné.';
-  }
-  if (reason) return reason;
-  const m = data?.message ?? data?.error ?? data?.detail ?? data?.title;
-  return typeof m === 'string' ? m : 'Požadavek se nezdařil.';
-}
-
-async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
-  const body = buildFreeTrialFormBody(fields);
-  const res = await fetch(FREE_TRIAL_AJAX_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      Accept: 'application/json',
-      'X-Requested-With': 'XMLHttpRequest',
-    },
-    body: body.toString(),
-    mode: 'cors',
-    redirect: 'manual',
-  });
-
-  if (res.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(res.status)) {
-    return { status: 'thank_only' };
-  }
-
-  const rawText = await res.text();
-  let data: Record<string, unknown> | null = null;
-  if (rawText.trim()) {
-    try {
-      data = JSON.parse(rawText) as Record<string, unknown>;
-    } catch {
-      data = null;
-    }
-  }
-
-  if (res.ok && !data) {
-    return { status: 'thank_only' };
-  }
-
-  if (!res.ok) {
-    return { status: 'error', message: freeTrialErrorMessage(data) || `Chyba serveru (${res.status}).` };
-  }
-
-  const codes = parseTrialCodes(data);
-  const success = data?.success === true;
-
-  if (success && codes) {
-    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'created' };
-  }
-  if (success && !codes) {
-    return { status: 'thank_only' };
-  }
-
-  // success === false
-  if (codes) {
-    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'existing_trial' };
-  }
-
-  return { status: 'error', message: freeTrialErrorMessage(data) };
 }
 
 const POSITIONS = [
@@ -230,8 +82,8 @@ interface VvbIdentity {
   trialActivated: boolean; since: string; expires?: string;
 }
 interface SchoolResult { ico: string; name: string; address?: string; }
-interface PdOwner { name: string; firstName: string; email: string; phone: string; photoUrl: string; }
-type PipedriveStatus =
+export interface PdOwner { name: string; firstName: string; email: string; phone: string; photoUrl: string; }
+export type PipedriveStatus =
   | 'new'
   | 'known'
   | 'in_progress'
@@ -279,11 +131,12 @@ const PD_CFG: Record<string, { color: string; bg: string; border: string; icon: 
 };
 
 /* ── School autocomplete ── */
-function SchoolSearch({
+export function SchoolSearch({
   schoolName, ico, onSelect, onIcoChange,
   pdStatus, pdMessage, pdLoading, colleagues, owner, products,
   hidePipedriveStatusCard,
   pipedriveDebug,
+  readOnly,
 }: {
   schoolName: string; ico: string;
   onSelect: (name: string, ico: string) => void;
@@ -293,6 +146,8 @@ function SchoolSearch({
   owner: PdOwner | null;
   products: string[];
   hidePipedriveStatusCard?: boolean;
+  /** Jen zobrazení školy + CRM karty (bez editace polí) */
+  readOnly?: boolean;
   pipedriveDebug?: {
     raw: unknown | null;
     open: boolean;
@@ -354,93 +209,113 @@ function SchoolSearch({
 
   return (
     <div className="space-y-3">
-      {/* School name */}
-      <div ref={containerRef} className="relative">
-        <div className="relative">
-          <input type="text" value={query} onChange={e => handleNameChange(e.target.value)}
-            onFocus={() => results.length > 0 && setOpen(true)}
-            placeholder={'N\u00e1zev \u0161koly *'} className={`${INPUT_CLASS} pr-10`}
-            style={FF} autoComplete="off" />
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30 pointer-events-none">
-            {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-          </div>
+      {readOnly ? (
+        <div className="rounded-xl border border-[#001161]/10 bg-white px-4 py-3 space-y-1">
+          <p style={FF} className="text-[14px] font-semibold text-[#001161] leading-snug">
+            {schoolName || '\u2014'}
+          </p>
+          <p style={FF} className="text-[14px] text-[#001161]/70">
+            {ico ? `I\u010cO: ${ico}` : '\u2014'}
+          </p>
         </div>
-        <AnimatePresence>
-          {open && results.length > 0 && (
-            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-              transition={{ duration: 0.15 }}
-              className="absolute z-50 mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden">
-              <div className="max-h-[260px] overflow-y-auto py-1">
-                {results.map((school, i) => (
-                  <button key={`${school.ico}-${i}`} type="button" onClick={() => handleSelect(school)}
-                    className="w-full text-left px-4 py-3 hover:bg-[#F0F2F8] transition-colors flex items-start gap-3 group">
-                    <Building2 className="w-4 h-4 text-[#001161]/30 mt-0.5 shrink-0 group-hover:text-[#7C3AED] transition-colors" />
-                    <div className="flex-1 min-w-0">
-                      <p style={FF} className="text-[14px] text-[#001161] font-semibold leading-tight truncate">{school.name}</p>
-                      <p style={FF} className="text-[12px] text-[#001161]/45 mt-0.5">
-                        {school.address && <span>{school.address} · </span>}{'I\u010cO: '}{school.ico}
-                      </p>
-                    </div>
-                  </button>
-                ))}
+      ) : (
+        <>
+          {/* School name */}
+          <div ref={containerRef} className="relative">
+            <div className="relative">
+              <input type="text" value={query} onChange={e => handleNameChange(e.target.value)}
+                onFocus={() => results.length > 0 && setOpen(true)}
+                placeholder={'N\u00e1zev \u0161koly *'} className={`${INPUT_CLASS} pr-10`}
+                style={FF} autoComplete="off" />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30 pointer-events-none">
+                {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* IČO */}
-      <div className="space-y-2">
-        <div className="relative">
-          <input type="text" inputMode="numeric" value={icoInput}
-            onChange={e => handleIcoChange(e.target.value)}
-            placeholder={'I\u010cO \u0161koly *'} maxLength={10}
-            className={`${INPUT_CLASS} pr-10`} style={FF} />
-          <div className="absolute right-4 top-1/2 -translate-y-1/2">
-            {pdLoading
-              ? <Loader2 className="w-4 h-4 animate-spin text-[#001161]/30" />
-              : cfg ? <span style={{ color: cfg.color }}>{cfg.icon}</span> : null}
+            </div>
+            <AnimatePresence>
+              {open && results.length > 0 && (
+                <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute z-50 mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden">
+                  <div className="max-h-[260px] overflow-y-auto py-1">
+                    {results.map((school, i) => (
+                      <button key={`${school.ico}-${i}`} type="button" onClick={() => handleSelect(school)}
+                        className="w-full text-left px-4 py-3 hover:bg-[#F0F2F8] transition-colors flex items-start gap-3 group">
+                        <Building2 className="w-4 h-4 text-[#001161]/30 mt-0.5 shrink-0 group-hover:text-[#7C3AED] transition-colors" />
+                        <div className="flex-1 min-w-0">
+                          <p style={FF} className="text-[14px] text-[#001161] font-semibold leading-tight truncate">{school.name}</p>
+                          <p style={FF} className="text-[12px] text-[#001161]/45 mt-0.5">
+                            {school.address && <span>{school.address} · </span>}{'I\u010cO: '}{school.ico}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <a
-            href="https://ares.gov.cz/ekonomicke-subjekty"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={FF}
-            className="inline-block text-[13px] text-[#7C3AED] underline underline-offset-2 hover:opacity-80"
-          >
-            {'Nezn\u00e1te va\u0161e I\u010c? Zde ho m\u016f\u017eete naj\u00edt'}
-          </a>
-          {pipedriveDebug && ico.length >= 6 && (
-            <button
-              type="button"
-              onClick={pipedriveDebug.onToggle}
-              style={FF}
-              className="text-[12px] font-semibold text-[#001161]/50 hover:text-[#7C3AED] underline-offset-2 hover:underline"
-            >
-              {pipedriveDebug.open ? 'Skr\u00fdt JSON (Pipedrive)' : 'Dev \u2014 JSON (Pipedrive)'}
-            </button>
-          )}
-        </div>
-        {pipedriveDebug?.open && (
-          <div
-            className="rounded-xl border border-[#001161]/12 bg-[#0f172a]/95 p-3 max-h-[min(420px,50vh)] overflow-auto"
-            style={FF}
-          >
-            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              school-pipedrive-check (+ pipedriveApi = surov\u00e9 dealy Pipedrive, jen v Dev)
-            </p>
-            {pipedriveDebug.raw == null ? (
-              <p className="text-[12px] text-slate-400">Na\u010d\u00edt\u00e1m\u2026</p>
-            ) : (
-              <pre className="text-[11px] leading-relaxed text-emerald-100/95 whitespace-pre-wrap break-all m-0 font-mono">
-                {typeof pipedriveDebug.raw === 'string' ? pipedriveDebug.raw : JSON.stringify(pipedriveDebug.raw, null, 2)}
-              </pre>
+
+          {/* IČO */}
+          <div className="space-y-2">
+            <div className="relative">
+              <input type="text" inputMode="numeric" value={icoInput}
+                onChange={e => handleIcoChange(e.target.value)}
+                placeholder={'I\u010cO \u0161koly *'} maxLength={10}
+                className={`${INPUT_CLASS} pr-10`} style={FF} />
+              <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                {pdLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin text-[#001161]/30" />
+                  : cfg ? <span style={{ color: cfg.color }}>{cfg.icon}</span> : null}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <a
+                href="https://ares.gov.cz/ekonomicke-subjekty"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={FF}
+                className="inline-block text-[13px] text-[#7C3AED] underline underline-offset-2 hover:opacity-80"
+              >
+                {'Nezn\u00e1te va\u0161e I\u010c? Zde ho m\u016f\u017eete naj\u00edt'}
+              </a>
+              {pipedriveDebug && ico.length >= 6 && (
+                <button
+                  type="button"
+                  onClick={pipedriveDebug.onToggle}
+                  style={FF}
+                  className="text-[12px] font-semibold text-[#001161]/50 hover:text-[#7C3AED] underline-offset-2 hover:underline"
+                >
+                  {pipedriveDebug.open ? 'Skr\u00fdt JSON (Pipedrive)' : 'Dev \u2014 JSON (Pipedrive)'}
+                </button>
+              )}
+            </div>
+            {pipedriveDebug?.open && (
+              <div
+                className="rounded-xl border border-[#001161]/12 bg-[#0f172a]/95 p-3 max-h-[min(420px,50vh)] overflow-auto"
+                style={FF}
+              >
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                  school-pipedrive-check (+ pipedriveApi = surov\u00e9 dealy Pipedrive, jen v Dev)
+                </p>
+                {pipedriveDebug.raw == null ? (
+                  <p className="text-[12px] text-slate-400">Na\u010d\u00edt\u00e1m\u2026</p>
+                ) : (
+                  <pre className="text-[11px] leading-relaxed text-emerald-100/95 whitespace-pre-wrap break-all m-0 font-mono">
+                    {typeof pipedriveDebug.raw === 'string' ? pipedriveDebug.raw : JSON.stringify(pipedriveDebug.raw, null, 2)}
+                  </pre>
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </>
+      )}
+
+      {readOnly && pdLoading && (
+        <div className="flex items-center gap-2 text-[#001161]/55 text-[13px]" style={FF}>
+          <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+          {'Na\u010d\u00edt\u00e1m informace o \u0161kole z CRM\u2026'}
+        </div>
+      )}
 
       {/* Pipedrive status card */}
       <AnimatePresence>
@@ -1037,18 +912,18 @@ export function TrialPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left max-w-md mx-auto">
                   <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
                     <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">
-                      {'K\u00f3d pro \u017e\u00e1ka'}
-                    </p>
-                    <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">
-                      {trialResult.studentCode}
-                    </p>
-                  </div>
-                  <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
-                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">
                       {'K\u00f3d pro u\u010ditele'}
                     </p>
                     <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">
                       {trialResult.teacherCode}
+                    </p>
+                  </div>
+                  <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
+                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">
+                      {'K\u00f3d pro \u017e\u00e1ka'}
+                    </p>
+                    <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">
+                      {trialResult.studentCode}
                     </p>
                   </div>
                 </div>
@@ -1067,29 +942,7 @@ export function TrialPage() {
               <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
               {'Otev\u0159\u00edt aplikaci'}
             </a>
-            <div className="mt-6 border-t border-green-200/70 pt-6 text-left">
-              <p style={FF} className="mb-3 text-center text-[12px] font-bold uppercase tracking-wide text-[#001161]/45">
-                {'Mini\u0161kolen\u00ed'}
-              </p>
-              <ul className="space-y-2">
-                {TRIAL_TRAINING_VIDEOS.map((href, i) => (
-                  <li key={href}>
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-3 rounded-xl border border-[#001161]/10 bg-white/80 px-4 py-3 text-[14px] font-bold text-[#001161] shadow-sm transition-colors hover:border-[#7C3AED]/30 hover:bg-white hover:text-[#7C3AED]"
-                      style={FF}>
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-600 text-white">
-                        <Play className="h-4 w-4 fill-current" aria-hidden />
-                      </span>
-                      <span>{'Mini\u0161kolen\u00ed '}{i + 1}</span>
-                      <ExternalLink className="ml-auto h-4 w-4 shrink-0 text-[#001161]/35" aria-hidden />
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <TrialTrainingVideosList />
           </motion.div>
         ) : (
           <form onSubmit={handleSubmit} className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4">
@@ -1356,7 +1209,8 @@ export function TrialPage() {
               </span>
               <span style={FF} className="text-[13px] text-[#001161]/80 leading-[1.5]">
                 <span className="font-bold text-[#001161]">{'📚 Chci dostávat novinky a tipy do výuky'}</span>
-                <br />{'Jednou m\u011bs\u00ed\u010dn\u011b: nov\u00e9 tituly, metodick\u00e9 tipy a akce. Bez spamu.'}
+                <br />
+                {'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'}
               </span>
             </label>
 

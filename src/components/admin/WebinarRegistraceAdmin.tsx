@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   RefreshCw, ChevronDown, ChevronRight, Users, CheckCircle2,
   Rocket, Calendar, Mail, Phone, Briefcase, Clock, Search,
-  Download, Tag, Building2, User
+  Download, Tag, Building2, User, ClipboardList, ListChecks,
+  AlertTriangle, MinusCircle, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
@@ -10,6 +11,62 @@ import { webinarEventTimestampMs } from '../../utils/webinarEventTimestamp';
 import { cn } from '../ui/utils';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
+
+/**
+ * Některé proxy / edge vrstvy občas spojí odpověď jako `true{"a":1}` → JSON.parse hlásí
+ * „Unexpected non-whitespace character after JSON at position 4“. Stejná logika jako extractFirstJsonObject na serveru.
+ */
+function extractFirstJsonObjectFromString(raw: string): unknown {
+  const start = raw.indexOf('{');
+  if (start === -1) throw new SyntaxError('Žádný JSON objekt v odpovědi');
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (esc) {
+      esc = false;
+      continue;
+    }
+    if (ch === '\\' && inStr) {
+      esc = true;
+      continue;
+    }
+    if (ch === '"') {
+      inStr = !inStr;
+      continue;
+    }
+    if (inStr) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return JSON.parse(raw.slice(start, i + 1));
+      }
+    }
+  }
+  throw new SyntaxError('Neúplný JSON objekt');
+}
+
+function parseJsonResponseBody(text: string): unknown {
+  const strippedBom = text.replace(/\uFEFF/g, '').trim();
+  if (!strippedBom) return null;
+  try {
+    return JSON.parse(strippedBom);
+  } catch {
+    let candidate = strippedBom;
+    for (let s = 0; s < 8; s++) {
+      const m = candidate.match(/^(true|false|null)\b\s*(?:,\s*)?/i);
+      if (!m) break;
+      candidate = candidate.slice(m[0].length).trim();
+    }
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      return extractFirstJsonObjectFromString(candidate);
+    }
+  }
+}
 
 /** Horizontální scroll — padding pod obsahem + tenký scrollbar, ať nepřekrývá řádek (macOS overlay). */
 const ROW_SCROLL_CLASS = cn(
@@ -153,6 +210,36 @@ function compareWebinarsByScheduleLocal(a: WebinarStat, b: WebinarStat): number 
   return tb - ta;
 }
 
+/** Stav synchronizace s Mailchimpem po registraci (ukládá server do KV). */
+interface MailchimpSyncState {
+  ok: boolean;
+  skipped?: boolean;
+  memberOk?: boolean;
+  tagsOk?: boolean;
+  detail?: string;
+}
+
+/** Potvrzovací e-mail přes Mandrill — ukládá Edge po odeslání (KV). */
+interface MandrillSyncState {
+  ok: boolean;
+  skipped?: boolean;
+  detail?: string;
+}
+
+/** Jeden krok pipeline po registraci (stejný koncept jako workflow u objednávky). */
+interface IntegrationPipelineStep {
+  key: string;
+  label: string;
+  status: 'ok' | 'skipped' | 'failed';
+  detail?: string;
+  at: string;
+}
+
+interface IntegrationSummary {
+  overall: 'ok' | 'partial' | 'error';
+  headline?: string;
+}
+
 interface Registration {
   name: string;
   email: string;
@@ -163,6 +250,161 @@ interface Registration {
   attended: boolean;
   attendedAt?: string;
   trialToken?: string;
+  mailchimpSync?: MailchimpSyncState | null;
+  mailchimpSyncedAt?: string;
+  mandrillSync?: MandrillSyncState | null;
+  mandrillSyncedAt?: string;
+  integrationPipeline?: IntegrationPipelineStep[] | null;
+  integrationSummary?: IntegrationSummary | null;
+  integrationReportAt?: string;
+}
+
+function mailchimpSyncBadge(reg: Registration) {
+  const s = reg.mailchimpSync;
+  if (s == null && !reg.mailchimpSyncedAt) {
+    return (
+      <span
+        className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title="U starších registrací nelze zjistit, zda byl kontakt odeslán do Mailchimpu."
+      >
+        {'MC ?'}
+      </span>
+    );
+  }
+  if (s?.skipped) {
+    return (
+      <span
+        className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title={s.detail || 'Mailchimp nebyl nakonfigurován (API klíč / audience).'}
+      >
+        {'MC —'}
+      </span>
+    );
+  }
+  if (s?.ok) {
+    return (
+      <span
+        className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title="Kontakt byl v Mailchimpu vytvořen/aktualizován a tagy byly nastaveny."
+      >
+        {'MC ✓'}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+      title={s?.detail || 'Synchronizace s Mailchimpem selhala.'}
+    >
+      {'MC ✗'}
+    </span>
+  );
+}
+
+function mandrillSyncBadge(reg: Registration) {
+  const s = reg.mandrillSync;
+  if (s == null && !reg.mandrillSyncedAt) {
+    return (
+      <span
+        className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title="U starších registrací nelze zjistit, zda byl odeslán potvrzovací e-mail (Mandrill)."
+      >
+        {'E-mail ?'}
+      </span>
+    );
+  }
+  if (s?.skipped) {
+    return (
+      <span
+        className="text-[10px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title={s.detail || 'Chybí MANDRILL_API_KEY v Edge Secrets — e-mail se neodeslal.'}
+      >
+        {'E-mail —'}
+      </span>
+    );
+  }
+  if (s?.ok) {
+    return (
+      <span
+        className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+        title="Potvrzovací e-mail byl odeslán přes Mandrill."
+      >
+        {'E-mail ✓'}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-bold shrink-0"
+      title={s?.detail || 'Odeslání potvrzovacího e-mailu selhalo.'}
+    >
+      {'E-mail ✗'}
+    </span>
+  );
+}
+
+function integrationOverallFromLegacy(reg: Registration): IntegrationSummary['overall'] | 'unknown' {
+  if (reg.integrationSummary?.overall) return reg.integrationSummary.overall;
+  const hasM = reg.mandrillSync != null || !!reg.mandrillSyncedAt;
+  const hasMc = reg.mailchimpSync != null || !!reg.mailchimpSyncedAt;
+  if (!hasM && !hasMc) return 'unknown';
+  const mFail = reg.mandrillSync && !reg.mandrillSync.skipped && !reg.mandrillSync.ok;
+  const mcFail = reg.mailchimpSync && !reg.mailchimpSync.skipped && !reg.mailchimpSync.ok;
+  if (mFail || mcFail) return 'error';
+  if (reg.mandrillSync?.skipped || reg.mailchimpSync?.skipped) return 'partial';
+  return 'ok';
+}
+
+function integrationOverallBadge(reg: Registration) {
+  const o = integrationOverallFromLegacy(reg);
+  if (o === 'unknown') {
+    return (
+      <span
+        className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold shrink-0 inline-flex items-center gap-0.5"
+        title="Starší záznam — kompletní report kroků nemusí být uložený."
+      >
+        <ListChecks className="w-3 h-3 opacity-70" />
+        {'?'}
+      </span>
+    );
+  }
+  if (o === 'ok') {
+    return (
+      <span
+        className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-bold shrink-0 inline-flex items-center gap-0.5"
+        title={reg.integrationSummary?.headline || 'Externí integrace (Mandrill + Mailchimp) v pořádku.'}
+      >
+        <ListChecks className="w-3 h-3 opacity-80" />
+        {'OK'}
+      </span>
+    );
+  }
+  if (o === 'partial') {
+    return (
+      <span
+        className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded-full font-bold shrink-0 inline-flex items-center gap-0.5"
+        title={reg.integrationSummary?.headline || 'Některý krok přeskočen (např. chybí secret).'}
+      >
+        <AlertTriangle className="w-3 h-3 opacity-90" />
+        {'Část'}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[10px] bg-red-100 text-red-800 px-1.5 py-0.5 rounded-full font-bold shrink-0 inline-flex items-center gap-0.5"
+      title={reg.integrationSummary?.headline || 'Externí API vrátilo chybu — rozbalte Workflow.'}
+    >
+      <XCircle className="w-3 h-3 opacity-90" />
+      {'Chyba'}
+    </span>
+  );
+}
+
+function pipelineStepIcon(status: IntegrationPipelineStep['status']) {
+  if (status === 'ok') return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />;
+  if (status === 'skipped') return <MinusCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />;
+  return <XCircle className="w-3.5 h-3.5 text-red-600 shrink-0" />;
 }
 
 interface WebinarStat {
@@ -204,6 +446,13 @@ interface McPanelState {
   rows?: MailchimpMemberRow[];
 }
 
+interface SurveyPanelState {
+  loading: boolean;
+  questions: Array<{ id: string; type: string; label: string; options?: string[] }>;
+  responses: Array<{ email?: string; name?: string; answers?: Record<string, string>; submittedAt?: string }>;
+  error?: string;
+}
+
 export default function WebinarRegistraceAdmin() {
   const [data, setData] = useState<WebinarStat[]>([]);
   const [loading, setLoading] = useState(true);
@@ -214,6 +463,9 @@ export default function WebinarRegistraceAdmin() {
   /** Filtr tagů u Mailchimp: vše / nově příchozí / už byli na webináři */
   const [mcTagFilter, setMcTagFilter] = useState<Record<string, 'all' | 'new' | 'repeat'>>({});
   const mcLoadedRef = useRef<Set<string>>(new Set());
+  const [surveyByWid, setSurveyByWid] = useState<Record<string, SurveyPanelState>>({});
+  /** Rozbalený workflow report (`webinarId|email`). */
+  const [pipelineExpanded, setPipelineExpanded] = useState<string | null>(null);
   const load = useCallback(async () => {
     setLoading(true);
     const ctrl = new AbortController();
@@ -223,14 +475,15 @@ export default function WebinarRegistraceAdmin() {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
         signal: ctrl.signal,
       });
+      const rawList = await res.text();
+      const parsed = (parseJsonResponseBody(rawList) || {}) as { webinars?: WebinarStat[]; error?: string };
       if (!res.ok) {
-        const d = await res.json().catch(() => ({}));
-        throw new Error(d.error || res.statusText);
+        throw new Error(parsed.error || rawList.slice(0, 200) || res.statusText);
       }
-      const d = await res.json();
-      setData(d.webinars || []);
+      setData(parsed.webinars || []);
       setMcByWebinar({});
       setMcTagFilter({});
+      setSurveyByWid({});
       mcLoadedRef.current.clear();
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -293,9 +546,10 @@ export default function WebinarRegistraceAdmin() {
         const text = await res.text();
         let d: { members?: MailchimpMemberRow[]; error?: string } = {};
         try {
-          d = text ? JSON.parse(text) : {};
+          d = (text ? parseJsonResponseBody(text) : null) as typeof d;
+          if (!d || typeof d !== 'object') d = {};
         } catch {
-          /* ignore */
+          d = {};
         }
         if (!res.ok) {
           throw new Error(d.error || text.slice(0, 280) || res.statusText);
@@ -316,6 +570,55 @@ export default function WebinarRegistraceAdmin() {
     })();
     return () => ac.abort();
   }, [expanded, data]);
+
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    setSurveyByWid((prev) => ({
+      ...prev,
+      [expanded]: { loading: true, questions: [], responses: [] },
+    }));
+    (async () => {
+      try {
+        const res = await fetch(
+          `${SERVER}/admin/webinar-survey/${encodeURIComponent(expanded)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const rawText = await res.text();
+        let d: { error?: string; questions?: SurveyPanelState['questions']; responses?: SurveyPanelState['responses'] };
+        try {
+          d = parseJsonResponseBody(rawText) as typeof d;
+        } catch (parseErr: any) {
+          throw new Error(parseErr?.message || 'Neplatná odpověď serveru (JSON)');
+        }
+        if (cancelled) return;
+        if (!d || typeof d !== 'object') throw new Error('Prázdná odpověď serveru');
+        if (!res.ok) throw new Error(d.error || 'Chyba načtení dotazníku');
+        setSurveyByWid((prev) => ({
+          ...prev,
+          [expanded]: {
+            loading: false,
+            questions: Array.isArray(d.questions) ? d.questions : [],
+            responses: Array.isArray(d.responses) ? d.responses : [],
+          },
+        }));
+      } catch (e: any) {
+        if (cancelled) return;
+        setSurveyByWid((prev) => ({
+          ...prev,
+          [expanded]: {
+            loading: false,
+            questions: [],
+            responses: [],
+            error: e?.message || 'Chyba',
+          },
+        }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#f7f8fc]" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
@@ -465,74 +768,212 @@ export default function WebinarRegistraceAdmin() {
               {/* Expanded: formulář + Mailchimp */}
               {isOpen && (
                 <div className="border-t border-gray-100">
-                  <div className="px-5 py-2 border-b border-gray-100 bg-gray-50/80">
+                  <div className="px-5 py-2 border-b border-gray-100 bg-gray-50/80 space-y-1">
                     <span className="text-[11px] font-bold text-gray-600">{'Registrace z formuláře na webu'}</span>
+                    <p className="text-[10px] text-gray-500 leading-snug max-w-[920px]">
+                      {
+                        'U každého zápisu je report kroků (KV → Mandrill → Mailchimp). Jako u e‑shopu: jednou může API odpovědět timeoutem nebo 5xx — registrace v KV zůstane, selže jen externí krok. Proč to „jednou jde a jednou ne“: síť, rate limit, dočasný výpadek Mailchimpu/Mandrillu nebo změna na straně API. '
+                      }
+                      <span className="font-semibold text-[#001161]/80">{'Supabase → Edge Functions → Logs'}</span>
+                      {' ukáže přesnou chybu z requestu.'}
+                    </p>
                   </div>
                   {w.registrations.length === 0 ? (
                     <p className="px-5 py-4 text-center text-gray-400 text-[13px]">{'Zatím nikdo z formuláře.'}</p>
                   ) : (
                     <div className="divide-y divide-gray-50">
-                      {w.registrations.map((reg, idx) => (
-                        <div
-                          key={idx}
-                          className="px-5 py-2.5 flex items-center gap-2 hover:bg-gray-50/50 transition-colors min-w-0"
-                        >
-                          <div className="w-7 h-7 rounded-full bg-[#001161]/10 flex items-center justify-center shrink-0">
-                            <span className="text-[11px] font-bold text-[#001161]">
-                              {(reg.name || '?').charAt(0).toUpperCase()}
-                            </span>
-                          </div>
-                          <div className={cn(ROW_SCROLL_CLASS, 'text-[11px] text-[#001161]/90')}>
-                            <span className="font-semibold text-[#001161] shrink-0">{reg.name}</span>
-                            <span className="text-gray-300 shrink-0">·</span>
-                            <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
-                              <Mail className="w-3 h-3 shrink-0 opacity-60" />{reg.email}
-                            </span>
-                            {reg.phone ? (
-                              <>
-                                <span className="text-gray-300 shrink-0">·</span>
-                                <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
-                                  <Phone className="w-3 h-3 shrink-0 opacity-60" />{reg.phone}
+                      {w.registrations.map((reg, idx) => {
+                        const pipelineKey = `${w.webinarId}|${reg.email}`;
+                        const openPipe = pipelineExpanded === pipelineKey;
+                        return (
+                          <div
+                            key={idx}
+                            className="px-5 py-2.5 flex flex-col gap-1.5 hover:bg-gray-50/50 transition-colors min-w-0"
+                          >
+                            <div className="flex items-start gap-2 min-w-0">
+                              <div className="w-7 h-7 rounded-full bg-[#001161]/10 flex items-center justify-center shrink-0 mt-0.5">
+                                <span className="text-[11px] font-bold text-[#001161]">
+                                  {(reg.name || '?').charAt(0).toUpperCase()}
                                 </span>
-                              </>
-                            ) : null}
-                            <span className="text-gray-300 shrink-0">·</span>
-                            <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
-                              <Briefcase className="w-3 h-3 shrink-0 opacity-60" />{reg.position}
-                            </span>
-                            <span className="text-gray-300 shrink-0">·</span>
-                            <span className="flex items-center gap-0.5 shrink-0 text-gray-500">
-                              <Calendar className="w-3 h-3 shrink-0 opacity-60" />
-                              {new Date(reg.registeredAt).toLocaleDateString('cs-CZ')}
-                            </span>
-                            {reg.newsletter && (
-                              <>
-                                <span className="text-gray-300 shrink-0">·</span>
-                                <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'NL'}</span>
-                              </>
-                            )}
-                            {reg.attended ? (
-                              <>
-                                <span className="text-gray-300 shrink-0">·</span>
-                                <span className="text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Byl/a'}</span>
-                              </>
-                            ) : (
-                              <>
-                                <span className="text-gray-300 shrink-0">·</span>
-                                <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Nebyl/a'}</span>
-                              </>
-                            )}
-                            {reg.trialToken ? (
-                              <>
-                                <span className="text-gray-300 shrink-0">·</span>
-                                <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Trial'}</span>
-                              </>
+                              </div>
+                              <div className="min-w-0 flex-1 flex flex-col gap-1">
+                                <div className={cn(ROW_SCROLL_CLASS, 'text-[11px] text-[#001161]/90')}>
+                                  <span className="font-semibold text-[#001161] shrink-0">{reg.name}</span>
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
+                                    <Mail className="w-3 h-3 shrink-0 opacity-60" />{reg.email}
+                                  </span>
+                                  {reg.phone ? (
+                                    <>
+                                      <span className="text-gray-300 shrink-0">·</span>
+                                      <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
+                                        <Phone className="w-3 h-3 shrink-0 opacity-60" />{reg.phone}
+                                      </span>
+                                    </>
+                                  ) : null}
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  <span className="flex items-center gap-0.5 shrink-0 text-gray-600">
+                                    <Briefcase className="w-3 h-3 shrink-0 opacity-60" />{reg.position}
+                                  </span>
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  <span className="flex items-center gap-0.5 shrink-0 text-gray-500">
+                                    <Calendar className="w-3 h-3 shrink-0 opacity-60" />
+                                    {new Date(reg.registeredAt).toLocaleDateString('cs-CZ')}
+                                  </span>
+                                  {reg.newsletter && (
+                                    <>
+                                      <span className="text-gray-300 shrink-0">·</span>
+                                      <span className="text-[10px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'NL'}</span>
+                                    </>
+                                  )}
+                                  {reg.attended ? (
+                                    <>
+                                      <span className="text-gray-300 shrink-0">·</span>
+                                      <span className="text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Byl/a'}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-gray-300 shrink-0">·</span>
+                                      <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Nebyl/a'}</span>
+                                    </>
+                                  )}
+                                  {reg.trialToken ? (
+                                    <>
+                                      <span className="text-gray-300 shrink-0">·</span>
+                                      <span className="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full font-bold shrink-0">{'Trial'}</span>
+                                    </>
+                                  ) : null}
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  {integrationOverallBadge(reg)}
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  {mandrillSyncBadge(reg)}
+                                  <span className="text-gray-300 shrink-0">·</span>
+                                  {mailchimpSyncBadge(reg)}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 pl-0 sm:pl-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPipelineExpanded(openPipe ? null : pipelineKey)}
+                                    className={cn(
+                                      'inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-bold border transition-colors',
+                                      openPipe
+                                        ? 'border-[#001161] bg-[#001161]/5 text-[#001161]'
+                                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300',
+                                    )}
+                                  >
+                                    <ListChecks className="w-3 h-3" />
+                                    {'Workflow'}
+                                    {openPipe ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                  </button>
+                                  {reg.integrationSummary?.headline ? (
+                                    <span className="text-[10px] text-gray-500 max-w-full line-clamp-2" title={reg.integrationSummary.headline}>
+                                      {reg.integrationSummary.headline}
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </div>
+                            {openPipe ? (
+                              <div className="ml-0 sm:ml-9 rounded-xl border border-gray-100 bg-[#f8fafc] p-3 space-y-2.5">
+                                {(reg.integrationPipeline && reg.integrationPipeline.length > 0
+                                  ? reg.integrationPipeline
+                                  : []
+                                ).map((step) => (
+                                  <div key={step.key} className="flex gap-2.5 items-start">
+                                    <div className="pt-0.5">{pipelineStepIcon(step.status)}</div>
+                                    <div className="min-w-0 flex-1 space-y-0.5">
+                                      <div className="text-[12px] font-bold text-[#001161] leading-tight">{step.label}</div>
+                                      <div className="text-[10px] text-gray-400">
+                                        {new Date(step.at).toLocaleString('cs-CZ')}
+                                      </div>
+                                      {step.detail ? (
+                                        <pre className="text-[10px] text-red-800 whitespace-pre-wrap break-words font-mono bg-red-50/80 rounded-lg px-2 py-1.5 border border-red-100 mt-1">
+                                          {step.detail}
+                                        </pre>
+                                      ) : null}
+                                    </div>
+                                  </div>
+                                ))}
+                                {(!reg.integrationPipeline || reg.integrationPipeline.length === 0) ? (
+                                  <p className="text-[11px] text-gray-600 leading-relaxed">
+                                    {'U tohoto záznamu není uložený plný výpis kroků (starší registrace). Souhrn odvoďte z badge E-mail a MC výše; text chyby je v tooltipu u červeného křížku.'}
+                                  </p>
+                                ) : null}
+                              </div>
                             ) : null}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
+
+                  <div className="border-t border-gray-100">
+                    <div className="flex items-center gap-2 border-b border-gray-100 bg-emerald-50/50 px-5 py-2">
+                      <ClipboardList className="h-3.5 w-3.5 text-emerald-700" />
+                      <span className="text-[11px] font-bold text-emerald-900">{'Dotazník po registraci'}</span>
+                    </div>
+                    {surveyByWid[w.webinarId]?.loading ? (
+                      <div className="flex justify-center py-6">
+                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-emerald-600" />
+                      </div>
+                    ) : surveyByWid[w.webinarId]?.error ? (
+                      <p className="px-5 py-3 text-center text-[12px] text-red-500">{surveyByWid[w.webinarId]?.error}</p>
+                    ) : (surveyByWid[w.webinarId]?.questions || []).length === 0 ? (
+                      <p className="px-5 py-3 text-center text-[12px] text-gray-400">
+                        {'Dotazník u tohoto webináře není zapnutý nebo nemá otázky.'}
+                      </p>
+                    ) : (
+                      <div className="space-y-4 px-5 py-4">
+                        <p className="text-[11px] text-gray-500">
+                          {'Odpovědí: '}
+                          <strong className="text-[#001161]">{surveyByWid[w.webinarId]?.responses?.length ?? 0}</strong>
+                        </p>
+                        {(surveyByWid[w.webinarId]?.questions || []).map((q) => {
+                          const resps = surveyByWid[w.webinarId]?.responses || [];
+                          const vals = resps
+                            .map((r) => (r.answers && r.answers[q.id] != null ? String(r.answers[q.id]) : ''))
+                            .filter(Boolean);
+                          return (
+                            <div key={q.id} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                              <p className="text-[12px] font-bold text-[#001161] mb-2">{q.label}</p>
+                              {q.type === 'yes_no' ? (
+                                <div className="flex flex-wrap gap-3 text-[12px] text-gray-700">
+                                  <span>
+                                    {'Ano: '}
+                                    <strong>{vals.filter((v) => v === 'yes').length}</strong>
+                                  </span>
+                                  <span>
+                                    {'Ne: '}
+                                    <strong>{vals.filter((v) => v === 'no').length}</strong>
+                                  </span>
+                                </div>
+                              ) : q.type === 'abc' && q.options?.length ? (
+                                <ul className="space-y-1 text-[12px] text-gray-700">
+                                  {q.options.map((opt) => (
+                                    <li key={opt}>
+                                      <span className="text-gray-500">{opt}: </span>
+                                      <strong>{vals.filter((v) => v === opt).length}</strong>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <ul className="max-h-[180px] space-y-1.5 overflow-y-auto text-[11px] text-gray-700">
+                                  {vals.slice(0, 40).map((v, vi) => (
+                                    <li key={vi} className="rounded-lg bg-white px-2 py-1.5 border border-gray-100">
+                                      {v}
+                                    </li>
+                                  ))}
+                                  {vals.length > 40 ? (
+                                    <li className="text-gray-400">{'… a dalších '}{vals.length - 40}</li>
+                                  ) : null}
+                                </ul>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
                   {w.mailchimpTag && (() => {
                     const rowsRawCount = mcByWebinar[w.webinarId]?.rows || [];

@@ -6,6 +6,7 @@ import * as kv from './kv_store.tsx';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
+import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
 
 const app = new Hono();
 const KV_KEY = 'vividbooks_master_products_v1';
@@ -30,6 +31,58 @@ const GROWTH_CAMPAIGNS_KEY = 'growth:campaigns';
 const GROWTH_INSIGHTS_KEY = 'growth:insights';
 /** Storage pro admin uploady obrázků (sdílený bucket). */
 const UPLOAD_BUCKET = 'make-93a20b6f-uploads';
+
+/**
+ * Meta + CSS pro čitelnost v dark mode na mobilu (iOS Mail, Apple Mail, část Android/Gmail).
+ * Třídy dm-* přepisují inline barvy v @media (prefers-color-scheme: dark).
+ */
+const WEBINAR_EMAIL_DARK_HEAD = `<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<meta name="x-apple-disable-message-reformatting" content="">
+<style type="text/css">
+:root { color-scheme: light dark; }
+@media (prefers-color-scheme: dark) {
+  .dm-body, .dm-wrap { background-color: #0c0c0f !important; }
+  .dm-card { background-color: #16161c !important; box-shadow: 0 4px 24px rgba(0,0,0,0.45) !important; }
+  .dm-header { background-color: #050a18 !important; }
+  .dm-content { background-color: #16161c !important; }
+  .dm-h1 { color: #e8e8ed !important; }
+  .dm-text { color: #c5c5d0 !important; }
+  .dm-text .dm-strong, strong.dm-strong, .dm-strong { color: #93c5fd !important; }
+  .dm-inner { border-color: #3d3d48 !important; }
+  .dm-box-top { background-color: #1a1a22 !important; }
+  .dm-box-pad { background-color: #1a1a22 !important; }
+  .dm-label { color: #9898a8 !important; }
+  .dm-title-lg { color: #e8e8ed !important; }
+  .dm-muted { color: #a8a8b8 !important; }
+  .dm-cta-navy { background-color: #2d4a6f !important; }
+  a.dm-btn { background-color: #eef2ff !important; color: #172554 !important; }
+  .dm-footer { background-color: #121218 !important; border-top-color: #2a2a32 !important; }
+  .dm-footer-text { color: #888898 !important; }
+  .dm-cal a, a.dm-cal-link { background-color: #2a2a32 !important; color: #e8e8ed !important; border: 1px solid #3d3d48 !important; }
+  .dm-ics-note { color: #a0a0b0 !important; }
+  .dm-cal-heading { color: rgba(200,200,220,0.55) !important; }
+  .dm-rem-body, .dm-rem-wrap { background-color: #0c0c0f !important; }
+  .dm-rem-card { background-color: #16161c !important; }
+  .dm-rem-content { background-color: #16161c !important; }
+  .dm-rem-muted { color: #a8a8b8 !important; }
+  .dm-rem-link { color: #9ca3af !important; }
+  a.dm-rem-btn { background-color: #dc2626 !important; color: #ffffff !important; }
+  strong.dm-accent, .dm-text strong.dm-accent { color: #fdba74 !important; }
+}
+</style>`;
+
+/**
+ * Veřejná doména webu (odkazy v e-mailech a JSON po /webinar-registrace, připomínky).
+ * Produkce na vividbooks.com: nastav v Supabase → Edge Functions → Secrets:
+ * PUBLIC_SITE_URL=https://www.vividbooks.com
+ * Bez secretu: výchozí lokální Vite (http://localhost:5173).
+ */
+function getPublicSiteOrigin(): string {
+  const u = Deno.env.get('PUBLIC_SITE_URL')?.trim();
+  if (u) return u.replace(/\/$/, '');
+  return 'http://localhost:5173';
+}
 
 app.use('*', cors());
 app.use('*', logger(console.log));
@@ -1054,7 +1107,7 @@ app.get('/make-server-93a20b6f/webinare', async (c) => {
     const items = await getCollection(WEBINARS_KEY);
     /* Přepis je jen pro admin/RAG — neposílat na veřejný web (velikost + soukromí). */
     const itemsPublic = items.map((w: any) => {
-      const { prepis: _p, ...rest } = w;
+      const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
       return rest;
     });
     return c.json({ items: itemsPublic });
@@ -1886,7 +1939,25 @@ app.get('/make-server-93a20b6f/public/notifikace', async (c) => {
 app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
   try {
     const body = await c.req.json();
-    const { webinarId, webinarTitle, webinarSlug, name, email, phone, position, gdpr, newsletter } = body;
+    const {
+      webinarId,
+      webinarTitle,
+      webinarSlug,
+      name,
+      email,
+      phone,
+      position,
+      gdpr,
+      newsletter,
+      /** Fallback termín z klienta (KV nemusí mít webinář nebo je zastaralý) */
+      webinarDay: bodyDay,
+      webinarMonthNum: bodyMonthNum,
+      webinarYear: bodyYear,
+      webinarTime: bodyTime,
+      webinarMonthName: bodyMonthName,
+      /** Přesný název tagu v Mailchimp (jako v adminu u webináře), jinak webinar-{slug} */
+      mailchimpTagName: bodyMailchimpTag,
+    } = body;
 
     if (!webinarId || !name || !email || !position) {
       return c.json({ error: 'Chybí povinná pole (webinarId, name, email, position).' }, 400);
@@ -1925,6 +1996,26 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     await kv.set(key, registration);
     console.log(`[Webinar] Registrace ulozena: ${name} (${cleanEmail}) -> ${webinarId}`);
 
+    await mergeWebinarEmailIndex(cleanEmail, {
+      webinarId,
+      webinarTitle: webinarTitle || webinarId,
+      webinarSlug: slug,
+      attended: false,
+      registeredAt: registration.registeredAt,
+    });
+
+    /** Osobní odkaz do e-mailu (Mandrill) — po kliknutí ověření bez zadávání e-mailu + jméno do chatu. */
+    const lobbyToken = crypto.randomUUID();
+    const lobbyExpiresAt = new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString();
+    await kv.set(`webinar_lobby_${lobbyToken}`, {
+      webinarId,
+      webinarSlug: slug,
+      email: cleanEmail,
+      name: name.trim(),
+      createdAt: new Date().toISOString(),
+      expiresAt: lobbyExpiresAt,
+    });
+
     // Save trial token
     await kv.set(`trial_token_${token}`, {
       token,
@@ -1937,206 +2028,223 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       trialActivated: false,
     });
 
-    // Mailchimp integration
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
-    const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
-    const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
-    const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+    // ── Kalendář + stream URL (stejné jako e-mail; JSON odpověď i bez Mandrill) ─
+    const siteBaseUrl = getPublicSiteOrigin();
+    const liveUrl = `${siteBaseUrl}/webinar/${slug}/live`;
+    const liveUrlPersonal = `${liveUrl}?lobby=${lobbyToken}`;
 
-    if (mcApiKey && audienceId) {
-      try {
-        const subscriberHash = md5(cleanEmail);
-        const dc = mcApiKey.split('-').pop() || 'us19';
-        const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
-        const mcAuth = btoa(`anystring:${mcApiKey}`);
-        const nameParts = name.trim().split(' ');
-        const fname = nameParts[0] || '';
-        const lname = nameParts.slice(1).join(' ') || '';
+    const allWebinars = await getCollection(WEBINARS_KEY);
+    const webinarFromKv = allWebinars.find((w: any) => w.id === webinarId) as Record<string, unknown> | undefined;
+    const bd = Number(bodyDay);
+    const bm = Number(bodyMonthNum);
+    const by = Number(bodyYear);
+    const kvD = webinarFromKv?.day;
+    const kvMo = webinarFromKv?.monthNum;
+    const kvY = webinarFromKv?.year;
+    const dayResolved =
+      typeof kvD === 'number' && kvD >= 1 && kvD <= 31 ? kvD
+      : Number.isFinite(bd) && bd >= 1 && bd <= 31 ? bd
+      : NaN;
+    const monthResolved =
+      typeof kvMo === 'number' && kvMo >= 1 && kvMo <= 12 ? kvMo
+      : Number.isFinite(bm) && bm >= 1 && bm <= 12 ? bm
+      : NaN;
+    const yearResolved =
+      typeof kvY === 'number' && kvY >= 2020 && kvY <= 2100 ? kvY
+      : Number.isFinite(by) && by >= 2020 && by <= 2100 ? by
+      : NaN;
+    const merged: {
+      day: number;
+      monthNum: number;
+      year: number;
+      time: string;
+      monthName: string;
+      title: string;
+    } = {
+      day: dayResolved,
+      monthNum: monthResolved,
+      year: yearResolved,
+      time: String(webinarFromKv?.time || bodyTime || '18:00').trim() || '18:00',
+      monthName: String(webinarFromKv?.monthName || bodyMonthName || ''),
+      title: String(webinarFromKv?.title || webinarTitle || webinarId),
+    };
 
-        // 1. Check if contact already exists in this audience
-        const checkRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
-          method: 'GET',
-          headers: { 'Authorization': `Basic ${mcAuth}` },
-        });
+    let gcalStr = '';
+    let icsContent = '';
+    let humanDate = '';
+    let outlookUrl = '';
 
-        if (checkRes.status === 404) {
-          // NEW contact — create as subscribed
-          const createRes = await fetch(`${mcBase}/lists/${audienceId}/members`, {
-            method: 'POST',
-            headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email_address: cleanEmail,
-              status: 'subscribed',
-              merge_fields: { FNAME: fname, LNAME: lname, PHONE: phone?.trim() || '' },
-            }),
-          });
-          if (createRes.ok) {
-            console.log(`[Mailchimp] Novy kontakt vytvoren: ${cleanEmail} -> audience ${audienceId}`);
-          } else {
-            const errText = await createRes.text();
-            console.log(`[Mailchimp] Create selhal: ${createRes.status} ${errText.slice(0, 200)}`);
-          }
-        } else if (checkRes.ok) {
-          // EXISTING contact — only update merge fields, DO NOT touch subscription status
-          console.log(`[Mailchimp] Existujici kontakt nalezen: ${cleanEmail} -> pouze pridavam tag`);
-          await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
-            method: 'PATCH',
-            headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              merge_fields: { FNAME: fname, LNAME: lname, PHONE: phone?.trim() || '' },
-            }),
-          });
-        } else {
-          const errText = await checkRes.text();
-          console.log(`[Mailchimp] Check selhal: ${checkRes.status} ${errText.slice(0, 200)}`);
-        }
+    const hasSchedule =
+      Number.isFinite(merged.day) &&
+      Number.isFinite(merged.monthNum) &&
+      Number.isFinite(merged.year);
 
-        // 2. Add tags (works for both new and existing contacts)
-        const tags = [
-          { name: `webinar-${slug}`, status: 'active' },
-          { name: 'webinar-registrace', status: 'active' },
-        ] as Array<{ name: string; status: string }>;
-        if (newsletter) tags.push({ name: 'newsletter', status: 'active' });
+    if (hasSchedule) {
+      const [hh, mm] = merged.time.split(':').map((x: string) => parseInt(x, 10));
+      const hhSafe = Number.isFinite(hh) ? hh : 18;
+      const mmSafe = Number.isFinite(mm) ? mm : 0;
+      const d = merged.day;
+      const mo = merged.monthNum;
+      const yr = merged.year;
+      const monthGenitive = [
+        '', 'ledna', 'února', 'března', 'dubna', 'května', 'června', 'července', 'srpna', 'září', 'října',
+        'listopadu', 'prosince',
+      ];
+      const monthGen = monthGenitive[mo] || String(merged.monthName || '').toLowerCase();
+      humanDate = `${d}. ${monthGen} ${yr} v ${merged.time} (středoevropský čas)`;
+      const pad = (n: number) => String(n).padStart(2, '0');
 
-        const tagRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}/tags`, {
-          method: 'POST',
-          headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tags }),
-        });
-        if (tagRes.ok) {
-          console.log(`[Mailchimp] Tagy pridany: webinar-${slug} pro ${cleanEmail}`);
-        } else {
-          const te = await tagRes.text();
-          console.log(`[Mailchimp] Tagy selhaly: ${tagRes.status} ${te.slice(0, 200)}`);
-        }
-      } catch (mcErr: any) {
-        console.log(`[Mailchimp] Chyba (neblokuje registraci): ${mcErr.message}`);
-      }
-    } else {
-      console.log(`[Mailchimp] Preskoceno - chybi API klic nebo audience ID`);
+      const dateStr = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
+      const rawEndMin = mmSafe + 30;
+      const endHhFinal = hhSafe + 1 + Math.floor(rawEndMin / 60);
+      const endMmFinal = rawEndMin % 60;
+      const endDateStr = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
+      const dtstamp = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
+
+      icsContent = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Vividbooks//Webinar//CS',
+        'CALSCALE:GREGORIAN',
+        'METHOD:REQUEST',
+        'BEGIN:VTIMEZONE',
+        'TZID:Europe/Prague',
+        'BEGIN:STANDARD',
+        'DTSTART:19701025T030000',
+        'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
+        'TZOFFSETFROM:+0200',
+        'TZOFFSETTO:+0100',
+        'TZNAME:CET',
+        'END:STANDARD',
+        'BEGIN:DAYLIGHT',
+        'DTSTART:19700329T020000',
+        'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
+        'TZOFFSETFROM:+0100',
+        'TZOFFSETTO:+0200',
+        'TZNAME:CEST',
+        'END:DAYLIGHT',
+        'END:VTIMEZONE',
+        'BEGIN:VEVENT',
+        `UID:webinar-${webinarId}-${Date.now()}@vividbooks.cz`,
+        `DTSTAMP:${dtstamp}`,
+        `DTSTART;TZID=Europe/Prague:${dateStr}`,
+        `DTEND;TZID=Europe/Prague:${endDateStr}`,
+        `SUMMARY:${merged.title.replace(/,/g, '\\,')}`,
+        `DESCRIPTION:Online webinář Vividbooks — odkaz na přenos: ${liveUrl}`,
+        `URL:${liveUrl}`,
+        `LOCATION:Online — ${liveUrl}`,
+        'STATUS:CONFIRMED',
+        'END:VEVENT',
+        'END:VCALENDAR',
+      ].join('\r\n');
+
+      const gcalStart = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
+      const gcalEnd = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
+      gcalStr = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(merged.title)}&dates=${gcalStart}/${gcalEnd}&details=${encodeURIComponent('Online webinář Vividbooks\n\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
+
+      outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(merged.title)}&startdt=${yr}-${pad(mo)}-${pad(d)}T${pad(hhSafe)}:${pad(mmSafe)}:00&enddt=${yr}-${pad(mo)}-${pad(d)}T${pad(endHhFinal)}:${pad(endMmFinal)}:00&body=${encodeURIComponent('Online webinář Vividbooks\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
+    }
+
+    let icsBase64 = '';
+    if (icsContent) {
+      const icsBytes = new TextEncoder().encode(icsContent);
+      let icsBin = '';
+      icsBytes.forEach((b: number) => { icsBin += String.fromCharCode(b); });
+      icsBase64 = btoa(icsBin);
     }
 
     // ── Mandrill confirmation email ────────────────────────────────
+    type MandrillSyncState = {
+      ok: boolean;
+      skipped?: boolean;
+      detail?: string;
+    };
+    let mandrillSync: MandrillSyncState = {
+      ok: false,
+      skipped: true,
+      detail: 'Chybí MANDRILL_API_KEY v Supabase (Edge Functions → Secrets). Bez něj se potvrzovací e-mail neodešle.',
+    };
+
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
     if (mandrillKey) {
       try {
-        // Look up webinar data for calendar
-        const allWebinars = await getCollection(WEBINARS_KEY);
-        const webinarData = allWebinars.find((w: any) => w.id === webinarId);
-
-        // Build live URL
-        const baseUrl = 'https://www.vividbooks.com';
-        const liveUrl = `${baseUrl}/webinar/${slug}/live`;
-
-        // Calendar dates
-        let gcalStr = '';
-        let icsContent = '';
-        let humanDate = '';
-        let outlookUrl = '';
-
-        if (webinarData) {
-          const [hh, mm] = (webinarData.time || '17:00').split(':').map(Number);
-          const d = webinarData.day || 1;
-          const mo = webinarData.monthNum || 1;
-          const yr = webinarData.year || new Date().getFullYear();
-          humanDate = `${d}. ${webinarData.monthName || ''} ${yr} v ${webinarData.time || '17:00'}`;
-          const pad = (n: number) => String(n).padStart(2, '0');
-
-          // ICS local time with TZID Europe/Prague
-          const dateStr = `${yr}${pad(mo)}${pad(d)}T${pad(hh)}${pad(mm)}00`;
-          const rawEndMin = mm + 30;
-          const endHhFinal = hh + 1 + Math.floor(rawEndMin / 60);
-          const endMmFinal = rawEndMin % 60;
-          const endDateStr = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
-          const dtstamp = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
-
-          icsContent = [
-            'BEGIN:VCALENDAR',
-            'VERSION:2.0',
-            'PRODID:-//Vividbooks//Webinar//CS',
-            'CALSCALE:GREGORIAN',
-            'METHOD:REQUEST',
-            'BEGIN:VTIMEZONE',
-            'TZID:Europe/Prague',
-            'BEGIN:STANDARD',
-            'DTSTART:19701025T030000',
-            'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
-            'TZOFFSETFROM:+0200',
-            'TZOFFSETTO:+0100',
-            'TZNAME:CET',
-            'END:STANDARD',
-            'BEGIN:DAYLIGHT',
-            'DTSTART:19700329T020000',
-            'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
-            'TZOFFSETFROM:+0100',
-            'TZOFFSETTO:+0200',
-            'TZNAME:CEST',
-            'END:DAYLIGHT',
-            'END:VTIMEZONE',
-            'BEGIN:VEVENT',
-            `UID:webinar-${webinarId}-${Date.now()}@vividbooks.cz`,
-            `DTSTAMP:${dtstamp}`,
-            `DTSTART;TZID=Europe/Prague:${dateStr}`,
-            `DTEND;TZID=Europe/Prague:${endDateStr}`,
-            `SUMMARY:${(webinarData.title || webinarTitle || webinarId).replace(/,/g, '\\,')}`,
-            `DESCRIPTION:Webinar Vividbooks\\nPripojte se: ${liveUrl}`,
-            `URL:${liveUrl}`,
-            `LOCATION:${liveUrl}`,
-            'STATUS:CONFIRMED',
-            'END:VEVENT',
-            'END:VCALENDAR',
-          ].join('\r\n');
-
-          // Google Calendar URL
-          const gcalStart = `${yr}${pad(mo)}${pad(d)}T${pad(hh)}${pad(mm)}00`;
-          const gcalEnd   = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
-          gcalStr = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(webinarData.title || webinarTitle)}&dates=${gcalStart}/${gcalEnd}&details=${encodeURIComponent('Webinar Vividbooks\n\nPripojte se: ' + liveUrl)}&location=${encodeURIComponent(liveUrl)}`;
-
-          // Outlook URL
-          outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(webinarData.title || webinarTitle)}&startdt=${yr}-${pad(mo)}-${pad(d)}T${pad(hh)}:${pad(mm)}:00&enddt=${yr}-${pad(mo)}-${pad(d)}T${pad(endHhFinal)}:${pad(endMmFinal)}:00&body=${encodeURIComponent('Webinar Vividbooks\nPripojte se: ' + liveUrl)}&location=${encodeURIComponent(liveUrl)}`;
-        }
-
-        // Base64 encode ICS (UTF-8 safe)
-        const icsBytes = new TextEncoder().encode(icsContent);
-        let icsBin = '';
-        icsBytes.forEach((b: number) => { icsBin += String.fromCharCode(b); });
-        const icsBase64 = btoa(icsBin);
-
-        // HTML email
         const firstName = name.trim().split(' ')[0] || name.trim();
+        const escHtml = (s: string) =>
+          String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        const lecturerResolved = String(webinarFromKv?.lecturer || '').trim();
+        const coverRaw = String(webinarFromKv?.coverImage || '').trim();
+        const coverImgUrl = /^https?:\/\//i.test(coverRaw) ? coverRaw : '';
+        const titleSafe = escHtml(merged.title);
+        const humanDateSafe = humanDate ? escHtml(humanDate) : '';
+        const firstNameSafe = escHtml(firstName);
+        const coverBlock = coverImgUrl
+          ? `<img src="${escHtml(coverImgUrl)}" alt="${titleSafe}" width="520" style="width:100%;max-width:520px;height:auto;border-radius:12px 12px 0 0;display:block;border:0;margin:0;" />`
+          : '';
+        const titleIfNoCover = !coverImgUrl
+          ? `<p style="margin:0 0 14px;font-size:20px;font-weight:800;color:#001161;line-height:1.35;">${titleSafe}</p>`
+          : '';
+        const dateAndLecturerBlock = humanDateSafe
+          ? `<p style="margin:0 0 6px;font-size:16px;color:#334155;line-height:1.5;">${humanDateSafe}</p>${
+            lecturerResolved
+              ? `<p style="margin:0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
+              : ''
+          }`
+          : `<p class="dm-muted" style="margin:0;font-size:14px;color:#64748b;">${
+            lecturerResolved
+              ? `Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p><p style="margin:10px 0 0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
+              : 'Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p>'
+          }`;
+
+        const linkActiveText = hasSchedule
+          ? `Odkaz bude aktivní ${merged.day}. ${merged.monthNum}. ${merged.year} od ${merged.time}. Otevřete ho v naplánovaný čas.`
+          : 'Otevřete odkaz v naplánovaný čas — jakmile bude k dispozici termín, upřesníme ho v další zprávě.';
+        const linkActiveSafe = escHtml(linkActiveText);
+
         const emailHtml = `<!DOCTYPE html>
 <html lang="cs">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Registrace potvrzena</title></head>
-<body style="margin:0;padding:0;background:#f5f6fa;font-family:Arial,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6fa;padding:32px 16px;">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Registrace potvrzená</title>${WEBINAR_EMAIL_DARK_HEAD}</head>
+<body class="dm-body" style="margin:0;padding:0;background:#f5f6fa;font-family:Arial,Helvetica,sans-serif;">
+<table class="dm-wrap" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6fa;padding:32px 16px;">
 <tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
-<tr><td style="background:#001161;padding:32px 40px 28px;">
+<table class="dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
+<tr><td class="dm-header" style="background:#001161;padding:32px 40px 28px;">
 <p style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Vividbooks</p>
-<p style="margin:6px 0 0;color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Potvrzeni registrace</p>
+<p style="margin:6px 0 0;color:rgba(255,255,255,0.55);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Potvrzení registrace</p>
 </td></tr>
-<tr><td style="padding:40px 40px 32px;">
-<p style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Jste prihlaseni!</p>
-<p style="margin:0 0 6px;font-size:16px;color:#4a5568;">Ahoj <strong style="color:#001161;">${firstName}</strong>,</p>
-<p style="margin:0 0 28px;font-size:16px;color:#4a5568;line-height:1.6;">
-Vase registrace na webinar <strong style="color:#001161;">${webinarTitle || webinarId}</strong>${humanDate ? ` (<span style="color:#FF8C00;">${humanDate}</span>)` : ''} byla uspesna.
+<tr><td class="dm-content" style="padding:40px 40px 28px;">
+<p class="dm-h1" style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Jste přihlášeni!</p>
+<p class="dm-text" style="margin:0 0 6px;font-size:16px;color:#4a5568;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameSafe}</strong>,</p>
+<p class="dm-text" style="margin:0 0 22px;font-size:16px;color:#4a5568;line-height:1.6;">
+Děkujeme za registraci. Tady je vše potřebné:
 </p>
-<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
-<tr><td style="background:#dc2626;border-radius:16px;padding:24px 28px;">
-<p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.65);">Odkaz na live vysilani</p>
-<p style="margin:0 0 16px;font-size:17px;font-weight:800;color:#ffffff;">${webinarTitle || 'Webinar Vividbooks'}</p>
-<a href="${liveUrl}" style="display:inline-block;background:#ffffff;color:#dc2626;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;letter-spacing:-0.2px;">&#9654; Vstoupit na stream</a>
-<p style="margin:14px 0 0;font-size:12px;color:rgba(255,255,255,0.55);word-break:break-all;">${liveUrl}</p>
+<table class="dm-inner" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+<tr><td class="dm-box-top" style="background:#f8fafc;padding:0;">
+${coverBlock}
+<div class="dm-box-pad" style="padding:22px 24px 24px;">
+${titleIfNoCover}${dateAndLecturerBlock}
+</div>
 </td></tr>
 </table>
-<p style="margin:0 0 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(0,17,97,0.4);">Pridat do kalendare</p>
-${gcalStr ? `<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a href="${gcalStr}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Google Kalendar</a></td></tr></table>` : ''}
-${outlookUrl ? `<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a href="${outlookUrl}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Outlook / Office 365</a></td></tr></table>` : ''}
-<p style="margin:12px 0 0;font-size:13px;color:#718096;">Priloha .ics funguje s Apple Calendar, Thunderbird a dalsimi.</p>
+<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
+<tr><td class="dm-cta-navy" style="background:#1e3a5f;border-radius:16px;padding:24px 28px;">
+<p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,0.85);">Váš vstup na webinář</p>
+<p style="margin:0 0 16px;font-size:14px;color:rgba(255,255,255,0.9);line-height:1.5;">${linkActiveSafe}</p>
+<a class="dm-btn" href="${liveUrlPersonal.replace(/"/g, '&quot;')}" style="display:inline-block;background:#ffffff;color:#1e3a5f;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;letter-spacing:-0.2px;">Otevřít přenos</a>
+<p style="margin:12px 0 0;font-size:12px;color:#94a3b8;word-break:break-all;line-height:1.45;">${escHtml(liveUrlPersonal)}</p>
 </td></tr>
-<tr><td style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
-<p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
-Tento email byl odeslan automaticky po registraci na webinar.<br>
+</table>
+<p class="dm-cal-heading" style="margin:0 0 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(0,17,97,0.4);">Přidat do kalendáře</p>
+${gcalStr ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${gcalStr}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Google Kalendář</a></td></tr></table>` : ''}
+${outlookUrl ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${outlookUrl}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Outlook / Office 365</a></td></tr></table>` : ''}
+<p class="dm-ics-note" style="margin:12px 0 0;font-size:13px;color:#718096;">Příloha .ics funguje s Apple Calendar, Thunderbird a dalšími.</p>
+</td></tr>
+<tr><td class="dm-footer" style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
+<p class="dm-footer-text" style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
+Tento e-mail byl odeslán automaticky po registraci na webinář.<br>
 &copy; ${new Date().getFullYear()} Vividbooks
 </p>
 </td></tr>
@@ -2150,16 +2258,16 @@ Tento email byl odeslan automaticky po registraci na webinar.<br>
           key: mandrillKey,
           message: {
             html: emailHtml,
-            subject: `Registrace potvrzena: ${webinarTitle || webinarId}`,
-            from_email: 'webinare@vividbooks.com',
-            from_name: 'Vividbooks webinare',
+            subject: `Registrace potvrzená: ${webinarTitle || webinarId}`,
+            from_email: 'hello@vividbooks.com',
+            from_name: 'Vividbooks',
             to: [{ email: cleanEmail, name: name.trim(), type: 'to' }],
             attachments: icsContent ? [{
               type: 'text/calendar; charset=utf-8; method=REQUEST',
               name: `webinar-${slug}.ics`,
               content: icsBase64,
             }] : [],
-            headers: { 'Reply-To': 'webinare@vividbooks.com' },
+            headers: { 'Reply-To': 'hello@vividbooks.com' },
             track_opens: true,
             track_clicks: false,
           },
@@ -2171,16 +2279,262 @@ Tento email byl odeslan automaticky po registraci na webinar.<br>
           body: JSON.stringify(mandrillBody),
         });
         const mailData = await mailRes.json();
-        if (Array.isArray(mailData) && mailData[0]?.status === 'sent') {
+        if (!mailRes.ok) {
+          const errSlice = JSON.stringify(mailData).slice(0, 400);
+          mandrillSync = {
+            ok: false,
+            detail: `HTTP ${mailRes.status}: ${errSlice}`,
+          };
+          console.log(`[Mandrill] HTTP ${mailRes.status}: ${errSlice}`);
+        } else if (Array.isArray(mailData) && mailData[0]?.status === 'sent') {
+          mandrillSync = { ok: true };
           console.log(`[Mandrill] Email odeslan: ${cleanEmail} status=${mailData[0].status}`);
         } else {
-          console.log(`[Mandrill] Odpoved: ${JSON.stringify(mailData).slice(0, 400)}`);
+          const errSlice = JSON.stringify(mailData).slice(0, 500);
+          mandrillSync = { ok: false, detail: errSlice };
+          console.log(`[Mandrill] Odpoved: ${errSlice}`);
         }
       } catch (mailErr: any) {
-        console.log(`[Mandrill] Chyba (neblokuje registraci): ${mailErr.message}`);
+        const msg = mailErr?.message || String(mailErr);
+        mandrillSync = { ok: false, detail: msg };
+        console.log(`[Mandrill] Chyba (neblokuje registraci): ${msg}`);
       }
     } else {
       console.log('[Mandrill] MANDRILL_API_KEY neni nastaven, email preskocen');
+    }
+
+    // Mailchimp integration — výsledek uložíme do KV pro admin (Registrace)
+    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
+    const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
+    const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+
+    type McSync = {
+      ok: boolean;
+      skipped?: boolean;
+      memberOk?: boolean;
+      tagsOk?: boolean;
+      detail?: string;
+    };
+    let mailchimpSync: McSync = { ok: false };
+
+    if (mcApiKey && audienceId) {
+      try {
+        const subscriberHash = md5(cleanEmail);
+        const dc = mcApiKey.split('-').pop() || 'us19';
+        const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+        const mcAuth = btoa(`anystring:${mcApiKey}`);
+        const nameParts = name.trim().split(' ');
+        const fname = nameParts[0] || '';
+        const lname = nameParts.slice(1).join(' ') || '';
+
+        const detailParts: string[] = [];
+        let memberOk = false;
+
+        // 1. Check if contact already exists in this audience
+        const checkRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
+          method: 'GET',
+          headers: { 'Authorization': `Basic ${mcAuth}` },
+        });
+
+        if (checkRes.status === 404) {
+          const createRes = await fetch(`${mcBase}/lists/${audienceId}/members`, {
+            method: 'POST',
+            headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email_address: cleanEmail,
+              status: 'subscribed',
+              merge_fields: { FNAME: fname, LNAME: lname, PHONE: phone?.trim() || '' },
+            }),
+          });
+          memberOk = createRes.ok;
+          if (createRes.ok) {
+            console.log(`[Mailchimp] Novy kontakt vytvoren: ${cleanEmail} -> audience ${audienceId}`);
+          } else {
+            const errText = await createRes.text();
+            detailParts.push(`create ${createRes.status}: ${errText.slice(0, 160)}`);
+            console.log(`[Mailchimp] Create selhal: ${createRes.status} ${errText.slice(0, 200)}`);
+          }
+        } else if (checkRes.ok) {
+          console.log(`[Mailchimp] Existujici kontakt nalezen: ${cleanEmail} -> pouze pridavam tag`);
+          const patchRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              merge_fields: { FNAME: fname, LNAME: lname, PHONE: phone?.trim() || '' },
+            }),
+          });
+          memberOk = patchRes.ok;
+          if (!patchRes.ok) {
+            const te = await patchRes.text();
+            detailParts.push(`patch ${patchRes.status}: ${te.slice(0, 160)}`);
+          }
+        } else {
+          const errText = await checkRes.text();
+          detailParts.push(`check ${checkRes.status}: ${errText.slice(0, 160)}`);
+          console.log(`[Mailchimp] Check selhal: ${checkRes.status} ${errText.slice(0, 200)}`);
+        }
+
+        const explicitMcTag = typeof bodyMailchimpTag === 'string' && bodyMailchimpTag.trim().length > 0
+          ? bodyMailchimpTag.trim().slice(0, 100)
+          : '';
+        const webinarListTag = explicitMcTag || `webinar-${slug}`;
+        const tags = [
+          { name: webinarListTag, status: 'active' },
+          { name: 'webinar-registrace', status: 'active' },
+        ] as Array<{ name: string; status: string }>;
+        if (newsletter) tags.push({ name: 'newsletter', status: 'active' });
+
+        const tagRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}/tags`, {
+          method: 'POST',
+          headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tags }),
+        });
+        const tagsOk = tagRes.ok;
+        if (tagRes.ok) {
+          console.log(`[Mailchimp] Tagy pridany: ${webinarListTag} + webinar-registrace pro ${cleanEmail}`);
+        } else {
+          const te = await tagRes.text();
+          detailParts.push(`tags ${tagRes.status}: ${te.slice(0, 160)}`);
+          console.log(`[Mailchimp] Tagy selhaly: ${tagRes.status} ${te.slice(0, 200)}`);
+        }
+
+        mailchimpSync = {
+          ok: memberOk && tagsOk,
+          memberOk,
+          tagsOk,
+          detail: detailParts.length ? detailParts.join(' | ').slice(0, 400) : undefined,
+        };
+      } catch (mcErr: any) {
+        const msg = mcErr?.message || String(mcErr);
+        mailchimpSync = { ok: false, detail: msg };
+        console.log(`[Mailchimp] Chyba (neblokuje registraci): ${msg}`);
+      }
+    } else {
+      mailchimpSync = {
+        ok: false,
+        skipped: true,
+        detail: 'Chybí MAILCHIMP_API_KEY nebo audience (NEWSLETTER / NO_NEWSLETTER).',
+      };
+      console.log(`[Mailchimp] Preskoceno - chybi API klic nebo audience ID`);
+    }
+
+    const integrationReportAt = new Date().toISOString();
+    type IntegrationPipelineStep = {
+      key: string;
+      label: string;
+      status: 'ok' | 'skipped' | 'failed';
+      detail?: string;
+      at: string;
+    };
+    const integrationPipeline: IntegrationPipelineStep[] = [
+      {
+        key: 'registration_kv',
+        label: 'Záznam registrace (KV)',
+        status: 'ok',
+        at: registration.registeredAt,
+      },
+      {
+        key: 'email_index',
+        label: 'Index e-mailů pro admin',
+        status: 'ok',
+        at: integrationReportAt,
+      },
+      {
+        key: 'lobby_kv',
+        label: 'Odkaz do lobby (KV)',
+        status: 'ok',
+        at: integrationReportAt,
+      },
+      {
+        key: 'trial_kv',
+        label: 'Trial token (KV)',
+        status: 'ok',
+        at: integrationReportAt,
+      },
+      {
+        key: 'mandrill',
+        label: 'Potvrzovací e-mail (Mandrill)',
+        status: mandrillSync.skipped ? 'skipped' : mandrillSync.ok ? 'ok' : 'failed',
+        detail: mandrillSync.detail,
+        at: integrationReportAt,
+      },
+      {
+        key: 'mailchimp',
+        label: 'Mailchimp (kontakt + tagy)',
+        status: mailchimpSync.skipped ? 'skipped' : mailchimpSync.ok ? 'ok' : 'failed',
+        detail: mailchimpSync.detail,
+        at: integrationReportAt,
+      },
+    ];
+
+    const mandrillFailed = !mandrillSync.skipped && !mandrillSync.ok;
+    const mailchimpFailed = !mailchimpSync.skipped && !mailchimpSync.ok;
+    const integrationSummary = {
+      overall: (mandrillFailed || mailchimpFailed
+        ? 'error'
+        : (mandrillSync.skipped || mailchimpSync.skipped)
+          ? 'partial'
+          : 'ok') as 'ok' | 'partial' | 'error',
+      headline: mandrillFailed || mailchimpFailed
+        ? 'Alespoň jedna externí integrace selhala — viz krok níže a Supabase Edge Logs.'
+        : (mandrillSync.skipped || mailchimpSync.skipped)
+          ? 'Některý krok přeskočen (není nastaven klíč nebo audience).'
+          : 'Všechny naplánované kroky proběhly v pořádku.',
+    };
+
+    if (mandrillFailed) {
+      await upsertSiteIncident({
+        source: 'webinar_registration',
+        incidentType: 'mandrill_email_failed',
+        severity: 'warning',
+        dedupeKey: `webinar-mandrill-${webinarId}-${cleanEmail}`,
+        title: 'Webinář: potvrzovací e-mail se neodeslal (Mandrill)',
+        message: mandrillSync.detail || 'Mandrill nevrátil úspěšné odeslání.',
+        payload: {
+          webinarId,
+          webinarSlug: slug,
+          email: cleanEmail,
+          name: name.trim(),
+        },
+        webinarId,
+        webinarTitle: webinarTitle || webinarId,
+        contactEmail: cleanEmail,
+      });
+    }
+    if (mailchimpFailed) {
+      await upsertSiteIncident({
+        source: 'webinar_registration',
+        incidentType: 'mailchimp_sync_failed',
+        severity: 'warning',
+        dedupeKey: `webinar-mc-${webinarId}-${cleanEmail}`,
+        title: 'Webinář: synchronizace s Mailchimpem selhala',
+        message: mailchimpSync.detail || 'Mailchimp API vrátilo chybu.',
+        payload: {
+          webinarId,
+          webinarSlug: slug,
+          email: cleanEmail,
+          newsletter: !!newsletter,
+        },
+        webinarId,
+        webinarTitle: webinarTitle || webinarId,
+        contactEmail: cleanEmail,
+      });
+    }
+
+    const regStored = await kv.get(key);
+    if (regStored && typeof regStored === 'object') {
+      const syncedAt = new Date().toISOString();
+      await kv.set(key, {
+        ...(regStored as Record<string, unknown>),
+        mailchimpSync,
+        mailchimpSyncedAt: syncedAt,
+        mandrillSync,
+        mandrillSyncedAt: syncedAt,
+        integrationPipeline,
+        integrationSummary,
+        integrationReportAt: syncedAt,
+      });
     }
 
     return c.json({
@@ -2188,6 +2542,21 @@ Tento email byl odeslan automaticky po registraci na webinar.<br>
       message: 'Registrace proběhla úspěšně.',
       token,
       trialUrl: `/vyzkousejte?token=${token}`,
+      streamUrl: liveUrlPersonal,
+      streamUrlPublic: liveUrl,
+      calendar: hasSchedule && gcalStr
+        ? { googleUrl: gcalStr, outlookUrl, icsBase64: icsBase64 || null }
+        : null,
+      /** Diagnostika (klient může ignorovat) — zda odešel e-mail a zda proběhl Mailchimp */
+      sync: {
+        mandrill: mandrillSync,
+        mailchimp: mailchimpSync,
+      },
+      integration: {
+        summary: integrationSummary,
+        pipeline: integrationPipeline,
+        reportAt: integrationReportAt,
+      },
     });
   } catch (err: any) {
     console.log(`[Webinar] Chyba pri registraci: ${err.message}`);
@@ -2438,45 +2807,636 @@ app.get('/make-server-93a20b6f/verify-token/:token', async (c) => {
   }
 });
 
+/** Pro admin Kontakty: účast/registrace po jednotlivých webinářích (stejný e-mail může mít víc záznamů). */
+type WebinarEmailIdxEntry = {
+  webinarId: string;
+  webinarTitle: string;
+  webinarSlug: string;
+  attended: boolean;
+  attendedAt?: string;
+  registeredAt: string;
+};
+
+function webinarEmailIndexKey(cleanEmail: string): string {
+  return `webinar_reg_email_idx_${md5(cleanEmail)}`;
+}
+
+async function mergeWebinarEmailIndex(
+  cleanEmail: string,
+  patch: {
+    webinarId: string;
+    webinarTitle?: string;
+    webinarSlug?: string;
+    attended?: boolean;
+    attendedAt?: string;
+    registeredAt?: string;
+  },
+): Promise<void> {
+  const idxKey = webinarEmailIndexKey(cleanEmail);
+  const prev = ((await kv.get(idxKey)) as WebinarEmailIdxEntry[] | null) || [];
+  const i = prev.findIndex((x) => x.webinarId === patch.webinarId);
+  const base: WebinarEmailIdxEntry = i >= 0
+    ? prev[i]!
+    : {
+      webinarId: patch.webinarId,
+      webinarTitle: patch.webinarTitle || patch.webinarId,
+      webinarSlug: patch.webinarSlug || patch.webinarId,
+      attended: false,
+      registeredAt: patch.registeredAt || new Date().toISOString(),
+    };
+  const next: WebinarEmailIdxEntry = {
+    ...base,
+    webinarTitle: patch.webinarTitle ?? base.webinarTitle,
+    webinarSlug: patch.webinarSlug ?? base.webinarSlug,
+    attended: patch.attended !== undefined ? patch.attended : base.attended,
+    attendedAt: patch.attendedAt !== undefined ? patch.attendedAt : base.attendedAt,
+    registeredAt: patch.registeredAt ?? base.registeredAt,
+  };
+  const arr = [...prev];
+  if (i >= 0) arr[i] = next;
+  else arr.push(next);
+  await kv.set(idxKey, arr);
+}
+
+/** Načte index; když je prázdný, jednorázově doplní ze záznamů webinar_reg_* (starší data). */
+async function getWebinarEmailIndexRows(cleanEmail: string): Promise<WebinarEmailIdxEntry[]> {
+  const idxKey = webinarEmailIndexKey(cleanEmail);
+  const cached = (await kv.get(idxKey)) as WebinarEmailIdxEntry[] | null;
+  if (Array.isArray(cached) && cached.length > 0) return cached;
+
+  const webinars = await getCollection(WEBINARS_KEY) as Array<{ id: string; title?: string; slug?: string }>;
+  const out: WebinarEmailIdxEntry[] = [];
+  for (const w of webinars) {
+    const reg = await kv.get(`webinar_reg_${w.id}_${cleanEmail}`) as Record<string, unknown> | null;
+    if (!reg) continue;
+    out.push({
+      webinarId: w.id,
+      webinarTitle: String(reg.webinarTitle || w.title || w.id),
+      webinarSlug: String(reg.webinarSlug || w.slug || w.id),
+      attended: !!reg.attended,
+      attendedAt: typeof reg.attendedAt === 'string' ? reg.attendedAt : undefined,
+      registeredAt: typeof reg.registeredAt === 'string' ? reg.registeredAt : new Date().toISOString(),
+    });
+  }
+  if (out.length) await kv.set(idxKey, out);
+  return out;
+}
+
+/** Označí účast v KV + index pro admin (bez Mailchimp tagu „attended“). */
+async function runWebinarCheckInEffects(
+  webinarId: string,
+  cleanEmail: string,
+): Promise<{ ok: true } | { ok: false; reason: 'not_found' }> {
+  const key = `webinar_reg_${webinarId}_${cleanEmail}`;
+  const reg = await kv.get(key) as Record<string, unknown> | null;
+  if (!reg) return { ok: false, reason: 'not_found' };
+  const attendedAt = new Date().toISOString();
+  const updated = { ...reg, attended: true, attendedAt };
+  await kv.set(key, updated);
+  console.log(`[Webinar] Check-in: ${cleanEmail} na ${webinarId}`);
+
+  await mergeWebinarEmailIndex(cleanEmail, {
+    webinarId,
+    webinarTitle: String(updated.webinarTitle || webinarId),
+    webinarSlug: String(updated.webinarSlug || webinarId),
+    attended: true,
+    attendedAt,
+    registeredAt: typeof updated.registeredAt === 'string' ? updated.registeredAt : attendedAt,
+  });
+  return { ok: true };
+}
+
 /* ── Webinar check-in ──────────────────────────────────────────── */
 app.post('/make-server-93a20b6f/webinar-checkin', async (c) => {
   try {
     const { webinarId, email, webinarSlug } = await c.req.json();
     if (!webinarId || !email) return c.json({ error: 'Chybí webinarId nebo email.' }, 400);
     const cleanEmail = email.toLowerCase().trim();
-    const key = `webinar_reg_${webinarId}_${cleanEmail}`;
-    const reg = await kv.get(key);
-    if (!reg) return c.json({ error: 'Registrace nenalezena.' }, 404);
-
-    await kv.set(key, { ...reg, attended: true, attendedAt: new Date().toISOString() });
-    console.log(`[Webinar] Check-in: ${cleanEmail} na ${webinarId}`);
-
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
-    if (mcApiKey) {
-      try {
-        const slug = webinarSlug || webinarId;
-        const subscriberHash = md5(cleanEmail);
-        const dc = mcApiKey.split('-').pop() || 'us19';
-        const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
-        const mcAuth = btoa(`anystring:${mcApiKey}`);
-        for (const aud of [Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER'), Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER')]) {
-          if (!aud) continue;
-          await fetch(`${mcBase}/lists/${aud}/members/${subscriberHash}/tags`, {
-            method: 'POST',
-            headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ tags: [{ name: `webinar-${slug}-attended`, status: 'active' }] }),
-          }).catch(() => {});
-        }
-        console.log(`[Mailchimp] Attended tag pridan: ${cleanEmail}`);
-      } catch (mcErr: any) {
-        console.log(`[Mailchimp] Attended tag selhal: ${mcErr.message}`);
-      }
-    }
-
+    const r = await runWebinarCheckInEffects(webinarId, cleanEmail);
+    if (!r.ok) return c.json({ error: 'Registrace nenalezena.' }, 404);
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Checkin] Chyba: ${err.message}`);
     return c.json({ error: `Chyba check-in: ${err.message}` }, 500);
+  }
+});
+
+/* ── Osobní odkaz z Mandrill e-mailu (?lobby=) ─────────────────── */
+app.post('/make-server-93a20b6f/webinar-lobby-verify', async (c) => {
+  try {
+    const body = await c.req.json();
+    const token = typeof body?.token === 'string' ? body.token.trim() : '';
+    if (!token) return c.json({ error: 'Chybí token.' }, 400);
+
+    const row = await kv.get(`webinar_lobby_${token}`) as {
+      webinarId?: string;
+      webinarSlug?: string;
+      email?: string;
+      name?: string;
+      expiresAt?: string;
+    } | null;
+    if (!row?.webinarId || !row.email) {
+      return c.json({ error: 'Odkaz je neplatný nebo vypršel.' }, 404);
+    }
+    if (row.expiresAt) {
+      const exp = new Date(row.expiresAt).getTime();
+      if (Number.isFinite(exp) && Date.now() > exp) {
+        return c.json({ error: 'Odkaz vypršel.' }, 410);
+      }
+    }
+
+    const cleanEmail = String(row.email).toLowerCase().trim();
+    const applied = await runWebinarCheckInEffects(row.webinarId, cleanEmail);
+    if (!applied.ok) return c.json({ error: 'Registrace nenalezena.' }, 404);
+
+    return c.json({
+      success: true,
+      webinarId: row.webinarId,
+      email: cleanEmail,
+      name: String(row.name || '').trim(),
+    });
+  } catch (err: any) {
+    console.log(`[Lobby] Chyba: ${err.message}`);
+    return c.json({ error: `Chyba ověření odkazu: ${err.message}` }, 500);
+  }
+});
+
+/* ── Dotazník po registraci na webinář ─────────────────────────── */
+const DEFAULT_SURVEY_QUESTIONS_SERVER: Array<{
+  id: string;
+  type: 'open' | 'abc' | 'yes_no';
+  label: string;
+  options?: string[];
+}> = [
+  { id: 'motivation', type: 'open', label: 'S jakou motivací přicházíte na tento webinář?' },
+  { id: 'topic_interest', type: 'open', label: 'Co by vás u tématu nejvíce zajímalo?' },
+  { id: 'uses_vividbooks', type: 'yes_no', label: 'Používám Vividbooks' },
+];
+
+function resolveSurveyQuestionsFromWebinarItem(w: Record<string, unknown> | null): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
+  /** Chybí záznam v CMS (jen statický web) → stejné výchozí otázky jako na klientu. */
+  if (!w) return DEFAULT_SURVEY_QUESTIONS_SERVER;
+  if (w.surveyEnabled === false) return [];
+  const raw = w.surveyQuestions;
+  if (Array.isArray(raw) && raw.length > 0) {
+    return raw
+      .filter((x: any) => x && x.id && x.label && x.type)
+      .map((x: any) => ({
+        id: String(x.id),
+        type: x.type as 'open' | 'abc' | 'yes_no',
+        label: String(x.label),
+        options: Array.isArray(x.options) ? x.options.map((o: unknown) => String(o)) : undefined,
+      }));
+  }
+  return DEFAULT_SURVEY_QUESTIONS_SERVER;
+}
+
+function webinarSurveyAnswerKey(webinarId: string, cleanEmail: string): string {
+  return `webinar_survey_${webinarId}_${md5(cleanEmail)}`;
+}
+
+/** Stejná konvence jako u POST /webinar-registrace (string | number z JSON). */
+function normalizeWebinarIdFromBody(v: unknown): string {
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t) return t;
+  }
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  return '';
+}
+
+function pragueWallClockFromMs(nowMs: number): { y: number; m: number; d: number; H: number; M: number } {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = f.formatToParts(new Date(nowMs));
+  const o: Record<string, string> = {};
+  for (const p of parts) {
+    if (p.type !== 'literal') o[p.type] = p.value;
+  }
+  return { y: +o.year, m: +o.month, d: +o.day, H: +o.hour, M: +o.minute };
+}
+
+function webinarStartEpochMsPrague(w: {
+  year: number;
+  monthNum?: number;
+  day?: number;
+  time?: string;
+}): number {
+  const mo = w.monthNum || 1;
+  const d = w.day || 1;
+  const y = w.year;
+  const tm = String(w.time || '18:00').match(/^(\d{1,2}):(\d{2})/);
+  const hh = tm ? parseInt(tm[1], 10) : 18;
+  const mi = tm ? parseInt(tm[2], 10) : 0;
+  const T = (globalThis as any).Temporal;
+  if (T?.PlainDateTime?.from && T?.ZonedDateTime) {
+    try {
+      const plain = T.PlainDateTime.from({ year: y, month: mo, day: d, hour: hh, minute: mi });
+      const zdt = plain.toZonedDateTime('Europe/Prague');
+      return zdt.epochMilliseconds;
+    } catch {
+      /* fall through */
+    }
+  }
+  return Date.UTC(y, mo - 1, d, hh - 2, mi, 0, 0);
+}
+
+function webinarReminderMorningKey(webinarId: string, emailHash: string): string {
+  return `webinar_rem_morning_${webinarId}_${emailHash}`;
+}
+function webinarReminderT30Key(webinarId: string, emailHash: string): string {
+  return `webinar_rem_t30_${webinarId}_${emailHash}`;
+}
+
+function remEscHtmlReminder(s: string) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Odkaz na stránku webináře s předvyplněným e-mailem — zobrazí blok s dotazníkem (stejný jako po registraci). */
+function buildWebinarSurveyInviteUrl(baseUrl: string, w: any, cleanEmail: string): string | null {
+  if (resolveSurveyQuestionsFromWebinarItem(w).length === 0) return null;
+  const slug = String(w.slug || w.id || '').trim() || String(w.id);
+  const origin = String(baseUrl || '').replace(/\/$/, '');
+  return `${origin}/webinar/${encodeURIComponent(slug)}?dotaznik=1&email=${encodeURIComponent(cleanEmail)}`;
+}
+
+function buildSurveyEmailCtaBlock(surveyPageUrl: string | null | undefined): string {
+  if (!surveyPageUrl) return '';
+  const href = remEscHtmlReminder(surveyPageUrl);
+  return `<p class="dm-text" style="margin:0 0 18px;font-size:14px;color:#4a5568;line-height:1.55;">Ještě jsme od vás neobdrželi krátký dotazník před webinářem — pomůže nám připravit obsah. <a href="${href}" style="color:#001161;font-weight:800;text-decoration:underline;">Vyplnit dotazník</a></p>`;
+}
+
+async function resolveSurveyInviteUrlForRegistrant(
+  w: any,
+  cleanEmail: string,
+  baseUrl: string,
+): Promise<string | null> {
+  const invite = buildWebinarSurveyInviteUrl(baseUrl, w, cleanEmail);
+  if (!invite) return null;
+  const answered = await kv.get(webinarSurveyAnswerKey(String(w.id), cleanEmail));
+  return answered ? null : invite;
+}
+
+function buildWebinarReminderT30Email(
+  w: any,
+  firstName: string,
+  liveUrl: string,
+  surveyPageUrl?: string | null,
+) {
+  const titleEsc = remEscHtmlReminder(String(w.title || ''));
+  const firstNameEsc = remEscHtmlReminder(firstName);
+  const timeEsc = remEscHtmlReminder(String(w.time || '18:00'));
+  const surveyCta = buildSurveyEmailCtaBlock(surveyPageUrl ?? null);
+  const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
+<body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
+<table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
+<tr><td class="dm-header" style="background:#001161;padding:24px;border-radius:12px 12px 0 0;">
+<p style="margin:0;color:#fff;font-size:20px;font-weight:800;">Vividbooks</p>
+<p style="margin:8px 0 0;color:rgba(255,255,255,0.6);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Za chvíli začínáme</p>
+</td></tr>
+<tr><td class="dm-rem-content" style="padding:28px 28px 24px;">
+<p class="dm-h1" style="margin:0 0 12px;font-size:18px;font-weight:800;color:#001161;">Za půl hodiny začíná webinář</p>
+<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
+<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;"><strong class="dm-strong" style="color:#001161;">${titleEsc}</strong> začíná v <strong class="dm-strong">${timeEsc}</strong> — máte ještě chvíli na přípravu.</p>
+${surveyCta}
+<a class="dm-rem-btn" href="${liveUrl.replace(/"/g, '&quot;')}" style="display:inline-block;background:#dc2626;color:#fff;font-weight:800;font-size:15px;padding:12px 24px;border-radius:100px;text-decoration:none;">Otevřít stream</a>
+<p class="dm-rem-link" style="margin:16px 0 0;font-size:11px;color:#a0aec0;word-break:break-all;">${remEscHtmlReminder(liveUrl)}</p>
+</td></tr></table></td></tr></table></body></html>`;
+  return { html, subject: `Za chvíli: ${w.title || 'webinář'}` };
+}
+
+function buildWebinarReminderMorningEmail(
+  w: any,
+  firstName: string,
+  liveUrl: string,
+  surveyPageUrl?: string | null,
+) {
+  const d = w.day || 1;
+  const y = w.year;
+  const humanWhen = `${d}. ${w.monthName || ''} ${y} v ${w.time || '18:00'}`;
+  const titleEsc = remEscHtmlReminder(String(w.title || ''));
+  const firstNameEsc = remEscHtmlReminder(firstName);
+  const whenEsc = remEscHtmlReminder(humanWhen);
+  const surveyCta = buildSurveyEmailCtaBlock(surveyPageUrl ?? null);
+  const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
+<body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
+<table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
+<tr><td class="dm-header" style="background:#001161;padding:24px;border-radius:12px 12px 0 0;">
+<p style="margin:0;color:#fff;font-size:20px;font-weight:800;">Vividbooks</p>
+<p style="margin:8px 0 0;color:rgba(255,255,255,0.6);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Připomínka webináře</p>
+</td></tr>
+<tr><td class="dm-rem-content" style="padding:28px 28px 24px;">
+<p class="dm-h1" style="margin:0 0 12px;font-size:18px;font-weight:800;color:#001161;">Dnes vás čeká webinář</p>
+<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
+<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">připomínáme, že <strong class="dm-strong" style="color:#001161;">${titleEsc}</strong> proběhne <strong class="dm-strong dm-accent" style="color:#FF8C00;">dnes (${whenEsc})</strong>.</p>
+${surveyCta}
+<p class="dm-text" style="margin:0 0 20px;font-size:14px;color:#4a5568;">Odkaz na živé vysílání najdete v původním registračním e-mailu, nebo se přihlaste na stránce streamu registračním e-mailem.</p>
+<a class="dm-rem-btn" href="${liveUrl.replace(/"/g, '&quot;')}" style="display:inline-block;background:#dc2626;color:#fff;font-weight:800;font-size:15px;padding:12px 24px;border-radius:100px;text-decoration:none;">Vstoupit na stránku streamu</a>
+<p class="dm-rem-link" style="margin:16px 0 0;font-size:11px;color:#a0aec0;word-break:break-all;">${remEscHtmlReminder(liveUrl)}</p>
+</td></tr></table></td></tr></table></body></html>`;
+  return { html, subject: `Dnes: ${w.title || 'webinář Vividbooks'}` };
+}
+
+async function sendMandrillHtmlResult(opts: {
+  toEmail: string;
+  toName: string;
+  subject: string;
+  html: string;
+}): Promise<{ ok: boolean; detail?: string }> {
+  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  if (!mandrillKey) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
+  try {
+    const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: mandrillKey,
+        message: {
+          html: opts.html,
+          subject: opts.subject,
+          from_email: 'webinare@vividbooks.com',
+          from_name: 'Vividbooks webináře',
+          to: [{ email: opts.toEmail, name: opts.toName, type: 'to' }],
+          headers: { 'Reply-To': 'webinare@vividbooks.com' },
+          track_opens: true,
+          track_clicks: false,
+        },
+      }),
+    });
+    const mailData = await mailRes.json();
+    if (!mailRes.ok) {
+      return { ok: false, detail: `HTTP ${mailRes.status}: ${JSON.stringify(mailData).slice(0, 400)}` };
+    }
+    const ok = Array.isArray(mailData) && mailData[0]?.status === 'sent';
+    if (!ok) return { ok: false, detail: JSON.stringify(mailData).slice(0, 500) };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, detail: e?.message || String(e) };
+  }
+}
+
+async function sendMandrillHtml(opts: {
+  toEmail: string;
+  toName: string;
+  subject: string;
+  html: string;
+}): Promise<boolean> {
+  const r = await sendMandrillHtmlResult(opts);
+  return r.ok;
+}
+
+const webinarSurveySubmitHandler = async (c: Context) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = normalizeWebinarIdFromBody(body?.webinarId);
+    const email =
+      typeof body?.email === 'string' ? body.email.toLowerCase().trim() : '';
+    const answers = body?.answers;
+    if (!webinarId || !email || answers == null || typeof answers !== 'object') {
+      return c.json({ error: 'Chybí webinarId, email nebo odpovědi.' }, 400);
+    }
+    const regKey = `webinar_reg_${webinarId}_${email}`;
+    const reg = await kv.get(regKey);
+    /** 403 + JSON — neplést s textovým „404 Not Found“ z Hona při chybějící route. */
+    if (!reg) {
+      return c.json(
+        {
+          error:
+            'Nejprve se registrujte na tento webinář se stejným e-mailem. Pokud jste už registrovaní, zkuste obnovit stránku a odeslat znovu.',
+        },
+        403,
+      );
+    }
+
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
+    const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
+    if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
+
+    const out: Record<string, string> = {};
+    for (const q of questions) {
+      const v = (answers as Record<string, unknown>)[q.id];
+      const s = v === undefined || v === null ? '' : String(v).trim();
+      if (!s) continue;
+      if (q.type === 'yes_no' && s !== 'yes' && s !== 'no') {
+        return c.json({ error: `Neplatná odpověď u: ${q.label}` }, 400);
+      }
+      if (q.type === 'abc' && q.options && q.options.length > 0) {
+        const ok = q.options.some((o) => o === s);
+        if (!ok) return c.json({ error: `Neplatná volba u: ${q.label}` }, 400);
+      }
+      out[q.id] = s;
+    }
+
+    const existing = await kv.get(webinarSurveyAnswerKey(webinarId, email));
+    if (existing) return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
+
+    await kv.set(webinarSurveyAnswerKey(webinarId, email), {
+      webinarId,
+      email,
+      name: (reg as any).name || '',
+      answers: out,
+      submittedAt: new Date().toISOString(),
+    });
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.log(`[Survey] Chyba: ${err.message}`);
+    return c.json({ error: err.message || String(err) }, 500);
+  }
+};
+
+app.post('/make-server-93a20b6f/webinar-survey-submit', webinarSurveySubmitHandler);
+/** Záloha: některé proxy posílají jen suffix cesty bez prefixu funkce. */
+app.post('/webinar-survey-submit', webinarSurveySubmitHandler);
+
+app.get('/make-server-93a20b6f/admin/webinar-survey/:webinarId', async (c) => {
+  try {
+    const webinarId = c.req.param('webinarId');
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => x.id === webinarId) as Record<string, unknown> | undefined;
+    const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
+    const prefix = `webinar_survey_${webinarId}_`;
+    const rows = await kv.getByPrefix(prefix);
+    /** Zaručí čistě serializovatelný JSON (BigInt / cizí typy z JSONB). */
+    let responses: unknown[] = [];
+    try {
+      responses = JSON.parse(JSON.stringify(rows ?? [])) as unknown[];
+    } catch {
+      responses = [];
+    }
+    return c.json({ webinarId, questions, responses });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+app.post('/make-server-93a20b6f/cron/webinar-reminders', async (c) => {
+  try {
+    const secret = Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim();
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || '';
+    const hdr = c.req.header('X-Cron-Secret') || '';
+    if (!secret || (auth !== secret && hdr !== secret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+    if (!mandrillKey) return c.json({ ok: true, skipped: 'MANDRILL_API_KEY missing', sent: 0 });
+
+    const items = (await getCollection(WEBINARS_KEY)) as any[];
+    const nowMs = Date.now();
+    const baseUrl = getPublicSiteOrigin();
+    let sent = 0;
+
+    for (const w of items) {
+      if (!w?.id || w.isPast) continue;
+      const startMs = webinarStartEpochMsPrague(w);
+      if (startMs <= nowMs) continue;
+
+      const y = w.year;
+      const m = w.monthNum || 1;
+      const d = w.day || 1;
+      const p = pragueWallClockFromMs(nowMs);
+      const isEventDay = p.y === y && p.m === m && p.d === d;
+      const liveUrl = `${baseUrl}/webinar/${w.slug || w.id}/live`;
+
+      const regs = await kv.getByPrefix(`webinar_reg_${w.id}_`) as any[];
+      if (!regs?.length) continue;
+
+      for (const reg of regs) {
+        const cleanEmail = String(reg.email || '').toLowerCase().trim();
+        if (!cleanEmail) continue;
+        const name = String(reg.name || '').trim();
+        const firstName = name.split(/\s+/)[0] || name || 'dobrý den';
+        const eh = md5(cleanEmail);
+        const delta = startMs - nowMs;
+        /** ~30 min před začátkem (cron každých 10–15 min — širší okno) */
+        let inT30 = delta >= 15 * 60 * 1000 && delta <= 50 * 60 * 1000;
+        let inMorning = isEventDay && p.H >= 7 && p.H <= 10;
+        if (w.devSimulateReminderT30 === true) inT30 = true;
+        if (w.devSimulateReminderMorning === true) inMorning = true;
+        /** Jinak by „za chvíli“ (15–50 min před startem) přebilo vývoj „dnes“. */
+        if (w.devSimulateReminderMorning === true) inT30 = false;
+        if (w.devSimulateReminderT30 === true) inMorning = false;
+
+        if (inT30) {
+          const k2 = webinarReminderT30Key(w.id, eh);
+          if (w.devSimulateReminderT30 !== true && (await kv.get(k2))) continue;
+          const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, cleanEmail, baseUrl);
+          const { html, subject } = buildWebinarReminderT30Email(w, firstName, liveUrl, surveyPageUrl);
+          const ok2 = await sendMandrillHtml({
+            toEmail: cleanEmail,
+            toName: name || cleanEmail,
+            subject,
+            html,
+          });
+          if (ok2) {
+            await kv.set(k2, { sentAt: new Date().toISOString() });
+            sent++;
+          }
+        } else if (inMorning) {
+          const k = webinarReminderMorningKey(w.id, eh);
+          if (w.devSimulateReminderMorning !== true && (await kv.get(k))) continue;
+          const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, cleanEmail, baseUrl);
+          const { html, subject } = buildWebinarReminderMorningEmail(w, firstName, liveUrl, surveyPageUrl);
+          const ok = await sendMandrillHtml({
+            toEmail: cleanEmail,
+            toName: name || cleanEmail,
+            subject,
+            html,
+          });
+          if (ok) {
+            await kv.set(k, { sentAt: new Date().toISOString() });
+            sent++;
+          }
+        }
+      }
+    }
+    return c.json({ ok: true, sent });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+/** Okamžitý test připomínky (bez cronu) — první registrace v KV, stejná šablona jako produkce. */
+app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body?.webinarId || '').trim();
+    const kind = body?.kind === 't30' ? 't30' : 'morning';
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+
+    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
+      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    }
+
+    const items = (await getCollection(WEBINARS_KEY)) as any[];
+    const w = items.find((x: any) => x.id === webinarId);
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+
+    const startMs = webinarStartEpochMsPrague(w);
+    if (startMs <= Date.now()) {
+      return c.json({ error: 'Webinář už podle rozvrhu začal nebo skončil — připomínky se neposílají.' }, 400);
+    }
+    if (w.isPast) {
+      return c.json({ error: 'Webinář je označen jako minulý (isPast). Upravte datum v administraci.' }, 400);
+    }
+
+    const regs = await kv.getByPrefix(`webinar_reg_${w.id}_`) as any[];
+    if (!regs?.length) {
+      return c.json({
+        error:
+          'Žádná registrace na tento webinář. Připomínky chodí jen registrovaným — nejdřív se zaregistrujte testovacím e-mailem.',
+      }, 400);
+    }
+
+    const reg = regs[0];
+    const cleanEmail = String(reg.email || '').toLowerCase().trim();
+    if (!cleanEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
+    const name = String(reg.name || '').trim();
+    const firstName = name.split(/\s+/)[0] || name || 'dobrý den';
+    const baseUrl = getPublicSiteOrigin();
+    const liveUrl = `${baseUrl}/webinar/${w.slug || w.id}/live`;
+
+    const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, cleanEmail, baseUrl);
+    const { html, subject } = kind === 't30'
+      ? buildWebinarReminderT30Email(w, firstName, liveUrl, surveyPageUrl)
+      : buildWebinarReminderMorningEmail(w, firstName, liveUrl, surveyPageUrl);
+
+    const result = await sendMandrillHtmlResult({
+      toEmail: cleanEmail,
+      toName: name || cleanEmail,
+      subject,
+      html,
+    });
+
+    if (!result.ok) {
+      await upsertSiteIncident({
+        source: 'webinar_reminder_test',
+        incidentType: 'mandrill_webinar_reminder_test_failed',
+        severity: 'warning',
+        dedupeKey: `webinar-reminder-test-${webinarId}-mandrill`,
+        title: 'Test připomínky webináře — Mandrill neodeslal',
+        message: result.detail || 'Neznámá chyba',
+        payload: { webinarId, kind, to: cleanEmail },
+        webinarId,
+        webinarTitle: String(w.title || ''),
+        contactEmail: cleanEmail,
+      });
+      return c.json({ ok: false, detail: result.detail, to: cleanEmail, kind });
+    }
+    return c.json({ ok: true, to: cleanEmail, kind });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
   }
 });
 
@@ -3175,6 +4135,26 @@ app.get('/make-server-93a20b6f/admin/marketing/contacts', async (c) => {
     const { data, error, count } = await query;
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ rows: data || [], total: count ?? 0, limit, offset });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+/** Účast na webinářích z KV (po řádcích e-mail — více webinářů najednou). */
+app.post('/make-server-93a20b6f/admin/marketing/contacts/webinar-attendance', async (c) => {
+  try {
+    const body = await c.req.json();
+    const raw = body?.emails;
+    if (!Array.isArray(raw)) return c.json({ error: 'Očekáváme pole emails.' }, 400);
+    const emails = raw
+      .map((e: unknown) => String(e).toLowerCase().trim())
+      .filter(Boolean)
+      .slice(0, 80);
+    const byEmail: Record<string, WebinarEmailIdxEntry[]> = {};
+    for (const email of emails) {
+      byEmail[email] = await getWebinarEmailIndexRows(email);
+    }
+    return c.json({ byEmail });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }
@@ -14549,6 +15529,10 @@ Deno.serve((incoming) => {
     (p.startsWith('/admin/') || p.startsWith('/public/'))
   ) {
     p = `${fnRoot}${p}`;
+  }
+  /** Edge někdy doručí jen `/webinar-survey-submit` bez `/make-server-93a20b6f`. */
+  if (p === '/webinar-survey-submit' || p.startsWith('/webinar-survey-submit?')) {
+    p = `${fnRoot}/webinar-survey-submit${p.slice('/webinar-survey-submit'.length)}`;
   }
   url.pathname = p;
   return app.fetch(new Request(url.toString(), incoming));

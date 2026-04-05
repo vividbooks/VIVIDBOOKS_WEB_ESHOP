@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, CheckCircle, AlertCircle, Radio, Download, Search, Building2, Loader2 } from 'lucide-react';
+import { ChevronLeft, CheckCircle, AlertCircle, Radio, Calendar, Search, Building2, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { Webinar } from '../data/webinars';
 import { useWebinars } from '../contexts/WebinarsContext';
@@ -7,7 +7,10 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { SEOHead, webinarJsonLd } from './SEOHead';
-import React, { useState, useEffect, useRef } from 'react';
+import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
+import { WebinarPostSurvey } from './WebinarPostSurvey';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { getResolvedWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
 
 const POSITIONS = [
   'U\u010ditel/ka na Z\u0160',
@@ -35,9 +38,27 @@ interface WebinarDetailPageProps {
   webinar: Webinar;
 }
 
+const USE_VIVIDBOOKS_QID = 'uses_vividbooks';
+
 export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const navigate = useNavigate();
   const { webinars } = useWebinars();
+
+  const postRegSurveyQuestions = useMemo(() => getResolvedWebinarSurveyQuestions(webinar), [webinar]);
+  const postRegSurveyHasUsesQuestion = useMemo(
+    () => postRegSurveyQuestions.some((q) => q.id === USE_VIVIDBOOKS_QID),
+    [postRegSurveyQuestions],
+  );
+  const [postSurveyAnswers, setPostSurveyAnswers] = useState<Record<string, string>>({});
+  const onPostSurveyAnswersChange = useCallback((a: Record<string, string>) => {
+    setPostSurveyAnswers(a);
+  }, []);
+
+  const showPostRegistrationTrial = useMemo(() => {
+    if (postRegSurveyQuestions.length === 0) return true;
+    if (!postRegSurveyHasUsesQuestion) return true;
+    return postSurveyAnswers[USE_VIVIDBOOKS_QID] === 'no';
+  }, [postRegSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers]);
 
   const [form, setForm] = useState<FormState>({
     name: '',
@@ -52,9 +73,15 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
+  const [surveyDeepLink, setSurveyDeepLink] = useState(false);
   const [error, setError] = useState('');
-  const [trialToken, setTrialToken] = useState<string | null>(null);
   const [notTeacher, setNotTeacher] = useState(false);
+  /** Z API po registraci — stejné odkazy jako v e-mailu (vividbooks.com, kalendář Praha). */
+  const [postReg, setPostReg] = useState<{
+    streamUrl: string;
+    calendar: { googleUrl: string; outlookUrl: string; icsBase64: string | null } | null;
+  } | null>(null);
 
   const [schoolResults, setSchoolResults] = useState<{ ico: string; name: string; address?: string }[]>([]);
   const [schoolOpen, setSchoolOpen] = useState(false);
@@ -69,6 +96,23 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get('dotaznik') !== '1') return;
+    const raw = sp.get('email');
+    const em = raw ? decodeURIComponent(raw.trim()) : '';
+    if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
+    if (postRegSurveyQuestions.length === 0) return;
+    setForm(prev => ({ ...prev, email: em }));
+    setSubmitted(true);
+    setSurveyDeepLink(true);
+    window.history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => {
+      document.getElementById('webinar-dotaznik')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 450);
+  }, [webinar.id, postRegSurveyQuestions.length]);
 
   const fetchSchools = async (q: string) => {
     if (q.trim().length < 2) { setSchoolResults([]); setSchoolOpen(false); return; }
@@ -113,17 +157,39 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const webinarEnd = new Date(webinarStart.getTime() + 90 * 60000);
   const nowMs = Date.now();
   const diffMin = (nowMs - webinarStart.getTime()) / 60000;
-  const showLiveButton = !webinar.isPast && diffMin > -60 && diffMin < 150;
+  const showLiveButton = !webinar.isPast && diffMin > -30 && diffMin < 150;
 
   const devImminentId = typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null;
   const isDevPreview = devImminentId === webinar.id;
   const showDirectEntry = isDevPreview && !webinar.isPast;
 
-  const liveUrl = `${typeof window !== 'undefined' ? window.location.origin : 'https://vividbooks.cz'}/webinar/${webinar.id}/live`;
-  const calDetails = encodeURIComponent(`Webin\u00e1\u0159: ${webinar.title}\n\nP\u0159ipojte se zde: ${liveUrl}`);
-  const formatGCal = (d: Date) => d.toISOString().replace(/[-:]|\\.\\d{3}/g, '').slice(0, 15) + 'Z';
-  const googleCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(webinar.title)}&dates=${formatGCal(webinarStart)}/${formatGCal(webinarEnd)}&details=${calDetails}&location=${encodeURIComponent(liveUrl)}`;
-  const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(webinar.title)}&startdt=${webinarStart.toISOString()}&enddt=${webinarEnd.toISOString()}&body=${calDetails}&location=${encodeURIComponent(liveUrl)}`;
+  const siteOrigin =
+    typeof window !== 'undefined'
+      ? window.location.origin
+      : (import.meta.env.VITE_PUBLIC_SITE_URL || 'http://localhost:5173').replace(/\/$/, '');
+  const liveUrl = `${siteOrigin}/webinar/${webinar.id}/live`;
+
+  const downloadIcsFromApi = () => {
+    const b64 = postReg?.calendar?.icsBase64;
+    if (!b64) {
+      downloadIcs();
+      return;
+    }
+    try {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const blob = new Blob([bytes], { type: 'text/calendar;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `webinar-${webinar.slug || webinar.id}.ics`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      downloadIcs();
+    }
+  };
 
   const downloadIcs = () => {
     const fmt = (d: Date) => d.toISOString().replace(/[-:]|\\.\\d{3}/g, '').slice(0, 15) + 'Z';
@@ -182,6 +248,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             webinarId: webinar.id,
             webinarTitle: webinar.title,
             webinarSlug: webinar.slug || webinar.id,
+            /** Termín + tag pro Mailchimp / Mandrill (Edge nemusí mít v KV čerstvá data) */
+            webinarDay: webinar.day,
+            webinarMonthNum: webinar.monthNum,
+            webinarYear: webinar.year,
+            webinarTime: webinar.time,
+            webinarMonthName: webinar.monthName,
+            mailchimpTagName: webinar.mailchimpTagName,
             notTeacher,
             ...form,
           }),
@@ -192,7 +265,26 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         throw new Error(data.error || 'Registrace se nepoda\u0159ila.');
       }
       const data = await res.json().catch(() => ({}));
-      if (data.token) setTrialToken(data.token);
+      if (typeof data.streamUrl === 'string' && data.streamUrl) {
+        setPostReg({
+          streamUrl: data.streamUrl,
+          calendar:
+            data.calendar &&
+            typeof data.calendar.googleUrl === 'string' &&
+            typeof data.calendar.outlookUrl === 'string'
+              ? {
+                  googleUrl: data.calendar.googleUrl,
+                  outlookUrl: data.calendar.outlookUrl,
+                  icsBase64:
+                    typeof data.calendar.icsBase64 === 'string' && data.calendar.icsBase64
+                      ? data.calendar.icsBase64
+                      : null,
+                }
+              : null,
+        });
+      } else {
+        setPostReg(null);
+      }
       setSubmitted(true);
     } catch (err: any) {
       console.error('Webinar registration error:', err);
@@ -363,72 +455,80 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 >
                   <CheckCircle className="w-14 h-14 text-[#27ae60]" />
                   <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[18px] font-bold">
-                    {'Registrace prob\u011bhla \u00fasp\u011b\u0161n\u011b!'}
+                    {'D\u011bkujeme za va\u0161i registraci'}
                   </p>
                   <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/60 text-[14px] max-w-[360px]">
                     {webinar.day}{`.\u00a0`}{webinar.monthName}{`.\u00a0`}{webinar.year}{` v\u00a0`}{webinar.time}
                     {` \u2014 t\u011b\u0161\u00edme se na va\u0161i \u00fa\u010dast!`}
                   </p>
-
                   <a
-                    href={liveUrl}
-                    className="w-full flex items-center justify-between gap-3 bg-red-600 hover:bg-red-700 text-white font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-5 py-3.5 rounded-2xl transition-all hover:scale-[1.02] no-underline shadow-lg shadow-red-600/20"
+                    href={postReg?.streamUrl || liveUrl}
+                    className={
+                      showLiveButton
+                        ? 'w-full flex items-center justify-between gap-3 bg-red-600 hover:bg-red-700 text-white font-[\'Fenomen_Sans\',sans-serif] font-bold text-[14px] px-5 py-3.5 rounded-2xl transition-all hover:scale-[1.02] no-underline shadow-lg shadow-red-600/20'
+                        : 'w-full flex items-center justify-between gap-3 bg-[#001161] hover:bg-[#001161]/90 text-white font-[\'Fenomen_Sans\',sans-serif] font-bold text-[14px] px-5 py-3.5 rounded-2xl transition-all hover:scale-[1.02] no-underline shadow-lg shadow-[#001161]/25'
+                    }
                   >
-                    <span className="flex items-center gap-2">
-                      <Radio className="w-4 h-4 animate-pulse" />
-                      {'Sledovat webin\u00e1\u0159 live'}
+                    <span className="flex items-center gap-2 text-left">
+                      <Radio className={`w-4 h-4 shrink-0 ${showLiveButton ? 'animate-pulse' : ''}`} />
+                      {showLiveButton
+                        ? 'Sledovat webin\u00e1\u0159 live'
+                        : 'Odkaz na \u017eiv\u00fd p\u0159enos (v den akce)'}
                     </span>
-                    <span className="text-white/70 text-[12px] font-normal truncate max-w-[160px]">{liveUrl.replace('https://', '')}</span>
+                    <span className="text-white/70 text-[12px] font-normal truncate max-w-[160px]">
+                      {(postReg?.streamUrl || liveUrl).replace(/^https?:\/\//, '')}
+                    </span>
                   </a>
-
-                  <div className="w-full">
-                    <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/50 text-[11px] font-bold uppercase tracking-wide mb-2 text-left">
-                      {'P\u0159idat do kalend\u00e1\u0159e'}
+                  {!showLiveButton ? (
+                    <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/50 max-w-[360px] -mt-2">
+                      {'\u017eiv\u00fd p\u0159enos b\u011b\u017e\u00ed a\u017e v napl\u00e1novan\u00fd \u010das \u2014 odkaz si ulo\u017ete nebo p\u0159idejte ud\u00e1lost do kalend\u00e1\u0159e n\u00ed\u017ee.'}
                     </p>
-                    <div className="flex flex-col gap-2">
-                      <a href={googleCalUrl} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-3 bg-white border border-gray-200 hover:border-[#001161]/30 hover:bg-[#f0f2f8] text-[#001161] font-['Fenomen_Sans',sans-serif] font-bold text-[13px] px-4 py-2.5 rounded-xl transition-all no-underline">
-                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                          <path d="M19.5 3h-3V1.5h-1.5V3h-6V1.5H7.5V3h-3A1.5 1.5 0 0 0 3 4.5v15A1.5 1.5 0 0 0 4.5 21h15a1.5 1.5 0 0 0 1.5-1.5v-15A1.5 1.5 0 0 0 19.5 3ZM18 19.5H6A1.5 1.5 0 0 1 4.5 18V9h15v9A1.5 1.5 0 0 1 18 19.5Z" fill="#4285F4"/>
-                        </svg>
-                        {'Google Kalend\u00e1\u0159'}
-                      </a>
-                      <a href={outlookUrl} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-3 bg-white border border-gray-200 hover:border-[#001161]/30 hover:bg-[#f0f2f8] text-[#001161] font-['Fenomen_Sans',sans-serif] font-bold text-[13px] px-4 py-2.5 rounded-xl transition-all no-underline">
-                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none">
-                          <rect x="3" y="3" width="18" height="18" rx="2" fill="#0078D4"/>
-                          <text x="12" y="15" textAnchor="middle" fill="white" fontSize="9" fontFamily="sans-serif" fontWeight="bold">OL</text>
-                        </svg>
-                        {'Outlook / Office 365'}
-                      </a>
-                      <button onClick={downloadIcs}
-                        className="flex items-center gap-3 bg-white border border-gray-200 hover:border-[#001161]/30 hover:bg-[#f0f2f8] text-[#001161] font-['Fenomen_Sans',sans-serif] font-bold text-[13px] px-4 py-2.5 rounded-xl transition-all text-left">
-                        <Download className="w-4 h-4 shrink-0 text-gray-500" />
-                        {'St\u00e1hnout .ics soubor (Apple / jin\u00fd kalend\u00e1\u0159)'}
-                      </button>
-                    </div>
-                  </div>
+                  ) : null}
 
-                  {trialToken && (
-                    <a
-                      href={`/vyzkousejte?token=${trialToken}`}
-                      className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-6 py-3 rounded-full transition-all hover:scale-105 no-underline shadow-lg shadow-[#7C3AED]/25"
-                    >
-                      {'\uD83D\uDE80 Aktivovat zku\u0161ebn\u00ed p\u0159\u00edstup zdarma'}
-                    </a>
-                  )}
+                  <button
+                    type="button"
+                    onClick={downloadIcsFromApi}
+                    className="w-full flex items-center justify-center gap-2.5 bg-white border border-[#001161]/12 hover:border-[#001161]/25 hover:bg-[#f0f2f8] text-[#001161] font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-5 py-3.5 rounded-2xl transition-all"
+                  >
+                    <Calendar className="w-5 h-5 shrink-0 text-[#001161]/80" />
+                    {'P\u0159idat do kalend\u00e1\u0159e'}
+                  </button>
+
+                  <WebinarPostSurvey
+                    webinar={webinar}
+                    email={form.email}
+                    onAnswersChange={onPostSurveyAnswersChange}
+                  />
+
+                  {showPostRegistrationTrial && !surveyDeepLink ? (
+                    <WebinarPostRegistrationTrial
+                      form={{
+                        name: form.name,
+                        email: form.email,
+                        phone: form.phone,
+                        position: form.position,
+                        gdpr: form.gdpr,
+                        newsletter: form.newsletter,
+                        schoolName: form.schoolName,
+                        ico: form.ico,
+                      }}
+                      notTeacher={notTeacher}
+                    />
+                  ) : null}
                 </motion.div>
               ) : (
                 <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
 
-                  {/* ── Switch: Nejsem učitel ── */}
+                  {/* ── Switch: pedagog / certifikát DVPP (ON=zelená, OFF=červená) ── */}
                   <div className="flex items-center justify-between bg-white rounded-[12px] px-4 py-3 border border-[#001161]/10">
                     <div>
                       <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161] leading-tight">
-                        {'Nejsem u\u010ditel/ka'}
+                        {notTeacher ? 'Nejsem pedagog' : 'Jsem pedagog'}
                       </p>
                       <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45 leading-tight mt-0.5">
-                        {notTeacher ? 'Bez certifik\u00e1tu DVPP' : 'S certifik\u00e1tem DVPP'}
+                        {notTeacher
+                          ? 'Nepot\u0159ebuji certifik\u00e1t DVPP'
+                          : 'Po webin\u00e1\u0159i obdr\u017e\u00edm certifik\u00e1t DVPP'}
                       </p>
                     </div>
                     <button
@@ -441,12 +541,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                           setSchoolOpen(false);
                         }
                       }}
-                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 shrink-0 cursor-pointer focus:outline-none ${notTeacher ? 'bg-[#5B4FD8]' : 'bg-[#001161]/15'}`}
-                      aria-checked={notTeacher}
+                      className={`relative w-11 h-6 rounded-full transition-colors duration-200 shrink-0 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#001161]/30 ${notTeacher ? 'bg-red-500' : 'bg-emerald-600'}`}
+                      aria-checked={!notTeacher}
                       role="switch"
+                      aria-label={notTeacher ? 'Zapnout režim pedagog s certifikátem DVPP' : 'Vypnout — nejsem pedagog'}
                     >
                       <span
-                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${notTeacher ? 'translate-x-5' : 'translate-x-0'}`}
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${notTeacher ? 'translate-x-0' : 'translate-x-5'}`}
                       />
                     </button>
                   </div>
@@ -460,7 +561,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                         animate={{ opacity: 1, height: 'auto' }}
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.22 }}
-                        className="overflow-hidden flex flex-col gap-3"
+                        className="flex flex-col gap-3 overflow-visible"
                       >
                         <p className="font-['Fenomen_Sans',sans-serif] text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mt-1 pl-1">
                           {'Informace o \u0161kole'}
@@ -484,7 +585,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                               <motion.div
                                 initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
                                 transition={{ duration: 0.15 }}
-                                className="absolute z-50 mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden"
+                                className="absolute z-[100] mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden"
                               >
                                 <div className="max-h-[220px] overflow-y-auto py-1">
                                   {schoolResults.map((s, i) => (
@@ -579,15 +680,22 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                     </span>
                   </label>
 
-                  <label className="flex items-start gap-3 cursor-pointer">
-                    <div
-                      className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-all ${form.newsletter ? 'bg-[#5B4FD8] border-[#5B4FD8]' : 'bg-white border-[#001161]/20'}`}
-                      onClick={() => handleChange('newsletter', !form.newsletter)}
-                    >
-                      {form.newsletter && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                    </div>
-                    <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/70 leading-snug" onClick={() => handleChange('newsletter', !form.newsletter)}>
-                      {'Souhlas\u00edm se zas\u00edl\u00e1n\u00edm novinek ze sv\u011bta Vividbooks.'}
+                  {/* Stejné jako trial formulář — přepínač + krémový box + copy */}
+                  <label className="flex items-start gap-3 cursor-pointer bg-[#FFF7ED] rounded-xl px-4 py-3 border border-[#E8942A]/20">
+                    <span className="relative flex-shrink-0 mt-0.5">
+                      <input
+                        type="checkbox"
+                        checked={form.newsletter}
+                        onChange={() => handleChange('newsletter', !form.newsletter)}
+                        className="sr-only peer"
+                      />
+                      <span className="block w-[42px] h-[24px] bg-[#001161]/15 rounded-full peer-checked:bg-[#E8942A] transition-colors" />
+                      <span className="absolute left-[3px] top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[18px]" />
+                    </span>
+                    <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/80 leading-[1.5]">
+                      <span className="font-bold text-[#001161]">{'📚 Chci dostávat novinky a tipy do výuky'}</span>
+                      <br />
+                      {'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'}
                     </span>
                   </label>
 

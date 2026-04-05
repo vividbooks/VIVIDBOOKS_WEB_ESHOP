@@ -17,6 +17,10 @@ export function orderAlertTypeLabelCs(alertType: string): string {
       return 'iDoklad — export selhal';
     case 'export_queue_processing_too_long':
       return 'Fronta exportu visí v processing';
+    case 'mandrill_email_failed':
+      return 'Webinář — e-mail se neodeslal (Mandrill)';
+    case 'mailchimp_sync_failed':
+      return 'Webinář — Mailchimp selhal';
     default:
       return alertType;
   }

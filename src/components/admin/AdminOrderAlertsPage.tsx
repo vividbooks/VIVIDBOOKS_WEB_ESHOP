@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ExternalLink, ShieldAlert } from 'lucide-react';
-import { useNavigate } from 'react-router';
+import { AlertTriangle, ExternalLink, Filter, ShieldAlert } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   fetchAdminOrderAlerts,
@@ -8,20 +8,28 @@ import {
   type AdminOrderAlert,
 } from '../../utils/adminApi';
 import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
+import { incidentResolutionStateLabelCs, incidentSeverityLabelCs } from '../../utils/incidentLabels';
 
-const STATE_FILTERS = [
-  { id: 'open', label: 'Otevřené' },
-  { id: 'acknowledged', label: 'Potvrzené' },
-  { id: 'resolved', label: 'Vyřešené' },
-  { id: 'all', label: 'Vše' },
+/** Workflow řešení incidentu (DB: open / acknowledged / resolved) — nezaměňovat se stavem objednávky. */
+const RESOLUTION_STATE_FILTERS = [
+  { id: 'open', label: 'Čeká na vyřízení', hint: 'Nikdo z týmu ještě nepotvrdil převzetí.' },
+  { id: 'acknowledged', label: 'V řešení', hint: 'Někdo incident převzal a řeší ho.' },
+  { id: 'resolved', label: 'Uzavřené', hint: 'Incident vyřešen nebo neaktuální.' },
+  { id: 'all', label: 'Všechny stavy', hint: 'Všechny kroky workflow.' },
 ] as const;
 
 const SEVERITY_FILTERS = [
-  { id: '', label: 'Všechny severity' },
-  { id: 'critical', label: 'Critical' },
-  { id: 'warning', label: 'Warning' },
+  { id: '', label: 'Všechny úrovně' },
+  { id: 'critical', label: 'Kritická' },
+  { id: 'warning', label: 'Varování' },
   { id: 'info', label: 'Info' },
 ] as const;
+
+const SCOPE_FILTERS = [
+  { id: 'all' as const, label: 'Vše (e-shop + web)' },
+  { id: 'orders' as const, label: 'Jen objednávky' },
+  { id: 'site' as const, label: 'Jen web (webináře, …)' },
+];
 
 function formatDate(value?: string | null) {
   if (!value) return '—';
@@ -49,11 +57,20 @@ function stateClass(state: string) {
 
 export function AdminOrderAlertsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [alerts, setAlerts] = useState<AdminOrderAlert[]>([]);
+  const [alertTypes, setAlertTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [state, setState] = useState<'all' | 'open' | 'acknowledged' | 'resolved'>('open');
   const [severity, setSeverity] = useState<'' | 'info' | 'warning' | 'critical'>('');
+  /** Kód typu z `order_alerts.alert_type` — synchronizace s `?typ=` v URL */
+  const [alertType, setAlertType] = useState(() => (searchParams.get('typ') || '').trim());
+  const [scope, setScope] = useState<'all' | 'orders' | 'site'>(() => {
+    const s = (searchParams.get('scope') || 'all').trim();
+    if (s === 'orders' || s === 'site') return s;
+    return 'all';
+  });
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -63,9 +80,10 @@ export function AdminOrderAlertsPage() {
     setLoading(true);
     setError('');
     try {
-      const data = await fetchAdminOrderAlerts({ state, severity, page, pageSize });
+      const data = await fetchAdminOrderAlerts({ state, severity, alertType, scope, page, pageSize });
       setAlerts(data.items || []);
       setTotal(data.total || 0);
+      setAlertTypes(Array.isArray(data.alertTypes) ? data.alertTypes : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nepodařilo se načíst alerty.');
     } finally {
@@ -75,7 +93,18 @@ export function AdminOrderAlertsPage() {
 
   useEffect(() => {
     void loadAlerts();
-  }, [state, severity, page]);
+  }, [state, severity, alertType, scope, page]);
+
+  useEffect(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (alertType) next.set('typ', alertType);
+      else next.delete('typ');
+      if (scope && scope !== 'all') next.set('scope', scope);
+      else next.delete('scope');
+      return next;
+    }, { replace: true });
+  }, [alertType, scope, setSearchParams]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
@@ -86,7 +115,11 @@ export function AdminOrderAlertsPage() {
     try {
       setActionLoading(alertId);
       await runAdminOrderAlertAction({ alertId, action });
-      toast.success(action === 'acknowledge' ? 'Alert potvrzen.' : 'Alert vyřešen.');
+      toast.success(
+        action === 'acknowledge'
+          ? 'Incident převzat do řešení.'
+          : 'Incident uzavřen.',
+      );
       await loadAlerts();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Akci se nepodařilo provést.');
@@ -100,51 +133,123 @@ export function AdminOrderAlertsPage() {
       <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-3xl font-bold text-[#001161] font-['Fenomen_Sans']">
-            {'Alerty objednávek'}
+            {'Centrála alertů'}
           </h1>
-          <p className="text-gray-500 mt-1 text-[14px]">
-            {'Monitoring zaseknutých kroků, failů a self-heal stavu objednávek'}
+          <p className="text-gray-500 mt-1 text-[14px] max-w-[920px] leading-relaxed">
+            {
+              'Jedna fronta pro provozní incidenty: z e-shopu (monitoring objednávek) i z webu (např. neodeslaný e-mail, Mailchimp). Filtr „stav řešení“ popisuje jen to, zda někdo z týmu incident převzal a uzavřel — '
+            }
+            <span className="font-semibold text-[#001161]/80">
+              {'není to stav objednávky ani fáze platby.'}
+            </span>
           </p>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {STATE_FILTERS.map((item) => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setPage(1);
-                setState(item.id);
-              }}
-              className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-colors ${
-                state === item.id
-                  ? 'bg-[#001161] text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+      <div className="bg-white rounded-2xl border border-gray-100 p-4 mb-6 flex flex-col gap-4">
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">{'Zdroj'}</div>
+          <div className="flex flex-wrap gap-2">
+            {SCOPE_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  setScope(item.id);
+                }}
+                className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-colors ${
+                  scope === item.id
+                    ? 'bg-[#001161] text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          {SEVERITY_FILTERS.map((item) => (
-            <button
-              key={item.id || 'all'}
-              onClick={() => {
-                setPage(1);
-                setSeverity(item.id);
-              }}
-              className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-colors ${
-                severity === item.id
-                  ? 'bg-[#001161] text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 text-[12px] font-bold text-gray-500 uppercase tracking-wide shrink-0">
+            <Filter className="w-4 h-4" />
+            {'Typ'}
+          </div>
+          <select
+            value={alertType}
+            onChange={(e) => {
+              setPage(1);
+              setAlertType(e.target.value);
+            }}
+            className="w-full sm:max-w-md px-3 py-2.5 rounded-xl border border-gray-200 bg-white text-[13px] font-semibold text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#001161]/20 focus:border-[#001161]"
+          >
+            <option value="">{'Všechny typy'}</option>
+            {alertType && !alertTypes.includes(alertType) ? (
+              <option value={alertType}>{`${alertType} (${orderAlertTypeLabelCs(alertType)})`}</option>
+            ) : null}
+            {alertTypes.map((t) => (
+              <option key={t} value={t}>
+                {orderAlertTypeLabelCs(t)}
+                {` (${t})`}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+          <div className="space-y-1.5 max-w-xl">
+            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">
+              {'Stav řešení incidentu'}
+            </div>
+            <p className="text-[10px] text-gray-500 leading-snug -mt-0.5 mb-1">
+              {
+                'Čeká → někdo převezme („V řešení“) → uzavře. Stejné sloupce v DB jako u objednávkových alertů, ale význam je vždy „kdo to řeší“, ne stav zakázky.'
+              }
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {RESOLUTION_STATE_FILTERS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  title={item.hint}
+                  onClick={() => {
+                    setPage(1);
+                    setState(item.id);
+                  }}
+                  className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-colors ${
+                    state === item.id
+                      ? 'bg-[#001161] text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide">{'Závažnost incidentu'}</div>
+            <div className="flex flex-wrap gap-2">
+              {SEVERITY_FILTERS.map((item) => (
+                <button
+                  key={item.id || 'all'}
+                  type="button"
+                  onClick={() => {
+                    setPage(1);
+                    setSeverity(item.id);
+                  }}
+                  className={`px-4 py-2 rounded-xl text-[13px] font-bold transition-colors ${
+                    severity === item.id
+                      ? 'bg-[#001161] text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {item.id === '' ? item.label : incidentSeverityLabelCs(item.id)}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -160,15 +265,29 @@ export function AdminOrderAlertsPage() {
         ) : alerts.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-100 p-10 text-center">
             <ShieldAlert className="w-10 h-10 text-emerald-500 mx-auto mb-4" />
-            <div className="text-[16px] font-bold text-[#001161]">{'Žádné alerty'}</div>
-            <div className="text-[13px] text-gray-500 mt-1">{'Aktuální filtr nevrátil žádné provozní incidenty.'}</div>
+            <div className="text-[16px] font-bold text-[#001161]">{'Žádné incidenty'}</div>
+            <div className="text-[13px] text-gray-500 mt-1 max-w-md mx-auto">
+              {
+                'Pro zvolené filtry není žádný záznam. Zkuste „Všechny stavy řešení“, jiný zdroj (E-shop / Web) nebo typ.'
+              }
+            </div>
           </div>
         ) : (
-          alerts.map((alert) => (
+          alerts.map((alert) => {
+            const origin = alert.origin ?? 'order';
+            return (
             <div key={alert.id} className="bg-white rounded-2xl border border-gray-100 p-5">
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                        origin === 'site' ? 'bg-violet-100 text-violet-800' : 'bg-slate-200 text-slate-800'
+                      }`}
+                      title={origin === 'site' ? 'Incident z webu (app_incidents)' : 'Alert z objednávek (order_alerts)'}
+                    >
+                      {origin === 'site' ? 'Web' : 'E-shop'}
+                    </span>
                     <span className="inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold bg-slate-100 text-slate-700">
                       {orderAlertTypeLabelCs(alert.alert_type)}
                     </span>
@@ -184,12 +303,27 @@ export function AdminOrderAlertsPage() {
                       </span>
                     )}
                   </div>
+                  {origin === 'site' && (alert.webinar_id || alert.contact_email) ? (
+                    <p className="mt-2 text-[12px] text-gray-500">
+                      {alert.webinar_title ? (
+                        <span className="font-semibold text-[#001161]/80">{alert.webinar_title}</span>
+                      ) : null}
+                      {alert.webinar_id ? (
+                        <span className="font-mono text-[11px] text-gray-400 ml-1">{`id: ${alert.webinar_id}`}</span>
+                      ) : null}
+                      {alert.contact_email ? (
+                        <span className="block sm:inline sm:ml-2">{`E-mail: ${alert.contact_email}`}</span>
+                      ) : null}
+                    </p>
+                  ) : null}
                   <h2 className="mt-3 text-[16px] font-bold text-[#001161]">{alert.title}</h2>
                   <p className="mt-2 text-[14px] text-gray-600 leading-relaxed">{alert.message}</p>
                   <div className="mt-3 flex items-center gap-4 text-[12px] text-gray-400 flex-wrap">
                     <span>{`Poprvé: ${formatDate(alert.first_seen_at)}`}</span>
                     <span>{`Naposledy: ${formatDate(alert.last_seen_at)}`}</span>
-                    {alert.acknowledged_at && <span>{`Potvrzeno: ${formatDate(alert.acknowledged_at)}`}</span>}
+                    {alert.acknowledged_at && (
+                      <span>{`Převzato do řešení: ${formatDate(alert.acknowledged_at)}`}</span>
+                    )}
                   </div>
                 </div>
 
@@ -210,7 +344,7 @@ export function AdminOrderAlertsPage() {
                       className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-100 text-amber-800 text-[13px] font-bold disabled:opacity-40"
                     >
                       <AlertTriangle className="w-4 h-4" />
-                      {'Potvrdit'}
+                      {'Převzít do řešení'}
                     </button>
                   )}
                   {alert.state !== 'resolved' && (
@@ -219,13 +353,14 @@ export function AdminOrderAlertsPage() {
                       disabled={actionLoading === alert.id}
                       className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-100 text-emerald-700 text-[13px] font-bold disabled:opacity-40"
                     >
-                      {'Označit jako vyřešené'}
+                      {'Uzavřít incident'}
                     </button>
                   )}
                 </div>
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </div>
 

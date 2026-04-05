@@ -33,6 +33,33 @@ export interface Webinar {
    * Např. „Jak na zlomky… – 7. 4. 2026 od 18.00“.
    */
   mailchimpTagName?: string;
+  /**
+   * Dotazník po úspěšné registraci (před blokem se zkušebním přístupem).
+   * `surveyEnabled === false` vypne; prázdné `surveyQuestions` = výchozí tři otázky v kódu.
+   */
+  surveyEnabled?: boolean;
+  surveyQuestions?: WebinarSurveyQuestion[];
+  /**
+   * Admin / vývoj: cron připomínek vynutí odeslání „Dnes vás čeká webinář“ (i mimo okno 7–10 h).
+   * Veřejné API tento příznak nevrací.
+   */
+  devSimulateReminderMorning?: boolean;
+  /**
+   * Admin / vývoj: cron vynutí e-mail „Za chvíli začínáme“ (i mimo okno ~30 min před začátkem).
+   * Stejné jako přepínač „Začíná za chvíli“ po uložení — pro test Mandrill šablon.
+   */
+  devSimulateReminderT30?: boolean;
+}
+
+/** Typ otázky: otevřená / výběr z možností / Ano–Ne */
+export type WebinarSurveyQuestionType = 'open' | 'abc' | 'yes_no';
+
+export interface WebinarSurveyQuestion {
+  id: string;
+  type: WebinarSurveyQuestionType;
+  label: string;
+  /** Pro `abc` — alespoň 2 možnosti */
+  options?: string[];
 }
 
 const AVATAR = 'https://images.unsplash.com/photo-1769628027250-d2a7a5a4eb64?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiZWFyZGVkJTIwbWFsZSUyMHRlYWNoZXIlMjBwcm9mZXNzaW9uYWwlMjBwb3J0cmFpdHxlbnwxfHx8fDE3NzIzNTYzMDR8MA&ixlib=rb-4.1.0&q=80&w=200';

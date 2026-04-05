@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useId, useState } from 'react';
 import { Link } from 'react-router';
 import {
   acceptAllCookies,
+  COOKIE_CONSENT_CHANGED,
   hasValidCookieConsent,
   OPEN_COOKIE_SETTINGS,
   readCookieConsent,
@@ -84,6 +85,21 @@ export function CookieConsentBar() {
     };
     window.addEventListener(OPEN_COOKIE_SETTINGS, open);
     return () => window.removeEventListener(OPEN_COOKIE_SETTINGS, open);
+  }, [syncFromStorage]);
+
+  /** Po načtení stránky / jiném tabu znovu načíst z localStorage + cookie — lišta se nesmí zbytečně zobrazit. */
+  useEffect(() => {
+    const syncVisibility = () => {
+      setVisible(!hasValidCookieConsent());
+      syncFromStorage();
+    };
+    syncVisibility();
+    window.addEventListener('storage', syncVisibility);
+    window.addEventListener(COOKIE_CONSENT_CHANGED, syncVisibility);
+    return () => {
+      window.removeEventListener('storage', syncVisibility);
+      window.removeEventListener(COOKIE_CONSENT_CHANGED, syncVisibility);
+    };
   }, [syncFromStorage]);
 
   const close = () => {

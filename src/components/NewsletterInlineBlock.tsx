@@ -61,7 +61,7 @@ export function NewsletterInlineBlock({ source = 'unknown', compact = false }: P
           </p>
         </div>
         <p className="text-[#001161]/65 text-[12px] leading-snug mb-4" style={{ fontFamily: ff }}>
-          {'Jednou m\u011bs\u00ed\u010dn\u011b: nov\u00e9 tituly, tipy do v\u00fduk y a slevy.'}
+          {'Novinky, tipy do v\u00fduky a slevy \u2014 jen kdy\u017e to d\u00e1v\u00e1 smysl.'}
         </p>
 
         <AnimatePresence mode="wait">
@@ -148,7 +148,7 @@ export function NewsletterInlineBlock({ source = 'unknown', compact = false }: P
           {'P\u0159ihlaste se k odb\u011bru novinek'}
         </h3>
         <p className="text-[#001161]/60 text-[14px] md:text-[15px] leading-relaxed" style={{ fontFamily: ff }}>
-          {'Jednou m\u011bs\u00ed\u010dn\u011b p\u00eds\u00e1me u\u010ditel\u016fm o nov\u00fdch titulech, metodick\u00fdch tipech a akcích.'}
+          {'P\u00ed\u0161eme u\u010ditel\u016fm o novink\u00e1ch, metodick\u00fdch tipech a akc\u00edch \u2014 podle toho, co pr\u00e1v\u011b \u0159e\u0161\u00edme.'}
           <br />
           <span className="text-[#001161]/40 text-[13px]">{'Bez spamu. Odhlásit se m\u016f\u017eete kdykoliv.'}</span>
         </p>

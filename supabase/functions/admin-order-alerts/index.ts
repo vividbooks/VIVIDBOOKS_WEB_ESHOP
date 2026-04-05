@@ -7,10 +7,10 @@ type AlertSummaryRow = {
   acknowledged_open: number;
 };
 
-type AlertListRow = {
+/** Sjednocený řádek: objednávkové alerty + app_incidents (webináře, …). */
+type UnifiedAlertRow = {
   id: string;
-  order_id: string | null;
-  order_number: string | null;
+  origin: 'order' | 'site';
   alert_type: string;
   severity: string;
   state: string;
@@ -23,6 +23,11 @@ type AlertListRow = {
   acknowledged_by: string | null;
   resolved_at: string | null;
   payload: unknown;
+  order_id: string | null;
+  order_number: string | null;
+  webinar_id: string | null;
+  webinar_title: string | null;
+  contact_email: string | null;
 };
 
 const corsHeaders = {
@@ -70,12 +75,17 @@ Deno.serve(async (req) => {
 
       if (mode === 'summary') {
         const rows = await sql<AlertSummaryRow[]>`
+          with u as (
+            select state, severity from public.order_alerts
+            union all
+            select state, severity from public.app_incidents
+          )
           select
             count(*) filter (where state = 'open')::int as total_open,
             count(*) filter (where state = 'open' and severity = 'critical')::int as critical_open,
             count(*) filter (where state = 'open' and severity = 'warning')::int as warning_open,
             count(*) filter (where state = 'acknowledged')::int as acknowledged_open
-          from public.order_alerts
+          from u
         `;
 
         return jsonResponse({ summary: rows[0] || {
@@ -88,30 +98,27 @@ Deno.serve(async (req) => {
 
       const state = (url.searchParams.get('state') || 'open').trim();
       const severity = (url.searchParams.get('severity') || '').trim();
+      const alertType = (url.searchParams.get('alertType') || '').trim();
+      const scope = (url.searchParams.get('scope') || 'all').trim() as 'all' | 'orders' | 'site';
       const page = Math.max(Number.parseInt(url.searchParams.get('page') || '1', 10), 1);
       const pageSize = Math.min(Math.max(Number.parseInt(url.searchParams.get('pageSize') || '20', 10), 1), 100);
       const offset = (page - 1) * pageSize;
 
       const stateClause = state === 'all'
         ? sql``
-        : sql`and a.state = ${state}`;
+        : sql`and c.state = ${state}`;
       const severityClause = severity
-        ? sql`and a.severity = ${severity}`
+        ? sql`and c.severity = ${severity}`
+        : sql``;
+      const alertTypeClause = alertType
+        ? sql`and c.alert_type = ${alertType}`
         : sql``;
 
-      const [countRows, alerts] = await Promise.all([
-        sql<{ count: number }[]>`
-          select count(*)::int as count
-          from public.order_alerts a
-          where true
-          ${stateClause}
-          ${severityClause}
-        `,
-        sql<AlertListRow[]>`
+      const combinedFragment = scope === 'orders'
+        ? sql`
           select
             a.id,
-            a.order_id,
-            o.order_number,
+            'order'::text as origin,
             a.alert_type,
             a.severity,
             a.state,
@@ -123,25 +130,150 @@ Deno.serve(async (req) => {
             a.acknowledged_at,
             a.acknowledged_by,
             a.resolved_at,
-            a.payload
+            a.payload,
+            a.order_id,
+            o.order_number,
+            null::text as webinar_id,
+            null::text as webinar_title,
+            null::text as contact_email
           from public.order_alerts a
           left join public.orders o on o.id = a.order_id
+        `
+        : scope === 'site'
+        ? sql`
+          select
+            i.id,
+            'site'::text as origin,
+            i.incident_type as alert_type,
+            i.severity,
+            i.state,
+            i.title,
+            i.message,
+            i.dedupe_key,
+            i.first_seen_at,
+            i.last_seen_at,
+            i.acknowledged_at,
+            i.acknowledged_by,
+            i.resolved_at,
+            i.payload,
+            i.order_id,
+            o2.order_number,
+            i.webinar_id,
+            i.webinar_title,
+            i.contact_email
+          from public.app_incidents i
+          left join public.orders o2 on o2.id = i.order_id
+        `
+        : sql`
+          select
+            a.id,
+            'order'::text as origin,
+            a.alert_type,
+            a.severity,
+            a.state,
+            a.title,
+            a.message,
+            a.dedupe_key,
+            a.first_seen_at,
+            a.last_seen_at,
+            a.acknowledged_at,
+            a.acknowledged_by,
+            a.resolved_at,
+            a.payload,
+            a.order_id,
+            o.order_number,
+            null::text as webinar_id,
+            null::text as webinar_title,
+            null::text as contact_email
+          from public.order_alerts a
+          left join public.orders o on o.id = a.order_id
+          union all
+          select
+            i.id,
+            'site'::text as origin,
+            i.incident_type as alert_type,
+            i.severity,
+            i.state,
+            i.title,
+            i.message,
+            i.dedupe_key,
+            i.first_seen_at,
+            i.last_seen_at,
+            i.acknowledged_at,
+            i.acknowledged_by,
+            i.resolved_at,
+            i.payload,
+            i.order_id,
+            o2.order_number,
+            i.webinar_id,
+            i.webinar_title,
+            i.contact_email
+          from public.app_incidents i
+          left join public.orders o2 on o2.id = i.order_id
+        `;
+
+      const [countRows, alerts, typeRows] = await Promise.all([
+        sql<{ count: number }[]>`
+          with combined as (${combinedFragment})
+          select count(*)::int as count
+          from combined c
           where true
           ${stateClause}
           ${severityClause}
+          ${alertTypeClause}
+        `,
+        sql<UnifiedAlertRow[]>`
+          with combined as (${combinedFragment})
+          select
+            c.id,
+            c.origin::text,
+            c.alert_type,
+            c.severity,
+            c.state,
+            c.title,
+            c.message,
+            c.dedupe_key,
+            c.first_seen_at,
+            c.last_seen_at,
+            c.acknowledged_at,
+            c.acknowledged_by,
+            c.resolved_at,
+            c.payload,
+            c.order_id,
+            c.order_number,
+            c.webinar_id,
+            c.webinar_title,
+            c.contact_email
+          from combined c
+          where true
+          ${stateClause}
+          ${severityClause}
+          ${alertTypeClause}
           order by
-            case a.severity when 'critical' then 0 when 'warning' then 1 else 2 end,
-            a.last_seen_at desc
+            case c.severity when 'critical' then 0 when 'warning' then 1 else 2 end,
+            c.last_seen_at desc
           limit ${pageSize}
           offset ${offset}
         `,
+        sql<{ alert_type: string }[]>`
+          select distinct alert_type from (
+            select alert_type from public.order_alerts
+            union
+            select incident_type as alert_type from public.app_incidents
+          ) t
+          order by alert_type
+        `,
       ]);
+
+      const alertTypes = typeRows.map((r) => r.alert_type).filter(Boolean);
 
       return jsonResponse({
         items: alerts,
         total: countRows[0]?.count ?? 0,
         page,
         pageSize,
+        alertTypes,
+        scope: scope === 'all' ? 'all' : scope,
       });
     }
 
@@ -159,30 +291,67 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Unsupported action.' }, 400);
       }
 
+      const id = payload.alertId;
+
       if (payload.action === 'acknowledge') {
-        await sql`
+        const o = await sql<{ id: string }[]>`
           update public.order_alerts
           set
             state = 'acknowledged',
             acknowledged_at = now(),
             acknowledged_by = 'admin',
             updated_at = now()
-          where id = ${payload.alertId}::uuid
+          where id = ${id}::uuid
+          returning id
         `;
+        if (o.length) {
+          return jsonResponse({ success: true });
+        }
+        const s = await sql<{ id: string }[]>`
+          update public.app_incidents
+          set
+            state = 'acknowledged',
+            acknowledged_at = now(),
+            acknowledged_by = 'admin',
+            updated_at = now()
+          where id = ${id}::uuid
+          returning id
+        `;
+        if (s.length) {
+          return jsonResponse({ success: true });
+        }
+        return jsonResponse({ error: 'Alert nenalezen.' }, 404);
       }
 
       if (payload.action === 'resolve') {
-        await sql`
+        const o = await sql<{ id: string }[]>`
           update public.order_alerts
           set
             state = 'resolved',
             resolved_at = now(),
             updated_at = now()
-          where id = ${payload.alertId}::uuid
+          where id = ${id}::uuid
+          returning id
         `;
+        if (o.length) {
+          return jsonResponse({ success: true });
+        }
+        const s = await sql<{ id: string }[]>`
+          update public.app_incidents
+          set
+            state = 'resolved',
+            resolved_at = now(),
+            updated_at = now()
+          where id = ${id}::uuid
+          returning id
+        `;
+        if (s.length) {
+          return jsonResponse({ success: true });
+        }
+        return jsonResponse({ error: 'Alert nenalezen.' }, 404);
       }
 
-      return jsonResponse({ success: true });
+      return jsonResponse({ error: 'Unsupported action.' }, 400);
     }
 
     return jsonResponse({ error: 'Method not allowed.' }, 405);

@@ -12,7 +12,8 @@ import {
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebinars } from '../../contexts/WebinarsContext';
-import type { Webinar } from '../../data/webinars';
+import type { Webinar, WebinarSurveyQuestion, WebinarSurveyQuestionType } from '../../data/webinars';
+import { DEFAULT_WEBINAR_SURVEY_QUESTIONS } from '../../utils/webinarSurveyDefaults';
 import { ImagePicker } from './ImagePicker';
 import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
 
@@ -35,6 +36,8 @@ function emptyWebinar(): Partial<Webinar> {
     relatedSubjects: [], tags: [], highlightQuote: '',
     mailchimpTagName: '',
     thumbnailVariant: 1, isPast: false,
+    surveyEnabled: true,
+    surveyQuestions: [],
   };
 }
 
@@ -149,11 +152,11 @@ export default function WebinareEditor() {
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [slugManual, setSlugManual] = useState(false);
-  const [activeSection, setActiveSection] = useState<'description' | 'perks'>('description');
   const [copiedLive, setCopiedLive] = useState(false);
   const [devImminent, setDevImminent] = useState<string | null>(() =>
     typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null
   );
+  const [reminderTestBusy, setReminderTestBusy] = useState(false);
 
   function handleCopyLive() {
     const url = `https://www.vividbooks.com/webinar/${selected?.slug || selected?.id}/live`;
@@ -163,19 +166,93 @@ export default function WebinareEditor() {
     });
   }
 
-  function toggleDevImminent() {
+  async function persistDevReminderFlags(body: {
+    devSimulateReminderT30?: boolean;
+    devSimulateReminderMorning?: boolean;
+  }) {
     const id = selected?.id;
-    if (!id) return;
-    if (devImminent === id) {
-      localStorage.removeItem('vvb_dev_imminent');
-      setDevImminent(null);
-    } else {
-      localStorage.setItem('vvb_dev_imminent', id);
-      setDevImminent(id);
+    if (!id || isNew) return;
+    try {
+      const res = await fetch(`${SERVER}/admin/webinare/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || res.statusText);
+      }
+      await loadList();
+      refreshContext();
+    } catch (e: any) {
+      toast.error(e.message || 'Uložení vývojových přepínačů selhalo.');
     }
   }
 
-  // Separate TipTap editors for description and perks
+  async function toggleDevImminent() {
+    const id = selected?.id;
+    if (!id || isNew) return;
+    if (devImminent === id) {
+      localStorage.removeItem('vvb_dev_imminent');
+      setDevImminent(null);
+      await persistDevReminderFlags({ devSimulateReminderT30: false });
+      setSelected(prev => (prev ? { ...prev, devSimulateReminderT30: false } : prev));
+    } else {
+      localStorage.setItem('vvb_dev_imminent', id);
+      setDevImminent(id);
+      await persistDevReminderFlags({ devSimulateReminderT30: true, devSimulateReminderMorning: false });
+      setSelected(prev =>
+        prev ? { ...prev, devSimulateReminderT30: true, devSimulateReminderMorning: false } : prev,
+      );
+    }
+  }
+
+  async function toggleDevToday() {
+    const id = selected?.id;
+    if (!id || isNew) return;
+    const next = !selected.devSimulateReminderMorning;
+    if (next) {
+      localStorage.removeItem('vvb_dev_imminent');
+      setDevImminent(null);
+      await persistDevReminderFlags({ devSimulateReminderMorning: true, devSimulateReminderT30: false });
+      setSelected(prev =>
+        prev ? { ...prev, devSimulateReminderMorning: true, devSimulateReminderT30: false } : prev,
+      );
+    } else {
+      await persistDevReminderFlags({ devSimulateReminderMorning: false });
+      setSelected(prev => (prev ? { ...prev, devSimulateReminderMorning: false } : prev));
+    }
+  }
+
+  async function sendReminderTest(kind: 'morning' | 't30') {
+    const id = selected?.id;
+    if (!id || isNew) return;
+    setReminderTestBusy(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/webinar-reminder-test-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ webinarId: id, kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+        return;
+      }
+      if (data.ok) {
+        toast.success(
+          `Odesláno na ${data.to} (${kind === 't30' ? 'Za chvíli' : 'Dnes'}).`,
+        );
+      } else {
+        toast.error(data.detail || 'Mandrill neodeslal — zkontrolujte Centrálu alertů.');
+      }
+    } catch (e: any) {
+      toast.error(e.message || String(e));
+    } finally {
+      setReminderTestBusy(false);
+    }
+  }
+
   const descEditor = useEditor({
     extensions: [
       StarterKit,
@@ -184,12 +261,6 @@ export default function WebinareEditor() {
     ],
     content: '<p></p>',
     editorProps: { attributes: { class: 'vvb-webinar-editor' } },
-  });
-
-  const perksEditor = useEditor({
-    extensions: [StarterKit],
-    content: '<p></p>',
-    editorProps: { attributes: { class: 'vvb-webinar-editor vvb-perks-editor' } },
   });
 
   // Dialog states
@@ -217,19 +288,13 @@ export default function WebinareEditor() {
 
   useEffect(() => { loadList(); }, [loadList]);
 
-  // Load content into editors when selection changes
   useEffect(() => {
-    if (!descEditor || !perksEditor || !selected) return;
-    // description — may be HTML or plain text
+    if (!descEditor || !selected) return;
     const descHtml = selected.description
       ? (selected.description.includes('<') ? selected.description : `<p>${selected.description}</p>`)
       : '<p></p>';
-    const perksHtml = selected.perks
-      ? (selected.perks.includes('<') ? selected.perks : `<p>${selected.perks}</p>`)
-      : '<p></p>';
     descEditor.commands.setContent(descHtml, false);
-    perksEditor.commands.setContent(perksHtml, false);
-  }, [selected?.id, descEditor, perksEditor]);
+  }, [selected?.id, descEditor]);
 
   const filtered = useMemo(() => {
     const rows = items.filter((w) => {
@@ -247,22 +312,36 @@ export default function WebinareEditor() {
     setSelected({ ...item });
     setIsNew(false);
     setSlugManual(true);
-    setActiveSection('description');
+    if (item.devSimulateReminderT30) {
+      try {
+        localStorage.setItem('vvb_dev_imminent', item.id);
+        setDevImminent(item.id);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      try {
+        const stored = localStorage.getItem('vvb_dev_imminent');
+        if (stored === item.id) {
+          localStorage.removeItem('vvb_dev_imminent');
+          setDevImminent(null);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function handleNew() {
     setSelected(emptyWebinar());
     setIsNew(true);
     setSlugManual(false);
-    setActiveSection('description');
     descEditor?.commands.setContent('<p></p>', false);
-    perksEditor?.commands.setContent('<p></p>', false);
   }
 
   function handleClose() {
     setSelected(null);
     descEditor?.commands.setContent('<p></p>', false);
-    perksEditor?.commands.setContent('<p></p>', false);
   }
 
   function updateField(key: string, value: any) {
@@ -288,14 +367,13 @@ export default function WebinareEditor() {
   }
 
   async function handleSave() {
-    if (!selected || !descEditor || !perksEditor) return;
-    if (!selected.title?.trim()) { toast.error('Titulek je povinn\u00fd.'); return; }
+    if (!selected || !descEditor) return;
+    if (!selected.title?.trim()) { toast.error('Titulek je povinný.'); return; }
     setSaving(true);
     try {
       const payload: any = {
         ...selected,
         description: descEditor.getHTML(),
-        perks: perksEditor.getHTML(),
         id: selected.id || `webinar-${Date.now()}`,
         slug: selected.slug || slugify(selected.title || ''),
         updatedAt: new Date().toISOString(),
@@ -487,7 +565,7 @@ export default function WebinareEditor() {
 
                 {/* ── Základní pole ──────────────────────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
-                  <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">Z\u00e1kladn\u00ed informace</h3>
+                  <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">Základní informace</h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-[11px] font-bold text-gray-500 block mb-1">Titulek *</label>
@@ -561,11 +639,11 @@ export default function WebinareEditor() {
                       {/* Dev switch: simulace "začíná za chvíli" pro slider */}
                       <div
                         className={`mt-2 flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all cursor-pointer select-none ${
-                          devImminent === selected.id
+                          devImminent === selected.id || selected.devSimulateReminderT30
                             ? 'bg-amber-50 border-amber-300'
                             : 'bg-gray-50 border-gray-200 hover:border-gray-300'
                         }`}
-                        onClick={toggleDevImminent}
+                        onClick={() => void toggleDevImminent()}
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-base leading-none">{'🧪'}</span>
@@ -574,16 +652,70 @@ export default function WebinareEditor() {
                               {'V\u00fdvoj: Za\u010d\u00edn\u00e1 za chv\u00edli'}
                             </span>
                             <span className="text-[10px] text-gray-400 leading-tight">
-                              {devImminent === selected.id
-                                ? 'Aktivn\u00ed \u2014 webinář se zobrazuje ve slideru'
-                                : 'Simuluje webinář do 30 min \u2014 ukáže slide v katalogu'}
+                              {devImminent === selected.id || selected.devSimulateReminderT30
+                                ? 'Slider v katalogu + cron ode\u0161le mail \u201eZa chv\xedli\u201c (p\u0159i b\u011bhu cronu)'
+                                : 'Simuluje webinář do 30 min \u2014 ukáže slide v katalogu; pro test e-mailu zapnout'}
                             </span>
                           </div>
                         </div>
-                        {/* Toggle pill */}
-                        <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${devImminent === selected.id ? 'bg-amber-400' : 'bg-gray-200'}`}>
-                          <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${devImminent === selected.id ? 'left-[18px]' : 'left-0.5'}`} />
+                        <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${devImminent === selected.id || selected.devSimulateReminderT30 ? 'bg-amber-400' : 'bg-gray-200'}`}>
+                          <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${devImminent === selected.id || selected.devSimulateReminderT30 ? 'left-[18px]' : 'left-0.5'}`} />
                         </div>
+                      </div>
+                      <div
+                        className={`mt-2 flex items-center justify-between px-3 py-2.5 rounded-xl border transition-all cursor-pointer select-none ${
+                          selected.devSimulateReminderMorning
+                            ? 'bg-emerald-50 border-emerald-300'
+                            : 'bg-gray-50 border-gray-200 hover:border-gray-300'
+                        }`}
+                        onClick={() => void toggleDevToday()}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-base leading-none shrink-0">{'🧪'}</span>
+                          <div className="min-w-0">
+                            <span className="text-[11px] font-bold text-gray-600 block leading-tight">
+                              {'V\u00fdvoj: Za\u010d\u00edn\u00e1 dnes'}
+                            </span>
+                            <span className="text-[10px] text-gray-400 leading-tight block">
+                              {selected.devSimulateReminderMorning
+                                ? 'Cron ode\u0161le rann\xed p\u0159ipom\xednku \u201eDnes v\xe1s \u010dek\xe1 webin\xe1\u0159\u201c (p\u0159i b\u011bhu cronu)'
+                                : 'Vynut\xed odesl\xe1n\xed mailu \u201eDnes\u201c m\xedsto \u010dasu 7\u201310 h'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${selected.devSimulateReminderMorning ? 'bg-emerald-400' : 'bg-gray-200'}`}>
+                          <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${selected.devSimulateReminderMorning ? 'left-[18px]' : 'left-0.5'}`} />
+                        </div>
+                      </div>
+                      <div className="mt-2 space-y-2">
+                        <p className="text-[10px] text-gray-500 leading-snug px-0.5">
+                          {'Nejrychlej\u0161\xed test: ode\u0161lete si zku\u0161ebn\xed p\u0159ipom\xednku na e-mail prvn\xed registrace (bez cronu). P\u0159ep\xedna\u010de v\xfdvoje jen \u0159\xedd\xed automatick\xfd b\u011bh cronu.'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={reminderTestBusy}
+                            onClick={() => void sendReminderTest('morning')}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {reminderTestBusy ? '\u2026' : 'Test mail \u201eDnes\u201c'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reminderTestBusy}
+                            onClick={() => void sendReminderTest('t30')}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {reminderTestBusy ? '\u2026' : 'Test mail \u201eZa chv\xedli\u201c'}
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-gray-400 leading-snug px-0.5">
+                          {'Cron v produkci: '}
+                          <code className="text-[9px] bg-gray-100 px-1 rounded">POST \u2026/cron/webinar-reminders</code>
+                          {' + '}
+                          <code className="text-[9px] bg-gray-100 px-1 rounded">WEBINAR_REMINDER_CRON_SECRET</code>
+                          {'. Po otestov\xe1n\xed v\xfdvoj vypn\u011bte \u2014 m\u016f\u017ee pos\xedlat opakovan\u011b.'}
+                        </p>
                       </div>
                     </div>
                   )}
@@ -592,7 +724,7 @@ export default function WebinareEditor() {
                 {/* ── Datum a čas ────────────────────────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
                   <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                    <Calendar className="w-3.5 h-3.5" /> Datum a \u010das
+                    <Calendar className="w-3.5 h-3.5" /> Datum a čas
                   </h3>
                   <div className="grid grid-cols-4 gap-3">
                     <div>
@@ -601,7 +733,7 @@ export default function WebinareEditor() {
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">M\u011bs\u00edc</label>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Měsíc</label>
                       <select value={selected.monthNum || 1} onChange={e => updateField('monthNum', Number(e.target.value))}
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none bg-white">
                         {MONTHS_CS.map((m, i) => (
@@ -616,7 +748,7 @@ export default function WebinareEditor() {
                     </div>
                     <div>
                       <label className="text-[11px] font-bold text-gray-500 block mb-1 flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> \u010cas
+                        <Clock className="w-3 h-3" /> Čas
                       </label>
                       <input type="text" value={selected.time || '18:00'} onChange={e => updateField('time', e.target.value)}
                         placeholder="18:00"
@@ -624,16 +756,129 @@ export default function WebinareEditor() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl text-[12px] text-gray-500">
-                    <span>Datum webin\u00e1\u0159e:</span>
+                    <span>Datum webináře:</span>
                     <span className="font-bold text-[#001161]">
                       {selected.day}. {MONTHS_CS[(selected.monthNum || 1) - 1]} {selected.year} od {selected.time}
                     </span>
                     <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
                       selected.isPast ? 'bg-gray-200 text-gray-500' : 'bg-purple-100 text-purple-700'
                     }`}>
-                      {selected.isPast ? 'MINUL\u00dd' : 'PL\u00c1NOVAN\u00dd'}
+                      {selected.isPast ? 'MINULÝ' : 'PLÁNOVANÝ'}
                     </span>
                   </div>
+                </div>
+
+                {/* ── Dotazník po registraci ─────────────────────── */}
+                <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
+                  <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">
+                    Dotazník po registraci
+                  </h3>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={selected.surveyEnabled !== false}
+                      onChange={(e) => updateField('surveyEnabled', e.target.checked)}
+                      className="rounded border-gray-300"
+                    />
+                    <span className="text-[13px] text-[#001161] font-semibold">{'Zobrazit kr\u00e1tk\u00fd dotazn\u00edk po odesl\u00e1n\u00ed registrace'}</span>
+                  </label>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    {
+                      'Zobraz\u00ed se p\u0159ed blokem se zku\u0161ebn\u00edm p\u0159\u00edstupem. Pr\u00e1zdn\u00fd seznam = t\u0159i v\u00fdchoz\u00ed ot\u00e1zky (motivace, z\u00e1jem, Vividbooks ano/ne).'
+                    }
+                  </p>
+                  {selected.surveyEnabled !== false && (
+                    <div className="space-y-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateField('surveyQuestions', DEFAULT_WEBINAR_SURVEY_QUESTIONS.map((q) => ({ ...q })))
+                        }
+                        className="text-[12px] font-bold text-purple-600 hover:underline"
+                      >
+                        {'Obnovit v\u00fdchoz\u00ed t\u0159i ot\u00e1zky'}
+                      </button>
+                      {(selected.surveyQuestions || []).map((q, qi) => (
+                        <div key={q.id || qi} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3 space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] font-mono text-gray-400 truncate">{q.id}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = [...(selected.surveyQuestions || [])];
+                                next.splice(qi, 1);
+                                updateField('surveyQuestions', next);
+                              }}
+                              className="text-[11px] text-red-500 hover:underline shrink-0"
+                            >
+                              {'Odebrat'}
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={q.label}
+                            onChange={(e) => {
+                              const next = [...(selected.surveyQuestions || [])];
+                              next[qi] = { ...next[qi], label: e.target.value };
+                              updateField('surveyQuestions', next);
+                            }}
+                            placeholder="Text ot\u00e1zky"
+                            className="w-full px-2 py-1.5 text-[13px] border border-gray-200 rounded-lg bg-white"
+                          />
+                          <select
+                            value={q.type}
+                            onChange={(e) => {
+                              const next = [...(selected.surveyQuestions || [])];
+                              const t = e.target.value as WebinarSurveyQuestionType;
+                              next[qi] = {
+                                ...next[qi],
+                                type: t,
+                                options: t === 'abc' ? next[qi].options?.length ? next[qi].options : ['Mo\u017enost A', 'Mo\u017enost B'] : undefined,
+                              };
+                              updateField('surveyQuestions', next);
+                            }}
+                            className="w-full px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white"
+                          >
+                            <option value="open">{'Otev\u0159en\u00e1 odpov\u011b\u010f'}</option>
+                            <option value="abc">{'V\u00fdb\u011br z mo\u017enost\u00ed (ABC)'}</option>
+                            <option value="yes_no">{'Ano / Ne'}</option>
+                          </select>
+                          {q.type === 'abc' && (
+                            <textarea
+                              value={(q.options || []).join('\n')}
+                              onChange={(e) => {
+                                const opts = e.target.value
+                                  .split('\n')
+                                  .map((s) => s.trim())
+                                  .filter(Boolean);
+                                const next = [...(selected.surveyQuestions || [])];
+                                next[qi] = { ...next[qi], options: opts };
+                                updateField('surveyQuestions', next);
+                              }}
+                              placeholder={'Mo\u017enost na \u0159\u00e1dek'}
+                              rows={3}
+                              className="w-full px-2 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-white font-mono"
+                            />
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const id = `q_${Date.now()}`;
+                          const row: WebinarSurveyQuestion = {
+                            id,
+                            type: 'open',
+                            label: 'Nov\u00e1 ot\u00e1zka',
+                          };
+                          updateField('surveyQuestions', [...(selected.surveyQuestions || []), row]);
+                        }}
+                        className="text-[12px] font-bold text-[#001161] border border-dashed border-gray-300 rounded-lg px-3 py-2 w-full hover:bg-gray-50"
+                      >
+                        + {'P\u0159idat ot\u00e1zku'}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* ── Lektor ─────────────────────────────────────── */}
@@ -643,52 +888,42 @@ export default function WebinareEditor() {
                   </h3>
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Jm\u00e9no lektora</label>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Jméno lektora</label>
                       <input type="text" value={selected.lecturer || ''} onChange={e => updateField('lecturer', e.target.value)}
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                     </div>
                     <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">C\u00edlov\u00e1 skupina</label>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Cílová skupina</label>
                       <input type="text" value={selected.targetAudience || ''} onChange={e => updateField('targetAudience', e.target.value)}
-                        placeholder="nap\u0159. u\u010ditel\u00e9 2. stupn\u011b"
+                        placeholder="např. učitelé 2. stupně"
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                     </div>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Avatar lektora</label>
-                      <ImagePicker
-                        value={selected.lecturerAvatar || ''}
-                        onChange={url => updateField('lecturerAvatar', url)}
-                        previewHeight={120}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] font-bold text-gray-500 block mb-1">Cover obrázek webináre</label>
-                      <ImagePicker
-                        value={selected.coverImage || ''}
-                        onChange={url => updateField('coverImage', url)}
-                        previewHeight={120}
-                      />
-                    </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">Cover obrázek webináře</label>
+                    <ImagePicker
+                      value={selected.coverImage || ''}
+                      onChange={url => updateField('coverImage', url)}
+                      previewHeight={120}
+                    />
                   </div>
                 </div>
 
                 {/* ── Stránka předmětu (slider) ─────────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
                   <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide">
-                    Str\u00e1nka p\u0159edm\u011btu (slider)
+                    Stránka předmětu (slider)
                   </h3>
                   <p className="text-[11px] text-gray-500 leading-relaxed">
-                    Pod srovn\u00e1n\u00edm digit\u00e1ln\u00edch p\u0159\u00edstup\u016f na str\u00e1nk\u00e1ch /predmet/\u2026 se zobraz\u00ed
-                    horizont\u00e1ln\u00ed slider webin\u00e1\u0159\u016f. N\u00e1zvy p\u0159edm\u011bt\u016f pi\u0161te stejn\u011b jako v katalogu
-                    (nap\u0159. <span className="font-mono text-gray-600">Matematika</span>,{' '}
-                    <span className="font-mono text-gray-600">Matematika 1. stupe\u0148</span>,{' '}
+                    Pod srovnáním digitálních přístupů na stránkách /predmet/… se zobrazí
+                    horizontální slider webinářů. Názvy předmětů pište stejně jako v katalogu
+                    (např. <span className="font-mono text-gray-600">Matematika</span>,{' '}
+                    <span className="font-mono text-gray-600">Matematika 1. stupeň</span>,{' '}
                     <span className="font-mono text-gray-600">Fyzika</span>).
                   </p>
                   <div>
                     <label className="text-[11px] font-bold text-gray-500 block mb-1">
-                      Propojen\u00e9 p\u0159edm\u011bty (\u010d\u00e1rkou odd\u011blen\u00e9)
+                      Propojené předměty (čárkou oddělené)
                     </label>
                     <input
                       type="text"
@@ -702,13 +937,13 @@ export default function WebinareEditor() {
                             .filter(Boolean),
                         )
                       }
-                      placeholder="Matematika, Matematika 2. stupe\u0148"
+                      placeholder="Matematika, Matematika 2. stupeň"
                       className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
                     />
                   </div>
                   <div>
                     <label className="text-[11px] font-bold text-gray-500 block mb-1">
-                      Tagy (\u010d\u00e1rkou, nap\u0159. matematika)
+                      Tagy (čárkou, např. matematika)
                     </label>
                     <input
                       type="text"
@@ -726,18 +961,18 @@ export default function WebinareEditor() {
                       className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
                     />
                     <p className="text-[10px] text-gray-400 mt-1 leading-relaxed">
-                      Voliteln\u00e9 \u0161t\u00edtky pro intern\u00ed orientaci (nap\u0159. t\u00e9mata, kan\u00e1l).
+                      Volitelné štítky pro interní orientaci (např. témata, kanál).
                     </p>
                   </div>
                   <div>
                     <label className="text-[11px] font-bold text-gray-500 block mb-1">
-                      Citace do slideru (voliteln\u00e9)
+                      Citace do slideru (volitelné)
                     </label>
                     <textarea
                       value={selected.highlightQuote || ''}
                       onChange={(e) => updateField('highlightQuote', e.target.value)}
                       rows={2}
-                      placeholder="Kr\u00e1tk\u00e1 v\u011bta z obsahu webin\u00e1\u0159e\u2026"
+                      placeholder="Krátká věta z obsahu webináře…"
                       className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none resize-y"
                     />
                   </div>
@@ -749,71 +984,23 @@ export default function WebinareEditor() {
                     <Link2 className="w-3.5 h-3.5" /> Zoom / odkaz na registraci
                   </h3>
                   <input type="url" value={selected.zoomLink || ''} onChange={e => updateField('zoomLink', e.target.value)}
-                    placeholder="https://zoom.us/j/\u2026"
+                    placeholder="https://zoom.us/j/…"
                     className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                   <label className="text-[11px] font-bold text-gray-500 block mt-4 mb-1">YouTube URL (live stream / záznam)</label>
                   <input type="url" value={(selected as any).youtubeUrl || ''} onChange={e => updateField('youtubeUrl', e.target.value)}
-                    placeholder="https://www.youtube.com/watch?v=\u2026"
+                    placeholder="https://www.youtube.com/watch?v=…"
                     className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                   <p className="text-[11px] text-gray-400 mt-1">{'Zobraz\u00ed se na live str\u00e1nce /webinar/[id]/live'}</p>
                 </div>
 
                 {/* ── Popis (description) WYSIWYG ────────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
-                  {/* Section switcher */}
-                  <div className="flex border-b border-gray-200">
-                    {([
-                      { key: 'description', label: 'Popis webin\u00e1\u0159e' },
-                      { key: 'perks',       label: 'V\u00fdhody / Benefity' },
-                    ] as const).map(s => (
-                      <button key={s.key} onClick={() => setActiveSection(s.key)}
-                        className={`px-5 py-3 text-[12px] font-bold border-b-2 transition-all ${
-                          activeSection === s.key ? 'border-purple-500 text-purple-700' : 'border-transparent text-gray-400 hover:text-gray-600'
-                        }`}>
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {activeSection === 'description' && (
-                    <div className="relative">
-                      <Toolbar editor={descEditor} onImage={() => setImgDialog(true)} onVideo={() => setVidDialog(true)} />
-                      <EditorContent editor={descEditor} />
-                    </div>
-                  )}
-
-                  {activeSection === 'perks' && (
-                    <div>
-                      <div className="flex items-center gap-0.5 px-3 py-2 border-b border-gray-200 bg-[#fafafa] flex-wrap">
-                        <ToolbarBtn active={perksEditor?.isActive('bold')} title="Tu\u010dn\u00e9" onClick={() => perksEditor?.chain().focus().toggleBold().run()}>
-                          <Bold className="w-3.5 h-3.5" />
-                        </ToolbarBtn>
-                        <ToolbarBtn active={perksEditor?.isActive('bulletList')} title="Odr\u00e1\u017eky" onClick={() => perksEditor?.chain().focus().toggleBulletList().run()}>
-                          <List className="w-3.5 h-3.5" />
-                        </ToolbarBtn>
-                        <ToolbarBtn active={false} title="Zp\u011bt" onClick={() => perksEditor?.chain().focus().undo().run()}>
-                          <Undo2 className="w-3.5 h-3.5" />
-                        </ToolbarBtn>
-                      </div>
-                      <EditorContent editor={perksEditor} />
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Thumbnail varianta ────────────────────────── */}
-                <div className="bg-white rounded-2xl border border-gray-200 p-5">
-                  <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide mb-3">Varianta thumb (fallback bez obr\u00e1zku)</h3>
-                  <div className="flex gap-2">
-                    {([1, 2, 3] as const).map(v => (
-                      <button key={v} onClick={() => updateField('thumbnailVariant', v)}
-                        className={`px-4 py-2 rounded-xl text-[13px] font-bold border transition-all ${
-                          selected.thumbnailVariant === v
-                            ? 'bg-purple-600 text-white border-purple-600'
-                            : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'
-                        }`}>
-                        {`Varianta ${v}`}
-                      </button>
-                    ))}
+                  <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide px-5 py-3 border-b border-gray-200">
+                    Popis webináře
+                  </h3>
+                  <div className="relative">
+                    <Toolbar editor={descEditor} onImage={() => setImgDialog(true)} onVideo={() => setVidDialog(true)} />
+                    <EditorContent editor={descEditor} />
                   </div>
                 </div>
 
@@ -826,11 +1013,11 @@ export default function WebinareEditor() {
               <div className="w-16 h-16 bg-purple-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
                 <Radio className="w-8 h-8 text-purple-400" />
               </div>
-              <p className="text-[14px] font-semibold text-gray-500">Vyberte webin\u00e1\u0159 ze seznamu</p>
-              <p className="text-[12px] text-gray-400 mt-1">nebo vytvo\u0159te nov\u00fd</p>
+              <p className="text-[14px] font-semibold text-gray-500">Vyberte webinář ze seznamu</p>
+              <p className="text-[12px] text-gray-400 mt-1">nebo vytvořte nový</p>
               <button onClick={handleNew}
                 className="mt-4 flex items-center gap-2 mx-auto px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-xl text-[13px] font-bold transition-colors">
-                <Plus className="w-4 h-4" /> Nov\u00fd webin\u00e1\u0159
+                <Plus className="w-4 h-4" /> Nový webinář
               </button>
             </div>
           </div>
@@ -840,10 +1027,10 @@ export default function WebinareEditor() {
         {imgDialog && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setImgDialog(false)}>
             <div className="bg-white rounded-2xl p-6 w-[380px] shadow-2xl" onClick={e => e.stopPropagation()}>
-              <h3 className="text-[15px] font-bold text-[#001161] mb-4">Vlo\u017eit obr\u00e1zek</h3>
+              <h3 className="text-[15px] font-bold text-[#001161] mb-4">Vložit obrázek</h3>
               <div className="space-y-3">
                 <ImagePicker
-                  label="Obr\u00e1zek *"
+                  label="Obrázek *"
                   value={imgUrl}
                   onChange={setImgUrl}
                   previewHeight={140}
@@ -855,8 +1042,8 @@ export default function WebinareEditor() {
                 </div>
               </div>
               <div className="flex gap-2 mt-5">
-                <button onClick={() => setImgDialog(false)} className="flex-1 py-2 text-[13px] font-bold border border-gray-200 rounded-xl text-gray-500 hover:bg-gray-50">Zru\u0161it</button>
-                <button onClick={insertImage} disabled={!imgUrl.trim()} className="flex-1 py-2 text-[13px] font-bold bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-40">Vlo\u017eit</button>
+                <button onClick={() => setImgDialog(false)} className="flex-1 py-2 text-[13px] font-bold border border-gray-200 rounded-xl text-gray-500 hover:bg-gray-50">Zrušit</button>
+                <button onClick={insertImage} disabled={!imgUrl.trim()} className="flex-1 py-2 text-[13px] font-bold bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:opacity-40">Vložit</button>
               </div>
             </div>
           </div>
@@ -865,7 +1052,7 @@ export default function WebinareEditor() {
         {vidDialog && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={() => setVidDialog(false)}>
             <div className="bg-white rounded-2xl p-6 w-[380px] shadow-2xl" onClick={e => e.stopPropagation()}>
-              <h3 className="text-[15px] font-bold text-[#001161] mb-4">Vlo\u017eit YouTube video</h3>
+              <h3 className="text-[15px] font-bold text-[#001161] mb-4">Vložit YouTube video</h3>
               <div className="space-y-3">
                 <div>
                   <label className="text-[11px] font-bold text-gray-500 block mb-1">YouTube URL *</label>
@@ -873,14 +1060,14 @@ export default function WebinareEditor() {
                     className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                 </div>
                 <div>
-                  <label className="text-[11px] font-bold text-gray-500 block mb-1">N\u00e1zev</label>
+                  <label className="text-[11px] font-bold text-gray-500 block mb-1">Název</label>
                   <input type="text" value={vidTitle} onChange={e => setVidTitle(e.target.value)}
                     className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                 </div>
               </div>
               <div className="flex gap-2 mt-5">
-                <button onClick={() => setVidDialog(false)} className="flex-1 py-2 text-[13px] font-bold border border-gray-200 rounded-xl text-gray-500 hover:bg-gray-50">Zru\u0161it</button>
-                <button onClick={insertVideo} disabled={!vidUrl.trim()} className="flex-1 py-2 text-[13px] font-bold bg-red-500 text-white rounded-xl hover:bg-red-600 disabled:opacity-40">Vlo\u017eit</button>
+                <button onClick={() => setVidDialog(false)} className="flex-1 py-2 text-[13px] font-bold border border-gray-200 rounded-xl text-gray-500 hover:bg-gray-50">Zrušit</button>
+                <button onClick={insertVideo} disabled={!vidUrl.trim()} className="flex-1 py-2 text-[13px] font-bold bg-red-500 text-white rounded-xl hover:bg-red-600 disabled:opacity-40">Vložit</button>
               </div>
             </div>
           </div>

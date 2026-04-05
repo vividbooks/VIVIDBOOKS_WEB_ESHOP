@@ -282,8 +282,13 @@ export interface AdminOrderWorkflowStep {
 
 export interface AdminOrderAlert {
   id: string;
+  /** `order` = tabulka order_alerts, `site` = app_incidents (webináře, …) */
+  origin?: 'order' | 'site';
   order_id?: string | null;
   order_number?: string | null;
+  webinar_id?: string | null;
+  webinar_title?: string | null;
+  contact_email?: string | null;
   alert_type: string;
   severity: 'info' | 'warning' | 'critical';
   state: 'open' | 'acknowledged' | 'resolved' | 'suppressed';
@@ -556,6 +561,10 @@ export async function fetchAdminAlertSummary() {
 export async function fetchAdminOrderAlerts(params?: {
   state?: 'all' | 'open' | 'acknowledged' | 'resolved';
   severity?: '' | 'info' | 'warning' | 'critical';
+  /** Kód typu z `order_alerts.alert_type` (např. basecom_failed). Prázdné = všechny. */
+  alertType?: string;
+  /** `all` = objednávky + web; `orders` = jen e-shop; `site` = jen app_incidents */
+  scope?: 'all' | 'orders' | 'site';
   page?: number;
   pageSize?: number;
 }) {
@@ -564,6 +573,9 @@ export async function fetchAdminOrderAlerts(params?: {
   url.searchParams.set('severity', params?.severity || '');
   url.searchParams.set('page', String(params?.page || 1));
   url.searchParams.set('pageSize', String(params?.pageSize || 20));
+  const at = (params?.alertType || '').trim();
+  if (at) url.searchParams.set('alertType', at);
+  url.searchParams.set('scope', params?.scope || 'all');
 
   const res = await fetch(url.toString(), { headers: HEADERS });
   if (!res.ok) {
@@ -576,6 +588,9 @@ export async function fetchAdminOrderAlerts(params?: {
     total: number;
     page: number;
     pageSize: number;
+    /** Distinct typy v DB — pro filtr v adminu */
+    alertTypes: string[];
+    scope?: 'all' | 'orders' | 'site';
   }>;
 }
 

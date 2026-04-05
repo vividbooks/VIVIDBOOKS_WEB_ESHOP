@@ -13,6 +13,7 @@ import {
   type AdminOrderWorkflowStep,
 } from '../../utils/adminApi';
 import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
+import { incidentResolutionStateLabelCs, incidentSeverityLabelCs } from '../../utils/incidentLabels';
 
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -398,7 +399,9 @@ export function AdminOrderDetailPage() {
           </section>
 
           <section className="bg-white rounded-2xl border border-gray-100 p-4">
-            <h2 className="text-[15px] font-bold text-[#001161] mb-3">{'Aktivní a historické alerty'}</h2>
+            <h2 className="text-[15px] font-bold text-[#001161] mb-3">
+              {'Alerty u objednávky (stav řešení incidentu)'}
+            </h2>
             <div className="space-y-2.5">
               {alerts.length === 0 ? (
                 <div className="text-[13px] text-gray-500">{'K této objednávce zatím nejsou evidované alerty.'}</div>
@@ -413,10 +416,10 @@ export function AdminOrderDetailPage() {
                     </div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${alertSeverityClass(alert.severity)}`}>
-                        {alert.severity}
+                        {incidentSeverityLabelCs(alert.severity)}
                       </span>
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${alertStateClass(alert.state)}`}>
-                        {alert.state}
+                        {incidentResolutionStateLabelCs(alert.state)}
                       </span>
                     </div>
                   </div>

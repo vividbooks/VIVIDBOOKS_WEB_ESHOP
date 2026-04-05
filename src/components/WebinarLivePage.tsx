@@ -57,18 +57,15 @@ function avatarColor(name: string) {
 }
 
 /* ─── Logo ──────────────────────────────────────────────────────── */
+/** Řádek „BY GRADA“ je ve zdrojovém SVG ve spodní části canvasu — ořízneme viewBox (bez druhého SVG). */
+const VIVIDBOOKS_LOGO_VIEWBOX = '0 0 1786.62 869.93';
+
 function VividbooksLogo() {
   const W = 72;
-  const byW = Math.round(1027.31 * (W / 1786.62) * 1.1);
   return (
     <div className="flex flex-col items-start">
-      <svg viewBox="0 0 1786.62 869.93" fill="none" style={{ width: W, height: 'auto' }}>
+      <svg viewBox={VIVIDBOOKS_LOGO_VIEWBOX} fill="none" style={{ width: W, height: 'auto' }}>
         {['p299c6b00','p3cc4870','p98d9300','pf524b00','p26e2d80','p15998cf0','p1bd3b900','p19a24c00','p34d64300','p396dedf0'].map(k => (
-          <path key={k} d={(logoPaths as any)[k]} fill="#001161" />
-        ))}
-      </svg>
-      <svg viewBox="0 0 1027.31 180.529" fill="none" style={{ width: byW, height: 'auto', marginTop: 2 }}>
-        {['p26ef8900','p30e25000','p3a0e6400','p203e8600','p3250b400','p27a1eb00','p3f809700','p1c9b900','p3b78df00'].map(k => (
           <path key={k} d={(logoPaths as any)[k]} fill="#001161" />
         ))}
       </svg>
@@ -239,6 +236,14 @@ function ChatPanel({ webinarId, myName: initName, isPreview }: { webinarId: stri
   const unanswered = qaMsgs.filter(m => !m.answered).length;
 
   const INLINE_EMOJIS = ['👍', '❤️', '😂', '🙌', '🎉', '🤔', '💡', '🔥'];
+
+  useEffect(() => {
+    const n = initName?.trim();
+    if (!n) return;
+    setMyName(n);
+    setNameInput(n);
+    setNameLocked(true);
+  }, [initName]);
 
   useEffect(() => {
     if (!isPreview || messages.length > 0) return;
@@ -427,6 +432,8 @@ function ChatPanel({ webinarId, myName: initName, isPreview }: { webinarId: stri
 export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
   const [searchParams] = useSearchParams();
   const isPreview = searchParams.get('preview') === '1';
+  const lobbyToken = searchParams.get('lobby');
+  const lobbyVerifyOnce = useRef(false);
 
   const isDevImminent = (() => {
     try {
@@ -460,6 +467,44 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
       if (devId === webinar.id) { setCheckedIn(true); setAttendeeName('Dev Admin'); }
     } catch {}
   }, [webinar.id, isPreview]);
+
+  /** Osobní odkaz z potvrzovacího e-mailu (?lobby=) — ověření na serveru, jméno + check-in bez formuláře. */
+  useEffect(() => {
+    if (isPreview || !lobbyToken || lobbyVerifyOnce.current) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${SERVER}/webinar-lobby-verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+          body: JSON.stringify({ token: lobbyToken }),
+        });
+        const data = await res.json();
+        if (cancelled || !res.ok) return;
+        if (data.webinarId !== webinar.id) return;
+        lobbyVerifyOnce.current = true;
+        const email = String(data.email || '').trim();
+        const name = String(data.name || '').trim();
+        localStorage.setItem('vvb_checkin', JSON.stringify({ email, webinarId: data.webinarId }));
+        try {
+          const prevRaw = localStorage.getItem('vvb_identity');
+          const prev = prevRaw ? JSON.parse(prevRaw) : {};
+          const next = { ...(typeof prev === 'object' && prev ? prev : {}), name, email, webinarId: data.webinarId, since: new Date().toISOString() };
+          localStorage.setItem('vvb_identity', JSON.stringify(next));
+        } catch {
+          localStorage.setItem('vvb_identity', JSON.stringify({ name, email, webinarId: data.webinarId, since: new Date().toISOString() }));
+        }
+        setCheckedIn(true);
+        if (name) setAttendeeName(name);
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('lobby');
+          window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+        } catch {}
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [lobbyToken, webinar.id, isPreview]);
 
   useEffect(() => {
     if (isPreview) return;

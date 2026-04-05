@@ -14,15 +14,15 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
 import { subjectToSlug } from '../utils/slugify';
 
-/* ── Logo ──────────────────────────────────────────────────────── */
+/* ── Logo: viewBox musí pokrýt celý řádek BOOKS (y≈866); 655 ořezával půlku písmen ── */
+const VIVIDBOOKS_LOGO_VIEWBOX = '0 0 1786.62 869.93';
+
 function VividbooksLogo() {
   const W = 110;
-  const scale = W / 1786.62;
-  const byW = Math.round(1027.31 * scale * 1.1);
   return (
     <div className="flex flex-col items-center mb-4">
       {/* VIVIDBOOKS */}
-      <svg viewBox="0 0 1786.62 869.93" fill="none" style={{ width: `${W}px`, height: 'auto', display: 'block' }}>
+      <svg viewBox={VIVIDBOOKS_LOGO_VIEWBOX} fill="none" style={{ width: `${W}px`, height: 'auto', display: 'block' }}>
         <path d={logoPaths.p299c6b00} fill="#001161" />
         <path d={logoPaths.p3cc4870}  fill="#001161" />
         <path d={logoPaths.p98d9300}  fill="#001161" />
@@ -61,27 +61,31 @@ interface SidebarAccordionItem {
 interface SidebarAccordionSection {
   title: string;
   items: SidebarAccordionItem[];
+  /** Červená blikající tečka před názvem (např. novinka / upozornění) */
+  attentionDot?: boolean;
+}
+
+function MenuAttentionDot() {
+  return (
+    <span
+      className="inline-block size-2 shrink-0 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.85)] motion-safe:animate-pulse"
+      aria-hidden
+    />
+  );
 }
 
 const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
   {
-    title: 'Digit\u00e1ln\u00ed rozhra\u006e\u00ed',
+    title: 'Vividboard',
     items: [
-      { label: '\u2013\u00a0Vividbooks u\u010debnice',       href: 'https://app.vividbooks.com' },
-      { label: '\u2013\u00a0Vividbooks autor',               href: 'https://autor.vividbooks.com' },
-      { label: '\u2013\u00a0Vividbooks t\u0159\u00edda',     href: 'https://trida.vividbooks.com' },
+      { label: 'Vividboard', href: 'https://app.vividbooks.com' },
     ],
   },
   {
     title: 'DVPP webin\u00e1\u0159e',
+    attentionDot: true,
     items: [
       { label: 'DVPP webin\u00e1\u0159e', internal: '/webinare' },
-    ],
-  },
-  {
-    title: 'Asistent',
-    items: [
-      { label: 'Vividbooks asistent', internal: '/asistent' },
     ],
   },
   {
@@ -124,8 +128,9 @@ function SidebarAccordion() {
             <button
               key={section.title}
               onClick={() => handleItem(item)}
-              className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+              className="w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer flex items-center gap-2"
             >
+              {section.attentionDot ? <MenuAttentionDot /> : null}
               {section.title}
             </button>
           );
@@ -135,7 +140,7 @@ function SidebarAccordion() {
         <div key={section.title}>
           <button
             onClick={() => toggle(section.title)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+            className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
           >
             <span>{section.title}</span>
             <ChevronDown
@@ -159,7 +164,7 @@ function SidebarAccordion() {
                     !item.href && !item.internal ? (
                       <span
                         key={item.label}
-                        className="px-3 pt-1.5 pb-0.5 font-['Fenomen_Sans',sans-serif] text-[13px] font-bold uppercase tracking-wider text-[#001161]/40"
+                        className="px-3 pt-1.5 pb-0.5 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider text-[#001161]/50"
                       >
                         {item.label}
                       </span>
@@ -167,7 +172,7 @@ function SidebarAccordion() {
                     <button
                       key={item.label}
                       onClick={() => handleItem(item)}
-                      className="w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/75 hover:text-[#ff6a35] hover:bg-orange-50 transition-colors"
+                      className="w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
                     >
                       {item.label}
                     </button>
@@ -410,31 +415,32 @@ export default function CatalogLayout() {
                   <button
                     type="button"
                     onClick={() => { navigate('/webinare'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1 flex items-center gap-2"
                   >
+                    <MenuAttentionDot />
                     {'DVPP webin\u00e1\u0159e'}
                   </button>
-                  <p className="px-3 pt-2 pb-0.5 text-[11px] font-bold uppercase tracking-wider text-[#001161]/40">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-2 px-3 pt-2">
                     {'Novinky a blog'}
                   </p>
                   <button
                     type="button"
                     onClick={() => { navigate('/novinky'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[15px] font-semibold text-[#001161]/85 hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
                   >
                     Novinky
                   </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/blog'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[15px] font-semibold text-[#001161]/85 hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
                   >
                     Blog
                   </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/kontakt'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
                   >
                     Kontakt
                   </button>

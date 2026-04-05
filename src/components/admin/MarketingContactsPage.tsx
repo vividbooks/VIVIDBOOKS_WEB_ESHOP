@@ -17,6 +17,36 @@ type ContactRow = {
   synced_at: string;
 };
 
+type WebinarEmailIdxEntry = {
+  webinarId: string;
+  webinarTitle: string;
+  webinarSlug: string;
+  attended: boolean;
+  attendedAt?: string;
+  registeredAt: string;
+};
+
+function webinarAttendanceTooltip(list: WebinarEmailIdxEntry[]): string {
+  if (!list.length) return '';
+  return list
+    .map((w) => {
+      const t = w.webinarTitle || w.webinarId;
+      if (w.attended) {
+        const when = w.attendedAt
+          ? new Date(w.attendedAt).toLocaleString('cs-CZ', {
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '';
+        return `${t}: účast${when ? ` (${when})` : ''}`;
+      }
+      return `${t}: jen registrace`;
+    })
+    .join('\n');
+}
+
 type StatusFilter = '' | 'subscribed' | 'unsubscribed';
 
 /** Rychlé skupiny — „Rodiče“ je vždy poslední v seznamu i v UI. */
@@ -82,6 +112,9 @@ export default function MarketingContactsPage() {
   const [activePresetId, setActivePresetId] = useState<string>('all');
   const [offset, setOffset] = useState(0);
   const limit = 50;
+  const [attendanceByEmail, setAttendanceByEmail] = useState<Record<string, WebinarEmailIdxEntry[]>>({});
+
+  const rowsEmailKey = useMemo(() => rows.map((r) => r.email).join('\0'), [rows]);
 
   const loadMeta = useCallback(async () => {
     try {
@@ -140,6 +173,35 @@ export default function MarketingContactsPage() {
   useEffect(() => {
     void loadRows();
   }, [loadRows]);
+
+  useEffect(() => {
+    if (!rows.length) {
+      setAttendanceByEmail({});
+      return;
+    }
+    const emails = rows.map((r) => r.email.toLowerCase());
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${SERVER}/admin/marketing/contacts/webinar-attendance`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${publicAnonKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ emails }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !d.byEmail) return;
+        setAttendanceByEmail(d.byEmail as Record<string, WebinarEmailIdxEntry[]>);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rowsEmailKey]);
 
   const applyPreset = (presetId: string) => {
     const p = QUICK_PRESETS.find((x) => x.id === presetId);
@@ -262,6 +324,11 @@ export default function MarketingContactsPage() {
             }
           </li>
           <li>{'Rychlé skupiny nastaví tag nebo text ve sloupci školy (u Rodiče hledáme „parent“ v merge textu). '}</li>
+          <li>
+            {
+              'Sloupec Webináře bere data z registrací na webu (ne z Mailchimpu). U jednoho e-mailu vidíte každý webinář zvlášť — najetím na buňku zobrazíte názvy a stav účasti.'
+            }
+          </li>
         </ul>
         <div className="mt-3 flex flex-wrap gap-4 border-t border-violet-200/80 pt-3 text-[11px] text-violet-800/90">
           <span className="inline-flex items-center gap-1">
@@ -453,19 +520,20 @@ export default function MarketingContactsPage() {
               <th className="px-3 py-2">{'E-mail'}</th>
               <th className="px-3 py-2">{'Škola / pole'}</th>
               <th className="px-3 py-2">{'Stav'}</th>
+              <th className="min-w-[140px] px-3 py-2">{'Webináře'}</th>
               <th className="px-3 py-2">{'Tagy'}</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-10 text-center text-gray-400">
                   {'Načítám…'}
                 </td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-10 text-center text-gray-400">
+                <td colSpan={5} className="px-4 py-10 text-center text-gray-400">
                   {total === 0
                     ? 'Žádná data — spusťte synchronizaci z Mailchimp (tlačítko výše).'
                     : 'Žádné výsledky — upravte filtry.'}
@@ -474,6 +542,10 @@ export default function MarketingContactsPage() {
             ) : (
               rows.map((r) => {
                 const sortedTags = sortTagsForDisplay([...(r.tags || [])]);
+                const wList = attendanceByEmail[r.email.toLowerCase()] || [];
+                const attendedN = wList.filter((x) => x.attended).length;
+                const regN = wList.length;
+                const wTitle = webinarAttendanceTooltip(wList);
                 return (
                   <tr key={r.email_hash} className="border-b border-gray-50 hover:bg-purple-50/20">
                     <td className="max-w-[220px] truncate px-3 py-2 font-mono text-[11px] text-[#001161]">{r.email}</td>
@@ -481,6 +553,30 @@ export default function MarketingContactsPage() {
                       {r.school || '—'}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-[10px] uppercase text-gray-400">{r.status || '—'}</td>
+                    <td className="max-w-[200px] px-3 py-2 align-top text-[11px] text-gray-700" title={wTitle || undefined}>
+                      {regN === 0 ? (
+                        <span className="text-gray-300">{'—'}</span>
+                      ) : (
+                        <span className="inline-flex flex-col gap-0.5">
+                          <span className="font-semibold text-[#001161]">
+                            {attendedN}
+                            {'× účast'}
+                            <span className="font-normal text-gray-400">{' · '}</span>
+                            {regN}
+                            {'× reg.'}
+                          </span>
+                          <span className="line-clamp-2 text-[10px] leading-snug text-gray-500">
+                            {wList.slice(0, 3).map((w) => (
+                              <span key={w.webinarId} className="mr-1 inline-block max-w-[180px] truncate align-bottom" title={w.webinarTitle}>
+                                {w.attended ? '✓ ' : '○ '}
+                                {w.webinarTitle}
+                              </span>
+                            ))}
+                            {wList.length > 3 ? <span className="text-gray-400">{`+${wList.length - 3}`}</span> : null}
+                          </span>
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <div className="flex max-w-[400px] flex-wrap gap-1">
                         {sortedTags.slice(0, 10).map((t) => (

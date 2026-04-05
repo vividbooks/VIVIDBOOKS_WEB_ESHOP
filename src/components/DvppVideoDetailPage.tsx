@@ -408,14 +408,16 @@ export function DvppVideoDetailPage() {
 
                       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
 
-                        {/* Toggle: Nejsem učitel */}
+                        {/* Toggle: pedagog / certifikát DVPP (ON=zelená, OFF=červená) */}
                         <div className="flex items-center justify-between bg-white rounded-[12px] px-4 py-3 border border-[#001161]/10">
                           <div>
                             <p className="text-[14px] font-semibold text-[#001161] leading-tight" style={{ fontFamily: ff }}>
-                              {'Nejsem u\u010ditel/ka'}
+                              {notTeacher ? 'Nejsem pedagog' : 'Jsem pedagog'}
                             </p>
                             <p className="text-[12px] text-[#001161]/45 leading-tight mt-0.5" style={{ fontFamily: ff }}>
-                              {notTeacher ? 'Bez certifik\u00e1tu DVPP' : 'S certifik\u00e1tem DVPP'}
+                              {notTeacher
+                                ? 'Nepot\u0159ebuji certifik\u00e1t DVPP'
+                                : 'Po webin\u00e1\u0159i obdr\u017e\u00edm certifik\u00e1t DVPP'}
                             </p>
                           </div>
                           <button
@@ -428,11 +430,12 @@ export function DvppVideoDetailPage() {
                                 setSchoolOpen(false);
                               }
                             }}
-                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 shrink-0 cursor-pointer focus:outline-none ${notTeacher ? 'bg-[#5B4FD8]' : 'bg-[#001161]/15'}`}
-                            aria-checked={notTeacher}
+                            className={`relative w-11 h-6 rounded-full transition-colors duration-200 shrink-0 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#001161]/30 ${notTeacher ? 'bg-red-500' : 'bg-emerald-600'}`}
+                            aria-checked={!notTeacher}
                             role="switch"
+                            aria-label={notTeacher ? 'Zapnout režim pedagog s certifikátem DVPP' : 'Vypnout — nejsem pedagog'}
                           >
-                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${notTeacher ? 'translate-x-5' : 'translate-x-0'}`} />
+                            <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform duration-200 ${notTeacher ? 'translate-x-0' : 'translate-x-5'}`} />
                           </button>
                         </div>
 
@@ -445,7 +448,7 @@ export function DvppVideoDetailPage() {
                               animate={{ opacity: 1, height: 'auto' }}
                               exit={{ opacity: 0, height: 0 }}
                               transition={{ duration: 0.22 }}
-                              className="overflow-hidden flex flex-col gap-3"
+                              className="flex flex-col gap-3 overflow-visible"
                             >
                               <p className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mt-1 pl-1" style={{ fontFamily: ff }}>
                                 {'Informace o \u0161kole'}
@@ -470,7 +473,7 @@ export function DvppVideoDetailPage() {
                                     <motion.div
                                       initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
                                       transition={{ duration: 0.15 }}
-                                      className="absolute z-50 mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden"
+                                      className="absolute z-[100] mt-1 w-full bg-white border border-[#001161]/10 rounded-2xl shadow-xl overflow-hidden"
                                     >
                                       <div className="max-h-[220px] overflow-y-auto py-1">
                                         {schoolResults.map((s, i) => (
@@ -570,16 +573,22 @@ export function DvppVideoDetailPage() {
                           </span>
                         </label>
 
-                        {/* Newsletter */}
-                        <label className="flex items-start gap-3 cursor-pointer">
-                          <div
-                            className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-all ${form.newsletter ? 'bg-[#5B4FD8] border-[#5B4FD8]' : 'bg-white border-[#001161]/20'}`}
-                            onClick={() => handleChange('newsletter', !form.newsletter)}
-                          >
-                            {form.newsletter && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                          </div>
-                          <span className="text-[13px] text-[#001161]/70 leading-snug" style={{ fontFamily: ff }} onClick={() => handleChange('newsletter', !form.newsletter)}>
-                            {'Souhlas\u00edm se zas\u00edl\u00e1n\u00edm novinek ze sv\u011bta Vividbooks.'}
+                        {/* Newsletter — stejné jako trial formulář */}
+                        <label className="flex items-start gap-3 cursor-pointer bg-[#FFF7ED] rounded-xl px-4 py-3 border border-[#E8942A]/20">
+                          <span className="relative flex-shrink-0 mt-0.5">
+                            <input
+                              type="checkbox"
+                              checked={form.newsletter}
+                              onChange={() => handleChange('newsletter', !form.newsletter)}
+                              className="sr-only peer"
+                            />
+                            <span className="block w-[42px] h-[24px] bg-[#001161]/15 rounded-full peer-checked:bg-[#E8942A] transition-colors" />
+                            <span className="absolute left-[3px] top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[18px]" />
+                          </span>
+                          <span className="text-[13px] text-[#001161]/80 leading-[1.5]" style={{ fontFamily: ff }}>
+                            <span className="font-bold text-[#001161]">{'📚 Chci dostávat novinky a tipy do výuky'}</span>
+                            <br />
+                            {'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'}
                           </span>
                         </label>
 
