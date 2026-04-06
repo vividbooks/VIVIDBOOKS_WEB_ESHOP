@@ -1,0 +1,467 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Check, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import type { PostWebinarQuizQuestion } from '../data/webinars';
+import { SurveyFlowProgressBar } from './SurveyFlowProgressBar';
+
+const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
+const COOPER = { fontFamily: "'Cooper Light', serif" } as const;
+
+/** Pozadí „plátna“ jako Vividboard (Web vividbooks + Vividbooks40 slide) */
+const BG_STAGE = '#E8EBF4';
+const NAVY = '#001161';
+/** Text otázky — stejná šedá jako ABCSlideView ve Vividbooks40 */
+const QUESTION_MUTED = '#4E5871';
+const PURPLE = '#7C3AED';
+const INTRO_FILL = '#C2DFFF';
+/** Tlačítko „Odpovědět“ — plná výplň (bez gradientu), stejná námořní jako primární CTA na webu. */
+const ANSWER_BTN =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-6 py-2.5 text-[14px] font-bold text-white shadow-md shadow-[#001161]/20 transition hover:bg-[#001a8c] disabled:opacity-50';
+
+type Props = {
+  webinarTitle: string;
+  questions: PostWebinarQuizQuestion[];
+  answers: Record<string, string>;
+  onAnswerChange: (questionId: string, optionText: string) => void;
+  onComplete: () => void;
+  variant?: 'default' | 'fullscreen';
+  /** Celkový počet segmentů v celém průvodci (DVPP + zpětná vazba + odeslání + certifikát). */
+  flowProgressTotal?: number;
+  /** Kolik segmentů je vyplněných v tomto celkovém průvodci. */
+  flowProgressFilled?: number;
+  /** Sledování kroku pro rodiče (globální progress). */
+  onStepChange?: (step: number) => void;
+  /** Uložení jedné odpovědi na server (částečný zápis) — po webináři. */
+  onSavePartialAnswer?: (questionId: string, value: string) => Promise<void>;
+};
+
+/**
+ * Průvodce ve stylu Vividboard (viz Vividbooks40 `ABCSlideView`): bílá „stage“ karta,
+ * otázka nahoře, mřížka 2×2 dole, postranní navigace.
+ */
+export function WebinarDvppQuizPlayer({
+  webinarTitle,
+  questions,
+  answers,
+  onAnswerChange,
+  onComplete,
+  variant = 'default',
+  flowProgressTotal,
+  flowProgressFilled,
+  onStepChange,
+  onSavePartialAnswer,
+}: Props) {
+  const fs = variant === 'fullscreen';
+  const total = questions.length;
+  const [partialSaving, setPartialSaving] = useState(false);
+  const [partialOk, setPartialOk] = useState(false);
+  const [partialErr, setPartialErr] = useState('');
+  /** -1 = úvodní obrazovka, 0..total-1 = otázky */
+  const [step, setStep] = useState(-1);
+
+  useEffect(() => {
+    onStepChange?.(step);
+  }, [step, onStepChange]);
+
+  useEffect(() => {
+    setPartialErr('');
+    setPartialOk(false);
+  }, [step]);
+
+  /** Pruh jen pro otázky (úvod = žádný segment nevyplněný). */
+  const filledQuestionSlots = step < 0 ? 0 : Math.min(step + 1, total);
+
+  const useFlowProgress =
+    typeof flowProgressTotal === 'number' && flowProgressTotal > 0 && typeof flowProgressFilled === 'number';
+
+  const currentQ = step >= 0 && step < total ? questions[step] : null;
+  const selectedForCurrent = currentQ ? answers[currentQ.id] : undefined;
+
+  const goPrev = useCallback(() => {
+    setStep((s) => Math.max(-1, s - 1));
+  }, []);
+
+  const goNext = useCallback(() => {
+    if (step === -1) {
+      setStep(0);
+      return;
+    }
+    if (step >= 0 && step < total) {
+      if (!selectedForCurrent) return;
+      if (step === total - 1) {
+        onComplete();
+        return;
+      }
+      setStep((s) => s + 1);
+    }
+  }, [step, total, selectedForCurrent, onComplete]);
+
+  const handleSavePartial = useCallback(async () => {
+    if (!currentQ || !selectedForCurrent || !onSavePartialAnswer) return;
+    setPartialErr('');
+    setPartialOk(false);
+    setPartialSaving(true);
+    try {
+      await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+      setPartialOk(true);
+      window.setTimeout(() => setPartialOk(false), 2200);
+    } catch (e) {
+      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+    } finally {
+      setPartialSaving(false);
+    }
+  }, [currentQ, selectedForCurrent, onSavePartialAnswer]);
+
+  if (total === 0) return null;
+
+  const letters = ['A', 'B', 'C', 'D'] as const;
+
+  if (!fs) {
+    return (
+      <div
+        className="relative flex min-h-0 w-full flex-col rounded-[24px] py-6 px-3 sm:px-6 md:px-10"
+        style={{ backgroundColor: '#F3F5FA' }}
+      >
+        <div className="pointer-events-none absolute inset-y-0 left-0 right-0 flex items-center justify-between px-0 sm:px-1 md:-mx-2">
+          <button
+            type="button"
+            onClick={goPrev}
+            disabled={step <= -1}
+            className="pointer-events-auto z-10 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm transition hover:bg-gray-50 disabled:opacity-35 disabled:hover:bg-white"
+            aria-label="Zpět"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </button>
+          <button
+            type="button"
+            onClick={goNext}
+            disabled={
+              step === -1 ? false : step >= 0 && step < total ? !selectedForCurrent : true
+            }
+            className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
+            style={{ backgroundColor: PURPLE }}
+            aria-label={step === total - 1 ? 'Dokončit' : 'Další'}
+          >
+            <ChevronRight className="h-6 w-6" />
+          </button>
+        </div>
+
+        <div className="relative z-[1] mx-auto flex w-full min-h-0 max-w-[640px] flex-col px-11 sm:px-10 md:px-6">
+          <div className="mb-6">
+            {useFlowProgress ? (
+              <SurveyFlowProgressBar total={flowProgressTotal} filled={flowProgressFilled} className="mb-0" />
+            ) : (
+              <div className="flex justify-center gap-1.5 px-2">
+                {Array.from({ length: total }, (_, i) => (
+                  <div
+                    key={i}
+                    className="h-1.5 max-w-[48px] flex-1 rounded-full transition-colors duration-300"
+                    style={{
+                      backgroundColor: i < filledQuestionSlots ? NAVY : 'rgba(0,17,97,0.12)',
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
+          <AnimatePresence mode="wait">
+            {step === -1 && (
+              <motion.div
+                key="intro"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+                className="rounded-[20px] border-4 p-6 text-center shadow-sm sm:p-10"
+                style={{ borderColor: NAVY, backgroundColor: INTRO_FILL }}
+              >
+                <p style={{ ...FF, color: NAVY }} className="text-[15px] font-medium sm:text-[16px]">
+                  {'Vědomostní test pro získání'}
+                </p>
+                <p
+                  style={{ ...COOPER, color: NAVY }}
+                  className="mt-3 text-[28px] leading-tight tracking-tight sm:text-[36px]"
+                >
+                  {'Certifikátu DVPP'}
+                </p>
+                <p style={{ ...FF, color: NAVY }} className="mt-5 text-[14px] leading-relaxed opacity-90 sm:text-[15px]">
+                  {'Po webináři '}
+                  <span className="font-semibold">{`„${webinarTitle}“`}</span>
+                </p>
+              </motion.div>
+            )}
+
+            {currentQ && (
+              <motion.div
+                key={currentQ.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.2 }}
+                className="rounded-[22px] bg-white p-6 shadow-[0_8px_40px_rgba(0,17,97,0.08)] ring-1 ring-[#001161]/6 sm:p-8"
+              >
+                <p
+                  style={{ ...FF, color: '#334155' }}
+                  className="text-center text-[21px] font-bold leading-snug sm:text-[24px] sm:leading-snug"
+                >
+                  {currentQ.label}
+                </p>
+
+                <div className="mt-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {currentQ.options.slice(0, 4).map((opt, oi) => {
+                    const letter = letters[oi];
+                    const sel = answers[currentQ.id] === opt;
+                    return (
+                      <button
+                        key={`${currentQ.id}-${oi}`}
+                        type="button"
+                        onClick={() => onAnswerChange(currentQ.id, opt)}
+                        className={`flex w-full items-stretch gap-3 rounded-2xl border-2 px-3 py-3 text-left transition-all ${
+                          sel
+                            ? 'border-[#7C3AED] bg-[#7C3AED]/[0.06] shadow-sm'
+                            : 'border-[#E2E8F0] bg-white hover:border-[#001161]/20 hover:bg-slate-50/80'
+                        }`}
+                      >
+                        <span
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[14px] font-bold"
+                          style={{
+                            ...FF,
+                            color: sel ? PURPLE : '#64748B',
+                            backgroundColor: sel ? 'rgba(124,58,237,0.12)' : '#F1F5F9',
+                          }}
+                        >
+                          {letter}
+                        </span>
+                        <span
+                          style={{ ...FF, color: '#334155' }}
+                          className="flex min-h-[44px] items-center text-[16px] font-normal leading-snug sm:text-[17px]"
+                        >
+                          {opt}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {onSavePartialAnswer && currentQ && selectedForCurrent ? (
+                  <div className="mt-5 flex flex-col items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={partialSaving}
+                      onClick={() => void handleSavePartial()}
+                      className={ANSWER_BTN}
+                      style={FF}
+                    >
+                      {partialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      {'Odpov\u011bd\u011bt'}
+                    </button>
+                    {partialErr ? (
+                      <p style={FF} className="text-center text-[12px] text-red-600">
+                        {partialErr}
+                      </p>
+                    ) : null}
+                    {partialOk ? (
+                      <p style={FF} className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
+                        <Check className="h-4 w-4 shrink-0" />
+                        {'Ulo\u017eeno'}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <p style={{ ...FF }} className="mt-6 text-center text-[12px] text-slate-400">
+                  {step + 1}
+                  {' / '}
+                  {total}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Fullscreen: layout jako Vividbooks40 ABCSlideView (desktop bez obrázku) ── */
+  return (
+    <div
+      className="relative flex min-h-0 flex-1 flex-col overflow-hidden pt-[max(0.25rem,env(safe-area-inset-top))]"
+      style={{ backgroundColor: BG_STAGE }}
+    >
+      {/* Mobil: šipky v horním řádku; md+: po stranách, vertikálně uprostřed */}
+      <div
+        className="pointer-events-none absolute left-0 right-0 z-20 flex items-center justify-between px-3 sm:px-4
+          max-md:top-0 max-md:min-h-[3.5rem] max-md:pt-[max(0.35rem,env(safe-area-inset-top))] max-md:pb-2
+          md:inset-y-0 md:min-h-0 md:px-5 md:py-0 md:pt-0 md:pb-0"
+      >
+        <button
+          type="button"
+          onClick={goPrev}
+          disabled={step <= -1}
+          className="pointer-events-auto flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200/90 bg-white/95 text-slate-500 shadow-md backdrop-blur-sm transition hover:bg-white disabled:opacity-30"
+          aria-label="Zpět"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+        <button
+          type="button"
+          onClick={goNext}
+          disabled={step === -1 ? false : step >= 0 && step < total ? !selectedForCurrent : true}
+          className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
+          aria-label={step === total - 1 ? 'Dokončit' : 'Další'}
+        >
+          <ChevronRight className="h-7 w-7" />
+        </button>
+      </div>
+
+      <div className="relative z-[1] mx-auto flex min-h-0 w-full max-w-[min(1120px,100%)] flex-1 flex-col px-4 max-md:pt-16 sm:px-6 md:px-8 md:pt-0">
+        {/* Progress nad „slide“ — mimo bílou kartu */}
+        <div className="mb-3 shrink-0 pt-1 sm:mb-4">
+          {useFlowProgress ? (
+            <SurveyFlowProgressBar total={flowProgressTotal} filled={flowProgressFilled} />
+          ) : (
+            <div className="flex justify-center gap-1.5 px-2">
+              {Array.from({ length: total }, (_, i) => (
+                <div
+                  key={i}
+                  className="h-1.5 max-w-[56px] flex-1 rounded-full transition-colors duration-300 sm:max-w-[64px]"
+                  style={{
+                    backgroundColor: i < filledQuestionSlots ? NAVY : 'rgba(0,17,97,0.1)',
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[1.65rem] bg-white shadow-[0_24px_64px_-18px_rgba(15,23,42,0.14)] ring-1 ring-slate-200/80 sm:rounded-[2rem]">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <AnimatePresence mode="wait">
+              {step === -1 && (
+                <motion.div
+                  key="intro"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex min-h-0 flex-1 flex-col p-3 sm:p-4 md:p-5"
+                >
+                  <div
+                    className="flex min-h-0 w-full flex-1 flex-col justify-center rounded-[18px] border-4 px-5 py-8 text-center shadow-inner sm:rounded-[22px] sm:px-8 sm:py-12 md:px-12"
+                    style={{ borderColor: NAVY, backgroundColor: INTRO_FILL }}
+                  >
+                    <p style={{ ...FF, color: NAVY }} className="text-[16px] font-medium sm:text-[18px]">
+                      {'Vědomostní test pro získání'}
+                    </p>
+                    <p
+                      style={{ ...COOPER, color: NAVY }}
+                      className="mt-4 text-[clamp(1.75rem,5vw,2.75rem)] leading-tight tracking-tight"
+                    >
+                      {'Certifikátu DVPP'}
+                    </p>
+                    <p style={{ ...FF, color: NAVY }} className="mt-6 text-[15px] leading-relaxed opacity-90 sm:text-[16px]">
+                      {'Po webináři '}
+                      <span className="font-semibold">{`„${webinarTitle}“`}</span>
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
+              {currentQ && (
+                <motion.div
+                  key={currentQ.id}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -8 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex min-h-0 flex-1 flex-col"
+                >
+                  {/* Horní část ~ jako Vividboard: otázka vycentrovaná */}
+                  <div className="flex min-h-0 flex-[1.15] flex-col items-center justify-center px-5 py-4 sm:px-12 sm:py-6 md:px-14">
+                    <p
+                      style={{ ...FF, color: QUESTION_MUTED }}
+                      className="max-w-4xl text-center text-[clamp(1.35rem,3.5vw,2.05rem)] font-bold leading-snug md:leading-relaxed md:text-[1.85rem] lg:text-[2.1rem]"
+                    >
+                      {currentQ.label}
+                    </p>
+                  </div>
+
+                  <div className="flex min-h-0 flex-1 flex-col justify-end pb-5 sm:pb-7">
+                    <div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-3 px-4 sm:grid-cols-2 sm:gap-4 sm:px-6 md:px-10">
+                      {currentQ.options.slice(0, 4).map((opt, oi) => {
+                        const letter = letters[oi];
+                        const sel = answers[currentQ.id] === opt;
+                        return (
+                          <button
+                            key={`${currentQ.id}-${oi}`}
+                            type="button"
+                            onClick={() => onAnswerChange(currentQ.id, opt)}
+                            className={`relative flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all md:gap-4 md:p-4 ${
+                              sel
+                                ? 'border-indigo-500 bg-indigo-50 shadow-sm'
+                                : 'border-slate-100 bg-white hover:border-indigo-200 hover:shadow-md'
+                            }`}
+                          >
+                            <span
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold md:h-10 md:w-10 md:text-[14px]"
+                              style={{
+                                ...FF,
+                                backgroundColor: sel ? '#c7d2fe' : '#cbd5e1',
+                                color: sel ? '#3730a3' : '#475569',
+                              }}
+                            >
+                              {letter}
+                            </span>
+                            <span
+                              style={{ ...FF, color: QUESTION_MUTED }}
+                              className="flex min-h-[48px] flex-1 items-center text-[16px] font-medium leading-snug md:text-[18px] md:leading-relaxed"
+                            >
+                              {opt}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {onSavePartialAnswer && currentQ && selectedForCurrent ? (
+                      <div className="mt-4 flex flex-col items-center gap-2 sm:mt-5">
+                        <button
+                          type="button"
+                          disabled={partialSaving}
+                          onClick={() => void handleSavePartial()}
+                          className={`${ANSWER_BTN} py-3 text-[15px] shadow-lg`}
+                          style={FF}
+                        >
+                          {partialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                          {'Odpov\u011bd\u011bt'}
+                        </button>
+                        {partialErr ? (
+                          <p style={FF} className="text-center text-[12px] text-red-600">
+                            {partialErr}
+                          </p>
+                        ) : null}
+                        {partialOk ? (
+                          <p style={FF} className="flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
+                            <Check className="h-4 w-4 shrink-0" />
+                            {'Ulo\u017eeno'}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <p style={{ ...FF }} className="mt-4 text-center text-[12px] text-slate-400 sm:mt-5">
+                      {step + 1}
+                      {' / '}
+                      {total}
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -20,6 +20,8 @@ export interface DvppVideo {
   orangeButtonText: string;
   orangeButtonLink: string;
   greyButtonText: string;
+  /** Stejné jako u webináře v CMS — `survey` = interní DVPP dotazník místo externího odkazu. */
+  certificateLinkMode?: 'external' | 'survey';
   topicIds: string[];
   description: string;
 }

@@ -8,6 +8,11 @@ export interface Webinar {
   monthNum: number;
   year: number;
   time: string;
+  /**
+   * Odhadovaná délka (min). Používá se k automatickému přepnutí na „minulý“ po skončení
+   * (začátek + délka) a v sekci Uplynulé webináře. Výchozí 120 min, lze přepsat env na serveru.
+   */
+  durationMinutes?: number;
   lecturer: string;
   lecturerAvatar: string;
   coverImage?: string;
@@ -49,6 +54,41 @@ export interface Webinar {
    * Stejné jako přepínač „Začíná za chvíli“ po uložení — pro test Mandrill šablon.
    */
   devSimulateReminderT30?: boolean;
+  /**
+   * Minulý webinář — otázky k ověření pochopení tématu (typicky z přepisu, pro DVPP).
+   * Ve veřejném API se neposílá `correctIndex` (jen admin).
+   */
+  postWebinarQuizQuestions?: PostWebinarQuizQuestion[];
+  /**
+   * Krátké shrnutí po webináři (HTML) — styl blogu, blok „co jsme se dozvěděli“ do e-mailu / Mailchimp.
+   */
+  postWebinarLearningsHtml?: string;
+  /**
+   * Druhá část zpětné vazby po DVPP (slide průvodce). `undefined` = výchozí kroky z kódu;
+   * prázdné pole `[]` = sekce vypnuta.
+   */
+  postWebinarPart2?: PostWebinarPart2Step[];
+  /** Odkaz na externí vyžádání certifikátu (Google Form apod.) — z adminu / Webflow. */
+  certificateUrl?: string;
+  /** Text tlačítka k `certificateUrl` (např. „Certifikát DVPP“). */
+  greyButtonText?: string;
+  /**
+   * Certifikát DVPP: `external` = vlastní URL (`certificateUrl`), `survey` = dotazník na webu (`/webinar/…/dvpp-dotaznik`).
+   * Bez hodnoty se bere jako `external` (zpětná kompatibilita).
+   */
+  certificateLinkMode?: 'external' | 'survey';
+}
+
+/** Kvíz po minulém webináři (výběr z možností). */
+export interface PostWebinarQuizQuestion {
+  id: string;
+  type: 'abc';
+  /** Text otázky */
+  label: string;
+  /** Přesně 4 možnosti */
+  options: string[];
+  /** Index správné odpovědi 0–3 — jen pro admin / vyhodnocení */
+  correctIndex?: number;
 }
 
 /** Typ otázky: otevřená / výběr z možností / Ano–Ne */
@@ -61,6 +101,21 @@ export interface WebinarSurveyQuestion {
   /** Pro `abc` — alespoň 2 možnosti */
   options?: string[];
 }
+
+/**
+ * Druhá část dotazníku po webináři (slide průvodce, stejný „stage“ styl jako DVPP).
+ * Úvodní krok se neodesílá; `open` / `abc` jdou do `answers` podle `id`.
+ */
+export type PostWebinarPart2Step =
+  | { type: 'intro'; id: string; title: string; subtitle?: string }
+  | {
+      type: 'open';
+      id: string;
+      label: string;
+      sublabel?: string;
+      placeholder?: string;
+    }
+  | { type: 'abc'; id: string; label: string; options: string[] };
 
 const AVATAR = 'https://images.unsplash.com/photo-1769628027250-d2a7a5a4eb64?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxiZWFyZGVkJTIwbWFsZSUyMHRlYWNoZXIlMjBwcm9mZXNzaW9uYWwlMjBwb3J0cmFpdHxlbnwxfHx8fDE3NzIzNTYzMDR8MA&ixlib=rb-4.1.0&q=80&w=200';
 

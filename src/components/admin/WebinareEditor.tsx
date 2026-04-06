@@ -15,7 +15,7 @@ import { useWebinars } from '../../contexts/WebinarsContext';
 import type { Webinar, WebinarSurveyQuestion, WebinarSurveyQuestionType } from '../../data/webinars';
 import { DEFAULT_WEBINAR_SURVEY_QUESTIONS } from '../../utils/webinarSurveyDefaults';
 import { ImagePicker } from './ImagePicker';
-import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
+import { compareWebinarsBySchedule, computeWebinarIsPastFromSchedule, DEFAULT_WEBINAR_DURATION_MIN } from '../../utils/webinarEventTimestamp';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -36,6 +36,7 @@ function emptyWebinar(): Partial<Webinar> {
     relatedSubjects: [], tags: [], highlightQuote: '',
     mailchimpTagName: '',
     thumbnailVariant: 1, isPast: false,
+    durationMinutes: DEFAULT_WEBINAR_DURATION_MIN,
     surveyEnabled: true,
     surveyQuestions: [],
   };
@@ -253,6 +254,33 @@ export default function WebinareEditor() {
     }
   }
 
+  async function sendRegistrationConfirmationTest() {
+    const id = selected?.id;
+    if (!id || isNew) return;
+    setReminderTestBusy(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/webinar-registration-test-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ webinarId: id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+        return;
+      }
+      if (data.ok) {
+        toast.success(`Potvrzovací mail odeslán na ${data.to}.`);
+      } else {
+        toast.error(data.detail || 'Mandrill neodeslal — zkontrolujte Centrálu alertů.');
+      }
+    } catch (e: any) {
+      toast.error(e.message || String(e));
+    } finally {
+      setReminderTestBusy(false);
+    }
+  }
+
   const descEditor = useEditor({
     extensions: [
       StarterKit,
@@ -352,14 +380,16 @@ export default function WebinareEditor() {
       if (key === 'monthNum') {
         next.monthName = MONTHS_CS[Number(value) - 1] || 'Leden';
       }
-      // auto-compute isPast from date
-      if (key === 'day' || key === 'monthNum' || key === 'year') {
-        const d = new Date(
-          key === 'year' ? Number(value) : (prev.year || now.getFullYear()),
-          (key === 'monthNum' ? Number(value) : (prev.monthNum || 1)) - 1,
-          key === 'day' ? Number(value) : (prev.day || 1)
-        );
-        next.isPast = d < now;
+      /* Minulý = po skončení (datum + čas + odhad délky), ne jen po půlnoci dne akce. */
+      if (key === 'day' || key === 'monthNum' || key === 'year' || key === 'time' || key === 'durationMinutes') {
+        next.isPast = computeWebinarIsPastFromSchedule({
+          year: next.year ?? now.getFullYear(),
+          monthNum: next.monthNum ?? 1,
+          day: next.day ?? 1,
+          time: next.time ?? '18:00',
+          durationMinutes:
+            typeof next.durationMinutes === 'number' && next.durationMinutes > 0 ? next.durationMinutes : undefined,
+        });
       }
       if (key === 'title' && !slugManual) next.slug = slugify(String(value));
       return next;
@@ -689,7 +719,7 @@ export default function WebinareEditor() {
                       </div>
                       <div className="mt-2 space-y-2">
                         <p className="text-[10px] text-gray-500 leading-snug px-0.5">
-                          {'Nejrychlej\u0161\xed test: ode\u0161lete si zku\u0161ebn\xed p\u0159ipom\xednku na e-mail prvn\xed registrace (bez cronu). P\u0159ep\xedna\u010de v\xfdvoje jen \u0159\xedd\xed automatick\xfd b\u011bh cronu.'}
+                          {'Nejrychlej\u0161\xed test: ode\u0161lete si zku\u0161ebn\xed mail na e-mail prvn\xed registrace (bez cronu). P\u0159ep\xedna\u010de v\xfdvoje jen \u0159\xedd\xed automatick\xfd b\u011bh p\u0159ipom\xednek.'}
                         </p>
                         <div className="flex flex-wrap gap-2">
                           <button
@@ -707,6 +737,14 @@ export default function WebinareEditor() {
                             className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white transition-colors"
                           >
                             {reminderTestBusy ? '\u2026' : 'Test mail \u201eZa chv\xedli\u201c'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={reminderTestBusy}
+                            onClick={() => void sendRegistrationConfirmationTest()}
+                            className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-sky-600 hover:bg-sky-700 disabled:opacity-50 text-white transition-colors"
+                          >
+                            {reminderTestBusy ? '\u2026' : 'Test mail po registraci'}
                           </button>
                         </div>
                         <p className="text-[10px] text-gray-400 leading-snug px-0.5">
@@ -726,7 +764,7 @@ export default function WebinareEditor() {
                   <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5" /> Datum a čas
                   </h3>
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                     <div>
                       <label className="text-[11px] font-bold text-gray-500 block mb-1">Den</label>
                       <input type="number" min={1} max={31} value={selected.day || 1} onChange={e => updateField('day', Number(e.target.value))}
@@ -754,11 +792,38 @@ export default function WebinareEditor() {
                         placeholder="18:00"
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                     </div>
+                    <div>
+                      <label className="text-[11px] font-bold text-gray-500 block mb-1" title="Od začátku do odhadovaného konce — pak se webinář sám označí jako minulý">
+                        Délka (min)
+                      </label>
+                      <input
+                        type="number"
+                        min={30}
+                        max={600}
+                        value={selected.durationMinutes ?? DEFAULT_WEBINAR_DURATION_MIN}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            updateField('durationMinutes', undefined);
+                            return;
+                          }
+                          const n = Number(raw);
+                          updateField('durationMinutes', Number.isFinite(n) && n > 0 ? n : undefined);
+                        }}
+                        className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
+                      />
+                    </div>
                   </div>
+                  <p className="text-[10px] text-gray-400 leading-snug">
+                    Po skončení (čas začátku + délka) se webinář v úložišti označí jako minulý — objeví se v záložce Uplynulé (cron nebo uložení v editoru). Výchozí délku lze změnit env{' '}
+                    <code className="text-[9px] bg-gray-100 px-1 rounded">WEBINAR_DEFAULT_DURATION_MIN</code>
+                    {' '}na serveru.
+                  </p>
                   <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl text-[12px] text-gray-500">
                     <span>Datum webináře:</span>
                     <span className="font-bold text-[#001161]">
                       {selected.day}. {MONTHS_CS[(selected.monthNum || 1) - 1]} {selected.year} od {selected.time}
+                      {' '}(cca {selected.durationMinutes ?? DEFAULT_WEBINAR_DURATION_MIN} min)
                     </span>
                     <span className={`ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full ${
                       selected.isPast ? 'bg-gray-200 text-gray-500' : 'bg-purple-100 text-purple-700'

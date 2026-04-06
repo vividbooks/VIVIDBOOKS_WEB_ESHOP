@@ -88,6 +88,14 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/DvppVideoDetailPage'), 'DvppVideoDetailPage'),
             },
             {
+              path: 'webinar/:id/dotaznik',
+              lazy: lazyNamed(() => import('./components/WebinarSurveyRedirectRoute'), 'WebinarSurveyRedirectRoute'),
+            },
+            {
+              path: 'webinar/:id/dvpp-dotaznik',
+              lazy: lazyNamed(() => import('./components/WebinarDvppDotaznikRedirectRoute'), 'WebinarDvppDotaznikRedirectRoute'),
+            },
+            {
               path: 'webinar/:id',
               lazy: lazyNamed(() => import('./components/WebinarDetailRoute'), 'WebinarDetailRoute'),
             },
@@ -99,6 +107,7 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/NovinkaDetailRoute'), 'NovinkaDetailRoute'),
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
           ],

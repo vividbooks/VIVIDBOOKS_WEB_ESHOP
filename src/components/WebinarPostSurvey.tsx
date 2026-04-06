@@ -1,9 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { ClipboardList, Loader2 } from 'lucide-react';
-import type { Webinar } from '../data/webinars';
-import { getResolvedWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
+import { Check, ClipboardList, Loader2 } from 'lucide-react';
+import type { PostWebinarQuizQuestion, Webinar } from '../data/webinars';
+import {
+  getMergedWebinarSurveyQuestions,
+  getPostWebinarPart2AnswerIds,
+  getPostWebinarPart2Steps,
+  getPreWebinarSurveyQuestions,
+  webinarPostWebinarQuizAsSurveyQuestions,
+} from '../utils/webinarSurveyDefaults';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { WebinarDvppCertificateSuccess } from './WebinarDvppCertificateSuccess';
+import { WebinarDvppQuizPlayer } from './WebinarDvppQuizPlayer';
+import { WebinarPostSurveyPart2Player } from './WebinarPostSurveyPart2Player';
+import { SurveyFlowProgressBar } from './SurveyFlowProgressBar';
+import { saveWebinarSurveyPartialAnswer } from '../utils/webinarSurveyPartialSave';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -28,40 +39,148 @@ export function WebinarPostSurvey({
   webinar,
   email,
   onAnswersChange,
+  variant = 'default',
+  scope = 'post',
+  participantName = '',
 }: {
   webinar: Webinar;
   email: string;
   /** Aktuální odpovědi — pro rodiče (např. zobrazení trial jen při „Nepoužívám“). */
   onAnswersChange?: (answers: Record<string, string>) => void;
+  /** `pre` = jen otázky před webinářem (bez DVPP). `post` = DVPP + dotazník po akci. */
+  scope?: 'pre' | 'post';
+  /** Celostránkový režim (`?dvppDotaznik=1`): bez horního okraje, kvíz vyplní šířku/výšku. */
+  variant?: 'default' | 'fullscreen';
+  /** Jméno z registrace — do potvrzení / certifikátu po odeslání. */
+  participantName?: string;
 }) {
-  const questions = useMemo(() => getResolvedWebinarSurveyQuestions(webinar), [webinar]);
+  const fs = variant === 'fullscreen';
+  const mergedQuestions = useMemo(
+    () =>
+      scope === 'pre'
+        ? getPreWebinarSurveyQuestions(webinar)
+        : getMergedWebinarSurveyQuestions(webinar),
+    [webinar, scope],
+  );
+  const dvppIds = useMemo(
+    () =>
+      scope === 'pre'
+        ? new Set<string>()
+        : new Set(webinarPostWebinarQuizAsSurveyQuestions(webinar).map((q) => q.id)),
+    [webinar, scope],
+  );
+  const part2AnswerIds = useMemo(
+    () => (scope === 'post' ? getPostWebinarPart2AnswerIds(webinar) : new Set<string>()),
+    [webinar, scope],
+  );
+
+  const part2Steps = useMemo(
+    () => (scope === 'post' ? getPostWebinarPart2Steps(webinar) : []),
+    [webinar, scope],
+  );
+
+  const restQuestions = useMemo(
+    () => mergedQuestions.filter((q) => !dvppIds.has(q.id) && !part2AnswerIds.has(q.id)),
+    [mergedQuestions, dvppIds, part2AnswerIds],
+  );
+
+  const dvppRaw = useMemo((): PostWebinarQuizQuestion[] => {
+    if (scope === 'pre') return [];
+    const raw = webinar.postWebinarQuizQuestions;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (q): q is PostWebinarQuizQuestion =>
+        !!q &&
+        q.type === 'abc' &&
+        typeof q.label === 'string' &&
+        q.label.trim().length > 0 &&
+        Array.isArray(q.options) &&
+        q.options.length >= 2,
+    );
+  }, [webinar, scope]);
+
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   const [skipped, setSkipped] = useState(false);
+  /** Po dokončení průvodce DVPP se zobrazí zbytek dotazníku (otevřené otázky). */
+  const [dvppPhaseDone, setDvppPhaseDone] = useState(false);
+  /** Po druhé části (slide zpětná vazba) formulář se zbylými otázkami z CMS / výchozími. */
+  const [part2PhaseDone, setPart2PhaseDone] = useState(false);
+  const [dvppNavStep, setDvppNavStep] = useState(-1);
+  const [part2NavStep, setPart2NavStep] = useState(0);
+  const [restPartialSavingId, setRestPartialSavingId] = useState<string | null>(null);
+  const [restPartialFlashId, setRestPartialFlashId] = useState<string | null>(null);
+  const [restPartialErr, setRestPartialErr] = useState('');
 
   useEffect(() => {
     onAnswersChange?.(answers);
   }, [answers, onAnswersChange]);
 
-  if (questions.length === 0 || skipped) return null;
+  const autoSubmitEmptyRestRef = useRef(false);
 
-  if (done) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="w-full mt-6 pt-6 border-t border-[#001161]/10 text-left"
-      >
-        <p style={FF} className="text-[13px] text-[#001161]/70">
-          {'D\u011bkujeme za odpov\u011bdi \u2014 pom\u016fh\u00e1 n\u00e1m to p\u0159ipravit obsah.'}
-        </p>
-      </motion.div>
-    );
-  }
+  useEffect(() => {
+    setDvppNavStep(-1);
+    setPart2NavStep(0);
+    autoSubmitEmptyRestRef.current = false;
+  }, [webinar.id]);
 
-  const submit = async () => {
+  const postFlow = scope === 'post';
+  const dvppSeg = postFlow && dvppRaw.length > 0 ? 1 + dvppRaw.length : 0;
+  const part2Seg = postFlow ? part2Steps.length : 0;
+  const restSeg = postFlow ? 1 : 0;
+  const certSeg = postFlow ? 1 : 0;
+  const totalProgressSegments = postFlow ? dvppSeg + part2Seg + restSeg + certSeg : 0;
+
+  const showDvppWizard = dvppRaw.length > 0 && !dvppPhaseDone;
+  const showPart2Wizard =
+    scope === 'post' &&
+    part2Steps.length > 0 &&
+    !part2PhaseDone &&
+    (dvppRaw.length === 0 || dvppPhaseDone);
+
+  const globalSegmentIndex = useMemo(() => {
+    if (!postFlow || totalProgressSegments === 0) return 0;
+    if (done) return totalProgressSegments;
+    if (showDvppWizard) {
+      if (dvppNavStep < 0) return 0;
+      return Math.min(1 + dvppNavStep, dvppSeg);
+    }
+    if (showPart2Wizard) {
+      return Math.min(dvppSeg + part2NavStep, dvppSeg + part2Seg);
+    }
+    return dvppSeg + part2Seg;
+  }, [
+    postFlow,
+    totalProgressSegments,
+    done,
+    showDvppWizard,
+    showPart2Wizard,
+    dvppNavStep,
+    part2NavStep,
+    dvppSeg,
+    part2Seg,
+  ]);
+
+  const progressFilled = useMemo(() => {
+    if (!postFlow || totalProgressSegments === 0) return 0;
+    if (done) return totalProgressSegments;
+    let filled = globalSegmentIndex;
+    if (!showDvppWizard && !showPart2Wizard && filled === 0 && totalProgressSegments > 0) {
+      filled = 1;
+    }
+    return Math.min(filled, totalProgressSegments);
+  }, [
+    postFlow,
+    totalProgressSegments,
+    done,
+    globalSegmentIndex,
+    showDvppWizard,
+    showPart2Wizard,
+  ]);
+
+  const submit = useCallback(async () => {
     setSubmitting(true);
     setError('');
     try {
@@ -98,88 +217,397 @@ export function WebinarPostSurvey({
     } finally {
       setSubmitting(false);
     }
-  };
+  }, [answers, email, webinar.id]);
+
+  const savePartialAnswer = useCallback(
+    async (questionId: string, value: string) => {
+      if (scope !== 'post') return;
+      const r = await saveWebinarSurveyPartialAnswer({
+        webinarId: String(webinar.id ?? '').trim(),
+        email: email.trim(),
+        questionId,
+        value,
+      });
+      if (!r.ok) throw new Error(r.error || 'Chyba');
+    },
+    [scope, webinar.id, email],
+  );
+
+  const saveRestQuestionPartial = useCallback(
+    async (q: { id: string; type: string }) => {
+      if (scope !== 'post') return;
+      const raw = (answers[q.id] || '').trim();
+      if (!raw) return;
+      setRestPartialErr('');
+      setRestPartialSavingId(q.id);
+      try {
+        const r = await saveWebinarSurveyPartialAnswer({
+          webinarId: String(webinar.id ?? '').trim(),
+          email: email.trim(),
+          questionId: q.id,
+          value: raw,
+        });
+        if (!r.ok) throw new Error(r.error || 'Chyba');
+        setRestPartialFlashId(q.id);
+        window.setTimeout(() => {
+          setRestPartialFlashId((cur) => (cur === q.id ? null : cur));
+        }, 2200);
+      } catch (e) {
+        setRestPartialErr(e instanceof Error ? e.message : 'Chyba');
+      } finally {
+        setRestPartialSavingId(null);
+      }
+    },
+    [scope, webinar.id, email, answers],
+  );
+
+  useEffect(() => {
+    if (scope !== 'post') return;
+    if (done || skipped) return;
+    if (mergedQuestions.length === 0) return;
+    if (showDvppWizard || showPart2Wizard) return;
+    if (restQuestions.length > 0) return;
+    if (submitting) return;
+    if (autoSubmitEmptyRestRef.current) return;
+    autoSubmitEmptyRestRef.current = true;
+    void submit();
+  }, [
+    scope,
+    done,
+    skipped,
+    mergedQuestions.length,
+    showDvppWizard,
+    showPart2Wizard,
+    restQuestions.length,
+    submitting,
+    submit,
+  ]);
+
+  if (done) {
+    if (scope === 'post') {
+      return (
+        <div
+          className={
+            fs ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto' : 'w-full'
+          }
+        >
+          {totalProgressSegments > 0 ? (
+            <div
+              className={
+                fs
+                  ? 'shrink-0 px-4 pt-4 sm:px-6'
+                  : 'mb-4 flex justify-center px-2'
+              }
+            >
+              <SurveyFlowProgressBar total={totalProgressSegments} filled={totalProgressSegments} />
+            </div>
+          ) : null}
+          <WebinarDvppCertificateSuccess
+            webinar={webinar}
+            email={email}
+            participantName={participantName}
+            variant={fs ? 'fullscreen' : 'default'}
+            certificateKind={dvppRaw.length > 0 ? 'dvpp' : 'feedback'}
+          />
+        </div>
+      );
+    }
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={
+          fs
+            ? 'flex min-h-0 flex-1 flex-col items-center justify-center px-4 py-12 text-center'
+            : 'w-full mt-6 border-t border-[#001161]/10 pt-6 text-left'
+        }
+      >
+        <p style={FF} className="text-[13px] text-[#001161]/70">
+          {'D\u011bkujeme za odpov\u011bdi \u2014 pom\u016fh\u00e1 n\u00e1m to p\u0159ipravit obsah.'}
+        </p>
+      </motion.div>
+    );
+  }
+
+  if (mergedQuestions.length === 0 || skipped) return null;
+
+  if (showDvppWizard) {
+    return (
+      <motion.div
+        id="webinar-dotaznik"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={
+          fs
+            ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto'
+            : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
+        }
+      >
+        <WebinarDvppQuizPlayer
+          variant={fs ? 'fullscreen' : 'default'}
+          webinarTitle={webinar.title}
+          questions={dvppRaw}
+          answers={answers}
+          onAnswerChange={(id, opt) => setAnswers((a) => ({ ...a, [id]: opt }))}
+          onComplete={() => setDvppPhaseDone(true)}
+          flowProgressTotal={totalProgressSegments}
+          flowProgressFilled={progressFilled}
+          onStepChange={setDvppNavStep}
+          onSavePartialAnswer={scope === 'post' ? savePartialAnswer : undefined}
+        />
+        {!fs ? (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setSkipped(true)}
+              className="text-[13px] font-semibold text-[#001161]/40 hover:text-[#001161]/70"
+              style={FF}
+            >
+              {'P\u0159esko\u010dit cel\u00fd dotazn\u00edk'}
+            </button>
+          </div>
+        ) : null}
+      </motion.div>
+    );
+  }
+
+  if (showPart2Wizard) {
+    return (
+      <motion.div
+        id="webinar-dotaznik"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={
+          fs
+            ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto'
+            : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
+        }
+      >
+        <WebinarPostSurveyPart2Player
+          variant={fs ? 'fullscreen' : 'default'}
+          steps={part2Steps}
+          answers={answers}
+          onAnswerChange={(id, v) => setAnswers((a) => ({ ...a, [id]: v }))}
+          onComplete={() => setPart2PhaseDone(true)}
+          flowProgressTotal={totalProgressSegments}
+          flowProgressFilled={progressFilled}
+          onStepChange={setPart2NavStep}
+          onSavePartialAnswer={scope === 'post' ? savePartialAnswer : undefined}
+        />
+        {!fs ? (
+          <div className="mt-4 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setSkipped(true)}
+              className="text-[13px] font-semibold text-[#001161]/40 hover:text-[#001161]/70"
+              style={FF}
+            >
+              {'P\u0159esko\u010dit cel\u00fd dotazn\u00edk'}
+            </button>
+          </div>
+        ) : null}
+      </motion.div>
+    );
+  }
+
+  const emptyRestPostFinal =
+    scope === 'post' &&
+    restQuestions.length === 0 &&
+    !showDvppWizard &&
+    !showPart2Wizard;
+
+  if (emptyRestPostFinal) {
+    return (
+      <motion.div
+        id="webinar-dotaznik"
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className={
+          fs
+            ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-8 md:px-12'
+            : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
+        }
+      >
+        {totalProgressSegments > 0 ? (
+          <div
+            className={fs ? 'mx-auto mb-4 w-full max-w-[min(1120px,100%)] shrink-0' : 'mb-4 flex justify-center'}
+          >
+            <SurveyFlowProgressBar total={totalProgressSegments} filled={progressFilled} />
+          </div>
+        ) : null}
+        <div className={fs ? 'mx-auto flex w-full max-w-[min(720px,100%)] flex-col items-center' : 'flex flex-col items-center'}>
+          {error ? (
+            <>
+              <p style={FF} className="mb-3 text-[13px] text-red-600">
+                {error}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={submit}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-5 py-2.5 text-[14px] font-bold text-white shadow-lg shadow-[#001161]/20 transition-all hover:scale-[1.02] disabled:opacity-50"
+                  style={FF}
+                >
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {'Odeslat odpov\u011bdi'}
+                </button>
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => setSkipped(true)}
+                  className="text-[13px] font-semibold text-[#001161]/40 hover:text-[#001161]/70"
+                  style={FF}
+                >
+                  {'P\u0159esko\u010dit'}
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-center py-10" aria-busy="true" aria-live="polite">
+              <Loader2 className="h-8 w-8 animate-spin text-[#001161]" />
+            </div>
+          )}
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
       id="webinar-dotaznik"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full mt-6 pt-6 border-t border-[#001161]/10 text-left"
+      className={
+        fs
+          ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto px-4 py-4 sm:px-8 md:px-12'
+          : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
+      }
     >
-      <div className="flex items-start gap-3 mb-4">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#001161]/8">
-          <ClipboardList className="h-5 w-5 text-[#001161]" />
+      {totalProgressSegments > 0 ? (
+        <div className={fs ? 'mx-auto mb-4 w-full max-w-[min(1120px,100%)] shrink-0' : 'mb-4 flex justify-center'}>
+          <SurveyFlowProgressBar total={totalProgressSegments} filled={progressFilled} />
         </div>
-        <div>
-          <h3 style={FF} className="text-[16px] font-bold text-[#001161] leading-snug">
-            {'Pomozte n\u00e1m porozum\u011bt, kdo p\u0159ich\u00e1z\u00ed na webin\u00e1\u0159'}
-          </h3>
-        </div>
-      </div>
-
-      <div className="space-y-4">
-        {questions.map((q) => (
-          <div key={q.id}>
-            <label style={FF} className="block text-[13px] font-semibold text-[#001161] mb-1.5">
-              {q.label}
-            </label>
-            {q.type === 'open' && (
-              <textarea
-                value={answers[q.id] || ''}
-                onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
-                rows={3}
-                className="w-full rounded-xl border border-[#001161]/12 bg-white px-3 py-2.5 text-[14px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-                style={FF}
-              />
-            )}
-            {q.type === 'abc' && q.options && q.options.length > 0 && (
-              <div className="flex flex-col gap-2">
-                {q.options.map((opt) => (
-                  <label
-                    key={opt}
-                    className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#001161]/10 bg-white px-3 py-2 text-[14px] text-[#001161] hover:bg-[#F0F2F8]"
-                    style={FF}
-                  >
-                    <input
-                      type="radio"
-                      name={q.id}
-                      checked={answers[q.id] === opt}
-                      onChange={() => setAnswers((a) => ({ ...a, [q.id]: opt }))}
-                      className="accent-[#001161]"
-                    />
-                    {opt}
-                  </label>
-                ))}
-              </div>
-            )}
-            {q.type === 'yes_no' && (
-              <div className="flex flex-wrap gap-2">
-                {(
-                  [
-                    { v: 'yes', l: 'Ano' },
-                    { v: 'no', l: 'Ne' },
-                  ] as const
-                ).map(({ v, l }) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => setAnswers((a) => ({ ...a, [q.id]: v }))}
-                    className={`rounded-xl px-4 py-2 text-[14px] font-bold transition-all ${
-                      answers[q.id] === v
-                        ? 'bg-[#001161] text-white shadow-md'
-                        : 'bg-[#F0F2F8] text-[#001161] hover:bg-[#e4e8f4]'
-                    }`}
-                    style={FF}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            )}
+      ) : null}
+      <div className={fs ? 'mx-auto w-full max-w-[min(720px,100%)]' : undefined}>
+      {restQuestions.length > 0 && (
+        <>
+          <div className="flex items-start gap-3 mb-4">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#001161]/8">
+              <ClipboardList className="h-5 w-5 text-[#001161]" />
+            </div>
+            <div>
+              <h3 style={FF} className="text-[16px] font-bold text-[#001161] leading-snug">
+                {'Pomozte n\u00e1m porozum\u011bt, kdo p\u0159ich\u00e1z\u00ed na webin\u00e1\u0159'}
+              </h3>
+            </div>
           </div>
-        ))}
-      </div>
+
+          <div className="space-y-4">
+            {restQuestions.map((q) => (
+              <div key={q.id}>
+                <label style={FF} className="block text-[13px] font-semibold text-[#001161] mb-1.5">
+                  {q.label}
+                </label>
+                {q.type === 'open' && (
+                  <textarea
+                    value={answers[q.id] || ''}
+                    onChange={(e) => setAnswers((a) => ({ ...a, [q.id]: e.target.value }))}
+                    rows={3}
+                    className="w-full rounded-xl border border-[#001161]/12 bg-white px-3 py-2.5 text-[14px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                    style={FF}
+                  />
+                )}
+                {q.type === 'abc' && q.options && q.options.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {q.options.map((opt) => (
+                      <label
+                        key={opt}
+                        className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#001161]/10 bg-white px-3 py-2 text-[14px] text-[#001161] hover:bg-[#F0F2F8]"
+                        style={FF}
+                      >
+                        <input
+                          type="radio"
+                          name={q.id}
+                          checked={answers[q.id] === opt}
+                          onChange={() => setAnswers((a) => ({ ...a, [q.id]: opt }))}
+                          className="accent-[#001161]"
+                        />
+                        {opt}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {q.type === 'yes_no' && (
+                  <div className="flex flex-wrap gap-2">
+                    {(
+                      [
+                        { v: 'yes', l: 'Ano' },
+                        { v: 'no', l: 'Ne' },
+                      ] as const
+                    ).map(({ v, l }) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setAnswers((a) => ({ ...a, [q.id]: v }))}
+                        className={`rounded-xl px-4 py-2 text-[14px] font-bold transition-all ${
+                          answers[q.id] === v
+                            ? 'bg-[#001161] text-white shadow-md'
+                            : 'bg-[#F0F2F8] text-[#001161] hover:bg-[#e4e8f4]'
+                        }`}
+                        style={FF}
+                      >
+                        {l}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {scope === 'post' ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={
+                        restPartialSavingId === q.id ||
+                        !(
+                          (q.type === 'open' && (answers[q.id] || '').trim()) ||
+                          (q.type === 'abc' &&
+                            q.options &&
+                            q.options.length > 0 &&
+                            !!(answers[q.id] || '').trim()) ||
+                          (q.type === 'yes_no' &&
+                            (answers[q.id] === 'yes' || answers[q.id] === 'no'))
+                        )
+                      }
+                      onClick={() => void saveRestQuestionPartial(q)}
+                      className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-5 py-2 text-[13px] font-bold text-white shadow-md shadow-[#001161]/20 transition hover:bg-[#001a8c] disabled:opacity-45"
+                      style={FF}
+                    >
+                      {restPartialSavingId === q.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      {'Odpov\u011bd\u011bt'}
+                    </button>
+                    {restPartialFlashId === q.id ? (
+                      <span
+                        style={FF}
+                        className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-600"
+                      >
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                        {'Ulo\u017eeno'}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+          {scope === 'post' && restPartialErr ? (
+            <p style={FF} className="mt-2 text-[13px] text-red-600">
+              {restPartialErr}
+            </p>
+          ) : null}
+        </>
+      )}
 
       {error ? (
         <p style={FF} className="mt-3 text-[13px] text-red-600">
@@ -207,6 +635,7 @@ export function WebinarPostSurvey({
         >
           {'P\u0159esko\u010dit'}
         </button>
+      </div>
       </div>
     </motion.div>
   );

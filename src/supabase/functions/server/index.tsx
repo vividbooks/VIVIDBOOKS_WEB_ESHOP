@@ -67,21 +67,44 @@ const WEBINAR_EMAIL_DARK_HEAD = `<meta name="color-scheme" content="light dark">
   .dm-rem-content { background-color: #16161c !important; }
   .dm-rem-muted { color: #a8a8b8 !important; }
   .dm-rem-link { color: #9ca3af !important; }
-  a.dm-rem-btn { background-color: #dc2626 !important; color: #ffffff !important; }
+  a.dm-rem-btn { background-color: #001161 !important; color: #ffffff !important; }
+  .dm-survey-box { background-color: #1a1a22 !important; border-color: #3d3d48 !important; }
+  .dm-survey-box p { color: #c5c5d0 !important; }
+  .dm-survey-box a { border-color: #93c5fd !important; color: #93c5fd !important; background-color: #16161c !important; }
   strong.dm-accent, .dm-text strong.dm-accent { color: #fdba74 !important; }
 }
 </style>`;
+
+/** Předmět transakčních Mandrill mailů o webinářích — rychlá orientace v inboxu. */
+const WEBINAR_EMAIL_SUBJECT_PREFIX = '🔴 ';
 
 /**
  * Veřejná doména webu (odkazy v e-mailech a JSON po /webinar-registrace, připomínky).
  * Produkce na vividbooks.com: nastav v Supabase → Edge Functions → Secrets:
  * PUBLIC_SITE_URL=https://www.vividbooks.com
- * Bez secretu: výchozí lokální Vite (http://localhost:5173).
+ * Bez secretu: lokální dev na http://localhost:3000 (sjednoceno s běžným dev serverem).
  */
+function normalizePublicSiteOrigin(raw: string): string {
+  let s = raw.replace(/\/$/, '');
+  try {
+    const url = new URL(s);
+    if (
+      (url.hostname === 'localhost' || url.hostname === '127.0.0.1') &&
+      url.port === '5173'
+    ) {
+      url.port = '3000';
+      return url.origin;
+    }
+  } catch {
+    /* ignore */
+  }
+  return s;
+}
+
 function getPublicSiteOrigin(): string {
   const u = Deno.env.get('PUBLIC_SITE_URL')?.trim();
-  if (u) return u.replace(/\/$/, '');
-  return 'http://localhost:5173';
+  if (u) return normalizePublicSiteOrigin(u);
+  return 'http://localhost:3000';
 }
 
 app.use('*', cors());
@@ -1108,7 +1131,15 @@ app.get('/make-server-93a20b6f/webinare', async (c) => {
     /* Přepis je jen pro admin/RAG — neposílat na veřejný web (velikost + soukromí). */
     const itemsPublic = items.map((w: any) => {
       const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
-      return rest;
+      const pub = { ...rest } as any;
+      if (Array.isArray(pub.postWebinarQuizQuestions)) {
+        pub.postWebinarQuizQuestions = pub.postWebinarQuizQuestions.map((q: any) => {
+          if (!q || typeof q !== 'object') return q;
+          const { correctIndex: _c, ...qq } = q;
+          return qq;
+        });
+      }
+      return pub;
     });
     return c.json({ items: itemsPublic });
   } catch (e: any) {
@@ -1333,22 +1364,33 @@ function extractFirstJsonObject(raw: string): { ok: true; value: unknown } | { o
   if (start === -1) return { ok: false, reason: 'Žádný objekt { … } v odpovědi' };
   let depth = 0;
   let inStr = false;
-  let esc = false;
   for (let i = start; i < candidate.length; i++) {
     const ch = candidate[i];
-    if (esc) {
-      esc = false;
-      continue;
-    }
-    if (ch === '\\' && inStr) {
-      esc = true;
+    if (inStr) {
+      if (ch === '\\') {
+        const next = i + 1;
+        if (next >= candidate.length) break;
+        const e = candidate[next];
+        if (e === 'u') {
+          const hex = candidate.slice(next + 1, next + 5);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            i = next + 4;
+            continue;
+          }
+        }
+        i = next;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = false;
+        continue;
+      }
       continue;
     }
     if (ch === '"') {
-      inStr = !inStr;
+      inStr = true;
       continue;
     }
-    if (inStr) continue;
     if (ch === '{') depth++;
     else if (ch === '}') {
       depth--;
@@ -1466,6 +1508,317 @@ Pravidla:
     return c.json({ error: e.message || 'Chyba' }, 500);
   }
 });
+
+/** HTML z AI pro e-mail — odstraní nebezpečné části; povolené značky nechává (Gemini). */
+function sanitizeWebinarLearningsHtml(raw: string): string {
+  let s = String(raw || '').trim();
+  if (!s) return '';
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
+  s = s.replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '');
+  s = s.replace(/javascript:/gi, '');
+  return s.slice(0, 120_000);
+}
+
+/** Společné zadání pro dlouhý „blogový“ článek do e-mailu (struktura + rozsah jako metodický text). */
+const WEBINAR_LEARNINGS_ARTICLE_SYSTEM = `Vytvoř shrnutí webináře pro e-mail učitelům — článek v češtině v HTML.
+Rozsah a struktura (inspirace stylem odborného článku / newsletteru, ne jedna krátká odrážka):
+- Úvod: první <h2> ve tvaru: „Co jsme se dozvěděli na webináři: [stručné téma podle názvu webináře]“.
+- Pod ním krátký perex: 1–2 odstavce <p> (nastínění kontextu z přepisu).
+- Dál několik logických sekcí <h2> podle témat z přepisu; kde to dává smysl, dílčí podnadpisy <h3>.
+- Odstavce <p>, výčty <ul><li> nebo <ol><li>, zvýraznění <strong> pro klíčové pojmy.
+- Cílová délka: podstatně víc než pár vět — řádově stovky až cca 1500–2500 slov podle toho, kolik má přepis látky; nevynechávej důležité bloky zmíněné v přepisu.
+- Výhradně fakta a témata z přepisu — nic nevymýšlej.
+
+Povolené tagy: h2, h3, p, ul, ol, li, strong, em, br. Bez odkazů <a> pokud v přepisu není konkrétní URL. Bez obrázků. Bez markdownu mimo JSON.
+Odpověz POUZE platným JSON: {"learningsHtml":"..."} kde hodnota je jeden řetězec s HTML.`;
+
+async function geminiCallJson(
+  geminiKey: string,
+  systemAndUser: string,
+  maxTokens: number,
+  temperature: number,
+): Promise<string> {
+  const gUrl =
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
+  const gRes = await fetch(gUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: systemAndUser }] }],
+      generationConfig: {
+        temperature,
+        maxOutputTokens: maxTokens,
+        responseMimeType: 'application/json',
+      },
+    }),
+  });
+  if (!gRes.ok) return '';
+  const gData = await gRes.json();
+  const parts = gData?.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+}
+
+/** Samostatné volání jen pro 4 ABC otázky — v kombinaci s dlouhým článkem se jinak JSON často usekne nebo chybí questions. */
+async function geminiGenerateDvppQuizQuestionsOnly(
+  geminiKey: string,
+  title: string,
+  lecturer: string,
+  truncatedPrepis: string,
+): Promise<unknown[] | null> {
+  const system =
+    `Jsi pedagogický asistent pro české učitele. Z přepisu webináře vygeneruj PŘESNĚ 4 otázky s výběrem odpovědí (ABC).
+Každá položka v poli "questions" MUSÍ mít:
+- "question": text otázky (řetězec)
+- "options": pole přesně 4 řetězců (možnosti A–D)
+- "correctIndex": číslo 0, 1, 2 nebo 3 (která možnost je správná)
+
+Pravidla: čeština; obsah výhradně z přepisu; každá otázka testuje jiný aspekt tématu.
+Odpověz POUZE JSON objektem ve tvaru:
+{"questions":[{"question":"...","options":["","","",""],"correctIndex":0}, ... přesně 4 prvky ]}`;
+
+  const userMsg = `Název webináře: ${title}\nLektor: ${lecturer}\n\nPřepis:\n${truncatedPrepis}`;
+  const text = await geminiCallJson(geminiKey, `${system}\n\n${userMsg}`, 4096, 0.4);
+  const extracted = extractFirstJsonObject(text);
+  if (!extracted.ok) {
+    console.log(`[dvpp-quiz-only] parse: ${extracted.reason} | head=${text.slice(0, 200)}`);
+    return null;
+  }
+  const parsed = extracted.value as { questions?: unknown };
+  return Array.isArray(parsed?.questions) ? parsed.questions : null;
+}
+
+async function geminiGenerateWebinarLearningsArticle(
+  geminiKey: string,
+  title: string,
+  lecturer: string,
+  truncatedPrepis: string,
+): Promise<string> {
+  const userMsg = `Název webináře: ${title}\nLektor: ${lecturer}\n\nPřepis:\n${truncatedPrepis}`;
+  const text = await geminiCallJson(
+    geminiKey,
+    `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
+    8192,
+    0.45,
+  );
+  const extracted = extractFirstJsonObject(text);
+  if (!extracted.ok) {
+    console.log(`[dvpp-learnings] parse: ${extracted.reason} | head=${text.slice(0, 200)}`);
+    return '';
+  }
+  const v = extracted.value as { learningsHtml?: string };
+  return sanitizeWebinarLearningsHtml(String(v?.learningsHtml || ''));
+}
+
+async function geminiGenerateWebinarLearningsFallback(
+  geminiKey: string,
+  title: string,
+  lecturer: string,
+  truncatedPrepis: string,
+): Promise<string> {
+  const userMsg = `Webinář: ${title}\nLektor: ${lecturer}\n\nPřepis:\n${truncatedPrepis}`;
+  const text = await geminiCallJson(
+    geminiKey,
+    `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
+    8192,
+    0.4,
+  );
+  const extracted = extractFirstJsonObject(text);
+  if (!extracted.ok) return '';
+  const v = extracted.value as { learningsHtml?: string };
+  return sanitizeWebinarLearningsHtml(String(v?.learningsHtml || ''));
+}
+
+function dvppQuizQuestionLabel(q: Record<string, unknown>): string {
+  const anyQ = q as Record<string, unknown>;
+  return String(
+    anyQ.question ?? anyQ.label ?? anyQ.stem ?? anyQ.text ?? anyQ.questionText ?? anyQ.title ?? '',
+  ).trim();
+}
+
+function dvppQuizQuestionOptions(q: Record<string, unknown>): string[] {
+  const anyQ = q as Record<string, unknown>;
+  let options = Array.isArray(anyQ.options)
+    ? (anyQ.options as unknown[]).map((x) => String(x).trim())
+    : Array.isArray(anyQ.answers)
+    ? (anyQ.answers as unknown[]).map((x) => String(x).trim())
+    : Array.isArray(anyQ.choices)
+    ? (anyQ.choices as unknown[]).map((x) => String(x).trim())
+    : [];
+  while (options.length < 4) options.push('');
+  return options.slice(0, 4);
+}
+
+/** Body.part: `questions` = jen 4× ABC, `learnings` = jen HTML článek, `both` / vynecháno = obojí. */
+function normalizeDvppGeneratePart(raw: unknown): 'both' | 'questions' | 'learnings' {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (!s || s === 'both' || s === 'all') return 'both';
+  if (s === 'questions' || s === 'quiz' || s === 'otazky' || s === 'otázky') return 'questions';
+  if (s === 'learnings' || s === 'article' || s === 'clanek' || s === 'článek' || s === 'html') {
+    return 'learnings';
+  }
+  return 'both';
+}
+
+/* POST /admin/webinar-generate-dvpp-quiz — 4 otázky a/nebo shrnutí „co jsme se dozvěděli“ (Gemini) */
+async function adminWebinarGenerateDvppQuizHandler(c: Context) {
+  try {
+    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+
+    const body = await c.req.json();
+    const part = normalizeDvppGeneratePart(body?.part);
+    const webinarId = String(body?.webinarId || '').trim();
+    const prepisOverride = typeof body?.prepis === 'string' ? body.prepis : '';
+    if (!webinarId) return c.json({ error: 'Chybí webinarId' }, 400);
+
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = items.find((w: any) => String(w.id) === webinarId) as Record<string, unknown> | undefined;
+    if (!webinar) return c.json({ error: 'Webinář nenalezen' }, 404);
+
+    const prepis = (prepisOverride.trim() || String(webinar.prepis || '').trim());
+    if (!prepis) {
+      return c.json(
+        {
+          error:
+            'Chybí přepis webináře — vložte ho do pole Přepis (záložka Úprava záznamu) a uložte, nebo použijte text z úložiště.',
+        },
+        400,
+      );
+    }
+
+    const truncated = prepis.length > 32000
+      ? `${prepis.slice(0, 32000)}\n\n[… text zkrácen pro generování …]`
+      : prepis;
+
+    const titleStr = String(webinar.title || '');
+    const lecturerStr = String(webinar.lecturer || '');
+
+    if (part === 'learnings') {
+      let learningsHtml = await geminiGenerateWebinarLearningsArticle(
+        geminiKey,
+        titleStr,
+        lecturerStr,
+        truncated,
+      );
+      if (learningsHtml.length < 80) {
+        learningsHtml = await geminiGenerateWebinarLearningsFallback(
+          geminiKey,
+          titleStr,
+          lecturerStr,
+          truncated,
+        );
+      }
+      return c.json({ learningsHtml, webinarId, part: 'learnings' as const });
+    }
+
+    let rawQs = await geminiGenerateDvppQuizQuestionsOnly(
+      geminiKey,
+      titleStr,
+      lecturerStr,
+      truncated,
+    );
+    if (!Array.isArray(rawQs) || rawQs.length < 4) {
+      console.log(`[dvpp-quiz] první pokus: ${rawQs?.length ?? 'null'}, druhý pokus`);
+      rawQs = await geminiGenerateDvppQuizQuestionsOnly(
+        geminiKey,
+        titleStr,
+        lecturerStr,
+        truncated,
+      );
+    }
+    if (!Array.isArray(rawQs) || rawQs.length === 0) {
+      return c.json(
+        {
+          error:
+            'Nepodařilo se vygenerovat 4 otázky (Gemini). Zkuste generovat znovu; pokud přepis je extrémně dlouhý, zkuste ho zkrátit na jádro.',
+        },
+        500,
+      );
+    }
+
+    const slug = String(webinarId).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40);
+    const out: Array<{
+      id: string;
+      type: 'abc';
+      label: string;
+      options: string[];
+      correctIndex: number;
+    }> = [];
+
+    for (let i = 0; i < Math.min(4, rawQs.length); i++) {
+      const q = rawQs[i] as Record<string, unknown>;
+      const label = dvppQuizQuestionLabel(q);
+      let options = dvppQuizQuestionOptions(q);
+      const anyQ = q as Record<string, unknown>;
+      let ci = 0;
+      const rawCi = anyQ.correctIndex ?? anyQ.correct;
+      if (typeof rawCi === 'number' && Number.isFinite(rawCi)) ci = Math.floor(rawCi);
+      else if (typeof rawCi === 'string' && /^[0-3]$/.test(rawCi.trim())) ci = parseInt(rawCi.trim(), 10);
+      if (ci < 0 || ci > 3) ci = 0;
+      if (!label || options.some((o) => !o)) {
+        return c.json(
+          { error: `Otázka ${i + 1}: chybí text nebo některá z 4 možností. Zkuste generovat znovu.` },
+          400,
+        );
+      }
+      out.push({
+        id: `dvpp-q-${slug}-${i}`,
+        type: 'abc',
+        label,
+        options,
+        correctIndex: ci,
+      });
+    }
+
+    if (out.length < 4) {
+      return c.json({ error: 'Model vrátil méně než 4 platné otázky.' }, 400);
+    }
+
+    if (part === 'questions') {
+      return c.json({ questions: out, webinarId, part: 'questions' as const });
+    }
+
+    let learningsHtml = await geminiGenerateWebinarLearningsArticle(
+      geminiKey,
+      titleStr,
+      lecturerStr,
+      truncated,
+    );
+    if (learningsHtml.length < 80) {
+      learningsHtml = await geminiGenerateWebinarLearningsFallback(
+        geminiKey,
+        titleStr,
+        lecturerStr,
+        truncated,
+      );
+    }
+
+    return c.json({ questions: out, learningsHtml, webinarId, part: 'both' as const });
+  } catch (e: any) {
+    console.log(`[dvpp-quiz] ${e.message}`);
+    return c.json({ error: e.message || 'Chyba' }, 500);
+  }
+}
+
+app.post('/make-server-93a20b6f/admin/webinar-generate-dvpp-quiz', adminWebinarGenerateDvppQuizHandler);
+/** Alias — některé proxy doručí cestu už bez segmentu make-server-93a20b6f (po normalizaci v Deno.serve). */
+app.post('/admin/webinar-generate-dvpp-quiz', adminWebinarGenerateDvppQuizHandler);
+/** GET: ověření, že je nasazená verze s tímto endpointem (POST = skutečné generování). */
+app.get('/make-server-93a20b6f/admin/webinar-generate-dvpp-quiz', (c) =>
+  c.json({
+    ok: true,
+    postOnly: true,
+    path: 'webinar-generate-dvpp-quiz',
+    bodyHint: { webinarId: 'string', prepis: 'string', part: 'questions | learnings | both (optional)' },
+  }));
+app.get('/admin/webinar-generate-dvpp-quiz', (c) =>
+  c.json({
+    ok: true,
+    postOnly: true,
+    path: 'webinar-generate-dvpp-quiz',
+    bodyHint: { webinarId: 'string', prepis: 'string', part: 'questions | learnings | both (optional)' },
+  }));
 
 /* ── Normalizace FAQ předmětu (sdíleno public API + RAG) ─────────── */
 function normalizeSubjectFaqs(raw: any): { question: string; answer: string }[] {
@@ -2035,123 +2388,17 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
 
     const allWebinars = await getCollection(WEBINARS_KEY);
     const webinarFromKv = allWebinars.find((w: any) => w.id === webinarId) as Record<string, unknown> | undefined;
-    const bd = Number(bodyDay);
-    const bm = Number(bodyMonthNum);
-    const by = Number(bodyYear);
-    const kvD = webinarFromKv?.day;
-    const kvMo = webinarFromKv?.monthNum;
-    const kvY = webinarFromKv?.year;
-    const dayResolved =
-      typeof kvD === 'number' && kvD >= 1 && kvD <= 31 ? kvD
-      : Number.isFinite(bd) && bd >= 1 && bd <= 31 ? bd
-      : NaN;
-    const monthResolved =
-      typeof kvMo === 'number' && kvMo >= 1 && kvMo <= 12 ? kvMo
-      : Number.isFinite(bm) && bm >= 1 && bm <= 12 ? bm
-      : NaN;
-    const yearResolved =
-      typeof kvY === 'number' && kvY >= 2020 && kvY <= 2100 ? kvY
-      : Number.isFinite(by) && by >= 2020 && by <= 2100 ? by
-      : NaN;
-    const merged: {
-      day: number;
-      monthNum: number;
-      year: number;
-      time: string;
-      monthName: string;
-      title: string;
-    } = {
-      day: dayResolved,
-      monthNum: monthResolved,
-      year: yearResolved,
-      time: String(webinarFromKv?.time || bodyTime || '18:00').trim() || '18:00',
-      monthName: String(webinarFromKv?.monthName || bodyMonthName || ''),
-      title: String(webinarFromKv?.title || webinarTitle || webinarId),
-    };
-
-    let gcalStr = '';
-    let icsContent = '';
-    let humanDate = '';
-    let outlookUrl = '';
-
-    const hasSchedule =
-      Number.isFinite(merged.day) &&
-      Number.isFinite(merged.monthNum) &&
-      Number.isFinite(merged.year);
-
-    if (hasSchedule) {
-      const [hh, mm] = merged.time.split(':').map((x: string) => parseInt(x, 10));
-      const hhSafe = Number.isFinite(hh) ? hh : 18;
-      const mmSafe = Number.isFinite(mm) ? mm : 0;
-      const d = merged.day;
-      const mo = merged.monthNum;
-      const yr = merged.year;
-      const monthGenitive = [
-        '', 'ledna', 'února', 'března', 'dubna', 'května', 'června', 'července', 'srpna', 'září', 'října',
-        'listopadu', 'prosince',
-      ];
-      const monthGen = monthGenitive[mo] || String(merged.monthName || '').toLowerCase();
-      humanDate = `${d}. ${monthGen} ${yr} v ${merged.time} (středoevropský čas)`;
-      const pad = (n: number) => String(n).padStart(2, '0');
-
-      const dateStr = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
-      const rawEndMin = mmSafe + 30;
-      const endHhFinal = hhSafe + 1 + Math.floor(rawEndMin / 60);
-      const endMmFinal = rawEndMin % 60;
-      const endDateStr = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
-      const dtstamp = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
-
-      icsContent = [
-        'BEGIN:VCALENDAR',
-        'VERSION:2.0',
-        'PRODID:-//Vividbooks//Webinar//CS',
-        'CALSCALE:GREGORIAN',
-        'METHOD:REQUEST',
-        'BEGIN:VTIMEZONE',
-        'TZID:Europe/Prague',
-        'BEGIN:STANDARD',
-        'DTSTART:19701025T030000',
-        'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
-        'TZOFFSETFROM:+0200',
-        'TZOFFSETTO:+0100',
-        'TZNAME:CET',
-        'END:STANDARD',
-        'BEGIN:DAYLIGHT',
-        'DTSTART:19700329T020000',
-        'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
-        'TZOFFSETFROM:+0100',
-        'TZOFFSETTO:+0200',
-        'TZNAME:CEST',
-        'END:DAYLIGHT',
-        'END:VTIMEZONE',
-        'BEGIN:VEVENT',
-        `UID:webinar-${webinarId}-${Date.now()}@vividbooks.cz`,
-        `DTSTAMP:${dtstamp}`,
-        `DTSTART;TZID=Europe/Prague:${dateStr}`,
-        `DTEND;TZID=Europe/Prague:${endDateStr}`,
-        `SUMMARY:${merged.title.replace(/,/g, '\\,')}`,
-        `DESCRIPTION:Online webinář Vividbooks — odkaz na přenos: ${liveUrl}`,
-        `URL:${liveUrl}`,
-        `LOCATION:Online — ${liveUrl}`,
-        'STATUS:CONFIRMED',
-        'END:VEVENT',
-        'END:VCALENDAR',
-      ].join('\r\n');
-
-      const gcalStart = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
-      const gcalEnd = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
-      gcalStr = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(merged.title)}&dates=${gcalStart}/${gcalEnd}&details=${encodeURIComponent('Online webinář Vividbooks\n\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
-
-      outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(merged.title)}&startdt=${yr}-${pad(mo)}-${pad(d)}T${pad(hhSafe)}:${pad(mmSafe)}:00&enddt=${yr}-${pad(mo)}-${pad(d)}T${pad(endHhFinal)}:${pad(endMmFinal)}:00&body=${encodeURIComponent('Online webinář Vividbooks\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
-    }
-
-    let icsBase64 = '';
-    if (icsContent) {
-      const icsBytes = new TextEncoder().encode(icsContent);
-      let icsBin = '';
-      icsBytes.forEach((b: number) => { icsBin += String.fromCharCode(b); });
-      icsBase64 = btoa(icsBin);
-    }
+    const merged = mergeWebinarRegistrationMergedFromBodyAndKv(webinarFromKv, {
+      webinarId,
+      webinarTitle: webinarTitle || webinarId,
+      webinarDay: bodyDay,
+      webinarMonthNum: bodyMonthNum,
+      webinarYear: bodyYear,
+      webinarTime: bodyTime,
+      webinarMonthName: bodyMonthName,
+    });
+    const cal = computeWebinarRegistrationCalendarAndIcs(webinarId, merged, liveUrl);
+    const { humanDate, hasSchedule, icsContent, icsBase64, gcalStr, outlookUrl } = cal;
 
     // ── Mandrill confirmation email ────────────────────────────────
     type MandrillSyncState = {
@@ -2168,131 +2415,35 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
     if (mandrillKey) {
       try {
-        const firstName = name.trim().split(' ')[0] || name.trim();
-        const escHtml = (s: string) =>
-          String(s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-        const lecturerResolved = String(webinarFromKv?.lecturer || '').trim();
-        const coverRaw = String(webinarFromKv?.coverImage || '').trim();
-        const coverImgUrl = /^https?:\/\//i.test(coverRaw) ? coverRaw : '';
-        const titleSafe = escHtml(merged.title);
-        const humanDateSafe = humanDate ? escHtml(humanDate) : '';
-        const firstNameSafe = escHtml(firstName);
-        const coverBlock = coverImgUrl
-          ? `<img src="${escHtml(coverImgUrl)}" alt="${titleSafe}" width="520" style="width:100%;max-width:520px;height:auto;border-radius:12px 12px 0 0;display:block;border:0;margin:0;" />`
-          : '';
-        const titleIfNoCover = !coverImgUrl
-          ? `<p style="margin:0 0 14px;font-size:20px;font-weight:800;color:#001161;line-height:1.35;">${titleSafe}</p>`
-          : '';
-        const dateAndLecturerBlock = humanDateSafe
-          ? `<p style="margin:0 0 6px;font-size:16px;color:#334155;line-height:1.5;">${humanDateSafe}</p>${
-            lecturerResolved
-              ? `<p style="margin:0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
-              : ''
-          }`
-          : `<p class="dm-muted" style="margin:0;font-size:14px;color:#64748b;">${
-            lecturerResolved
-              ? `Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p><p style="margin:10px 0 0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
-              : 'Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p>'
-          }`;
-
-        const linkActiveText = hasSchedule
-          ? `Odkaz bude aktivní ${merged.day}. ${merged.monthNum}. ${merged.year} od ${merged.time}. Otevřete ho v naplánovaný čas.`
-          : 'Otevřete odkaz v naplánovaný čas — jakmile bude k dispozici termín, upřesníme ho v další zprávě.';
-        const linkActiveSafe = escHtml(linkActiveText);
-
-        const emailHtml = `<!DOCTYPE html>
-<html lang="cs">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Registrace potvrzená</title>${WEBINAR_EMAIL_DARK_HEAD}</head>
-<body class="dm-body" style="margin:0;padding:0;background:#f5f6fa;font-family:Arial,Helvetica,sans-serif;">
-<table class="dm-wrap" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6fa;padding:32px 16px;">
-<tr><td align="center">
-<table class="dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
-<tr><td class="dm-header" style="background:#001161;padding:32px 40px 28px;">
-<p style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Vividbooks</p>
-<p style="margin:6px 0 0;color:rgba(255,255,255,0.55);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Potvrzení registrace</p>
-</td></tr>
-<tr><td class="dm-content" style="padding:40px 40px 28px;">
-<p class="dm-h1" style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Jste přihlášeni!</p>
-<p class="dm-text" style="margin:0 0 6px;font-size:16px;color:#4a5568;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameSafe}</strong>,</p>
-<p class="dm-text" style="margin:0 0 22px;font-size:16px;color:#4a5568;line-height:1.6;">
-Děkujeme za registraci. Tady je vše potřebné:
-</p>
-<table class="dm-inner" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
-<tr><td class="dm-box-top" style="background:#f8fafc;padding:0;">
-${coverBlock}
-<div class="dm-box-pad" style="padding:22px 24px 24px;">
-${titleIfNoCover}${dateAndLecturerBlock}
-</div>
-</td></tr>
-</table>
-<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
-<tr><td class="dm-cta-navy" style="background:#1e3a5f;border-radius:16px;padding:24px 28px;">
-<p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,0.85);">Váš vstup na webinář</p>
-<p style="margin:0 0 16px;font-size:14px;color:rgba(255,255,255,0.9);line-height:1.5;">${linkActiveSafe}</p>
-<a class="dm-btn" href="${liveUrlPersonal.replace(/"/g, '&quot;')}" style="display:inline-block;background:#ffffff;color:#1e3a5f;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;letter-spacing:-0.2px;">Otevřít přenos</a>
-<p style="margin:12px 0 0;font-size:12px;color:#94a3b8;word-break:break-all;line-height:1.45;">${escHtml(liveUrlPersonal)}</p>
-</td></tr>
-</table>
-<p class="dm-cal-heading" style="margin:0 0 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(0,17,97,0.4);">Přidat do kalendáře</p>
-${gcalStr ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${gcalStr}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Google Kalendář</a></td></tr></table>` : ''}
-${outlookUrl ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${outlookUrl}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Outlook / Office 365</a></td></tr></table>` : ''}
-<p class="dm-ics-note" style="margin:12px 0 0;font-size:13px;color:#718096;">Příloha .ics funguje s Apple Calendar, Thunderbird a dalšími.</p>
-</td></tr>
-<tr><td class="dm-footer" style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
-<p class="dm-footer-text" style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
-Tento e-mail byl odeslán automaticky po registraci na webinář.<br>
-&copy; ${new Date().getFullYear()} Vividbooks
-</p>
-</td></tr>
-</table>
-</td></tr>
-</table>
-</body>
-</html>`;
-
-        const mandrillBody = {
-          key: mandrillKey,
-          message: {
-            html: emailHtml,
-            subject: `Registrace potvrzená: ${webinarTitle || webinarId}`,
-            from_email: 'hello@vividbooks.com',
-            from_name: 'Vividbooks',
-            to: [{ email: cleanEmail, name: name.trim(), type: 'to' }],
-            attachments: icsContent ? [{
-              type: 'text/calendar; charset=utf-8; method=REQUEST',
-              name: `webinar-${slug}.ics`,
-              content: icsBase64,
-            }] : [],
-            headers: { 'Reply-To': 'hello@vividbooks.com' },
-            track_opens: true,
-            track_clicks: false,
-          },
-        };
-
-        const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(mandrillBody),
+        const payload = buildWebinarRegistrationConfirmationEmailPayload({
+          webinarFromKv,
+          merged,
+          slug,
+          webinarId,
+          webinarTitleForSubject: webinarTitle || webinarId,
+          liveUrl,
+          liveUrlPersonal,
+          recipientName: name.trim(),
+          humanDate,
+          hasSchedule,
+          gcalStr,
+          outlookUrl,
+          icsContent,
+          icsBase64,
         });
-        const mailData = await mailRes.json();
-        if (!mailRes.ok) {
-          const errSlice = JSON.stringify(mailData).slice(0, 400);
-          mandrillSync = {
-            ok: false,
-            detail: `HTTP ${mailRes.status}: ${errSlice}`,
-          };
-          console.log(`[Mandrill] HTTP ${mailRes.status}: ${errSlice}`);
-        } else if (Array.isArray(mailData) && mailData[0]?.status === 'sent') {
+        const result = await sendMandrillWebinarRegistrationConfirmationResult({
+          toEmail: cleanEmail,
+          toName: name.trim(),
+          subject: payload.subject,
+          html: payload.html,
+          attachments: payload.attachments,
+        });
+        if (result.ok) {
           mandrillSync = { ok: true };
-          console.log(`[Mandrill] Email odeslan: ${cleanEmail} status=${mailData[0].status}`);
+          console.log(`[Mandrill] Email odeslan: ${cleanEmail} status=sent`);
         } else {
-          const errSlice = JSON.stringify(mailData).slice(0, 500);
-          mandrillSync = { ok: false, detail: errSlice };
-          console.log(`[Mandrill] Odpoved: ${errSlice}`);
+          mandrillSync = { ok: false, detail: result.detail };
+          console.log(`[Mandrill] Odpoved: ${result.detail}`);
         }
       } catch (mailErr: any) {
         const msg = mailErr?.message || String(mailErr);
@@ -2576,6 +2727,25 @@ app.get('/make-server-93a20b6f/webinar-registrace/:webinarId', async (c) => {
   }
 });
 
+/** Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení). */
+async function handleWebinarRegistrationCheckGet(c: Context) {
+  try {
+    const webinarId = normalizeWebinarIdFromBody(c.req.query('webinarId'));
+    const emailRaw = typeof c.req.query('email') === 'string' ? c.req.query('email') : '';
+    const email = emailRaw.toLowerCase().trim();
+    if (!webinarId || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return c.json({ registered: false, error: 'Chybí platné webinarId nebo email.' }, 400);
+    }
+    const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
+    return c.json({ registered: !!reg });
+  } catch (err: any) {
+    console.log(`[Webinar] registration-check: ${err.message}`);
+    return c.json({ error: err.message || 'Chyba' }, 500);
+  }
+}
+app.get('/make-server-93a20b6f/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
+app.get('/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
+
 /* ── DVPP Video registrations ──────────────────────────────────── */
 app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
   try {
@@ -2675,7 +2845,7 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
     if (mandrillKey) {
       try {
-        const firstName = name.trim().split(' ')[0] || name.trim();
+        const firstName = czechFirstNameVocative(name.trim().split(' ')[0] || name.trim());
         const videoUrl = `https://www.vividbooks.com/webinare/zaznam/${videoId}`;
 
         const emailHtml = `<!DOCTYPE html>
@@ -2727,10 +2897,10 @@ Tento email byl odeslan automaticky po registraci ke sledovani zaznamu DVPP.<br>
             message: {
               html: emailHtml,
               subject: `Pristup k zaznamu: ${videoTitle || videoId}`,
-              from_email: 'webinare@vividbooks.com',
-              from_name: 'Vividbooks webinare',
+              from_email: 'hello@vividbooks.com',
+              from_name: 'Vividbooks',
               to: [{ email: cleanEmail, name: name.trim(), type: 'to' }],
-              headers: { 'Reply-To': 'webinare@vividbooks.com' },
+              headers: { 'Reply-To': 'hello@vividbooks.com' },
               track_opens: true,
               track_clicks: false,
             },
@@ -2973,8 +3143,108 @@ const DEFAULT_SURVEY_QUESTIONS_SERVER: Array<{
   { id: 'uses_vividbooks', type: 'yes_no', label: 'Používám Vividbooks' },
 ];
 
+/** Druhá část po DVPP — musí odpovídat `DEFAULT_POST_WEBINAR_PART2_STEPS` na klientu (bez úvodního kroku). */
+const DEFAULT_POST_WEBINAR_PART2_FOR_SERVER: typeof DEFAULT_SURVEY_QUESTIONS_SERVER = [
+  { id: 'post-part2-liked', type: 'open', label: 'Jak se vám webinář líbil?' },
+  {
+    id: 'post-part2-improve',
+    type: 'open',
+    label: 'Jak bychom mohli Vividbooks nebo naše webináře ještě vylepšit?',
+  },
+  {
+    id: 'post-part2-trial',
+    type: 'abc',
+    label:
+      'Přejete si vyzkoušet Vividbooks nebo zaškolit Vaše kolegy? (DVPP školení zdarma pro celý tým)',
+    options: [
+      'Ano, chci vyzkoušet nebo zaškolit mé kolegy',
+      'Ne, Vividbooks již testujeme',
+      'Nemám zájem',
+    ],
+  },
+  {
+    id: 'post-part2-why-not',
+    type: 'open',
+    label: 'Pokud si nepřejete vyzkoušet Vividbooks, napište nám prosím proč ne.',
+  },
+];
+
+function mapPostWebinarPart2FromItem(w: Record<string, unknown> | null): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
+  if (!w) return DEFAULT_POST_WEBINAR_PART2_FOR_SERVER;
+  if (w.surveyEnabled === false) return [];
+  const raw = w.postWebinarPart2;
+  if (raw !== undefined) {
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    return (raw as any[])
+      .filter(
+        (x) =>
+          x &&
+          (x.type === 'open' || x.type === 'abc') &&
+          typeof x.id === 'string' &&
+          typeof x.label === 'string',
+      )
+      .map((x) => {
+        if (x.type === 'open') {
+          return { id: String(x.id), type: 'open' as const, label: String(x.label) };
+        }
+        const opts = Array.isArray(x.options) ? x.options.map((o: unknown) => String(o)) : [];
+        return { id: String(x.id), type: 'abc' as const, label: String(x.label), options: opts };
+      });
+  }
+  return DEFAULT_POST_WEBINAR_PART2_FOR_SERVER;
+}
+
+function mapPostWebinarQuizQuestionsForSurvey(
+  w: Record<string, unknown>,
+): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
+  const raw = w.postWebinarQuizQuestions;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter(
+      (x: any) =>
+        x &&
+        x.type === 'abc' &&
+        typeof x.label === 'string' &&
+        String(x.label).trim() &&
+        Array.isArray(x.options) &&
+        x.options.length >= 2,
+    )
+    .map((x: any) => ({
+      id: String(x.id),
+      type: 'abc' as const,
+      label: String(x.label),
+      options: x.options.map((o: unknown) => String(o)),
+    }));
+}
+
 function resolveSurveyQuestionsFromWebinarItem(w: Record<string, unknown> | null): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
-  /** Chybí záznam v CMS (jen statický web) → stejné výchozí otázky jako na klientu. */
+  /** Chybí záznam v CMS — jako na klientu: jen výchozí part 2 (bez před-webinářových otázek). */
+  if (!w) {
+    return [...DEFAULT_POST_WEBINAR_PART2_FOR_SERVER];
+  }
+  const dvpp = mapPostWebinarQuizQuestionsForSurvey(w);
+  if (w.surveyEnabled === false) {
+    return dvpp.length > 0 ? dvpp : [];
+  }
+  const part2 = mapPostWebinarPart2FromItem(w);
+  const raw = w.surveyQuestions;
+  if (Array.isArray(raw) && raw.length > 0) {
+    const base = raw
+      .filter((x: any) => x && x.id && x.label && x.type)
+      .map((x: any) => ({
+        id: String(x.id),
+        type: x.type as 'open' | 'abc' | 'yes_no',
+        label: String(x.label),
+        options: Array.isArray(x.options) ? x.options.map((o: unknown) => String(o)) : undefined,
+      }));
+    return [...dvpp, ...part2, ...base];
+  }
+  /** Bez vlastních `surveyQuestions` v CMS nepřidáváme DEFAULT_SURVEY (motivace / téma / Vividbooks) — ty jsou pro před webinářem. */
+  return [...dvpp, ...part2];
+}
+
+/** Jen otázky před webinářem (bez DVPP) — stejné jako `getPreWebinarSurveyQuestions` na klientu. */
+function resolvePreWebinarSurveyQuestionsFromItem(w: Record<string, unknown> | null): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
   if (!w) return DEFAULT_SURVEY_QUESTIONS_SERVER;
   if (w.surveyEnabled === false) return [];
   const raw = w.surveyQuestions;
@@ -2993,6 +3263,10 @@ function resolveSurveyQuestionsFromWebinarItem(w: Record<string, unknown> | null
 
 function webinarSurveyAnswerKey(webinarId: string, cleanEmail: string): string {
   return `webinar_survey_${webinarId}_${md5(cleanEmail)}`;
+}
+
+function webinarSurveyPartialKey(webinarId: string, cleanEmail: string): string {
+  return `webinar_survey_partial_${webinarId}_${md5(cleanEmail)}`;
 }
 
 /** Stejná konvence jako u POST /webinar-registrace (string | number z JSON). */
@@ -3048,6 +3322,42 @@ function webinarStartEpochMsPrague(w: {
   return Date.UTC(y, mo - 1, d, hh - 2, mi, 0, 0);
 }
 
+function webinarDefaultDurationMinutes(w: Record<string, unknown>): number {
+  const v = (w as any).durationMinutes;
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 24 * 60) return Math.floor(v);
+  const env = Deno.env.get('WEBINAR_DEFAULT_DURATION_MIN')?.trim();
+  const n = env ? parseInt(env, 10) : NaN;
+  if (Number.isFinite(n) && n > 0 && n <= 24 * 60) return n;
+  return 120;
+}
+
+/** Začátek + odhad délky — po tomto okamžiku se webinář označí jako minulý (cron / editor). */
+function webinarEndEpochMsPrague(w: {
+  year: number;
+  monthNum?: number;
+  day?: number;
+  time?: string;
+}): number {
+  return webinarStartEpochMsPrague(w) + webinarDefaultDurationMinutes(w as any) * 60 * 1000;
+}
+
+async function markPastWebinarsInCollection(): Promise<{ updated: number }> {
+  const items = (await getCollection(WEBINARS_KEY)) as any[];
+  const nowMs = Date.now();
+  let updated = 0;
+  const next = items.map((w: any) => {
+    if (!w?.id || w.isPast) return w;
+    const endMs = webinarEndEpochMsPrague(w);
+    if (endMs < nowMs) {
+      updated++;
+      return { ...w, isPast: true, updatedAt: new Date().toISOString() };
+    }
+    return w;
+  });
+  if (updated > 0) await saveCollection(WEBINARS_KEY, next);
+  return { updated };
+}
+
 function webinarReminderMorningKey(webinarId: string, emailHash: string): string {
   return `webinar_rem_morning_${webinarId}_${emailHash}`;
 }
@@ -3059,19 +3369,523 @@ function remEscHtmlReminder(s: string) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** Odkaz na stránku webináře s předvyplněným e-mailem — zobrazí blok s dotazníkem (stejný jako po registraci). */
-function buildWebinarSurveyInviteUrl(baseUrl: string, w: any, cleanEmail: string): string | null {
-  if (resolveSurveyQuestionsFromWebinarItem(w).length === 0) return null;
-  const slug = String(w.slug || w.id || '').trim() || String(w.id);
-  const origin = String(baseUrl || '').replace(/\/$/, '');
-  return `${origin}/webinar/${encodeURIComponent(slug)}?dotaznik=1&email=${encodeURIComponent(cleanEmail)}`;
+/** PNG logo z `/public/email-logo-vividbooks.png` — stejná hlavička u webinářových Mandrill mailů. */
+function webinarEmailHeaderLogoAbsoluteUrl(): string {
+  return `${normalizePublicSiteOrigin(getPublicSiteOrigin())}/email-logo-vividbooks.png`;
+}
+
+/** Vycentrované logo + podnadpis (uppercase v CSS u příjemce). */
+function webinarEmailBrandedHeaderRow(
+  subtitlePlain: string,
+  style?: { headerPadding?: string; headerRadius?: string },
+): string {
+  const esc = remEscHtmlReminder;
+  const logoSrc = esc(webinarEmailHeaderLogoAbsoluteUrl());
+  const site = esc(normalizePublicSiteOrigin(getPublicSiteOrigin()));
+  const sub = esc(subtitlePlain);
+  const padding = style?.headerPadding ?? '22px 24px 20px';
+  const radius = style?.headerRadius ?? '12px 12px 0 0';
+  return `<tr><td class="dm-header" style="background:#001161;padding:${padding};border-radius:${radius};text-align:center;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:0 0 12px;">
+<a href="${site}" style="text-decoration:none;border:0;display:inline-block;">
+<img src="${logoSrc}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;outline:none;" />
+</a>
+</td></tr><tr><td align="center" style="padding:0;">
+<p style="margin:0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">${sub}</p>
+</td></tr></table>
+</td></tr>`;
+}
+
+/** Častá křestní jména → vokativ (malými písmeny, NFC). Doplňuje se o suffixová pravidla níže. */
+const CZECH_FIRST_NAME_VOCATIVE_MAP: Record<string, string> = {
+  'petr': 'petře',
+  'jan': 'jane',
+  'honza': 'honzo',
+  'pavel': 'pavle',
+  'tomáš': 'tomáši',
+  'lukáš': 'lukáši',
+  'martin': 'martine',
+  'jakub': 'jakube',
+  'matěj': 'matěji',
+  'ondřej': 'ondřeji',
+  'michal': 'michale',
+  'karel': 'karle',
+  'david': 'davide',
+  'adam': 'adame',
+  'josef': 'josefe',
+  'jiří': 'jiří',
+  'vítek': 'vítku',
+  'vitek': 'vítku',
+  'zdeněk': 'zdeňku',
+  'františek': 'františku',
+  'radek': 'radku',
+  'raděk': 'radku',
+  'dominik': 'dominiku',
+  'patrik': 'patriku',
+  'daniel': 'danieli',
+  'jindřich': 'jindřichu',
+  'roman': 'romane',
+  'marie': 'marie',
+  'jana': 'jano',
+  'petra': 'petro',
+  'eva': 'evo',
+  'anna': 'anno',
+  'lenka': 'lenko',
+  'michaela': 'michaelo',
+  'klára': 'kláro',
+  'václav': 'václave',
+  'filip': 'filipe',
+  'matyáš': 'matyáši',
+  'štěpán': 'štěpáne',
+  'vojtěch': 'vojtěchu',
+  'dobrý den': 'dobrý den',
+  'dobry den': 'dobrý den',
+};
+
+function czechFirstNameVocativeCapitalize(original: string, vocativeLower: string): string {
+  if (!vocativeLower) return original;
+  const t = original.trim();
+  const first = t[0];
+  if (first && first === first.toUpperCase() && first.toLowerCase() !== first.toUpperCase()) {
+    return vocativeLower.charAt(0).toUpperCase() + vocativeLower.slice(1);
+  }
+  return vocativeLower;
+}
+
+/** 5. pád křestního jména pro „Ahoj …“ (e-maily). Heuristiky + mapa; neznámé jméno vrátí beze změny. */
+function czechFirstNameVocative(firstName: string): string {
+  const raw = String(firstName || '').trim();
+  if (!raw) return raw;
+  const lower = raw.toLowerCase().normalize('NFC');
+  if (lower === 'dobrý den' || lower === 'dobry den') return raw;
+
+  const mapped = CZECH_FIRST_NAME_VOCATIVE_MAP[lower];
+  if (mapped) return czechFirstNameVocativeCapitalize(raw, mapped);
+
+  if (lower.endsWith('ěk')) {
+    return czechFirstNameVocativeCapitalize(raw, lower.replace(/ěk$/, 'ňku'));
+  }
+  if (lower.endsWith('ek')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -2)}ku`);
+  }
+  if (lower.endsWith('nik')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -3)}niku`);
+  }
+  if (lower.endsWith('ík')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -2)}íku`);
+  }
+  if (lower.endsWith('ik') && !lower.endsWith('ník') && !lower.endsWith('ík')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -2)}iku`);
+  }
+  if (lower.endsWith('áš')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -1)}ši`);
+  }
+  if (lower.endsWith('artin')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -2)}ine`);
+  }
+  if (lower.endsWith('a') && lower.length >= 3 && !lower.endsWith('ia')) {
+    return czechFirstNameVocativeCapitalize(raw, `${lower.slice(0, -1)}o`);
+  }
+  return raw;
+}
+
+/** 2. pád měsíce (9. dubna …) — používá monthNum z CMS, ne nominativ z monthName. */
+function webinarMonthGenitiveCs(monthNum: number): string {
+  const g = [
+    '', 'ledna', 'února', 'března', 'dubna', 'května', 'června', 'července', 'srpna', 'září', 'října', 'listopadu', 'prosince',
+  ];
+  return monthNum >= 1 && monthNum <= 12 ? g[monthNum] : '';
+}
+
+function formatWebinarReminderScheduleLine(w: any): string {
+  const d = w.day || 1;
+  const y = w.year;
+  const mo = w.monthNum;
+  const time = String(w.time || '18:00').trim() || '18:00';
+  const monthGen = typeof mo === 'number' && mo >= 1 && mo <= 12 ? webinarMonthGenitiveCs(mo) : '';
+  if (monthGen) return `${d}. ${monthGen} ${y} v ${time}`;
+  const raw = String(w.monthName || '').trim();
+  return `${d}. ${raw.toLowerCase()} ${y} v ${time}`;
+}
+
+/** Náhled + název + termín + lektor (stejná logika jako potvrzovací mail, bez kapitálkových labelů). */
+function buildWebinarReminderVisualCard(w: any): string {
+  const esc = remEscHtmlReminder;
+  const lecturerResolved = String(w.lecturer || '').trim();
+  const coverRaw = String(w.coverImage || '').trim();
+  const coverImgUrl = /^https?:\/\//i.test(coverRaw) ? coverRaw : '';
+  const titleEsc = esc(String(w.title || ''));
+  const whenLine = esc(formatWebinarReminderScheduleLine(w));
+  const lecturerBlock = lecturerResolved
+    ? `<p style="margin:0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${esc(lecturerResolved)}</p>`
+    : '';
+  const coverBlock = coverImgUrl
+    ? `<img src="${esc(coverImgUrl)}" alt="${titleEsc}" width="520" style="width:100%;max-width:520px;height:auto;border-radius:12px 12px 0 0;display:block;border:0;margin:0;" />`
+    : '';
+  const titleBlock = !coverImgUrl
+    ? `<p style="margin:0 0 14px;font-size:20px;font-weight:800;color:#001161;line-height:1.35;">${titleEsc}</p>`
+    : `<p style="margin:0 0 8px;font-size:18px;font-weight:800;color:#001161;line-height:1.35;">${titleEsc}</p>`;
+  return `<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+<tr><td style="background:#f8fafc;padding:0;">
+${coverBlock}
+<div style="padding:22px 24px 24px;">
+${titleBlock}
+<p style="margin:0 0 6px;font-size:16px;color:#334155;line-height:1.5;">${whenLine}</p>
+${lecturerBlock}
+</div>
+</td></tr>
+</table>`;
 }
 
 function buildSurveyEmailCtaBlock(surveyPageUrl: string | null | undefined): string {
   if (!surveyPageUrl) return '';
   const href = remEscHtmlReminder(surveyPageUrl);
-  return `<p class="dm-text" style="margin:0 0 18px;font-size:14px;color:#4a5568;line-height:1.55;">Ještě jsme od vás neobdrželi krátký dotazník před webinářem — pomůže nám připravit obsah. <a href="${href}" style="color:#001161;font-weight:800;text-decoration:underline;">Vyplnit dotazník</a></p>`;
+  return `<table class="dm-survey-box" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-radius:14px;background:#eef2f8;border:1px solid #e2e8f0;">
+<tr><td style="padding:20px 22px;">
+<p style="margin:0 0 14px;font-size:15px;color:#334155;line-height:1.55;">Co byste chtěli na webináři probrat? Vyplňte 3 krátké otázky a lektor na ně přímo naváže.</p>
+<a href="${href}" style="display:inline-block;background:#ffffff;color:#001161;font-weight:700;font-size:14px;padding:10px 22px;border-radius:100px;text-decoration:none;border:2px solid #001161;">Chci ovlivnit obsah</a>
+</td></tr>
+</table>`;
 }
+
+/** Před webinářem: `?dotaznik=1` — ovlivnění obsahu (bez DVPP kvízu v URL). */
+function buildWebinarSurveyInviteUrl(baseUrl: string, w: any, cleanEmail: string): string | null {
+  if (resolvePreWebinarSurveyQuestionsFromItem(w).length === 0) return null;
+  const slug = String(w.slug || w.id || '').trim() || String(w.id);
+  const origin = String(baseUrl || '').replace(/\/$/, '');
+  return `${origin}/webinar/${encodeURIComponent(slug)}?dotaznik=1&email=${encodeURIComponent(cleanEmail)}`;
+}
+
+/** Po webináři: `/webinar/.../dvpp-dotaznik` — DVPP + dotazník (stejné jako `?dvppDotaznik=1` na klientu). */
+function buildWebinarDvppDotaznikUrl(baseUrl: string, w: any, cleanEmail: string): string | null {
+  if (resolveSurveyQuestionsFromWebinarItem(w).length === 0) return null;
+  const slug = String(w.slug || w.id || '').trim() || String(w.id);
+  const origin = String(baseUrl || '').replace(/\/$/, '');
+  return `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(cleanEmail)}`;
+}
+
+/** Stejné jako `matchDvppVideo` ve WebinaryPastPanel — párování webináře k záznamu v KV `dvpp-videos`. */
+function normWebinarDvppMatch(raw: string): string {
+  return String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function matchDvppVideoForWebinar(webinar: any, dvppVideos: any[]): any | null {
+  if (!dvppVideos?.length) return null;
+  const wSlug = normWebinarDvppMatch(String(webinar.slug || webinar.id || ''));
+  const wTitle = normWebinarDvppMatch(String(webinar.title || ''));
+  const bySlug = dvppVideos.find((v: any) =>
+    normWebinarDvppMatch(String(v.slug || v.id || '')) === wSlug,
+  );
+  if (bySlug) return bySlug;
+  const byTitle = dvppVideos.find((v: any) => {
+    const vt = normWebinarDvppMatch(String(v.name || v.title || ''));
+    return wTitle.length > 5 && (
+      vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
+      wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7)))
+    );
+  });
+  return byTitle ?? null;
+}
+
+/** Který webinář patří k danému DVPP záznamu (pro ověření `webinar_reg_*`). */
+function findWebinarIdForDvppVideoId(videoId: string, webinars: any[], dvppVideos: any[]): string | null {
+  const vid = String(videoId).trim();
+  if (!vid) return null;
+  const direct = webinars.find((w: any) => String(w?.id) === vid);
+  if (direct) return String(direct.id);
+  for (const w of webinars) {
+    const m = matchDvppVideoForWebinar(w, dvppVideos);
+    if (m && String(m.id) === vid) return String(w.id);
+  }
+  return null;
+}
+
+/**
+ * Veřejná stránka záznamu (přehrávač + info): `/webinare/zaznam/:id` — `DvppVideoDetailPage`.
+ * ID bere z párovaného záznamu v `dvpp-videos`, jinak z `webinar.id` (admin často ukládá stejné id).
+ * Volitelně `?email=&from=email` — e-mail pro kontext; `from=email` znamená odkaz z follow-up mailu (odemčení záznamu na klientu).
+ */
+async function resolveWebinarZaznamPageUrl(origin: string, w: any, opts?: { email?: string }): Promise<string> {
+  const base = String(origin || '').replace(/\/$/, '');
+  let dvppVideos: any[] = [];
+  try {
+    const data: any = await kv.get(DVPP_VIDEOS_KEY);
+    dvppVideos = Array.isArray(data?.videos) ? data.videos : [];
+  } catch {
+    dvppVideos = [];
+  }
+  const matched = matchDvppVideoForWebinar(w, dvppVideos);
+  const zaznamId = matched?.id != null && String(matched.id).trim()
+    ? String(matched.id).trim()
+    : String(w?.id ?? '').trim();
+  if (!zaznamId) {
+    const slug = String(w.slug || w.id || '').trim() || 'webinar';
+    return `${base}/webinar/${encodeURIComponent(slug)}`;
+  }
+  let url = `${base}/webinare/zaznam/${encodeURIComponent(zaznamId)}`;
+  const em = String(opts?.email || '').trim().toLowerCase();
+  if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    const qs = new URLSearchParams();
+    qs.set('email', em);
+    qs.set('from', 'email');
+    url += `?${qs.toString()}`;
+  }
+  return url;
+}
+
+/** Ověření přístupu ke záznamu podle e-mailu (registrace na živý webinář nebo u záznamu). */
+async function handleDvppRecordingAccessGet(c: Context) {
+  try {
+    const videoId = String(c.req.query('videoId') || '').trim();
+    const cleanEmail = String(c.req.query('email') || '').trim().toLowerCase();
+    if (!videoId || !cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return c.json({ access: false, source: null }, 400);
+    }
+    const webinars = await getCollection(WEBINARS_KEY);
+    let dvppVideos: any[] = [];
+    try {
+      const data: any = await kv.get(DVPP_VIDEOS_KEY);
+      dvppVideos = Array.isArray(data?.videos) ? data.videos : [];
+    } catch {
+      dvppVideos = [];
+    }
+    const webinarId = findWebinarIdForDvppVideoId(videoId, webinars, dvppVideos);
+    let source: 'webinar' | 'dvpp' | null = null;
+    if (webinarId) {
+      const reg = await kv.get(`webinar_reg_${webinarId}_${cleanEmail}`);
+      if (reg) source = 'webinar';
+    }
+    if (!source) {
+      const dvppReg = await kv.get(`dvpp_video_reg_${videoId}_${cleanEmail}`);
+      if (dvppReg) source = 'dvpp';
+    }
+    return c.json({ access: !!source, source });
+  } catch (e: any) {
+    console.log(`[dvpp-recording-access] ${e.message}`);
+    return c.json({ error: e.message || 'Chyba' }, 500);
+  }
+}
+app.get('/make-server-93a20b6f/public/dvpp-recording-access', handleDvppRecordingAccessGet);
+app.get('/public/dvpp-recording-access', handleDvppRecordingAccessGet);
+
+/**
+ * 4. pád pro „Děkujeme za Váš zájem o …“ — z předmětů v CMS, tagů, názvu a doprovodných polí.
+ * Dříve: prázdné `relatedSubjects` → vždy „matematiku“ (vedlo k nesmyslu u ne-matematických webinářů).
+ * Teď: heuristika z celého kontextu; neznámé → null → jen „Děkujeme za Váš zájem!“
+ */
+function followupThankYouInterestAccusative(w: any): string | null {
+  const parts: string[] = [];
+  if (Array.isArray(w?.relatedSubjects)) {
+    for (const s of w.relatedSubjects) parts.push(String(s));
+  }
+  if (Array.isArray(w?.tags)) {
+    for (const t of w.tags) parts.push(String(t));
+  }
+  if (w?.title) parts.push(String(w.title));
+  if (w?.subtitle) parts.push(String(w.subtitle));
+  if (w?.targetAudience) parts.push(String(w.targetAudience));
+
+  const blob = parts.join(' ').trim();
+  if (!blob) return null;
+
+  const lower = blob.toLowerCase();
+
+  /* Značky / produkty — před obecnými předměty (nadpis často obsahuje „Vividboardem“ apod.) */
+  if (lower.includes('vividboard')) return 'Vividboard';
+  if (lower.includes('vividbooks')) return 'Vividbooks';
+
+  if (lower.includes('matematika')) return 'matematiku';
+  if (lower.includes('fyzika')) return 'fyziku';
+  if (lower.includes('chemie')) return 'chemii';
+  if (lower.includes('biologie')) return 'biologii';
+  if (lower.includes('informatika')) return 'informatiku';
+  if (lower.includes('češt') || lower.includes('cestin')) return 'češtinu';
+  if (lower.includes('angličt') || lower.includes('anglict')) return 'angličtinu';
+  if (lower.includes('zeměpis') || lower.includes('zeme')) return 'zeměpis';
+  if (lower.includes('dějepis') || lower.includes('dejepis')) return 'dějepis';
+  if (lower.includes('přírodopis') || lower.includes('prirodopis')) return 'přírodopis';
+  if (lower.includes('hudební') || lower.includes('hudebn')) return 'hudební výchovu';
+  if (lower.includes('výtvarka') || lower.includes('výtvar')) return 'výtvarnou výchovu';
+  if (lower.includes('tělesn')) return 'tělesnou výchovu';
+
+  return null;
+}
+
+/**
+ * Po webináři — pořadí: vizuál, poděkování (oranžový blok), záznam, trial, DVPP dotazník, shrnutí obsahu.
+ * Používá se u testovacího odeslání z administrace.
+ */
+function buildWebinarPostFollowupEmailHtml(opts: {
+  w: any;
+  webinarTitle: string;
+  learningsHtml: string;
+  /** Primární CTA — stránka záznamu na webu (`/webinare/zaznam/...`). */
+  recordingUrl: string;
+  trialUrl: string;
+  surveyQuizUrl: string | null;
+  showCertificateCta: boolean;
+  certificateLinkMode: 'external' | 'survey';
+  certificateExternalUrl: string;
+  certificateButtonLabel: string;
+}): string {
+  const esc = remEscHtmlReminder;
+  const titleEsc = esc(opts.webinarTitle);
+  const visualCard = buildWebinarReminderVisualCard(opts.w);
+  const interestAcc = followupThankYouInterestAccusative(opts.w);
+  const thanksLine = interestAcc
+    ? `Děkujeme za Váš zájem o ${esc(interestAcc)}!`
+    : 'Děkujeme za Váš zájem!';
+
+  const orangeBlock = `<table width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 22px;border-radius:14px;overflow:hidden;">
+<tr><td style="background:#f97316;padding:24px 26px;">
+<p style="margin:0;font-size:16px;color:#0f172a;line-height:1.65;text-align:center;">
+Vážení učitelé,<br/>
+včera proběhl webinář: <strong>${titleEsc}</strong>.<br/>
+${thanksLine}
+</p>
+</td></tr></table>`;
+
+  const recordingBlock = `<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 20px;">
+<tr><td align="center" style="padding:0;">
+<a href="${esc(opts.recordingUrl)}" style="display:inline-block;background:#facc15;color:#0f172a;font-weight:800;font-size:15px;padding:16px 28px;border-radius:100px;text-decoration:underline;">Otevřít záznam webináře</a>
+</td></tr></table>`;
+
+  const trialBlock = `<p style="margin:0 0 22px;font-size:15px;text-align:center;line-height:1.5;">
+<a href="${esc(opts.trialUrl)}" style="color:#2563eb;font-weight:700;text-decoration:underline;">Vyzkoušet Vividbooks na 14 dní zdarma</a>
+</p>`;
+
+  const certBtnEsc = esc((opts.certificateButtonLabel || 'Certifikát DVPP').trim() || 'Certifikát DVPP');
+  let certificateBlock = '';
+  if (opts.showCertificateCta) {
+    if (opts.certificateLinkMode === 'survey') {
+      if (opts.surveyQuizUrl) {
+        certificateBlock = `<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 26px;">
+<tr><td align="center" style="padding:0;">
+<a href="${esc(opts.surveyQuizUrl)}" style="display:inline-block;background:#ea580c;color:#ffffff;font-weight:800;font-size:14px;padding:12px 22px;border-radius:100px;text-decoration:none;">${certBtnEsc} (Dotazník)</a>
+</td></tr></table>`;
+      } else {
+        certificateBlock = `<p style="margin:0 0 22px;font-size:13px;color:#64748b;text-align:center;">Odkaz na dotazník (certifikát DVPP) doplníte po uložení webináře a nastavení otázek v administraci.</p>`;
+      }
+    } else if (opts.certificateExternalUrl) {
+      certificateBlock = `<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 26px;">
+<tr><td align="center" style="padding:0;">
+<a href="${esc(opts.certificateExternalUrl)}" style="display:inline-block;background:#374151;color:#ffffff;font-weight:800;font-size:14px;padding:12px 22px;border-radius:100px;text-decoration:none;">${certBtnEsc}</a>
+</td></tr></table>`;
+    }
+  }
+
+  const learningsBlock = opts.learningsHtml.trim()
+    ? `<div style="margin:0 0 8px;padding:20px 22px;border-radius:14px;background:#f8fafc;border:1px solid #e2e8f0;">
+<h2 style="margin:0 0 14px;font-size:17px;font-weight:800;color:#001161;">Co jsme se dozvěděli na webináři</h2>
+<div style="font-size:15px;color:#334155;line-height:1.6;">${opts.learningsHtml}</div>
+</div>`
+    : `<p style="margin:0 0 8px;font-size:15px;color:#64748b;">(Blok „Co jsme se dozvěděli na webináři“ zatím není — vygenerujte a uložte v administraci.)</p>`;
+
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
+<!-- vb-post-followup-email-template: v6 (PNG logo /public; deploy make-server-93a20b6f) -->
+<body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
+<table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
+${webinarEmailBrandedHeaderRow('Záznam webináře')}
+<tr><td class="dm-rem-content" style="padding:26px 26px 8px;">
+${visualCard}
+${orangeBlock}
+${recordingBlock}
+${trialBlock}
+${certificateBlock}
+${learningsBlock}
+</td></tr>
+<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
+<p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">Tento e-mail je testovací odeslaný z administrace.<br>
+&copy; ${new Date().getFullYear()} Vividbooks</p>
+</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+async function adminWebinarPostFollowupTestSendHandler(c: Context) {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body?.webinarId || '').trim();
+    const toEmail = String(body?.toEmail || '').toLowerCase().trim();
+    if (!webinarId || !toEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toEmail)) {
+      return c.json({ error: 'Chybí webinarId nebo platný toEmail.' }, 400);
+    }
+
+    const items = await getCollection(WEBINARS_KEY);
+    const w = items.find((x: any) => String(x.id) === webinarId) as Record<string, unknown> | undefined;
+    if (!w) return c.json({ error: 'Webinář nenalezen' }, 404);
+
+    const learningsRaw = typeof body?.learningsHtml === 'string' && body.learningsHtml.trim()
+      ? body.learningsHtml
+      : String(w.postWebinarLearningsHtml || '');
+    const learningsHtml = sanitizeWebinarLearningsHtml(learningsRaw);
+
+    /** Otázky z formuláře (i před uložením) — sloučí se do záznamu pro výpočet odkazu a náhledu. */
+    const merged: Record<string, unknown> = { ...w };
+    if (Array.isArray(body?.postWebinarQuizQuestions)) {
+      merged.postWebinarQuizQuestions = body.postWebinarQuizQuestions;
+    }
+
+    const slug = String(w.slug || w.id || '').trim() || String(webinarId);
+    const origin = getPublicSiteOrigin();
+    const quizPageUrl = `${origin}/webinar/${encodeURIComponent(slug)}`;
+    const quizPreviewLabels = mapPostWebinarQuizQuestionsForSurvey(merged).map((q) => q.label);
+    let surveyQuizUrl = buildWebinarDvppDotaznikUrl(origin, merged, toEmail);
+    /** Záloha: když je v KV např. surveyEnabled=false bez CMS otázek, ale z adminu přišly DVPP otázky. */
+    if (!surveyQuizUrl && quizPreviewLabels.length > 0) {
+      surveyQuizUrl = `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(toEmail)}`;
+    }
+
+    const certificateLinkMode = (merged as any).certificateLinkMode === 'survey' ? 'survey' : 'external';
+    const certificateExternalUrl = String((merged as any).certificateUrl || '').trim();
+    const certificateButtonLabel = String((merged as any).greyButtonText || 'Certifikát DVPP').trim();
+    const showCertificateCta = certificateLinkMode === 'survey'
+      ? !!(surveyQuizUrl || quizPreviewLabels.length > 0)
+      : !!certificateExternalUrl;
+
+    const recordingUrl = await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
+
+    const trialPath = String((merged as any).orangeButtonLink || '/vyzkousejte').trim();
+    const trialUrl = /^https?:\/\//i.test(trialPath)
+      ? trialPath
+      : `${origin}${trialPath.startsWith('/') ? trialPath : `/${trialPath}`}`;
+
+    const html = buildWebinarPostFollowupEmailHtml({
+      w,
+      webinarTitle: String(w.title || 'Webinář'),
+      learningsHtml,
+      recordingUrl,
+      trialUrl,
+      surveyQuizUrl,
+      showCertificateCta,
+      certificateLinkMode,
+      certificateExternalUrl,
+      certificateButtonLabel,
+    });
+
+    const titleShort = String(w.title || 'Webinář').slice(0, 60);
+    const result = await sendMandrillHtmlResult({
+      toEmail,
+      toName: toEmail.split('@')[0],
+      subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Záznam webináře: ${titleShort}`,
+      html,
+    });
+    if (!result.ok) {
+      return c.json({ error: result.detail || 'Odeslání selhalo' }, 500);
+    }
+    return c.json({ ok: true, template: 'post-followup-v6' });
+  } catch (e: any) {
+    console.log(`[webinar-post-followup-test] ${e.message}`);
+    return c.json({ error: e.message || 'Chyba' }, 500);
+  }
+}
+
+app.post('/make-server-93a20b6f/admin/webinar-post-followup-test-send', adminWebinarPostFollowupTestSendHandler);
+app.post('/admin/webinar-post-followup-test-send', adminWebinarPostFollowupTestSendHandler);
 
 async function resolveSurveyInviteUrlForRegistrant(
   w: any,
@@ -3084,33 +3898,45 @@ async function resolveSurveyInviteUrlForRegistrant(
   return answered ? null : invite;
 }
 
+function buildWebinarReminderEmailFooter(): string {
+  return `<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
+<p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
+Tento e-mail byl odeslán automaticky jako připomínka webináře.<br>
+&copy; ${new Date().getFullYear()} Vividbooks
+</p>
+</td></tr>`;
+}
+
 function buildWebinarReminderT30Email(
   w: any,
   firstName: string,
   liveUrl: string,
   surveyPageUrl?: string | null,
 ) {
-  const titleEsc = remEscHtmlReminder(String(w.title || ''));
-  const firstNameEsc = remEscHtmlReminder(firstName);
-  const timeEsc = remEscHtmlReminder(String(w.time || '18:00'));
+  const firstNameEsc = remEscHtmlReminder(czechFirstNameVocative(firstName));
+  const visualCard = buildWebinarReminderVisualCard(w);
   const surveyCta = buildSurveyEmailCtaBlock(surveyPageUrl ?? null);
+  const liveHref = liveUrl.replace(/"/g, '&quot;');
+  const footer = buildWebinarReminderEmailFooter();
   const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
 <body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
 <table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
-<tr><td class="dm-header" style="background:#001161;padding:24px;border-radius:12px 12px 0 0;">
-<p style="margin:0;color:#fff;font-size:20px;font-weight:800;">Vividbooks</p>
-<p style="margin:8px 0 0;color:rgba(255,255,255,0.6);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Za chvíli začínáme</p>
-</td></tr>
-<tr><td class="dm-rem-content" style="padding:28px 28px 24px;">
-<p class="dm-h1" style="margin:0 0 12px;font-size:18px;font-weight:800;color:#001161;">Za půl hodiny začíná webinář</p>
-<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
-<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;"><strong class="dm-strong" style="color:#001161;">${titleEsc}</strong> začíná v <strong class="dm-strong">${timeEsc}</strong> — máte ještě chvíli na přípravu.</p>
+${webinarEmailBrandedHeaderRow('Za chvíli začínáme')}
+<tr><td class="dm-rem-content" style="padding:28px 28px 0;">
+<p class="dm-h1" style="margin:0 0 12px;font-size:18px;font-weight:800;color:#001161;">Za chvíli začíná webinář</p>
+<p class="dm-text" style="margin:0 0 20px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
+${visualCard}
 ${surveyCta}
-<a class="dm-rem-btn" href="${liveUrl.replace(/"/g, '&quot;')}" style="display:inline-block;background:#dc2626;color:#fff;font-weight:800;font-size:15px;padding:12px 24px;border-radius:100px;text-decoration:none;">Otevřít stream</a>
-<p class="dm-rem-link" style="margin:16px 0 0;font-size:11px;color:#a0aec0;word-break:break-all;">${remEscHtmlReminder(liveUrl)}</p>
-</td></tr></table></td></tr></table></body></html>`;
-  return { html, subject: `Za chvíli: ${w.title || 'webinář'}` };
+<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px;">
+<tr><td style="padding:0;">
+<a class="dm-rem-btn" href="${liveHref}" style="display:inline-block;background:#001161;color:#ffffff;font-weight:800;font-size:15px;padding:14px 28px;border-radius:100px;text-decoration:none;">Otevřít webinář</a>
+<p style="margin:12px 0 0;font-size:12px;color:#94a3b8;word-break:break-all;line-height:1.45;">${remEscHtmlReminder(liveUrl)}</p>
+</td></tr></table>
+</td></tr>
+${footer}
+</table></td></tr></table></body></html>`;
+  return { html, subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Za chvíli: ${w.title || 'webinář'}` };
 }
 
 function buildWebinarReminderMorningEmail(
@@ -3119,31 +3945,351 @@ function buildWebinarReminderMorningEmail(
   liveUrl: string,
   surveyPageUrl?: string | null,
 ) {
-  const d = w.day || 1;
-  const y = w.year;
-  const humanWhen = `${d}. ${w.monthName || ''} ${y} v ${w.time || '18:00'}`;
-  const titleEsc = remEscHtmlReminder(String(w.title || ''));
-  const firstNameEsc = remEscHtmlReminder(firstName);
-  const whenEsc = remEscHtmlReminder(humanWhen);
+  const firstNameEsc = remEscHtmlReminder(czechFirstNameVocative(firstName));
+  const visualCard = buildWebinarReminderVisualCard(w);
   const surveyCta = buildSurveyEmailCtaBlock(surveyPageUrl ?? null);
+  const liveHref = liveUrl.replace(/"/g, '&quot;');
+  const footer = buildWebinarReminderEmailFooter();
   const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
 <body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
 <table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
-<tr><td class="dm-header" style="background:#001161;padding:24px;border-radius:12px 12px 0 0;">
-<p style="margin:0;color:#fff;font-size:20px;font-weight:800;">Vividbooks</p>
-<p style="margin:8px 0 0;color:rgba(255,255,255,0.6);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Připomínka webináře</p>
-</td></tr>
-<tr><td class="dm-rem-content" style="padding:28px 28px 24px;">
+${webinarEmailBrandedHeaderRow('Připomínka webináře')}
+<tr><td class="dm-rem-content" style="padding:28px 28px 0;">
 <p class="dm-h1" style="margin:0 0 12px;font-size:18px;font-weight:800;color:#001161;">Dnes vás čeká webinář</p>
-<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
-<p class="dm-text" style="margin:0 0 16px;font-size:15px;color:#4a5568;line-height:1.55;">připomínáme, že <strong class="dm-strong" style="color:#001161;">${titleEsc}</strong> proběhne <strong class="dm-strong dm-accent" style="color:#FF8C00;">dnes (${whenEsc})</strong>.</p>
+<p class="dm-text" style="margin:0 0 20px;font-size:15px;color:#4a5568;line-height:1.55;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameEsc}</strong>,</p>
+${visualCard}
 ${surveyCta}
-<p class="dm-text" style="margin:0 0 20px;font-size:14px;color:#4a5568;">Odkaz na živé vysílání najdete v původním registračním e-mailu, nebo se přihlaste na stránce streamu registračním e-mailem.</p>
-<a class="dm-rem-btn" href="${liveUrl.replace(/"/g, '&quot;')}" style="display:inline-block;background:#dc2626;color:#fff;font-weight:800;font-size:15px;padding:12px 24px;border-radius:100px;text-decoration:none;">Vstoupit na stránku streamu</a>
-<p class="dm-rem-link" style="margin:16px 0 0;font-size:11px;color:#a0aec0;word-break:break-all;">${remEscHtmlReminder(liveUrl)}</p>
-</td></tr></table></td></tr></table></body></html>`;
-  return { html, subject: `Dnes: ${w.title || 'webinář Vividbooks'}` };
+<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 24px;">
+<tr><td style="padding:0;">
+<a class="dm-rem-btn" href="${liveHref}" style="display:inline-block;background:#001161;color:#ffffff;font-weight:800;font-size:15px;padding:14px 28px;border-radius:100px;text-decoration:none;">Otevřít webinář</a>
+<p style="margin:12px 0 0;font-size:12px;color:#94a3b8;word-break:break-all;line-height:1.45;">${remEscHtmlReminder(liveUrl)}</p>
+</td></tr></table>
+</td></tr>
+${footer}
+</table></td></tr></table></body></html>`;
+  return { html, subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Dnes: ${w.title || 'webinář Vividbooks'}` };
+}
+
+function mergeWebinarRegistrationMergedFromBodyAndKv(
+  webinarFromKv: Record<string, unknown> | undefined,
+  body: {
+    webinarId: string;
+    webinarTitle?: string;
+    webinarDay?: number;
+    webinarMonthNum?: number;
+    webinarYear?: number;
+    webinarTime?: string;
+    webinarMonthName?: string;
+  },
+) {
+  const bd = Number(body.webinarDay);
+  const bm = Number(body.webinarMonthNum);
+  const by = Number(body.webinarYear);
+  const kvD = webinarFromKv?.day;
+  const kvMo = webinarFromKv?.monthNum;
+  const kvY = webinarFromKv?.year;
+  const dayResolved =
+    typeof kvD === 'number' && kvD >= 1 && kvD <= 31 ? kvD
+    : Number.isFinite(bd) && bd >= 1 && bd <= 31 ? bd
+    : NaN;
+  const monthResolved =
+    typeof kvMo === 'number' && kvMo >= 1 && kvMo <= 12 ? kvMo
+    : Number.isFinite(bm) && bm >= 1 && bm <= 12 ? bm
+    : NaN;
+  const yearResolved =
+    typeof kvY === 'number' && kvY >= 2020 && kvY <= 2100 ? kvY
+    : Number.isFinite(by) && by >= 2020 && by <= 2100 ? by
+    : NaN;
+  return {
+    day: dayResolved,
+    monthNum: monthResolved,
+    year: yearResolved,
+    time: String(webinarFromKv?.time || body.webinarTime || '18:00').trim() || '18:00',
+    monthName: String(webinarFromKv?.monthName || body.webinarMonthName || ''),
+    title: String(webinarFromKv?.title || body.webinarTitle || body.webinarId),
+  };
+}
+
+function computeWebinarRegistrationCalendarAndIcs(
+  webinarId: string,
+  merged: {
+    day: number;
+    monthNum: number;
+    year: number;
+    time: string;
+    monthName: string;
+    title: string;
+  },
+  liveUrl: string,
+): {
+  humanDate: string;
+  hasSchedule: boolean;
+  icsContent: string;
+  icsBase64: string;
+  gcalStr: string;
+  outlookUrl: string;
+} {
+  let gcalStr = '';
+  let icsContent = '';
+  let humanDate = '';
+  let outlookUrl = '';
+  let icsBase64 = '';
+
+  const hasSchedule =
+    Number.isFinite(merged.day) &&
+    Number.isFinite(merged.monthNum) &&
+    Number.isFinite(merged.year);
+
+  if (hasSchedule) {
+    const [hh, mm] = merged.time.split(':').map((x: string) => parseInt(x, 10));
+    const hhSafe = Number.isFinite(hh) ? hh : 18;
+    const mmSafe = Number.isFinite(mm) ? mm : 0;
+    const d = merged.day;
+    const mo = merged.monthNum;
+    const yr = merged.year;
+    const monthGenitive = [
+      '', 'ledna', 'února', 'března', 'dubna', 'května', 'června', 'července', 'srpna', 'září', 'října',
+      'listopadu', 'prosince',
+    ];
+    const monthGen = monthGenitive[mo] || String(merged.monthName || '').toLowerCase();
+      humanDate = `${d}. ${monthGen} ${yr} v ${merged.time}`;
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    const dateStr = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
+    const rawEndMin = mmSafe + 30;
+    const endHhFinal = hhSafe + 1 + Math.floor(rawEndMin / 60);
+    const endMmFinal = rawEndMin % 60;
+    const endDateStr = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
+    const dtstamp = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
+
+    icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Vividbooks//Webinar//CS',
+      'CALSCALE:GREGORIAN',
+      'METHOD:REQUEST',
+      'BEGIN:VTIMEZONE',
+      'TZID:Europe/Prague',
+      'BEGIN:STANDARD',
+      'DTSTART:19701025T030000',
+      'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
+      'TZOFFSETFROM:+0200',
+      'TZOFFSETTO:+0100',
+      'TZNAME:CET',
+      'END:STANDARD',
+      'BEGIN:DAYLIGHT',
+      'DTSTART:19700329T020000',
+      'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
+      'TZOFFSETFROM:+0100',
+      'TZOFFSETTO:+0200',
+      'TZNAME:CEST',
+      'END:DAYLIGHT',
+      'END:VTIMEZONE',
+      'BEGIN:VEVENT',
+      `UID:webinar-${webinarId}-${Date.now()}@vividbooks.cz`,
+      `DTSTAMP:${dtstamp}`,
+      `DTSTART;TZID=Europe/Prague:${dateStr}`,
+      `DTEND;TZID=Europe/Prague:${endDateStr}`,
+      `SUMMARY:${merged.title.replace(/,/g, '\\,')}`,
+      `DESCRIPTION:Online webinář Vividbooks — odkaz na přenos: ${liveUrl}`,
+      `URL:${liveUrl}`,
+      `LOCATION:Online — ${liveUrl}`,
+      'STATUS:CONFIRMED',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const gcalStart = `${yr}${pad(mo)}${pad(d)}T${pad(hhSafe)}${pad(mmSafe)}00`;
+    const gcalEnd = `${yr}${pad(mo)}${pad(d)}T${pad(endHhFinal)}${pad(endMmFinal)}00`;
+    gcalStr = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(merged.title)}&dates=${gcalStart}/${gcalEnd}&details=${encodeURIComponent('Online webinář Vividbooks\n\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
+
+    outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(merged.title)}&startdt=${yr}-${pad(mo)}-${pad(d)}T${pad(hhSafe)}:${pad(mmSafe)}:00&enddt=${yr}-${pad(mo)}-${pad(d)}T${pad(endHhFinal)}:${pad(endMmFinal)}:00&body=${encodeURIComponent('Online webinář Vividbooks\nPřipojte se: ' + liveUrl)}&location=${encodeURIComponent('Online — ' + liveUrl)}`;
+  }
+
+  if (icsContent) {
+    const icsBytes = new TextEncoder().encode(icsContent);
+    let icsBin = '';
+    icsBytes.forEach((b: number) => { icsBin += String.fromCharCode(b); });
+    icsBase64 = btoa(icsBin);
+  }
+
+  return { humanDate, hasSchedule, icsContent, icsBase64, gcalStr, outlookUrl };
+}
+
+function buildWebinarRegistrationConfirmationEmailPayload(opts: {
+  webinarFromKv: Record<string, unknown> | undefined;
+  merged: {
+    day: number;
+    monthNum: number;
+    year: number;
+    time: string;
+    monthName: string;
+    title: string;
+  };
+  slug: string;
+  webinarId: string;
+  webinarTitleForSubject: string;
+  liveUrl: string;
+  liveUrlPersonal: string;
+  recipientName: string;
+  humanDate: string;
+  hasSchedule: boolean;
+  gcalStr: string;
+  outlookUrl: string;
+  icsContent: string;
+  icsBase64: string;
+}): {
+  html: string;
+  subject: string;
+  attachments: Array<{ type: string; name: string; content: string }>;
+} {
+  const escHtml = (s: string) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  const firstNameNom = opts.recipientName.trim().split(' ')[0] || opts.recipientName.trim();
+  const firstName = czechFirstNameVocative(firstNameNom);
+  const lecturerResolved = String(opts.webinarFromKv?.lecturer || '').trim();
+  const coverRaw = String(opts.webinarFromKv?.coverImage || '').trim();
+  const coverImgUrl = /^https?:\/\//i.test(coverRaw) ? coverRaw : '';
+  const titleSafe = escHtml(opts.merged.title);
+  const humanDateSafe = opts.humanDate ? escHtml(opts.humanDate) : '';
+  const firstNameSafe = escHtml(firstName);
+  const coverBlock = coverImgUrl
+    ? `<img src="${escHtml(coverImgUrl)}" alt="${titleSafe}" width="520" style="width:100%;max-width:520px;height:auto;border-radius:12px 12px 0 0;display:block;border:0;margin:0;" />`
+    : '';
+  const titleIfNoCover = !coverImgUrl
+    ? `<p style="margin:0 0 14px;font-size:20px;font-weight:800;color:#001161;line-height:1.35;">${titleSafe}</p>`
+    : '';
+  const dateAndLecturerBlock = humanDateSafe
+    ? `<p style="margin:0 0 6px;font-size:16px;color:#334155;line-height:1.5;">${humanDateSafe}</p>${
+      lecturerResolved
+        ? `<p style="margin:0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
+        : ''
+    }`
+    : `<p class="dm-muted" style="margin:0;font-size:14px;color:#64748b;">${
+      lecturerResolved
+        ? `Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p><p style="margin:10px 0 0;font-size:15px;color:#334155;line-height:1.5;">Lektor: ${escHtml(lecturerResolved)}</p>`
+        : 'Přesný termín doplníme v dalším e-mailu nebo na stránce webináře.</p>'
+    }`;
+
+  const linkActiveText = opts.hasSchedule
+    ? `Odkaz bude aktivní ${opts.merged.day}. ${opts.merged.monthNum}. ${opts.merged.year} od ${opts.merged.time}. Otevřete ho v naplánovaný čas.`
+    : 'Otevřete odkaz v naplánovaný čas — jakmile bude k dispozici termín, upřesníme ho v další zprávě.';
+  const linkActiveSafe = escHtml(linkActiveText);
+
+  const emailHtml = `<!DOCTYPE html>
+<html lang="cs">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Registrace potvrzená</title>${WEBINAR_EMAIL_DARK_HEAD}</head>
+<body class="dm-body" style="margin:0;padding:0;background:#f5f6fa;font-family:Arial,Helvetica,sans-serif;">
+<table class="dm-wrap" width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6fa;padding:32px 16px;">
+<tr><td align="center">
+<table class="dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
+${webinarEmailBrandedHeaderRow('Potvrzení registrace', {
+  headerPadding: '28px 32px 24px',
+  headerRadius: '20px 20px 0 0',
+})}
+<tr><td class="dm-content" style="padding:40px 40px 28px;">
+<p class="dm-h1" style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Jste přihlášeni!</p>
+<p class="dm-text" style="margin:0 0 6px;font-size:16px;color:#4a5568;">Ahoj <strong class="dm-strong" style="color:#001161;">${firstNameSafe}</strong>,</p>
+<p class="dm-text" style="margin:0 0 22px;font-size:16px;color:#4a5568;line-height:1.6;">
+Děkujeme za registraci. Tady je vše potřebné:
+</p>
+<table class="dm-inner" cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+<tr><td class="dm-box-top" style="background:#f8fafc;padding:0;">
+${coverBlock}
+<div class="dm-box-pad" style="padding:22px 24px 24px;">
+${titleIfNoCover}${dateAndLecturerBlock}
+</div>
+</td></tr>
+</table>
+<table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
+<tr><td class="dm-cta-navy" style="background:#1e3a5f;border-radius:16px;padding:24px 28px;">
+<p style="margin:0 0 10px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:rgba(255,255,255,0.85);">Váš vstup na webinář</p>
+<p style="margin:0 0 16px;font-size:14px;color:rgba(255,255,255,0.9);line-height:1.5;">${linkActiveSafe}</p>
+<a class="dm-btn" href="${opts.liveUrlPersonal.replace(/"/g, '&quot;')}" style="display:inline-block;background:#ffffff;color:#1e3a5f;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;letter-spacing:-0.2px;">Otevřít přenos</a>
+<p style="margin:12px 0 0;font-size:12px;color:#94a3b8;word-break:break-all;line-height:1.45;">${escHtml(opts.liveUrlPersonal)}</p>
+</td></tr>
+</table>
+<p class="dm-cal-heading" style="margin:0 0 14px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(0,17,97,0.4);">Přidat do kalendáře</p>
+${opts.gcalStr ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${opts.gcalStr}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Google Kalendář</a></td></tr></table>` : ''}
+${opts.outlookUrl ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${opts.outlookUrl}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Outlook / Office 365</a></td></tr></table>` : ''}
+<p class="dm-ics-note" style="margin:12px 0 0;font-size:13px;color:#718096;">Příloha .ics funguje s Apple Calendar, Thunderbird a dalšími.</p>
+</td></tr>
+<tr><td class="dm-footer" style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
+<p class="dm-footer-text" style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
+Tento e-mail byl odeslán automaticky po registraci na webinář.<br>
+&copy; ${new Date().getFullYear()} Vividbooks
+</p>
+</td></tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>`;
+
+  const attachments = opts.icsContent
+    ? [{
+      type: 'text/calendar; charset=utf-8; method=REQUEST',
+      name: `webinar-${opts.slug}.ics`,
+      content: opts.icsBase64,
+    }]
+    : [];
+
+  return {
+    html: emailHtml,
+    subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Registrace potvrzená: ${opts.webinarTitleForSubject}`,
+    attachments,
+  };
+}
+
+/** Mandrill vrací u příloh často `queued` (+ queued_reason) — zpráva je přijata, ne jde o chybu. */
+function mandrillRecipientAccepted(rec: { status?: string } | undefined): boolean {
+  const s = rec?.status;
+  return s === 'sent' || s === 'queued' || s === 'scheduled';
+}
+
+async function sendMandrillWebinarRegistrationConfirmationResult(opts: {
+  toEmail: string;
+  toName: string;
+  subject: string;
+  html: string;
+  attachments: Array<{ type: string; name: string; content: string }>;
+}): Promise<{ ok: boolean; detail?: string }> {
+  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  if (!mandrillKey) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
+  try {
+    const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        key: mandrillKey,
+        message: {
+          html: opts.html,
+          subject: opts.subject,
+          from_email: 'hello@vividbooks.com',
+          from_name: 'Vividbooks',
+          to: [{ email: opts.toEmail, name: opts.toName, type: 'to' }],
+          attachments: opts.attachments,
+          headers: { 'Reply-To': 'hello@vividbooks.com' },
+          track_opens: true,
+          track_clicks: false,
+        },
+      }),
+    });
+    const mailData = await mailRes.json();
+    if (!mailRes.ok) {
+      return { ok: false, detail: `HTTP ${mailRes.status}: ${JSON.stringify(mailData).slice(0, 400)}` };
+    }
+    const ok = Array.isArray(mailData) && mandrillRecipientAccepted(mailData[0]);
+    if (!ok) return { ok: false, detail: JSON.stringify(mailData).slice(0, 500) };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, detail: e?.message || String(e) };
+  }
 }
 
 async function sendMandrillHtmlResult(opts: {
@@ -3163,10 +4309,10 @@ async function sendMandrillHtmlResult(opts: {
         message: {
           html: opts.html,
           subject: opts.subject,
-          from_email: 'webinare@vividbooks.com',
-          from_name: 'Vividbooks webináře',
+          from_email: 'hello@vividbooks.com',
+          from_name: 'Vividbooks',
           to: [{ email: opts.toEmail, name: opts.toName, type: 'to' }],
-          headers: { 'Reply-To': 'webinare@vividbooks.com' },
+          headers: { 'Reply-To': 'hello@vividbooks.com' },
           track_opens: true,
           track_clicks: false,
         },
@@ -3176,7 +4322,7 @@ async function sendMandrillHtmlResult(opts: {
     if (!mailRes.ok) {
       return { ok: false, detail: `HTTP ${mailRes.status}: ${JSON.stringify(mailData).slice(0, 400)}` };
     }
-    const ok = Array.isArray(mailData) && mailData[0]?.status === 'sent';
+    const ok = Array.isArray(mailData) && mandrillRecipientAccepted(mailData[0]);
     if (!ok) return { ok: false, detail: JSON.stringify(mailData).slice(0, 500) };
     return { ok: true };
   } catch (e: any) {
@@ -3193,6 +4339,71 @@ async function sendMandrillHtml(opts: {
   const r = await sendMandrillHtmlResult(opts);
   return r.ok;
 }
+
+const webinarSurveyPartialHandler = async (c: Context) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = normalizeWebinarIdFromBody(body?.webinarId);
+    const email =
+      typeof body?.email === 'string' ? body.email.toLowerCase().trim() : '';
+    const questionId = typeof body?.questionId === 'string' ? body.questionId.trim() : '';
+    const valueRaw = body?.value;
+    if (!webinarId || !email || !questionId) {
+      return c.json({ error: 'Chybí webinarId, email nebo questionId.' }, 400);
+    }
+    const value = valueRaw === undefined || valueRaw === null ? '' : String(valueRaw).trim();
+    if (!value) {
+      return c.json({ error: 'Chybí odpověď.' }, 400);
+    }
+    const regKey = `webinar_reg_${webinarId}_${email}`;
+    const reg = await kv.get(regKey);
+    if (!reg) {
+      return c.json(
+        {
+          error:
+            'Nejprve se registrujte na tento webinář se stejným e-mailem. Pokud jste už registrovaní, zkuste obnovit stránku a odeslat znovu.',
+        },
+        403,
+      );
+    }
+    const existingFinal = await kv.get(webinarSurveyAnswerKey(webinarId, email));
+    if (existingFinal) {
+      return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
+    }
+
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
+    const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
+    if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
+
+    const q = questions.find((x) => x.id === questionId);
+    if (!q) return c.json({ error: 'Neznámá otázka.' }, 400);
+    if (q.type === 'yes_no' && value !== 'yes' && value !== 'no') {
+      return c.json({ error: `Neplatná odpověď u: ${q.label}` }, 400);
+    }
+    if (q.type === 'abc' && q.options && q.options.length > 0) {
+      const ok = q.options.some((o) => o === value);
+      if (!ok) return c.json({ error: `Neplatná volba u: ${q.label}` }, 400);
+    }
+
+    const partialKey = webinarSurveyPartialKey(webinarId, email);
+    const prev = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
+    const nextAnswers = { ...(prev?.answers || {}), [questionId]: value };
+    await kv.set(partialKey, {
+      webinarId,
+      email,
+      name: (reg as any).name || '',
+      answers: nextAnswers,
+      updatedAt: new Date().toISOString(),
+    });
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.log(`[Survey partial] Chyba: ${err.message}`);
+    return c.json({ error: err.message || String(err) }, 500);
+  }
+};
 
 const webinarSurveySubmitHandler = async (c: Context) => {
   try {
@@ -3224,9 +4435,16 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
+    const partialKey = webinarSurveyPartialKey(webinarId, email);
+    const partialDoc = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
+    const mergedIncoming: Record<string, unknown> = {
+      ...(partialDoc?.answers || {}),
+      ...(answers as Record<string, unknown>),
+    };
+
     const out: Record<string, string> = {};
     for (const q of questions) {
-      const v = (answers as Record<string, unknown>)[q.id];
+      const v = mergedIncoming[q.id];
       const s = v === undefined || v === null ? '' : String(v).trim();
       if (!s) continue;
       if (q.type === 'yes_no' && s !== 'yes' && s !== 'no') {
@@ -3249,6 +4467,7 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       answers: out,
       submittedAt: new Date().toISOString(),
     });
+    await kv.del(partialKey).catch(() => {});
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Survey] Chyba: ${err.message}`);
@@ -3260,21 +4479,56 @@ app.post('/make-server-93a20b6f/webinar-survey-submit', webinarSurveySubmitHandl
 /** Záloha: některé proxy posílají jen suffix cesty bez prefixu funkce. */
 app.post('/webinar-survey-submit', webinarSurveySubmitHandler);
 
+app.post('/make-server-93a20b6f/webinar-survey-partial', webinarSurveyPartialHandler);
+app.post('/webinar-survey-partial', webinarSurveyPartialHandler);
+
 app.get('/make-server-93a20b6f/admin/webinar-survey/:webinarId', async (c) => {
   try {
     const webinarId = c.req.param('webinarId');
     const items = await getCollection(WEBINARS_KEY);
     const webinar = (items as any[]).find((x: any) => x.id === webinarId) as Record<string, unknown> | undefined;
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
-    const prefix = `webinar_survey_${webinarId}_`;
-    const rows = await kv.getByPrefix(prefix);
-    /** Zaručí čistě serializovatelný JSON (BigInt / cizí typy z JSONB). */
-    let responses: unknown[] = [];
+    const prefixFinal = `webinar_survey_${webinarId}_`;
+    const prefixPartial = `webinar_survey_partial_${webinarId}_`;
+    const rowsFinal = await kv.getByPrefix(prefixFinal);
+    const rowsPartial = await kv.getByPrefix(prefixPartial);
+    let finalClean: unknown[] = [];
+    let partialClean: unknown[] = [];
     try {
-      responses = JSON.parse(JSON.stringify(rows ?? [])) as unknown[];
+      finalClean = JSON.parse(JSON.stringify(rowsFinal ?? [])) as unknown[];
     } catch {
-      responses = [];
+      finalClean = [];
     }
+    try {
+      partialClean = JSON.parse(JSON.stringify(rowsPartial ?? [])) as unknown[];
+    } catch {
+      partialClean = [];
+    }
+    const byEmail = new Map<string, Record<string, unknown>>();
+    for (const p of partialClean as Array<Record<string, unknown>>) {
+      const em = String(p?.email || '')
+        .toLowerCase()
+        .trim();
+      if (!em) continue;
+      const upd = p?.updatedAt as string | undefined;
+      byEmail.set(em, {
+        ...p,
+        partial: true,
+        submittedAt: upd || p?.submittedAt || '',
+      });
+    }
+    for (const f of finalClean as Array<Record<string, unknown>>) {
+      const em = String(f?.email || '')
+        .toLowerCase()
+        .trim();
+      if (!em) continue;
+      byEmail.set(em, { ...f, partial: false });
+    }
+    const responses = Array.from(byEmail.values()).sort((a, b) => {
+      const ta = new Date(String(a?.submittedAt || 0)).getTime();
+      const tb = new Date(String(b?.submittedAt || 0)).getTime();
+      return tb - ta;
+    });
     return c.json({ webinarId, questions, responses });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
@@ -3289,8 +4543,11 @@ app.post('/make-server-93a20b6f/cron/webinar-reminders', async (c) => {
     if (!secret || (auth !== secret && hdr !== secret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    const markPast = await markPastWebinarsInCollection();
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
-    if (!mandrillKey) return c.json({ ok: true, skipped: 'MANDRILL_API_KEY missing', sent: 0 });
+    if (!mandrillKey) {
+      return c.json({ ok: true, skipped: 'MANDRILL_API_KEY missing', sent: 0, markPastUpdated: markPast.updated });
+    }
 
     const items = (await getCollection(WEBINARS_KEY)) as any[];
     const nowMs = Date.now();
@@ -3361,7 +4618,23 @@ app.post('/make-server-93a20b6f/cron/webinar-reminders', async (c) => {
         }
       }
     }
-    return c.json({ ok: true, sent });
+    return c.json({ ok: true, sent, markPastUpdated: markPast.updated });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+/** Označí webináře jako minulé po skončení (začátek + durationMinutes / výchozí 120 min). Lehké — lze volat často z cronu. */
+app.post('/make-server-93a20b6f/cron/webinar-mark-past', async (c) => {
+  try {
+    const secret = Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim();
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || '';
+    const hdr = c.req.header('X-Cron-Secret') || '';
+    if (!secret || (auth !== secret && hdr !== secret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const { updated } = await markPastWebinarsInCollection();
+    return c.json({ ok: true, updated });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }
@@ -3435,6 +4708,110 @@ app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => 
       return c.json({ ok: false, detail: result.detail, to: cleanEmail, kind });
     }
     return c.json({ ok: true, to: cleanEmail, kind });
+  } catch (e: any) {
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+});
+
+/** Okamžitý test potvrzovacího e-mailu po registraci — první registrace v KV, stejná šablona jako produkce. */
+app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body?.webinarId || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+
+    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
+      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    }
+
+    const items = (await getCollection(WEBINARS_KEY)) as any[];
+    const w = items.find((x: any) => x.id === webinarId);
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+
+    const regs = await kv.getByPrefix(`webinar_reg_${w.id}_`) as any[];
+    if (!regs?.length) {
+      return c.json({
+        error:
+          'Žádná registrace na tento webinář. Nejdřív se zaregistrujte testovacím e-mailem.',
+      }, 400);
+    }
+
+    const reg = regs[0];
+    const cleanEmail = String(reg.email || '').toLowerCase().trim();
+    if (!cleanEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
+    const name = String(reg.name || '').trim();
+    const slug = String(w.slug || w.id);
+
+    const lobbyToken = crypto.randomUUID();
+    const lobbyExpiresAt = new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString();
+    await kv.set(`webinar_lobby_${lobbyToken}`, {
+      webinarId: w.id,
+      webinarSlug: slug,
+      email: cleanEmail,
+      name: name.trim(),
+      createdAt: new Date().toISOString(),
+      expiresAt: lobbyExpiresAt,
+    });
+
+    const baseUrl = getPublicSiteOrigin();
+    const liveUrl = `${baseUrl}/webinar/${slug}/live`;
+    const liveUrlPersonal = `${liveUrl}?lobby=${lobbyToken}`;
+
+    const webinarFromKv = w as Record<string, unknown>;
+    const merged = mergeWebinarRegistrationMergedFromBodyAndKv(webinarFromKv, {
+      webinarId: w.id,
+      webinarTitle: String(w.title || w.id),
+      webinarDay: w.day,
+      webinarMonthNum: w.monthNum,
+      webinarYear: w.year,
+      webinarTime: w.time,
+      webinarMonthName: w.monthName,
+    });
+
+    const cal = computeWebinarRegistrationCalendarAndIcs(w.id, merged, liveUrl);
+    const { humanDate, hasSchedule, icsContent, icsBase64, gcalStr, outlookUrl } = cal;
+
+    const payload = buildWebinarRegistrationConfirmationEmailPayload({
+      webinarFromKv,
+      merged,
+      slug,
+      webinarId: w.id,
+      webinarTitleForSubject: String(w.title || w.id),
+      liveUrl,
+      liveUrlPersonal,
+      recipientName: name,
+      humanDate,
+      hasSchedule,
+      gcalStr,
+      outlookUrl,
+      icsContent,
+      icsBase64,
+    });
+
+    const result = await sendMandrillWebinarRegistrationConfirmationResult({
+      toEmail: cleanEmail,
+      toName: name || cleanEmail,
+      subject: payload.subject,
+      html: payload.html,
+      attachments: payload.attachments,
+    });
+
+    if (!result.ok) {
+      await upsertSiteIncident({
+        source: 'webinar_registration_test',
+        incidentType: 'mandrill_webinar_registration_test_failed',
+        severity: 'warning',
+        dedupeKey: `webinar-registration-test-${webinarId}-mandrill`,
+        title: 'Test potvrzovacího e-mailu webináře — Mandrill neodeslal',
+        message: result.detail || 'Neznámá chyba',
+        payload: { webinarId, to: cleanEmail },
+        webinarId,
+        webinarTitle: String(w.title || ''),
+        contactEmail: cleanEmail,
+      });
+      return c.json({ ok: false, detail: result.detail, to: cleanEmail });
+    }
+    return c.json({ ok: true, to: cleanEmail });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }
@@ -9770,15 +11147,20 @@ app.post('/make-server-93a20b6f/rag/ingest-webinar-prepis', async (c) => {
     const webinar = items.find((w: any) => w.id === webinarId);
     if (!webinar) return c.json({ error: `Webinar ${webinarId} nenalezen` }, 404);
 
-    // Accept prepis from request body (not yet saved) OR from stored webinar
-    const prepis: string = ((prepisFromBody || webinar.prepis || '') as string).trim();
+    const trimmedBody =
+      typeof prepisFromBody === 'string' ? prepisFromBody.trim() : '';
+    const prepisFromStore = String(webinar.prepis ?? '').trim();
+    // Text pro index: z těla (nepředané uložené) nebo z KV
+    const prepis: string = (trimmedBody || prepisFromStore);
     if (!prepis) return c.json({ error: 'Webinar nema vyplneny prepis' }, 400);
 
-    // If prepis came from body but differs from stored — auto-persist it
-    if (prepisFromBody && prepisFromBody.trim() !== (webinar.prepis || '').trim()) {
-      const updated = items.map((w: any) => w.id === webinarId ? { ...w, prepis: prepisFromBody.trim() } : w);
+    /** Vždy uložit neprázdný přepis z klienta — dřív se ukládalo jen při změně, takže při chybě / starém deployi zůstal RAG bez KV. */
+    if (trimmedBody.length > 0) {
+      const ts = new Date().toISOString();
+      const updated = items.map((w: any) =>
+        w.id === webinarId ? { ...w, prepis: trimmedBody, updatedAt: ts } : w);
       await saveCollection(WEBINARS_KEY, updated);
-      console.log(`[RAG prepis] Prepis auto-ulozen do KV pro webinar ${webinarId}`);
+      console.log(`[RAG prepis] Prepis ulozen do KV (${trimmedBody.length} zn.) webinar ${webinarId}`);
     }
 
     console.log(`[RAG prepis] Indexuji prepis webinare "${webinar.title}" (${prepis.length} znaku)`);
@@ -15533,6 +16915,9 @@ Deno.serve((incoming) => {
   /** Edge někdy doručí jen `/webinar-survey-submit` bez `/make-server-93a20b6f`. */
   if (p === '/webinar-survey-submit' || p.startsWith('/webinar-survey-submit?')) {
     p = `${fnRoot}/webinar-survey-submit${p.slice('/webinar-survey-submit'.length)}`;
+  }
+  if (p === '/webinar-survey-partial' || p.startsWith('/webinar-survey-partial?')) {
+    p = `${fnRoot}/webinar-survey-partial${p.slice('/webinar-survey-partial'.length)}`;
   }
   url.pathname = p;
   return app.fetch(new Request(url.toString(), incoming));

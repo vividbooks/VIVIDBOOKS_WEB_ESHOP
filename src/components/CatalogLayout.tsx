@@ -78,7 +78,7 @@ const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
   {
     title: 'Vividboard',
     items: [
-      { label: 'Vividboard', href: 'https://app.vividbooks.com' },
+      { label: 'Vividboard', internal: '/vividboard' },
     ],
   },
   {
@@ -288,15 +288,34 @@ export default function CatalogLayout() {
 
   const onOrder = () => navigate(schoolOrderCount > 0 ? '/objednat?step=2' : '/objednat');
 
+  /** Po webináři: `?dvppDotaznik=1` — jen DVPP/dotazník, bez katalogové navigace. */
+  const isWebinarSurveyFullscreen =
+    /^\/webinar\/[^/]+$/.test(location.pathname) &&
+    new URLSearchParams(location.search).get('dvppDotaznik') === '1';
+
+  const catalogContextValue = {
+    groupingMode, setGroupingMode,
+    activeSection, setActiveSection,
+    scrollToSection,
+    isDistributorMode,
+    handleDownloadPack,
+    isDownloadingPack,
+  };
+
+  if (isWebinarSurveyFullscreen) {
+    return (
+      <CatalogContext.Provider value={catalogContextValue}>
+        <div className="flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#E8EBF4]">
+          <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+            <Outlet />
+          </main>
+        </div>
+      </CatalogContext.Provider>
+    );
+  }
+
   return (
-    <CatalogContext.Provider value={{
-      groupingMode, setGroupingMode,
-      activeSection, setActiveSection,
-      scrollToSection,
-      isDistributorMode,
-      handleDownloadPack,
-      isDownloadingPack,
-    }}>
+    <CatalogContext.Provider value={catalogContextValue}>
       <div className="bg-white min-h-screen">
         {/* Fixed top navbar — desktop only (checkout je bez horní lišty) */}
         {!isCheckoutLikeSidebar && <TopNav onOrder={onOrder} />}

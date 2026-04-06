@@ -24,6 +24,25 @@ export type WebinarLikeForSort = {
 };
 
 /** Čas začátku akce v ms — pro řazení (nejbližší budoucí = nejnižší ts mezi upcoming). */
+/** Výchozí délka webináře v minutách — musí odpovídat výchozí hodnotě na Edge (WEBINAR_DEFAULT_DURATION_MIN). */
+export const DEFAULT_WEBINAR_DURATION_MIN = 120;
+
+export type WebinarLikeWithDuration = WebinarLikeForSort & { durationMinutes?: number };
+
+/** Konec akce v ms = začátek + délka (min). */
+export function webinarEndTimestampMs(w: WebinarLikeWithDuration, fallbackDurationMin = DEFAULT_WEBINAR_DURATION_MIN): number {
+  const d =
+    typeof w.durationMinutes === 'number' && Number.isFinite(w.durationMinutes) && w.durationMinutes > 0 && w.durationMinutes <= 24 * 60
+      ? Math.floor(w.durationMinutes)
+      : fallbackDurationMin;
+  return webinarEventTimestampMs(w) + d * 60 * 1000;
+}
+
+/** Minulý = po skončení podle odhadnuté délky. */
+export function computeWebinarIsPastFromSchedule(w: WebinarLikeWithDuration, nowMs = Date.now()): boolean {
+  return webinarEndTimestampMs(w) < nowMs;
+}
+
 export function webinarEventTimestampMs(w: WebinarLikeForSort): number {
   let monthIdx = 0;
   if (typeof w.monthNum === 'number' && w.monthNum >= 1 && w.monthNum <= 12) {

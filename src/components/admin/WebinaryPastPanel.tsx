@@ -4,11 +4,16 @@ import {
   Brain, CheckCircle2, AlertCircle, ChevronRight, Clock,
   FileText, Video, Trash2, ExternalLink, Info,
   BookOpen, Plus, Award, Zap, Link2,
-  ChevronDown, ChevronUp, Link, Unlink,
+  ChevronDown, ChevronUp, Link, Unlink, ClipboardList, Sparkles, Mail, Copy,
+  MessageSquare,
 } from 'lucide-react';
+import type { PostWebinarQuizQuestion, PostWebinarPart2Step } from '../../data/webinars';
+import { DEFAULT_POST_WEBINAR_PART2_STEPS } from '../../utils/webinarSurveyDefaults';
+import { WebinarLearningsRichEditor } from './WebinarLearningsRichEditor';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebinars } from '../../contexts/WebinarsContext';
+import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -49,14 +54,64 @@ const MONTH_NAMES = [
 
 type RagStatus = { count: number; loading: boolean; lastIndexed?: string };
 
+type PastPanelTab = 'uprava' | 'dotaznik';
+
 interface FormState {
   title: string; subtitle: string;
   day: number; monthNum: number; year: number; time: string;
   lecturer: string; description: string; perks: string; targetAudience: string;
   coverImage: string; recordingUrl: string;
+  certificateLinkMode: 'external' | 'survey';
   certificateUrl: string; greyButtonText: string;
   orangeButtonText: string; orangeButtonLink: string;
   prepis: string;
+  postWebinarLearningsHtml: string;
+  postWebinarQuizQuestions: PostWebinarQuizQuestion[];
+  postWebinarPart2: PostWebinarPart2Step[];
+}
+
+function cloneDefaultPart2(): PostWebinarPart2Step[] {
+  return JSON.parse(JSON.stringify(DEFAULT_POST_WEBINAR_PART2_STEPS)) as PostWebinarPart2Step[];
+}
+
+function normalizePart2FromItem(raw: unknown): PostWebinarPart2Step[] {
+  if (raw === undefined) return cloneDefaultPart2();
+  if (!Array.isArray(raw)) return cloneDefaultPart2();
+  if (raw.length === 0) return [];
+  const out: PostWebinarPart2Step[] = [];
+  for (const s of raw) {
+    if (!s || typeof s !== 'object') continue;
+    const o = s as Record<string, unknown>;
+    const type = o.type;
+    const id = String(o.id ?? '').trim();
+    if (!type || !id) continue;
+    if (type === 'intro') {
+      out.push({
+        type: 'intro',
+        id,
+        title: String(o.title ?? ''),
+        subtitle: typeof o.subtitle === 'string' ? o.subtitle : undefined,
+      });
+    } else if (type === 'open') {
+      out.push({
+        type: 'open',
+        id,
+        label: String(o.label ?? ''),
+        sublabel: typeof o.sublabel === 'string' ? o.sublabel : undefined,
+        placeholder: typeof o.placeholder === 'string' ? o.placeholder : undefined,
+      });
+    } else if (type === 'abc') {
+      const opts = Array.isArray(o.options) ? o.options.map((x) => String(x)) : [];
+      while (opts.length < 3) opts.push('');
+      out.push({
+        type: 'abc',
+        id,
+        label: String(o.label ?? ''),
+        options: opts.slice(0, 12),
+      });
+    }
+  }
+  return out.length > 0 ? out : cloneDefaultPart2();
 }
 
 const EMPTY_FORM: FormState = {
@@ -67,7 +122,27 @@ const EMPTY_FORM: FormState = {
   certificateUrl: '', greyButtonText: 'Certifikát DVPP',
   orangeButtonText: 'Vyzkoušejte zdarma', orangeButtonLink: '/vyzkousejte',
   prepis: '',
+  postWebinarLearningsHtml: '',
+  postWebinarQuizQuestions: [],
+  postWebinarPart2: cloneDefaultPart2(),
 };
+
+function normalizeQuizFromItem(raw: unknown): PostWebinarQuizQuestion[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((q: any, i: number) => {
+    const opts = Array.isArray(q?.options) ? q.options.map((x: unknown) => String(x)) : [];
+    const pad = [...opts, '', '', '', ''].slice(0, 4);
+    return {
+      id: String(q?.id || `dvpp-q-${i}`),
+      type: 'abc' as const,
+      label: String(q?.label ?? q?.question ?? '').trim(),
+      options: pad,
+      correctIndex: typeof q?.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex <= 3
+        ? q.correctIndex
+        : 0,
+    };
+  });
+}
 
 function itemToForm(webinar: any, dvpp: any | null): FormState {
   return {
@@ -83,11 +158,16 @@ function itemToForm(webinar: any, dvpp: any | null): FormState {
     targetAudience:   webinar.targetAudience   ?? '',
     coverImage:       webinar.coverImage       ?? dvpp?.thumbnail   ?? '',
     recordingUrl:     webinar.recordingUrl || webinar.youtubeUrl || dvpp?.youtubeUrl       || '',
+    certificateLinkMode:
+      webinar.certificateLinkMode === 'survey' || dvpp?.certificateLinkMode === 'survey' ? 'survey' : 'external',
     certificateUrl:   webinar.certificateUrl   || dvpp?.certificateUrl   || '',
     greyButtonText:   webinar.greyButtonText   || dvpp?.greyButtonText   || 'Certifikát DVPP',
     orangeButtonText: webinar.orangeButtonText || dvpp?.orangeButtonText || 'Vyzkoušejte zdarma',
     orangeButtonLink: webinar.orangeButtonLink || dvpp?.orangeButtonLink || '/vyzkousejte',
     prepis:           webinar.prepis           ?? '',
+    postWebinarLearningsHtml: typeof webinar.postWebinarLearningsHtml === 'string' ? webinar.postWebinarLearningsHtml : '',
+    postWebinarQuizQuestions: normalizeQuizFromItem(webinar.postWebinarQuizQuestions),
+    postWebinarPart2: normalizePart2FromItem(webinar.postWebinarPart2),
   };
 }
 
@@ -154,6 +234,13 @@ export default function WebinaryPastPanel() {
   const [saving, setSaving]       = useState(false);
   const [ragStatus, setRagStatus] = useState<Record<string, RagStatus>>({});
   const [indexing, setIndexing]   = useState<string | null>(null);
+  const [pastPanelTab, setPastPanelTab] = useState<PastPanelTab>('uprava');
+  const [generatingDvppQuestions, setGeneratingDvppQuestions] = useState(false);
+  const [generatingDvppLearnings, setGeneratingDvppLearnings] = useState(false);
+  const [followupTestEmail, setFollowupTestEmail] = useState('');
+  const [followupSending, setFollowupSending] = useState(false);
+  /** Remount WYSIWYG po AI generování článku (stejné id webináře). */
+  const [learningsRemountKey, setLearningsRemountKey] = useState(0);
 
   const loadList = useCallback(async (): Promise<{ past: any[]; dvpp: any[] }> => {
     setLoadingList(true);
@@ -193,6 +280,7 @@ export default function WebinaryPastPanel() {
   function handleSelect(item: any) {
     setIsNew(false);
     setSelected(item);
+    setPastPanelTab('uprava');
     const dvpp = matchDvppVideo(item, dvppVideos);
     setMatchedDvpp(dvpp);
     setForm(itemToForm(item, dvpp));
@@ -203,7 +291,161 @@ export default function WebinaryPastPanel() {
     setIsNew(true);
     setSelected(null);
     setMatchedDvpp(null);
+    setPastPanelTab('uprava');
     setForm({ ...EMPTY_FORM });
+  }
+
+  function updateQuizQuestion(index: number, patch: Partial<PostWebinarQuizQuestion>) {
+    setForm((f) => {
+      const list = [...(f.postWebinarQuizQuestions || [])];
+      const cur = list[index];
+      if (!cur) return f;
+      list[index] = { ...cur, ...patch };
+      return { ...f, postWebinarQuizQuestions: list };
+    });
+  }
+
+  function updateQuizOption(qIndex: number, optIndex: number, value: string) {
+    setForm((f) => {
+      const list = [...(f.postWebinarQuizQuestions || [])];
+      const cur = list[qIndex];
+      if (!cur) return f;
+      const options = [...cur.options];
+      options[optIndex] = value;
+      list[qIndex] = { ...cur, options };
+      return { ...f, postWebinarQuizQuestions: list };
+    });
+  }
+
+  function replacePart2Step(index: number, step: PostWebinarPart2Step) {
+    setForm((f) => {
+      const list = [...f.postWebinarPart2];
+      if (!list[index]) return f;
+      list[index] = step;
+      return { ...f, postWebinarPart2: list };
+    });
+  }
+
+  function updatePart2AbcOption(stepIndex: number, optIndex: number, value: string) {
+    setForm((f) => {
+      const list = [...f.postWebinarPart2];
+      const cur = list[stepIndex];
+      if (!cur || cur.type !== 'abc') return f;
+      const options = [...cur.options];
+      options[optIndex] = value;
+      list[stepIndex] = { ...cur, options };
+      return { ...f, postWebinarPart2: list };
+    });
+  }
+
+  async function callDvppGenerate(part: 'questions' | 'learnings') {
+    if (!selected?.id) return;
+    if (!form.prepis.trim()) {
+      toast.error('V záložce „Úprava záznamu“ vyplň přepis webináře (nebo ho uložte z minula).');
+      return;
+    }
+    if (part === 'questions') setGeneratingDvppQuestions(true);
+    else setGeneratingDvppLearnings(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/webinar-generate-dvpp-quiz`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ webinarId: selected.id, prepis: form.prepis, part }),
+      });
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.status === 404
+            ? 'Endpoint není na serveru (404). Znovu nasaďte Edge funkci make-server-93a20b6f z tohoto repa (supabase functions deploy make-server-93a20b6f).'
+            : `Neplatná odpověď serveru (${res.status}).`,
+        );
+      }
+      if (res.status === 404) {
+        throw new Error(
+          'Endpoint není na serveru (404). Znovu nasaďte Edge funkci make-server-93a20b6f z tohoto repa (supabase functions deploy make-server-93a20b6f).',
+        );
+      }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+
+      setForm((f) => ({
+        ...f,
+        ...(Array.isArray(data.questions) && data.questions.length > 0
+          ? { postWebinarQuizQuestions: data.questions as PostWebinarQuizQuestion[] }
+          : {}),
+        ...(typeof data.learningsHtml === 'string'
+          ? { postWebinarLearningsHtml: data.learningsHtml }
+          : {}),
+      }));
+
+      if (typeof data.learningsHtml === 'string') {
+        setLearningsRemountKey((k) => k + 1);
+      }
+
+      if (part === 'questions') {
+        const n = Array.isArray(data.questions) ? data.questions.length : 0;
+        if (n === 0) throw new Error('Server nevrátil otázky');
+        toast.success(`Vygenerováno ${n} otázek — zkontrolujte a uložte.`);
+      } else {
+        toast.success('Vygenerován článek — zkontrolujte a uložte.');
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Generování selhalo');
+    } finally {
+      if (part === 'questions') setGeneratingDvppQuestions(false);
+      else setGeneratingDvppLearnings(false);
+    }
+  }
+
+  async function handlePostFollowupTestSend() {
+    if (!selected?.id) return;
+    const em = followupTestEmail.trim();
+    if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+      toast.error('Zadejte platný e-mail pro test.');
+      return;
+    }
+    setFollowupSending(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/webinar-post-followup-test-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({
+          webinarId: selected.id,
+          toEmail: em,
+          learningsHtml: form.postWebinarLearningsHtml || undefined,
+          postWebinarQuizQuestions:
+            form.postWebinarQuizQuestions?.length > 0 ? form.postWebinarQuizQuestions : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      const tpl = typeof data.template === 'string' ? data.template : '';
+      toast.success(
+        tpl
+          ? `Odesláno (šablona ${tpl}). Starý vzhled = nenasazená Edge funkce — deploy make-server-93a20b6f.`
+          : 'Testovací e-mail odeslán (Mandrill).',
+      );
+    } catch (e: any) {
+      toast.error(e?.message || 'Odeslání selhalo');
+    } finally {
+      setFollowupSending(false);
+    }
+  }
+
+  function handleCopyLearningsBlock() {
+    const h = form.postWebinarLearningsHtml?.trim();
+    if (!h) {
+      toast.error('Nejdříve vygenerujte nebo vložte shrnutí.');
+      return;
+    }
+    const block =
+      `<h2>Co jsme se na webináři dozvěděli</h2>\n` +
+      h;
+    void navigator.clipboard.writeText(block).then(
+      () => toast.success('Blok zkopírován — vložte do Mailchimp / e-mailu.'),
+      () => toast.error('Kopírování se nepovedlo'),
+    );
   }
 
   async function handleSave() {
@@ -228,6 +470,7 @@ export default function WebinaryPastPanel() {
         thumbnail:        form.coverImage || '',
         youtubeUrl:       form.recordingUrl,
         certificateUrl:   form.certificateUrl,
+        certificateLinkMode: form.certificateLinkMode,
         greyButtonText:   form.greyButtonText,
         orangeButtonText: form.orangeButtonText,
         orangeButtonLink: form.orangeButtonLink,
@@ -246,7 +489,7 @@ export default function WebinaryPastPanel() {
         if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.statusText); }
         const data = await res.json();
         const newWebinar = data.item ?? webinarPayload;
-        if (form.recordingUrl || form.certificateUrl) {
+        if (form.recordingUrl || form.certificateUrl || form.certificateLinkMode === 'survey') {
           const dvppId = matchedDvpp?.id || newWebinar.id;
           await fetch(`${SERVER}/dvpp-videos/${dvppId}`, {
             method: 'PUT',
@@ -294,7 +537,7 @@ export default function WebinaryPastPanel() {
     const webinarId = selected?.id;
     if (!webinarId) return;
     if (!form.prepis.trim()) {
-      toast.error('Nejdříve vyplň přepis výše (tlačítkem „Uložit“ ho zapíšeš do záznamu webináře v úložišti).');
+      toast.error('Nejdříve vyplň přepis výše.');
       return;
     }
     setIndexing(webinarId);
@@ -312,6 +555,11 @@ export default function WebinaryPastPanel() {
         toast.warning('Indexace skončila s 0 chunky — zkontroluj přepis (délka, jen mezery?) nebo log edge funkce (embedding / DB).');
       } else {
         toast.success(`RAG: ${n} chunků indexováno`);
+      }
+      const { past } = await loadList();
+      const fresh = past.find((w: any) => w.id === webinarId);
+      if (fresh && typeof fresh.prepis === 'string' && fresh.prepis.length > 0) {
+        setForm((f) => ({ ...f, prepis: fresh.prepis }));
       }
       await loadRagStatus(webinarId);
       setRagStatus(prev => ({
@@ -373,7 +621,10 @@ export default function WebinaryPastPanel() {
             const isSel     = !isNew && selected?.id === item.id;
             const dvpp      = matchDvppVideo(item, dvppVideos);
             const hasVideo  = !!(item.recordingUrl || item.youtubeUrl || dvpp?.youtubeUrl);
-            const hasCert   = !!(item.certificateUrl || dvpp?.certificateUrl);
+            const hasCert   = !!(
+              item.certificateUrl || dvpp?.certificateUrl ||
+              item.certificateLinkMode === 'survey' || dvpp?.certificateLinkMode === 'survey'
+            );
             const hasPrepis = !!item.prepis;
             const st        = ragStatus[item.id];
             return (
@@ -486,6 +737,35 @@ export default function WebinaryPastPanel() {
               </div>
             </div>
 
+            {!isNew && selected && (
+              <div className="flex gap-1 p-1 bg-gray-100/90 rounded-xl border border-gray-200/80">
+                <button
+                  type="button"
+                  onClick={() => setPastPanelTab('uprava')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-bold transition-colors ${
+                    pastPanelTab === 'uprava'
+                      ? 'bg-white text-[#001161] shadow-sm border border-gray-200'
+                      : 'text-gray-500 hover:text-[#001161] hover:bg-white/60'
+                  }`}
+                >
+                  {'Úprava záznamu'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPastPanelTab('dotaznik')}
+                  className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-bold transition-colors ${
+                    pastPanelTab === 'dotaznik'
+                      ? 'bg-white text-[#001161] shadow-sm border border-gray-200'
+                      : 'text-gray-500 hover:text-[#001161] hover:bg-white/60'
+                  }`}
+                >
+                  {'Dotazník'}
+                </button>
+              </div>
+            )}
+
+            {(isNew || pastPanelTab === 'uprava') && (
+            <>
             {/* ── ZÁZNAM (YouTube) ── */}
             <Section
               icon={<Play className="w-4 h-4" />}
@@ -554,7 +834,7 @@ export default function WebinaryPastPanel() {
               subtitle={'Certifikát DVPP · CTA tlačítko'}
               color="#0ea5e9" bgColor="#F0F9FF"
               badge={
-                (form.certificateUrl || form.orangeButtonLink)
+                (form.certificateLinkMode === 'survey' || form.certificateUrl || form.orangeButtonLink)
                   ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 flex items-center gap-0.5"><CheckCircle2 className="w-2.5 h-2.5" /> Nastavena</span>
                   : <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400">Prázdná</span>
               }
@@ -565,32 +845,66 @@ export default function WebinaryPastPanel() {
                   <Award className="w-4 h-4 text-gray-600" />
                   <span className="text-[12px] font-bold text-gray-700 uppercase tracking-wide">{'Certifikát DVPP (šedé tlačítko)'}</span>
                 </div>
-                <Field
-                  label={'URL certifikátu'}
-                  hint={'Odkaz na formulář pro vyžádání certifikátu (Google Form, Typeform…)'}
-                >
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      value={form.certificateUrl}
-                      onChange={e => upd({ certificateUrl: e.target.value })}
-                      placeholder={'https://forms.google.com/…'}
-                      className={inputCls + ' flex-1 font-mono text-[12px]'}
-                    />
-                    {form.certificateUrl && (
-                      <>
-                        <a href={form.certificateUrl} target="_blank" rel="noopener noreferrer"
-                          className="flex items-center px-3 py-2 bg-blue-50 border border-blue-200 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </a>
-                        <button onClick={() => upd({ certificateUrl: '' })}
-                          className="flex items-center px-2 py-2 border border-gray-200 text-gray-400 rounded-xl hover:bg-red-50 hover:text-red-400 transition-colors">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
+                <div className="flex flex-col gap-2">
+                  <span className="text-[11px] font-semibold text-gray-600">{'Způsob certifikátu'}</span>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => upd({ certificateLinkMode: 'external' })}
+                      className={`px-3 py-2 rounded-xl text-[12px] font-bold border transition-colors ${
+                        form.certificateLinkMode === 'external'
+                          ? 'bg-white border-[#001161] text-[#001161] shadow-sm'
+                          : 'bg-white/60 border-gray-200 text-gray-500 hover:border-gray-300'
+                      }`}
+                    >
+                      {'Externí odkaz'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => upd({ certificateLinkMode: 'survey' })}
+                      className={`px-3 py-2 rounded-xl text-[12px] font-bold border transition-colors ${
+                        form.certificateLinkMode === 'survey'
+                          ? 'bg-white border-[#001161] text-[#001161] shadow-sm'
+                          : 'bg-white/60 border-gray-200 text-gray-500 hover:border-gray-300'
+                      }`}
+                    >
+                      {'Dotazník v administraci'}
+                    </button>
                   </div>
-                </Field>
+                  <p className="text-[11px] text-gray-500 leading-snug">
+                    {form.certificateLinkMode === 'external'
+                      ? 'Vlastní URL (Google Form, Typeform…) — odkaz se použije v e-mailu a na stránce záznamu.'
+                      : 'Odkaz povede na stránku DVPP dotazníku na webu (`/webinar/…/dvpp-dotaznik`). Otázky nastavíte v záložce Dotazník.'}
+                  </p>
+                </div>
+                {form.certificateLinkMode === 'external' ? (
+                  <Field
+                    label={'URL certifikátu'}
+                    hint={'Odkaz na formulář pro vyžádání certifikátu (Google Form, Typeform…)'}
+                  >
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        value={form.certificateUrl}
+                        onChange={e => upd({ certificateUrl: e.target.value })}
+                        placeholder={'https://forms.google.com/…'}
+                        className={inputCls + ' flex-1 font-mono text-[12px]'}
+                      />
+                      {form.certificateUrl && (
+                        <>
+                          <a href={form.certificateUrl} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center px-3 py-2 bg-blue-50 border border-blue-200 text-blue-600 rounded-xl hover:bg-blue-100 transition-colors">
+                            <ExternalLink className="w-3.5 h-3.5" />
+                          </a>
+                          <button type="button" onClick={() => upd({ certificateUrl: '' })}
+                            className="flex items-center px-2 py-2 border border-gray-200 text-gray-400 rounded-xl hover:bg-red-50 hover:text-red-400 transition-colors">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </Field>
+                ) : null}
                 <Field label={'Text tlačítka'}>
                   <input
                     value={form.greyButtonText}
@@ -781,26 +1095,395 @@ export default function WebinaryPastPanel() {
                 {!form.prepis && (
                   <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl mb-4">
                     <Info className="w-4 h-4 text-amber-500 shrink-0" />
-                    <span className="text-[12px] text-amber-700">{'Nejdříve vyplň přepis výše (nemusíš nejdříve ukládat).'}</span>
+                    <span className="text-[12px] text-amber-700">{'Nejdříve vyplň přepis výše. Po indexaci se uloží do záznamu webináře.'}</span>
                   </div>
                 )}
 
-                <button
-                  onClick={handleIndexRag}
-                  disabled={!form.prepis.trim() || !!indexing}
-                  className="w-full flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
-                >
-                  {indexing === selected?.id
-                    ? <><Loader2 className="w-4 h-4 animate-spin" />{'Indexuji přepis do RAG…'}</>
-                    : <><Brain className="w-4 h-4" />{'Indexovat přepis do RAG'}</>
-                  }
-                </button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-[#7C3AED] bg-white text-[#7C3AED] hover:bg-purple-50 disabled:opacity-40 rounded-xl text-[14px] font-bold transition-colors"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {saving ? 'Ukládám…' : 'Uložit'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleIndexRag}
+                    disabled={!form.prepis.trim() || !!indexing}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
+                  >
+                    {indexing === selected?.id
+                      ? <><Loader2 className="w-4 h-4 animate-spin" />{'Indexuji přepis do RAG…'}</>
+                      : <><Brain className="w-4 h-4" />{'Indexovat přepis do RAG'}</>
+                    }
+                  </button>
+                </div>
 
                 <p className="mt-3 text-[11px] text-gray-400 text-center leading-relaxed">
-                  {'Přepis je v záznamu webináře (úložiště CMS). Po „Indexovat“ se uloží do RAG tabulek v Supabase ('}
+                  {'„Uložit“ zapíše přepis do záznamu webináře. „Indexovat“ navíc uloží embeddingy do RAG ('}
                   <code className="text-[10px] bg-gray-100 px-1 rounded">rag_chunks</code>
                   {').'}
                 </p>
+              </div>
+            )}
+            </>
+            )}
+
+            {!isNew && selected && pastPanelTab === 'dotaznik' && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
+                      <ClipboardList className="w-4 h-4 text-purple-500" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">{'Dotazník (DVPP)'}</h3>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {'Čtyři otázky s výběrem odpovědí podle přepisu — ověření pochopení tématu po webináři.'}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={saving || generatingDvppQuestions || generatingDvppLearnings}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white px-4 py-2.5 text-[13px] font-bold transition-colors shadow-sm"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    {saving ? 'Ukládám…' : 'Uložit'}
+                  </button>
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">
+                  {'Generování mění jen obsah v tomto okně — po úpravách klikněte '}
+                  <strong>{'Uložit'}</strong>
+                  {', jinak se po obnovení stránky ztratí.'}
+                </div>
+
+                {!form.prepis.trim() && (
+                  <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                    <Info className="w-4 h-4 text-amber-500 shrink-0" />
+                    <span className="text-[12px] text-amber-700">
+                      {'V záložce „Úprava záznamu“ vložte přepis webináře, pak sem přepněte a klikněte na Generovat.'}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void callDvppGenerate('questions')}
+                    disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
+                  >
+                    {generatingDvppQuestions ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji otázky…'}</>
+                    ) : (
+                      <><Sparkles className="w-4 h-4" />{'Generovat otázky z přepisu'}</>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void callDvppGenerate('learnings')}
+                    disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
+                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#001161] hover:opacity-95 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
+                  >
+                    {generatingDvppLearnings ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji článek…'}</>
+                    ) : (
+                      <><BookOpen className="w-4 h-4" />{'Generovat článek z přepisu'}</>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                  {'Každé tlačítko volá Gemini zvlášť — můžete generovat jen otázky, jen článek, nebo postupně obojí.'}
+                </p>
+
+                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <BookOpen className="w-4 h-4 text-[#7C3AED] shrink-0" />
+                    <span className="text-[12px] font-bold text-[#001161]">{'Co jsme se na webináři dozvěděli (do e-mailu)'}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    {'Dlouhý text z přepisu — stejný obsah můžete použít v Mailchimp nebo v follow-up e-mailu. Upravujte přímo v náhledu (formátování jako v editoru).'}
+                  </p>
+                  <WebinarLearningsRichEditor
+                    key={`${selected?.id ?? 'new'}-${learningsRemountKey}`}
+                    value={form.postWebinarLearningsHtml}
+                    onChange={(html) => upd({ postWebinarLearningsHtml: html })}
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyLearningsBlock}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-[12px] font-bold text-gray-700 hover:bg-gray-50"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      {'Kopírovat blok pro e-mail'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-gray-600 shrink-0" />
+                    <span className="text-[12px] font-bold text-gray-700">{'Test e-mailu (Mandrill)'}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    {
+                      'Odešle náhled: shrnutí, seznam otázek kvízu a odkaz „Otevřít kvíz a dotazník“ (stejný jako po registraci). Vyžaduje MANDRILL_API_KEY na serveru.'
+                    }
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="email"
+                      value={followupTestEmail}
+                      onChange={(e) => setFollowupTestEmail(e.target.value)}
+                      placeholder="vas@email.cz"
+                      className={`${inputCls} flex-1`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handlePostFollowupTestSend()}
+                      disabled={followupSending}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#001161] text-white text-[13px] font-bold hover:opacity-95 disabled:opacity-40"
+                    >
+                      {followupSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                      {'Odeslat test'}
+                    </button>
+                  </div>
+                </div>
+
+                {form.postWebinarQuizQuestions.length > 0 && (
+                  <div className="space-y-4">
+                    {form.postWebinarQuizQuestions.map((q, qi) => (
+                      <div key={q.id} className="rounded-xl border border-gray-200 p-4 space-y-3 bg-gray-50/80">
+                        <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1">
+                          {`Otázka ${qi + 1}`}
+                        </div>
+                        <label className="block">
+                          <span className="sr-only">Text otázky</span>
+                          <textarea
+                            value={q.label}
+                            onChange={(e) => updateQuizQuestion(qi, { label: e.target.value })}
+                            rows={2}
+                            className={textareaCls + ' w-full bg-white'}
+                          />
+                        </label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {q.options.map((opt, oi) => (
+                            <label key={oi} className="block text-[11px] font-semibold text-gray-500">
+                              {`Možnost ${oi + 1}`}
+                              <input
+                                type="text"
+                                value={opt}
+                                onChange={(e) => updateQuizOption(qi, oi, e.target.value)}
+                                className={`${inputCls} mt-1 w-full bg-white`}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-bold text-gray-500">{'Správná odpověď'}</span>
+                          <select
+                            value={q.correctIndex ?? 0}
+                            onChange={(e) =>
+                              updateQuizQuestion(qi, { correctIndex: Number(e.target.value) as 0 | 1 | 2 | 3 })
+                            }
+                            className="text-[13px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                          >
+                            {[0, 1, 2, 3].map((i) => (
+                              <option key={i} value={i}>{`Možnost ${i + 1}`}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="mt-6 pt-6 border-t border-gray-200 space-y-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                        <MessageSquare className="w-4 h-4 text-emerald-600" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="text-[12px] font-bold text-[#001161]">{'Zpětná vazba (druhá část dotazníku)'}</h4>
+                        <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                          {'Otázky typu „líbilo se“, vyzkoušení Vividbooks apod. — zobrazí se po kvízu DVPP. Výchozí texty jsou předvyplněné; můžete je upravit nebo obnovit standard ze šablony.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => upd({ postWebinarPart2: cloneDefaultPart2() })}
+                        className="text-[11px] font-bold px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-800 bg-emerald-50/80 hover:bg-emerald-100/80"
+                      >
+                        {'Obnovit výchozí otázky'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (form.postWebinarPart2.length === 0) return;
+                          if (!confirm('Vypnout druhou část dotazníku u tohoto webináře? (Uložením se uloží prázdný seznam.)')) return;
+                          upd({ postWebinarPart2: [] });
+                        }}
+                        disabled={form.postWebinarPart2.length === 0}
+                        className="text-[11px] font-bold px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                      >
+                        {'Vypnout sekci'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.postWebinarPart2.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-5 text-center space-y-2">
+                      <p className="text-[12px] text-gray-600">{'Sekce zpětné vazby je u tohoto webináře vypnutá.'}</p>
+                      <button
+                        type="button"
+                        onClick={() => upd({ postWebinarPart2: cloneDefaultPart2() })}
+                        className="inline-flex items-center justify-center px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold"
+                      >
+                        {'Načíst výchozí otázky'}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {form.postWebinarPart2.map((step, si) => (
+                        <div
+                          key={step.id}
+                          className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 space-y-3"
+                        >
+                          <div className="text-[10px] font-bold text-emerald-700/80 uppercase tracking-wide">
+                            {step.type === 'intro' && 'Úvod'}
+                            {step.type === 'open' && 'Otevřená otázka'}
+                            {step.type === 'abc' && 'Výběr z možností'}
+                            <span className="text-gray-400 font-mono normal-case ml-2">{step.id}</span>
+                          </div>
+                          {step.type === 'intro' && (
+                            <>
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1">{'Nadpis'}</label>
+                              <input
+                                type="text"
+                                value={step.title}
+                                onChange={(e) =>
+                                  replacePart2Step(si, { ...step, title: e.target.value })
+                                }
+                                className={inputCls}
+                              />
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1 mt-2">{'Podnadpis (volitelný)'}</label>
+                              <input
+                                type="text"
+                                value={step.subtitle ?? ''}
+                                onChange={(e) =>
+                                  replacePart2Step(si, {
+                                    ...step,
+                                    subtitle: e.target.value.trim() ? e.target.value : undefined,
+                                  })
+                                }
+                                className={inputCls}
+                              />
+                            </>
+                          )}
+                          {step.type === 'open' && (
+                            <>
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1">{'Otázka'}</label>
+                              <textarea
+                                value={step.label}
+                                onChange={(e) =>
+                                  replacePart2Step(si, { ...step, label: e.target.value })
+                                }
+                                rows={2}
+                                className={textareaCls + ' w-full bg-white'}
+                              />
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1">{'Doplňující text (volitelný)'}</label>
+                              <textarea
+                                value={step.sublabel ?? ''}
+                                onChange={(e) =>
+                                  replacePart2Step(si, {
+                                    ...step,
+                                    sublabel: e.target.value.trim() ? e.target.value : undefined,
+                                  })
+                                }
+                                rows={2}
+                                className={textareaCls + ' w-full bg-white'}
+                              />
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1">{'Placeholder pole'}</label>
+                              <input
+                                type="text"
+                                value={step.placeholder ?? ''}
+                                onChange={(e) =>
+                                  replacePart2Step(si, {
+                                    ...step,
+                                    placeholder: e.target.value.trim() ? e.target.value : undefined,
+                                  })
+                                }
+                                className={inputCls}
+                              />
+                            </>
+                          )}
+                          {step.type === 'abc' && (
+                            <>
+                              <label className="block text-[11px] font-bold text-gray-500 mb-1">{'Otázka'}</label>
+                              <textarea
+                                value={step.label}
+                                onChange={(e) =>
+                                  replacePart2Step(si, { ...step, label: e.target.value })
+                                }
+                                rows={3}
+                                className={textareaCls + ' w-full bg-white'}
+                              />
+                              <div className="space-y-2">
+                                <span className="text-[11px] font-bold text-gray-500">{'Možnosti odpovědí'}</span>
+                                {step.options.map((opt, oi) => (
+                                  <div key={oi} className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold text-gray-400 w-16 shrink-0">{`#${oi + 1}`}</span>
+                                    <input
+                                      type="text"
+                                      value={opt}
+                                      onChange={(e) => updatePart2AbcOption(si, oi, e.target.value)}
+                                      className={`${inputCls} flex-1 bg-white`}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {selected?.id ? (
+                  <div className="mt-6 rounded-2xl border border-emerald-200 overflow-hidden bg-white shadow-sm">
+                    <WebinarSurveyResponsesPanel
+                      webinarId={String(selected.id)}
+                      title="Odpovědi účastníků"
+                      subtitle="Shromážděné odpovědi z kvízu DVPP, druhé části zpětné vazby a vlastních otázek — podle aktuálního záznamu webináře v CMS."
+                    />
+                  </div>
+                ) : null}
+
+                <div className="mt-2 pt-4 border-t border-gray-200 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleSave()}
+                    disabled={saving || generatingDvppQuestions || generatingDvppLearnings}
+                    className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-[#001161] hover:opacity-95 disabled:opacity-40 text-white text-[15px] font-bold transition-opacity shadow-md shadow-[#001161]/15"
+                  >
+                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                    {saving ? 'Ukládám…' : 'Uložit otázky a článek do webináře'}
+                  </button>
+                  <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                    {'Stejné tlačítko je i v horní liště vedle názvu webináře.'}
+                  </p>
+                </div>
               </div>
             )}
 

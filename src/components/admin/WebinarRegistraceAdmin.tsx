@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   RefreshCw, ChevronDown, ChevronRight, Users, CheckCircle2,
   Rocket, Calendar, Mail, Phone, Briefcase, Clock, Search,
-  Download, Tag, Building2, User, ClipboardList, ListChecks,
+  Download, Tag, Building2, User, ListChecks,
   AlertTriangle, MinusCircle, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { webinarEventTimestampMs } from '../../utils/webinarEventTimestamp';
 import { cn } from '../ui/utils';
+import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -446,13 +447,6 @@ interface McPanelState {
   rows?: MailchimpMemberRow[];
 }
 
-interface SurveyPanelState {
-  loading: boolean;
-  questions: Array<{ id: string; type: string; label: string; options?: string[] }>;
-  responses: Array<{ email?: string; name?: string; answers?: Record<string, string>; submittedAt?: string }>;
-  error?: string;
-}
-
 export default function WebinarRegistraceAdmin() {
   const [data, setData] = useState<WebinarStat[]>([]);
   const [loading, setLoading] = useState(true);
@@ -463,7 +457,6 @@ export default function WebinarRegistraceAdmin() {
   /** Filtr tagů u Mailchimp: vše / nově příchozí / už byli na webináři */
   const [mcTagFilter, setMcTagFilter] = useState<Record<string, 'all' | 'new' | 'repeat'>>({});
   const mcLoadedRef = useRef<Set<string>>(new Set());
-  const [surveyByWid, setSurveyByWid] = useState<Record<string, SurveyPanelState>>({});
   /** Rozbalený workflow report (`webinarId|email`). */
   const [pipelineExpanded, setPipelineExpanded] = useState<string | null>(null);
   const load = useCallback(async () => {
@@ -483,7 +476,6 @@ export default function WebinarRegistraceAdmin() {
       setData(parsed.webinars || []);
       setMcByWebinar({});
       setMcTagFilter({});
-      setSurveyByWid({});
       mcLoadedRef.current.clear();
     } catch (e: any) {
       if (e?.name === 'AbortError') {
@@ -570,55 +562,6 @@ export default function WebinarRegistraceAdmin() {
     })();
     return () => ac.abort();
   }, [expanded, data]);
-
-  useEffect(() => {
-    if (!expanded) return;
-    let cancelled = false;
-    setSurveyByWid((prev) => ({
-      ...prev,
-      [expanded]: { loading: true, questions: [], responses: [] },
-    }));
-    (async () => {
-      try {
-        const res = await fetch(
-          `${SERVER}/admin/webinar-survey/${encodeURIComponent(expanded)}`,
-          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
-        );
-        const rawText = await res.text();
-        let d: { error?: string; questions?: SurveyPanelState['questions']; responses?: SurveyPanelState['responses'] };
-        try {
-          d = parseJsonResponseBody(rawText) as typeof d;
-        } catch (parseErr: any) {
-          throw new Error(parseErr?.message || 'Neplatná odpověď serveru (JSON)');
-        }
-        if (cancelled) return;
-        if (!d || typeof d !== 'object') throw new Error('Prázdná odpověď serveru');
-        if (!res.ok) throw new Error(d.error || 'Chyba načtení dotazníku');
-        setSurveyByWid((prev) => ({
-          ...prev,
-          [expanded]: {
-            loading: false,
-            questions: Array.isArray(d.questions) ? d.questions : [],
-            responses: Array.isArray(d.responses) ? d.responses : [],
-          },
-        }));
-      } catch (e: any) {
-        if (cancelled) return;
-        setSurveyByWid((prev) => ({
-          ...prev,
-          [expanded]: {
-            loading: false,
-            questions: [],
-            responses: [],
-            error: e?.message || 'Chyba',
-          },
-        }));
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [expanded]);
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#f7f8fc]" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
@@ -907,72 +850,11 @@ export default function WebinarRegistraceAdmin() {
                     </div>
                   )}
 
-                  <div className="border-t border-gray-100">
-                    <div className="flex items-center gap-2 border-b border-gray-100 bg-emerald-50/50 px-5 py-2">
-                      <ClipboardList className="h-3.5 w-3.5 text-emerald-700" />
-                      <span className="text-[11px] font-bold text-emerald-900">{'Dotazník po registraci'}</span>
-                    </div>
-                    {surveyByWid[w.webinarId]?.loading ? (
-                      <div className="flex justify-center py-6">
-                        <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-200 border-t-emerald-600" />
-                      </div>
-                    ) : surveyByWid[w.webinarId]?.error ? (
-                      <p className="px-5 py-3 text-center text-[12px] text-red-500">{surveyByWid[w.webinarId]?.error}</p>
-                    ) : (surveyByWid[w.webinarId]?.questions || []).length === 0 ? (
-                      <p className="px-5 py-3 text-center text-[12px] text-gray-400">
-                        {'Dotazník u tohoto webináře není zapnutý nebo nemá otázky.'}
-                      </p>
-                    ) : (
-                      <div className="space-y-4 px-5 py-4">
-                        <p className="text-[11px] text-gray-500">
-                          {'Odpovědí: '}
-                          <strong className="text-[#001161]">{surveyByWid[w.webinarId]?.responses?.length ?? 0}</strong>
-                        </p>
-                        {(surveyByWid[w.webinarId]?.questions || []).map((q) => {
-                          const resps = surveyByWid[w.webinarId]?.responses || [];
-                          const vals = resps
-                            .map((r) => (r.answers && r.answers[q.id] != null ? String(r.answers[q.id]) : ''))
-                            .filter(Boolean);
-                          return (
-                            <div key={q.id} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                              <p className="text-[12px] font-bold text-[#001161] mb-2">{q.label}</p>
-                              {q.type === 'yes_no' ? (
-                                <div className="flex flex-wrap gap-3 text-[12px] text-gray-700">
-                                  <span>
-                                    {'Ano: '}
-                                    <strong>{vals.filter((v) => v === 'yes').length}</strong>
-                                  </span>
-                                  <span>
-                                    {'Ne: '}
-                                    <strong>{vals.filter((v) => v === 'no').length}</strong>
-                                  </span>
-                                </div>
-                              ) : q.type === 'abc' && q.options?.length ? (
-                                <ul className="space-y-1 text-[12px] text-gray-700">
-                                  {q.options.map((opt) => (
-                                    <li key={opt}>
-                                      <span className="text-gray-500">{opt}: </span>
-                                      <strong>{vals.filter((v) => v === opt).length}</strong>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <ul className="max-h-[180px] space-y-1.5 overflow-y-auto text-[11px] text-gray-700">
-                                  {vals.slice(0, 40).map((v, vi) => (
-                                    <li key={vi} className="rounded-lg bg-white px-2 py-1.5 border border-gray-100">
-                                      {v}
-                                    </li>
-                                  ))}
-                                  {vals.length > 40 ? (
-                                    <li className="text-gray-400">{'… a dalších '}{vals.length - 40}</li>
-                                  ) : null}
-                                </ul>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                  <div className="border-t border-gray-100 bg-white">
+                    <WebinarSurveyResponsesPanel
+                      webinarId={w.webinarId}
+                      title="Dotazník — přehled odpovědí"
+                    />
                   </div>
 
                   {w.mailchimpTag && (() => {

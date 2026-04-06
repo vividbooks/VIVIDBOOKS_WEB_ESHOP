@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Award, Play, ExternalLink, CheckCircle, AlertCircle, Loader2, Search, Building2 } from 'lucide-react';
 import { useDvppVideos } from '../contexts/DvppVideosContext';
@@ -61,9 +61,20 @@ interface FormState {
 export function DvppVideoDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { videos, topics, loading } = useDvppVideos();
 
   const video = videos.find(v => v.id === id);
+
+  const emailFromUrl = (searchParams.get('email') || '').trim();
+  const emailLooksValid =
+    emailFromUrl.length > 0 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailFromUrl.toLowerCase());
+  /** Odkaz z follow-up e-mailu (`?from=email`) — záznam hned přístupný bez registrace / ověření. */
+  const fromEmailLink = searchParams.get('from') === 'email';
+
+  const [serverAccessSource, setServerAccessSource] = useState<'webinar' | 'dvpp' | null>(null);
+  const [emailAccessDone, setEmailAccessDone] = useState(!emailLooksValid || fromEmailLink);
 
   const [alreadyRegistered, setAlreadyRegistered] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -84,6 +95,47 @@ export function DvppVideoDetailPage() {
   useEffect(() => {
     if (id && getRegisteredVideos().includes(id)) setAlreadyRegistered(true);
   }, [id]);
+
+  useEffect(() => {
+    if (fromEmailLink) {
+      setServerAccessSource(null);
+      setEmailAccessDone(true);
+      return;
+    }
+    if (!emailLooksValid) {
+      setServerAccessSource(null);
+      setEmailAccessDone(true);
+      return;
+    }
+    if (!id) return;
+    let cancelled = false;
+    setEmailAccessDone(false);
+    (async () => {
+      try {
+        const res = await fetch(
+          `${SERVER}/public/dvpp-recording-access?videoId=${encodeURIComponent(id)}&email=${encodeURIComponent(emailFromUrl)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && data.access && (data.source === 'webinar' || data.source === 'dvpp')) {
+          setServerAccessSource(data.source);
+        } else if (!cancelled) {
+          setServerAccessSource(null);
+        }
+      } finally {
+        if (!cancelled) setEmailAccessDone(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, emailFromUrl, emailLooksValid, fromEmailLink]);
+
+  useEffect(() => {
+    if (emailLooksValid && emailFromUrl) {
+      setForm((prev) => (prev.email === emailFromUrl ? prev : { ...prev, email: emailFromUrl }));
+    }
+  }, [emailFromUrl, emailLooksValid]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -130,7 +182,8 @@ export function DvppVideoDetailPage() {
     setError('');
   };
 
-  const showVideo = alreadyRegistered || submitted;
+  const showVideo =
+    alreadyRegistered || submitted || !!serverAccessSource || fromEmailLink;
 
   const YT_PAT = /(?:youtu\.be\/|youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/;
   let resolvedYtUrl = video?.youtubeUrl || '';
@@ -151,7 +204,13 @@ export function DvppVideoDetailPage() {
   const orangeText = video?.orangeButtonText || 'Vyzkoušet zdarma';
   const orangeLink = video?.orangeButtonLink || '';
   const certText = video?.greyButtonText || 'Certifikát DVPP';
-  const certLink = video?.certificateUrl || '';
+  const certMode = (video as any)?.certificateLinkMode === 'survey' ? 'survey' : 'external';
+  const vSlug = String((video as any)?.slug || video?.id || '');
+  const certLinkResolved =
+    certMode === 'survey'
+      ? `${typeof window !== 'undefined' ? window.location.origin : ''}/webinar/${encodeURIComponent(vSlug)}/dvpp-dotaznik`
+      : String(video?.certificateUrl || '').trim();
+  const showCertButton = certMode === 'survey' || !!certLinkResolved;
 
   const handleOrangeClick = () => {
     if (orangeLink) window.open(orangeLink, '_blank');
@@ -210,6 +269,18 @@ export function DvppVideoDetailPage() {
         <div className="flex flex-col items-center gap-4 text-[#001161]/40">
           <div className="w-10 h-10 rounded-full border-2 border-[#001161]/20 border-t-[#001161]/60 animate-spin" />
           <p className="text-[14px]" style={{ fontFamily: ff }}>{'Načítám záznam...'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  /* ── Ověření e-mailu z odkazu (registrace na webinář / u záznamu), ne když ?from=email ── */
+  if (emailLooksValid && !emailAccessDone && !fromEmailLink) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4 text-[#001161]/40">
+          <div className="w-10 h-10 rounded-full border-2 border-[#001161]/20 border-t-[#001161]/60 animate-spin" />
+          <p className="text-[14px]" style={{ fontFamily: ff }}>{'Ověřujeme přístup ke záznamu...'}</p>
         </div>
       </div>
     );
@@ -335,10 +406,11 @@ export function DvppVideoDetailPage() {
                   {orangeText}
                 </button>
 
-                {(certText || certLink) && (
+                {showCertButton && (
                   <button
-                    onClick={() => certLink && window.open(certLink, '_blank')}
-                    className={`w-full py-4 rounded-2xl text-white text-[15px] font-black text-center transition-all hover:opacity-90 active:scale-[0.97] flex items-center justify-center gap-2.5 ${certLink ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
+                    type="button"
+                    onClick={() => certLinkResolved && window.open(certLinkResolved, '_blank', 'noopener,noreferrer')}
+                    className={`w-full py-4 rounded-2xl text-white text-[15px] font-black text-center transition-all hover:opacity-90 active:scale-[0.97] flex items-center justify-center gap-2.5 ${certLinkResolved ? 'cursor-pointer' : 'cursor-default opacity-50'}`}
                     style={{ background: '#374151', fontFamily: ff }}
                   >
                     <Award className="w-5 h-5" />
@@ -362,6 +434,32 @@ export function DvppVideoDetailPage() {
                     className="flex flex-col gap-4"
                   >
                     <VideoEmbed />
+                    {serverAccessSource === 'webinar' && (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[#E8EDF8] border border-[#001161]/12">
+                        <CheckCircle className="w-4 h-4 text-[#001161] shrink-0" />
+                        <p className="text-[13px] text-[#001161] font-bold" style={{ fontFamily: ff }}>
+                          {
+                            'Jste přihlášeni jako účastník webináře — záznam je přístupný bez další registrace.'
+                          }
+                        </p>
+                      </div>
+                    )}
+                    {serverAccessSource === 'dvpp' && (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-[#E8EDF8] border border-[#001161]/12">
+                        <CheckCircle className="w-4 h-4 text-[#001161] shrink-0" />
+                        <p className="text-[13px] text-[#001161] font-bold" style={{ fontFamily: ff }}>
+                          {'Jste již registrováni u tohoto záznamu.'}
+                        </p>
+                      </div>
+                    )}
+                    {fromEmailLink && !serverAccessSource && (
+                      <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200/80">
+                        <CheckCircle className="w-4 h-4 text-amber-800 shrink-0" />
+                        <p className="text-[13px] text-amber-950 font-bold" style={{ fontFamily: ff }}>
+                          {'Odkaz z e-mailu — záznam máte přístupný bez další registrace.'}
+                        </p>
+                      </div>
+                    )}
                     {submitted && (
                       <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-green-50 border border-green-200">
                         <CheckCircle className="w-4 h-4 text-green-600 shrink-0" />
