@@ -37,6 +37,7 @@ export function WebinarsProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch(`${SERVER}/webinare`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
+        cache: 'no-store',
       });
       if (!res.ok) {
         const txt = await res.text();

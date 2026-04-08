@@ -69,6 +69,8 @@ interface FormState {
   postWebinarLearningsHtml: string;
   postWebinarQuizQuestions: PostWebinarQuizQuestion[];
   postWebinarPart2: PostWebinarPart2Step[];
+  /** Výchozí true — plná registrace před záznamem / dotazníkem; false = jen jméno, e-mail, telefon. */
+  surveyRequireFullRegistration: boolean;
 }
 
 function cloneDefaultPart2(): PostWebinarPart2Step[] {
@@ -120,12 +122,14 @@ const EMPTY_FORM: FormState = {
   day: new Date().getDate(), monthNum: new Date().getMonth() + 1, year: new Date().getFullYear(),
   time: '18:00', lecturer: '', description: '', perks: '', targetAudience: 'Pro učitele',
   coverImage: '', recordingUrl: '',
+  certificateLinkMode: 'external',
   certificateUrl: '', greyButtonText: 'Certifikát DVPP',
   orangeButtonText: 'Vyzkoušejte zdarma', orangeButtonLink: '/vyzkousejte',
   prepis: '',
   postWebinarLearningsHtml: '',
   postWebinarQuizQuestions: [],
   postWebinarPart2: cloneDefaultPart2(),
+  surveyRequireFullRegistration: true,
 };
 
 function normalizeQuizFromItem(raw: unknown): PostWebinarQuizQuestion[] {
@@ -169,6 +173,7 @@ function itemToForm(webinar: any, dvpp: any | null): FormState {
     postWebinarLearningsHtml: typeof webinar.postWebinarLearningsHtml === 'string' ? webinar.postWebinarLearningsHtml : '',
     postWebinarQuizQuestions: normalizeQuizFromItem(webinar.postWebinarQuizQuestions),
     postWebinarPart2: normalizePart2FromItem(webinar.postWebinarPart2),
+    surveyRequireFullRegistration: webinar.surveyRequireFullRegistration !== false,
   };
 }
 
@@ -282,9 +287,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     }>;
     error: string | null;
   }>({ loading: false, tag: null, rows: [], error: null });
-  /** Volitelný přepínač Mailchimp tagu (audience); prázdné = výchozí tag webináře. */
+  /** Více tagů v audience — prázdné pole = výchozí tag webináře; odesílá se jako `tagA|tagB`. */
+  const [mailchimpTagsSelected, setMailchimpTagsSelected] = useState<string[]>([]);
+  const [mailchimpTagDraftInput, setMailchimpTagDraftInput] = useState('');
+  /** Po debounci: řetězec pro API (`tagA|tagB` nebo prázdné = výchozí tag webináře). */
   const [mailchimpTagOverride, setMailchimpTagOverride] = useState('');
-  const [mailchimpTagForFetch, setMailchimpTagForFetch] = useState('');
   const [tagSuggestOptions, setTagSuggestOptions] = useState<
     Array<{ name: string; memberCount: number | null }>
   >([]);
@@ -373,21 +380,22 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     const id = selected?.id;
     if (id !== prevWebinarIdForMcTagRef.current) {
       prevWebinarIdForMcTagRef.current = id;
+      setMailchimpTagsSelected([]);
+      setMailchimpTagDraftInput('');
       setMailchimpTagOverride('');
-      setMailchimpTagForFetch('');
       setTagSuggestOptions([]);
     }
   }, [selected?.id]);
 
   useEffect(() => {
     const t = window.setTimeout(() => {
-      setMailchimpTagForFetch(mailchimpTagOverride.trim());
+      setMailchimpTagOverride(mailchimpTagsSelected.join('|'));
     }, 380);
     return () => clearTimeout(t);
-  }, [mailchimpTagOverride]);
+  }, [mailchimpTagsSelected]);
 
   useEffect(() => {
-    const q = mailchimpTagOverride.trim();
+    const q = mailchimpTagDraftInput.trim();
     if (q.length < 1) {
       setTagSuggestOptions([]);
       return;
@@ -409,7 +417,15 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         .catch(() => setTagSuggestOptions([]));
     }, 280);
     return () => clearTimeout(t);
-  }, [mailchimpTagOverride]);
+  }, [mailchimpTagDraftInput]);
+
+  const addMailchimpTag = useCallback((name: string) => {
+    const t = name.trim();
+    if (!t) return;
+    setMailchimpTagsSelected((prev) => (prev.includes(t) ? prev : [...prev, t]));
+    setMailchimpTagDraftInput('');
+    setTagSuggestOptions([]);
+  }, []);
 
   useEffect(() => {
     if (!selected?.id || isNew) {
@@ -419,7 +435,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     let cancelled = false;
     setFollowupPreviewLoading(true);
     const params = new URLSearchParams();
-    if (mailchimpTagForFetch) params.set('mailchimpTag', mailchimpTagForFetch);
+    if (mailchimpTagOverride) params.set('mailchimpTag', mailchimpTagOverride);
     const qs = params.toString();
     void fetch(
       `${SERVER}/admin/webinar-post-followup-recipient-preview/${encodeURIComponent(String(selected.id))}${qs ? `?${qs}` : ''}`,
@@ -450,7 +466,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, isNew, mailchimpTagForFetch]);
+  }, [selected?.id, isNew, mailchimpTagOverride]);
 
   useEffect(() => {
     if (!selected?.id || isNew) {
@@ -464,7 +480,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     setMcListState((s) => ({ ...s, loading: true, error: null }));
     const mcUrl =
       `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}?lite=1` +
-      (mailchimpTagForFetch ? `&mailchimpTag=${encodeURIComponent(mailchimpTagForFetch)}` : '');
+      (mailchimpTagOverride ? `&mailchimpTag=${encodeURIComponent(mailchimpTagOverride)}` : '');
     void fetch(
       mcUrl,
       { headers: { Authorization: `Bearer ${publicAnonKey}` }, signal: ac.signal },
@@ -534,7 +550,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       ac.abort();
       window.clearTimeout(to);
     };
-  }, [selected?.id, isNew, mailchimpTagForFetch]);
+  }, [selected?.id, isNew, mailchimpTagOverride]);
 
   const loadRagStatus = useCallback(async (webinarId: string) => {
     setRagStatus(prev => ({ ...prev, [webinarId]: { ...prev[webinarId], loading: true, count: prev[webinarId]?.count ?? 0 } }));
@@ -703,7 +719,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             form.postWebinarQuizQuestions && form.postWebinarQuizQuestions.length > 0
               ? form.postWebinarQuizQuestions
               : undefined,
-          ...(mailchimpTagForFetch ? { mailchimpTag: mailchimpTagForFetch } : {}),
+          ...(mailchimpTagOverride ? { mailchimpTag: mailchimpTagOverride } : {}),
         }),
       });
       const rawText = await res.text();
@@ -800,6 +816,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         isPast:      true,
         youtubeUrl:  form.recordingUrl || undefined,
         updatedAt:   new Date().toISOString(),
+        surveyRequireFullRegistration: form.surveyRequireFullRegistration,
       };
 
       const dvppPayload = {
@@ -1197,23 +1214,55 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   <div className="mt-2 space-y-2">
                     <div className="rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2.5 space-y-2">
                       <label className="block text-[11px] font-bold text-gray-600">
-                        {'Tag (volitelně jiný než výchozí u webináře)'}
+                        {'Tagy v audience (volitelně jiné než výchozí u webináře)'}
                       </label>
+                      {mailchimpTagsSelected.length > 0 && (
+                        <ul className="flex flex-wrap gap-1.5">
+                          {mailchimpTagsSelected.map((tg) => (
+                            <li
+                              key={tg}
+                              className="inline-flex items-center gap-1 rounded-lg border border-[#001161]/15 bg-white pl-2.5 pr-1 py-1 text-[11px] font-semibold text-[#001161]"
+                            >
+                              <span className="max-w-[220px] truncate" title={tg}>
+                                {tg}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setMailchimpTagsSelected((prev) => prev.filter((x) => x !== tg))
+                                }
+                                className="rounded-md p-0.5 text-gray-400 hover:bg-[#001161]/10 hover:text-[#001161]"
+                                aria-label={`Odebrat tag ${tg}`}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         <input
                           type="text"
-                          value={mailchimpTagOverride}
-                          onChange={(e) => setMailchimpTagOverride(e.target.value)}
-                          placeholder="Napište začátek názvu — našeptávač z Mailchimp"
+                          value={mailchimpTagDraftInput}
+                          onChange={(e) => setMailchimpTagDraftInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              const v = mailchimpTagDraftInput.trim();
+                              if (v) addMailchimpTag(v);
+                            }
+                          }}
+                          placeholder="Napište začátek názvu — Enter nebo klik přidá tag"
                           className={inputCls + ' flex-1 min-w-0 text-[13px]'}
                           list="mailchimp-tag-suggest-past"
                           autoComplete="off"
                         />
-                        {mailchimpTagOverride.trim() ? (
+                        {mailchimpTagsSelected.length > 0 || mailchimpTagDraftInput.trim() ? (
                           <button
                             type="button"
                             onClick={() => {
-                              setMailchimpTagOverride('');
+                              setMailchimpTagsSelected([]);
+                              setMailchimpTagDraftInput('');
                               setTagSuggestOptions([]);
                             }}
                             className="shrink-0 text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-3 py-2 hover:bg-[#001161]/5"
@@ -1233,12 +1282,10 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                             <li key={t.name}>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  setMailchimpTagOverride(t.name);
-                                  setTagSuggestOptions([]);
-                                }}
+                                onClick={() => addMailchimpTag(t.name)}
                                 className="text-[10px] font-semibold rounded-lg border border-amber-200/90 bg-white px-2 py-1 text-[#001161] hover:bg-amber-50/80"
                               >
+                                {'+ '}
                                 {t.name}
                                 {typeof t.memberCount === 'number' ? (
                                   <span className="text-gray-500 font-normal">{' · '}{t.memberCount}</span>
@@ -1250,7 +1297,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                       )}
                       <p className="text-[10px] text-gray-500 leading-snug">
                         {
-                          'Prázdné pole = stejný tag jako při registraci na web (automaticky vybraný). Po úpravě se přepočítají čísla u „Odeslat záznam“ i tabulka níže.'
+                          'Bez vybraného tagu = stejný tag jako při registraci na web. Můžete přidat více tagů — kontakty se sjednotí (každý e-mail jen jednou). Po úpravě se přepočítají čísla u „Odeslat záznam“ i tabulka níže.'
                         }
                       </p>
                     </div>
@@ -1275,8 +1322,8 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                           void (async () => {
                             try {
                               let csvUrl = `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`;
-                              if (mailchimpTagForFetch) {
-                                csvUrl += `?mailchimpTag=${encodeURIComponent(mailchimpTagForFetch)}`;
+                              if (mailchimpTagOverride) {
+                                csvUrl += `?mailchimpTag=${encodeURIComponent(mailchimpTagOverride)}`;
                               }
                               const res = await fetch(csvUrl, {
                                 headers: { Authorization: `Bearer ${publicAnonKey}` },
@@ -1771,6 +1818,36 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     {saving ? 'Ukládám…' : 'Uložit'}
                   </button>
+                </div>
+
+                <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50/90 px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[12px] font-bold text-gray-800 leading-snug">
+                      {'Vyžadovat registraci pro vyplnění dotazníku'}
+                    </span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.surveyRequireFullRegistration}
+                      onClick={() =>
+                        upd({ surveyRequireFullRegistration: !form.surveyRequireFullRegistration })
+                      }
+                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                        form.surveyRequireFullRegistration ? 'bg-emerald-600' : 'bg-gray-300'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                          form.surveyRequireFullRegistration ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    {
+                      'Vypnuto: u záznamu DVPP i u celostránkového dotazníku stačí jméno, e-mail a telefon (bez školy a pozice).'
+                    }
+                  </p>
                 </div>
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">

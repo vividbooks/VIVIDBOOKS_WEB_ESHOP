@@ -205,12 +205,27 @@ export function DvppVideoDetailPage() {
   const orangeLink = video?.orangeButtonLink || '';
   const certText = video?.greyButtonText || 'Certifikát DVPP';
   const certMode = (video as any)?.certificateLinkMode === 'survey' ? 'survey' : 'external';
-  const vSlug = String((video as any)?.slug || video?.id || '');
+  /** Slug webináře z adminu — `/webinar/:slug/dvpp-dotaznik` musí odpovídat KV webináři, ne Webflow záznamu. */
+  const surveySlug = String((video as any)?.webinarSlugForSurvey || video?.slug || video?.id || '').trim();
   const certLinkResolved =
     certMode === 'survey'
-      ? `${typeof window !== 'undefined' ? window.location.origin : ''}/webinar/${encodeURIComponent(vSlug)}/dvpp-dotaznik`
+      ? surveySlug
+        ? (() => {
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const path = `/webinar/${encodeURIComponent(surveySlug)}/dvpp-dotaznik`;
+            const em = (emailFromUrl || form.email || '').trim().toLowerCase();
+            if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+              return `${origin}${path}?email=${encodeURIComponent(em)}`;
+            }
+            return `${origin}${path}`;
+          })()
+        : ''
       : String(video?.certificateUrl || '').trim();
-  const showCertButton = certMode === 'survey' || !!certLinkResolved;
+  const showCertButton =
+    certMode === 'survey' ? surveySlug.length > 0 : !!certLinkResolved;
+
+  /** Z párovaného webináře (GET `/dvpp-videos`); výchozí true. */
+  const requireFullReg = (video as any)?.surveyRequireFullRegistration !== false;
 
   const handleOrangeClick = () => {
     if (orangeLink) window.open(orangeLink, '_blank');
@@ -219,17 +234,25 @@ export function DvppVideoDetailPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!notTeacher && !form.schoolName.trim()) {
-      setError('Vypl\u0148te pros\u00edm n\u00e1zev \u0161koly.');
-      return;
-    }
-    if (!notTeacher && !form.ico.trim()) {
-      setError('Vypl\u0148te pros\u00edm I\u010cO \u0161koly.');
-      return;
-    }
-    if (!form.name.trim() || !form.email.trim() || !form.position) {
-      setError('Vypl\u0148te pros\u00edm v\u0161echna povinn\u00e1 pole.');
-      return;
+    if (!video) return;
+    if (requireFullReg) {
+      if (!notTeacher && !form.schoolName.trim()) {
+        setError('Vypl\u0148te pros\u00edm n\u00e1zev \u0161koly.');
+        return;
+      }
+      if (!notTeacher && !form.ico.trim()) {
+        setError('Vypl\u0148te pros\u00edm I\u010cO \u0161koly.');
+        return;
+      }
+      if (!form.name.trim() || !form.email.trim() || !form.position) {
+        setError('Vypl\u0148te pros\u00edm v\u0161echna povinn\u00e1 pole.');
+        return;
+      }
+    } else {
+      if (!form.name.trim() || !form.email.trim() || !form.phone.trim()) {
+        setError('Vypl\u0148te pros\u00edm jm\u00e9no, e-mail a telefon.');
+        return;
+      }
     }
     if (!form.gdpr) {
       setError('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.');
@@ -241,14 +264,28 @@ export function DvppVideoDetailPage() {
       const res = await fetch(`${SERVER}/dvpp-video-registrace`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({
-          videoId: video!.id,
-          videoTitle: video!.name,
-          videoSlug: (video as any).slug || video!.id,
-          youtubeUrl: resolvedYtUrl,
-          notTeacher,
-          ...form,
-        }),
+        body: JSON.stringify(
+          requireFullReg
+            ? {
+                videoId: video.id,
+                videoTitle: video.name,
+                videoSlug: (video as any).slug || video.id,
+                youtubeUrl: resolvedYtUrl,
+                notTeacher,
+                ...form,
+              }
+            : {
+                videoId: video.id,
+                videoTitle: video.name,
+                videoSlug: (video as any).slug || video.id,
+                youtubeUrl: resolvedYtUrl,
+                lightLead: true,
+                name: form.name,
+                email: form.email,
+                phone: form.phone,
+                gdpr: form.gdpr,
+              },
+        ),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Registrace se nezda\u0159ila.');
@@ -492,7 +529,9 @@ export function DvppVideoDetailPage() {
                             <Play className="w-7 h-7 text-white ml-1" fill="white" />
                           </div>
                           <p className="text-white text-[14px] font-bold px-6 text-center" style={{ fontFamily: ff }}>
-                            {'Pro přístup k záznamu se prosím zaregistrujte'}
+                            {requireFullReg
+                              ? 'Pro přístup k záznamu se prosím zaregistrujte'
+                              : 'Pro přístup vyplňte jméno, e-mail a telefon'}
                           </p>
                         </div>
                       </div>
@@ -501,11 +540,13 @@ export function DvppVideoDetailPage() {
                     {/* Formulář — stejný jako webinář */}
                     <div className="bg-[#F0F2F8] rounded-[28px] px-6 md:px-10 py-8">
                       <h2 className="text-[#001161] text-[28px] text-center mb-6" style={{ fontFamily: "'Cooper Light', serif" }}>
-                        {'Přihlaste se ke sledování'}
+                        {requireFullReg ? 'Přihlaste se ke sledování' : 'Vyplňte kontakt'}
                       </h2>
 
                       <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
 
+                        {requireFullReg && (
+                        <>
                         {/* Toggle: pedagog / certifikát DVPP (ON=zelená, OFF=červená) */}
                         <div className="flex items-center justify-between bg-white rounded-[12px] px-4 py-3 border border-[#001161]/10">
                           <div>
@@ -608,6 +649,8 @@ export function DvppVideoDetailPage() {
                         <p className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mt-2 pl-1" style={{ fontFamily: ff }}>
                           {'Kontaktn\u00ed \u00fadaje'}
                         </p>
+                        </>
+                        )}
 
                         <input
                           type="text"
@@ -629,13 +672,15 @@ export function DvppVideoDetailPage() {
                         />
                         <input
                           type="tel"
+                          required={!requireFullReg}
                           value={form.phone}
                           onChange={e => handleChange('phone', e.target.value)}
-                          placeholder={'Telefon'}
+                          placeholder={requireFullReg ? 'Telefon' : 'Telefon *'}
                           className="w-full bg-white border border-[#001161]/10 rounded-[12px] px-4 py-3 text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15 transition-all"
                           style={{ fontFamily: ff }}
                         />
 
+                        {requireFullReg && (
                         <div className="relative">
                           <select
                             required
@@ -653,6 +698,7 @@ export function DvppVideoDetailPage() {
                             </svg>
                           </div>
                         </div>
+                        )}
 
                         {/* GDPR */}
                         <label className="flex items-start gap-3 cursor-pointer mt-1">
@@ -671,7 +717,7 @@ export function DvppVideoDetailPage() {
                           </span>
                         </label>
 
-                        {/* Newsletter — stejné jako trial formulář */}
+                        {requireFullReg && (
                         <label className="flex items-start gap-3 cursor-pointer bg-[#FFF7ED] rounded-xl px-4 py-3 border border-[#E8942A]/20">
                           <span className="relative flex-shrink-0 mt-0.5">
                             <input
@@ -689,6 +735,7 @@ export function DvppVideoDetailPage() {
                             {'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'}
                           </span>
                         </label>
+                        )}
 
                         {error && (
                           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
@@ -705,11 +752,13 @@ export function DvppVideoDetailPage() {
                         >
                           {submitting
                             ? <><div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />{'Odes\u00edl\u00e1m...'}</>
-                            : 'P\u0159ihl\u00e1sit'
+                            : requireFullReg
+                              ? 'P\u0159ihl\u00e1sit'
+                              : 'Odeslat a sledovat'
                           }
                         </button>
                         <p className="text-[12px] text-[#001161]/40 text-center" style={{ fontFamily: ff }}>
-                          {'* Povinn\u00e9 pole'}
+                          {requireFullReg ? '* Povinn\u00e9 pole' : '* Jm\u00e9no, e-mail a telefon'}
                         </p>
                       </form>
                     </div>

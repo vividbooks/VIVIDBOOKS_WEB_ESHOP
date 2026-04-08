@@ -1135,6 +1135,8 @@ app.get('/make-server-93a20b6f/webinare', async (c) => {
     const itemsPublic = items.map((w: any) => {
       const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
       const pub = { ...rest } as any;
+      /* Vždy explicitní boolean — klient (`WebinarDetailPage`) jinak u undefined bere plnou registraci. */
+      pub.surveyRequireFullRegistration = w.surveyRequireFullRegistration !== false;
       if (Array.isArray(pub.postWebinarQuizQuestions)) {
         pub.postWebinarQuizQuestions = pub.postWebinarQuizQuestions.map((q: any) => {
           if (!q || typeof q !== 'object') return q;
@@ -2764,7 +2766,8 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
       return c.json({ registered: false, error: 'Chybí platné webinarId nebo email.' }, 400);
     }
     const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
-    return c.json({ registered: !!reg });
+    const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
+    return c.json({ registered: !!(reg || light) });
   } catch (err: any) {
     console.log(`[Webinar] registration-check: ${err.message}`);
     return c.json({ error: err.message || 'Chyba' }, 500);
@@ -2772,6 +2775,46 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
 }
 app.get('/make-server-93a20b6f/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
 app.get('/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
+
+/** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
+app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body.webinarId || '').trim();
+    const name = String(body.name || '').trim();
+    const emailRaw = String(body.email || '').trim();
+    const phone = String(body.phone || '').trim();
+    const gdpr = !!body.gdpr;
+    if (!webinarId || !name || !emailRaw || !phone) {
+      return c.json({ error: 'Vyplňte jméno, e-mail a telefon.' }, 400);
+    }
+    if (!gdpr) {
+      return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
+    }
+    const cleanEmail = emailRaw.toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return c.json({ error: 'Neplatný e-mail.' }, 400);
+    }
+    const key = `webinar_survey_light_${webinarId}_${cleanEmail}`;
+    const existing = await kv.get(key);
+    if (existing) {
+      return c.json({ success: true, alreadyRegistered: true });
+    }
+    await kv.set(key, {
+      webinarId,
+      name,
+      email: cleanEmail,
+      phone,
+      gdpr: true,
+      savedAt: new Date().toISOString(),
+    });
+    console.log(`[Webinar] survey light lead: ${cleanEmail} webinar=${webinarId}`);
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.log(`[Webinar] survey light lead: ${err.message}`);
+    return c.json({ error: err?.message || 'Chyba' }, 500);
+  }
+});
 
 /**
  * Údaje pro certifikát DVPP (jméno + datum narození) — doplnění k existující registraci na webinář.
@@ -2900,12 +2943,19 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
 app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
   try {
     const body = await c.req.json();
+    const lightLead = body.lightLead === true;
     const { videoId, videoTitle, videoSlug, name, email, phone, position, gdpr, newsletter, youtubeUrl } = body;
 
-    if (!videoId || !name || !email || !position) {
+    if (lightLead) {
+      if (!videoId || !name || !email || !String(phone || '').trim()) {
+        return c.json({ error: 'Chybí povinná pole (videoId, name, email, telefon).' }, 400);
+      }
+      if (!gdpr) {
+        return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
+      }
+    } else if (!videoId || !name || !email || !position) {
       return c.json({ error: 'Chybí povinná pole (videoId, name, email, position).' }, 400);
-    }
-    if (!gdpr) {
+    } else if (!gdpr) {
       return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
     }
 
@@ -2917,6 +2967,10 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
       return c.json({ success: true, message: 'Již jste registrováni.', alreadyRegistered: true });
     }
 
+    const resolvedPosition = lightLead
+      ? 'Kontakt (záznam bez plné registrace)'
+      : position;
+
     const registration = {
       videoId,
       videoTitle: videoTitle || videoId,
@@ -2924,9 +2978,10 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
       name: name.trim(),
       email: cleanEmail,
       phone: phone?.trim() || '',
-      position,
+      position: resolvedPosition,
       gdpr: true,
-      newsletter: !!newsletter,
+      newsletter: lightLead ? false : !!newsletter,
+      lightLead: !!lightLead,
       registeredAt: new Date().toISOString(),
       youtubeUrl: youtubeUrl || '',
     };
@@ -3811,6 +3866,47 @@ function findWebinarIdForDvppVideoId(videoId: string, webinars: any[], dvppVideo
     if (m && String(m.id) === vid) return String(w.id);
   }
   return null;
+}
+
+/** Celý záznam webináře párovaného k DVPP záznamu (certifikát / dotazník na `/webinar/…/dvpp-dotaznik`). */
+function findWebinarRecordForDvppVideo(video: any, webinars: any[], allDvppVideos: any[]): any | null {
+  const vid = String(video?.id ?? '').trim();
+  if (!vid) return null;
+  const direct = webinars.find((w: any) => String(w?.id) === vid);
+  if (direct) return direct;
+  for (const w of webinars) {
+    const m = matchDvppVideoForWebinar(w, allDvppVideos);
+    if (m && String(m.id) === vid) return w;
+  }
+  return null;
+}
+
+/**
+ * Sloučí z KV uložené DVPP video s údaji o certifikátu/dotazníku z párovaného webináře (admin).
+ * Bez toho `certificateLinkMode: survey` z webináře na klientovi chybí a URL používá špatný slug.
+ */
+function certificateSurveyModeFromWebinarAndVideo(w: any, v: any): boolean {
+  if (w?.certificateLinkMode === 'survey') return true;
+  if (w?.certificateLinkMode === 'external') return false;
+  return v?.certificateLinkMode === 'survey';
+}
+
+function enrichDvppVideosWithWebinarCertificateFields(videos: any[], webinars: any[]): any[] {
+  if (!Array.isArray(videos) || videos.length === 0) return videos;
+  const webinarsArr = Array.isArray(webinars) ? webinars : [];
+  return videos.map((v) => {
+    const w = findWebinarRecordForDvppVideo(v, webinarsArr, videos);
+    if (!w) return v;
+    const survey = certificateSurveyModeFromWebinarAndVideo(w, v);
+    return {
+      ...v,
+      certificateLinkMode: survey ? 'survey' : 'external',
+      certificateUrl: String(w.certificateUrl ?? v.certificateUrl ?? ''),
+      greyButtonText: String(w.greyButtonText || v.greyButtonText || 'Certifikát DVPP'),
+      webinarSlugForSurvey: String(w.slug || w.id),
+      surveyRequireFullRegistration: w.surveyRequireFullRegistration !== false,
+    };
+  });
 }
 
 /**
@@ -5665,7 +5761,18 @@ async function mailchimpWebinarTagCountCached(w: any): Promise<{ count: number |
   return { count, tag };
 }
 
-/** Kontakty z Mailchimp — výchozí stejný tag jako u registrací; `overrideTag` = přesný název tagu v audience. */
+/**
+ * Více tagů v jednom parametru: `tagA|tagB` (admin UI přidává tagy jako čipy).
+ * Nesmí být v názvu samotného tagu znak `|`.
+ */
+function parseMailchimpMultiTagOverride(raw: string | undefined | null): string[] | null {
+  const s = typeof raw === 'string' ? raw.trim() : '';
+  if (!s) return null;
+  const parts = [...new Set(s.split('|').map((t) => t.trim()).filter(Boolean))];
+  return parts.length ? parts : null;
+}
+
+/** Kontakty z Mailchimp — výchozí stejný tag jako u registrací; `overrideTag` = jeden tag nebo `a|b` pro sjednocení. */
 async function mailchimpFetchFollowupRecipientsForWebinar(
   w: any,
   overrideTag?: string,
@@ -5680,31 +5787,45 @@ async function mailchimpFetchFollowupRecipientsForWebinar(
     return { rows: [], tag: '', error: 'Mailchimp není nakonfigurován (MAILCHIMP_API_KEY / audience).' };
   }
   try {
-    const trimmed = typeof overrideTag === 'string' ? overrideTag.trim() : '';
-    const tag = trimmed
-      ? trimmed
-      : (await mailchimpWebinarTagCountCached(w)).tag;
+    const multi = parseMailchimpMultiTagOverride(overrideTag);
+    const tagsToFetch = multi && multi.length
+      ? multi
+      : [(await mailchimpWebinarTagCountCached(w)).tag];
+    const tagLabel = tagsToFetch.join(' + ');
     const dc = mcApiKey.split('-').pop() || 'us19';
     const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
     const mcAuth = btoa(`anystring:${mcApiKey}`);
-    const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
-    if (!hit) {
-      return { rows: [], tag, error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` };
+    const rowMap = new Map<string, { email: string; name: string }>();
+    const errors: string[] = [];
+    for (const tag of tagsToFetch) {
+      const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
+      if (!hit) {
+        errors.push(`Tag v Mailchimp nenalezen v admin audience: ${tag}`);
+        continue;
+      }
+      const raw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+      for (const m of raw) {
+        const status = String(m?.status || '').toLowerCase();
+        if (status === 'unsubscribed' || status === 'cleaned') continue;
+        const email = String(m?.email_address || '').toLowerCase().trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+        if (rowMap.has(email)) continue;
+        const mf = m.merge_fields || {};
+        const fn = String(mf.FNAME || '').trim();
+        const ln = String(mf.LNAME || '').trim();
+        const name = [fn, ln].filter(Boolean).join(' ') || email.split('@')[0];
+        rowMap.set(email, { email, name });
+      }
     }
-    const raw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
-    const rows: { email: string; name: string }[] = [];
-    for (const m of raw) {
-      const status = String(m?.status || '').toLowerCase();
-      if (status === 'unsubscribed' || status === 'cleaned') continue;
-      const email = String(m?.email_address || '').toLowerCase().trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
-      const mf = m.merge_fields || {};
-      const fn = String(mf.FNAME || '').trim();
-      const ln = String(mf.LNAME || '').trim();
-      const name = [fn, ln].filter(Boolean).join(' ') || email.split('@')[0];
-      rows.push({ email, name });
+    const rows = [...rowMap.values()];
+    if (rows.length === 0 && errors.length) {
+      return { rows: [], tag: tagLabel, error: errors.join('; ') };
     }
-    return { rows, tag };
+    return {
+      rows,
+      tag: tagLabel,
+      error: errors.length ? errors.join('; ') : undefined,
+    };
   } catch (e: any) {
     const msg = e?.message || String(e);
     console.log(`[Mailchimp] followup recipients: ${msg}`);
@@ -5823,13 +5944,30 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-csv/:webinarId', async
     const mcAuth = btoa(`anystring:${mcApiKey}`);
 
     const qTag = c.req.query('mailchimpTag')?.trim() || c.req.query('tag')?.trim() || '';
-    const { tag } = qTag ? { tag: qTag } : await mailchimpWebinarTagCountCached(w);
-    const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
-    if (!hit) {
-      return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
-    }
+    const multi = parseMailchimpMultiTagOverride(qTag);
+    const defaultMc = await mailchimpWebinarTagCountCached(w);
+    const tagsToUse = multi && multi.length ? multi : [defaultMc.tag];
 
-    const members = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+    const memberByEmail = new Map<string, any>();
+    const tagErrors: string[] = [];
+    for (const tag of tagsToUse) {
+      const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
+      if (!hit) {
+        tagErrors.push(`Tag v Mailchimp nenalezen v admin audience: ${tag}`);
+        continue;
+      }
+      const segMembers = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+      for (const m of segMembers) {
+        const em = String(m?.email_address || '').toLowerCase().trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) continue;
+        if (!memberByEmail.has(em)) memberByEmail.set(em, m);
+      }
+    }
+    if (memberByEmail.size === 0 && tagErrors.length) {
+      return c.json({ error: tagErrors.join('; ') }, 404);
+    }
+    const members = [...memberByEmail.values()];
+
     const rows: string[][] = [
       ['E-mail', 'Jméno', 'Příjmení', 'Telefon', 'Stav'],
       ...members.map((m: any) => {
@@ -5874,13 +6012,30 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', a
     const mcAuth = btoa(`anystring:${mcApiKey}`);
 
     const qTag = c.req.query('mailchimpTag')?.trim() || c.req.query('tag')?.trim() || '';
-    const { tag } = qTag ? { tag: qTag } : await mailchimpWebinarTagCountCached(w);
-    const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
-    if (!hit) {
-      return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
-    }
+    const multi = parseMailchimpMultiTagOverride(qTag);
+    const defaultMc = await mailchimpWebinarTagCountCached(w);
+    const tagsToUse = multi && multi.length ? multi : [defaultMc.tag];
+    const tag = tagsToUse.join(' + ');
 
-    const raw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+    const memberByEmail = new Map<string, any>();
+    const tagErrors: string[] = [];
+    for (const tname of tagsToUse) {
+      const hit = await mailchimpResolveTagSegmentHit(adminListId, tname, mcBase, mcAuth);
+      if (!hit) {
+        tagErrors.push(`Tag v Mailchimp nenalezen v admin audience: ${tname}`);
+        continue;
+      }
+      const segRaw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
+      for (const m of segRaw) {
+        const em = String(m?.email_address || '').toLowerCase().trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) continue;
+        if (!memberByEmail.has(em)) memberByEmail.set(em, m);
+      }
+    }
+    if (memberByEmail.size === 0 && tagErrors.length) {
+      return c.json({ error: tagErrors.join('; ') }, 404);
+    }
+    const raw = [...memberByEmail.values()];
     const lite =
       c.req.query('lite') === '1' ||
       c.req.query('lite') === 'true' ||
@@ -9149,7 +9304,10 @@ app.get('/make-server-93a20b6f/dvpp-videos', async (c) => {
         data = { topics: [], videos: [] };
       }
     }
-    return c.json({ topics: data.topics ?? [], videos: data.videos ?? [], updatedAt: data.updatedAt });
+    const webinars = (await getCollection(WEBINARS_KEY)) as any[];
+    const rawVideos = data.videos ?? [];
+    const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
+    return c.json({ topics: data.topics ?? [], videos, updatedAt: data.updatedAt });
   } catch (e: any) {
     console.error('[dvpp-videos] GET error:', e.message);
     return c.json({ error: e.message, topics: [], videos: [] }, 500);

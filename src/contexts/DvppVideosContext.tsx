@@ -22,6 +22,10 @@ export interface DvppVideo {
   greyButtonText: string;
   /** Stejné jako u webináře v CMS — `survey` = interní DVPP dotazník místo externího odkazu. */
   certificateLinkMode?: 'external' | 'survey';
+  /** Slug/id webináře z KV (doplní Edge u GET `/dvpp-videos`) pro `/webinar/…/dvpp-dotaznik`. */
+  webinarSlugForSurvey?: string;
+  /** Z párovaného webináře — `false` = jen jméno, e-mail, telefon u záznamu. */
+  surveyRequireFullRegistration?: boolean;
   topicIds: string[];
   description: string;
 }
@@ -56,6 +60,7 @@ export function DvppVideosProvider({ children }: { children: ReactNode }) {
     try {
       const res = await fetch(`${SERVER}/dvpp-videos`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
+        cache: 'no-store',
       });
       if (!res.ok) {
         const txt = await res.text();

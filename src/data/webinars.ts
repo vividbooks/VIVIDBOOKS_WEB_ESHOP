@@ -83,6 +83,11 @@ export interface Webinar {
    * Bez hodnoty se bere jako `external` (zpětná kompatibilita).
    */
   certificateLinkMode?: 'external' | 'survey';
+  /**
+   * Pokud `true` (výchozí), před záznamem a dotazníkem DVPP platí plná registrace jako u webináře.
+   * Pokud `false`, stačí jméno, e-mail a telefon (záznam + `/webinar/…?dvppDotaznik=1`).
+   */
+  surveyRequireFullRegistration?: boolean;
 }
 
 /** Kvíz po minulém webináři (výběr z možností). */
