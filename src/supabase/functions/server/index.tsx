@@ -4152,12 +4152,21 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
     ? !!(surveyQuizUrl || quizPreviewLabels.length > 0)
     : !!certificateExternalUrl;
 
-  const recordingUrl = await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
+  const recordingUrlDefault = await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
+  const base = String(origin || '').replace(/\/$/, '');
+  const devRec = String((merged as any).devFollowupRecordingUrl ?? (w as any).devFollowupRecordingUrl ?? '').trim();
+  const recordingUrl = devRec
+    ? /^https?:\/\//i.test(devRec)
+      ? devRec
+      : `${base}${devRec.startsWith('/') ? devRec : `/${devRec}`}`
+    : recordingUrlDefault;
 
-  const trialPath = String((merged as any).orangeButtonLink || '/vyzkousejte').trim();
+  let trialPath = String((merged as any).orangeButtonLink || '/vyzkousejte').trim();
+  const devTrial = String((merged as any).devFollowupTrialUrl ?? (w as any).devFollowupTrialUrl ?? '').trim();
+  if (devTrial) trialPath = devTrial;
   const trialUrl = /^https?:\/\//i.test(trialPath)
     ? trialPath
-    : `${origin}${trialPath.startsWith('/') ? trialPath : `/${trialPath}`}`;
+    : `${base}${trialPath.startsWith('/') ? trialPath : `/${trialPath}`}`;
 
   const html = buildWebinarPostFollowupEmailHtml({
     w,
@@ -4204,6 +4213,12 @@ async function adminWebinarPostFollowupTestSendHandler(c: Context) {
     const merged: Record<string, unknown> = { ...w };
     if (Array.isArray(body?.postWebinarQuizQuestions)) {
       merged.postWebinarQuizQuestions = body.postWebinarQuizQuestions;
+    }
+    if (typeof body?.devFollowupRecordingUrl === 'string') {
+      merged.devFollowupRecordingUrl = body.devFollowupRecordingUrl;
+    }
+    if (typeof body?.devFollowupTrialUrl === 'string') {
+      merged.devFollowupTrialUrl = body.devFollowupTrialUrl;
     }
 
     const out = await sendWebinarPostFollowupEmailToRecipient({

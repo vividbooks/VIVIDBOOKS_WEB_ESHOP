@@ -88,6 +88,16 @@ export interface Webinar {
    * Pokud `false`, stačí jméno, e-mail a telefon (záznam + `/webinar/…?dvppDotaznik=1`).
    */
   surveyRequireFullRegistration?: boolean;
+  /**
+   * Admin DEV: dočasný přepis URL žlutého tlačítka „Otevřít záznam webináře“ v follow-up e-mailu (po webináři).
+   * Prázdné = výchozí `/webinare/zaznam/…?email&from=email`. Po nasazení smažte.
+   */
+  devFollowupRecordingUrl?: string;
+  /**
+   * Admin DEV: dočasný přepis modrého odkazu „Vyzkoušet Vividbooks…“ v follow-up e-mailu.
+   * Prázdné = `orangeButtonLink`. Po nasazení smažte.
+   */
+  devFollowupTrialUrl?: string;
 }
 
 /** Kvíz po minulém webináři (výběr z možností). */

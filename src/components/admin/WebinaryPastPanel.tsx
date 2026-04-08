@@ -71,6 +71,9 @@ interface FormState {
   postWebinarPart2: PostWebinarPart2Step[];
   /** Výchozí true — plná registrace před záznamem / dotazníkem; false = jen jméno, e-mail, telefon. */
   surveyRequireFullRegistration: boolean;
+  /** DEV: přepisy CTA v follow-up e-mailu (viz sekce Tlačítka). */
+  devFollowupRecordingUrl: string;
+  devFollowupTrialUrl: string;
 }
 
 function cloneDefaultPart2(): PostWebinarPart2Step[] {
@@ -130,6 +133,8 @@ const EMPTY_FORM: FormState = {
   postWebinarQuizQuestions: [],
   postWebinarPart2: cloneDefaultPart2(),
   surveyRequireFullRegistration: true,
+  devFollowupRecordingUrl: '',
+  devFollowupTrialUrl: '',
 };
 
 function normalizeQuizFromItem(raw: unknown): PostWebinarQuizQuestion[] {
@@ -174,6 +179,8 @@ function itemToForm(webinar: any, dvpp: any | null): FormState {
     postWebinarQuizQuestions: normalizeQuizFromItem(webinar.postWebinarQuizQuestions),
     postWebinarPart2: normalizePart2FromItem(webinar.postWebinarPart2),
     surveyRequireFullRegistration: webinar.surveyRequireFullRegistration !== false,
+    devFollowupRecordingUrl: typeof webinar.devFollowupRecordingUrl === 'string' ? webinar.devFollowupRecordingUrl : '',
+    devFollowupTrialUrl: typeof webinar.devFollowupTrialUrl === 'string' ? webinar.devFollowupTrialUrl : '',
   };
 }
 
@@ -769,6 +776,8 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
           learningsHtml: form.postWebinarLearningsHtml || undefined,
           postWebinarQuizQuestions:
             form.postWebinarQuizQuestions?.length > 0 ? form.postWebinarQuizQuestions : undefined,
+          devFollowupRecordingUrl: form.devFollowupRecordingUrl?.trim() || undefined,
+          devFollowupTrialUrl: form.devFollowupTrialUrl?.trim() || undefined,
         }),
       });
       const rawText = await res.text();
@@ -829,6 +838,8 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         greyButtonText:   form.greyButtonText,
         orangeButtonText: form.orangeButtonText,
         orangeButtonLink: form.orangeButtonLink,
+        devFollowupRecordingUrl: form.devFollowupRecordingUrl,
+        devFollowupTrialUrl: form.devFollowupTrialUrl,
         description:      form.description,
         topicIds:         matchedDvpp?.topicIds ?? [],
       };
@@ -1597,6 +1608,44 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     value={form.orangeButtonLink}
                     onChange={e => upd({ orangeButtonLink: e.target.value })}
                     placeholder={'/vyzkousejte'}
+                    className={inputCls + ' font-mono text-[12px]'}
+                  />
+                </Field>
+              </div>
+
+              <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/90 p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/90 px-2 py-0.5 rounded">
+                    DEV
+                  </span>
+                  <span className="text-[12px] font-bold text-amber-950">
+                    {'Dočasné přepisy v follow-up e-mailu (po webináři)'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-950/85 leading-relaxed">
+                  {
+                    'Přepíše žluté tlačítko „Otevřít záznam webináře“ a modrý odkaz „Vyzkoušet Vividbooks…“. Prázdné pole = výchozí chování. Po nasazení do produkce pole vymažte a uložte.'
+                  }
+                </p>
+                <Field
+                  label={'DEV — „Otevřít záznam webináře“ (žluté tlačítko)'}
+                  hint={'Plná https://… nebo cesta od kořene webu, např. /webinare/zaznam/…'}
+                >
+                  <input
+                    value={form.devFollowupRecordingUrl}
+                    onChange={e => upd({ devFollowupRecordingUrl: e.target.value })}
+                    placeholder={'Prázdné = automaticky záznam + ?email & from=email'}
+                    className={inputCls + ' font-mono text-[12px]'}
+                  />
+                </Field>
+                <Field
+                  label={'DEV — „Vyzkoušet Vividbooks na 14 dní zdarma“ (modrý odkaz)'}
+                  hint={'Plná URL nebo cesta; prázdné = odkaz z pole „Odkaz“ u fialového CTA výše.'}
+                >
+                  <input
+                    value={form.devFollowupTrialUrl}
+                    onChange={e => upd({ devFollowupTrialUrl: e.target.value })}
+                    placeholder={'Prázdné = stejné jako „Odkaz“ u Vyzkoušejte'}
                     className={inputCls + ' font-mono text-[12px]'}
                   />
                 </Field>
