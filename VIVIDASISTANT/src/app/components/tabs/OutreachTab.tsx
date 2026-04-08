@@ -9,6 +9,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { projectId } from '/utils/supabase/info';
 import { getEdgeFunctionHeaders } from '@/lib/edgeFunctionHeaders';
+import { useApp } from '@/app/contexts/AppContext';
 
 // School registry record from localStorage
 interface SchoolRecord {
@@ -105,6 +106,8 @@ const saveCampaigns = (campaigns: Campaign[]) => {
 };
 
 export const OutreachTab: React.FC = () => {
+  const { settings } = useApp();
+
   // View state
   const [view, setView] = useState<View>('list');
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -407,7 +410,9 @@ export const OutreachTab: React.FC = () => {
               name: org.name,
               address: org.address,
               contacts: org.contacts
-            }))
+            })),
+            senderName: settings.marketingSenderName?.trim() || undefined,
+            signature: settings.marketingEmailSignature?.trim() || undefined,
           })
         }
       );

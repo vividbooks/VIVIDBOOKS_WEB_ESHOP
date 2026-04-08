@@ -20,6 +20,12 @@ export interface Webinar {
   perks: string;
   targetAudience: string;
   zoomLink?: string;
+  /**
+   * Kde probíhá živý přenos na `/webinar/…/live`.
+   * `google_meet` = jen odkaz na setkání (pole `zoomLink`), bez chatu na stránce.
+   * `live_stream` = YouTube embed + chat vpravo (výchozí / dosavadní chování).
+   */
+  liveDeliveryMode?: 'google_meet' | 'live_stream';
   youtubeUrl?: string;
   thumbnailVariant: 1 | 2 | 3;
   isPast?: boolean;

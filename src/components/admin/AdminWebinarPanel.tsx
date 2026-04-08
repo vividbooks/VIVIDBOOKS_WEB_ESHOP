@@ -42,13 +42,13 @@ export default function AdminWebinarPanel() {
 
       {/* ── Content panels ──────────────────────────────────────── */}
       <div className={`flex-1 overflow-hidden ${tab === 'webinare' ? 'flex flex-col' : 'hidden'}`}>
-        <WebinareEditor />
+        <WebinareEditor onMarkedPast={() => setTab('uplynule')} />
       </div>
       <div className={`flex-1 overflow-hidden ${tab === 'registrace' ? 'flex flex-col' : 'hidden'}`}>
         <WebinarRegistraceAdmin />
       </div>
       <div className={`flex-1 overflow-hidden ${tab === 'uplynule' ? 'flex flex-col' : 'hidden'}`}>
-        <WebinaryPastPanel />
+        <WebinaryPastPanel active={tab === 'uplynule'} />
       </div>
     </div>
   );

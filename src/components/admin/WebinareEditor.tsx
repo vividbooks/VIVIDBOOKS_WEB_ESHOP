@@ -33,6 +33,7 @@ function emptyWebinar(): Partial<Webinar> {
     monthName: MONTHS_CS[now.getMonth()], year: now.getFullYear(),
     time: '18:00', lecturer: '', lecturerAvatar: '', coverImage: '',
     description: '', perks: '', targetAudience: '', zoomLink: '',
+    liveDeliveryMode: 'live_stream',
     relatedSubjects: [], tags: [], highlightQuote: '',
     mailchimpTagName: '',
     thumbnailVariant: 1, isPast: false,
@@ -140,8 +141,13 @@ function Toolbar({ editor, onImage, onVideo }: { editor: any; onImage: () => voi
   );
 }
 
+export type WebinareEditorProps = {
+  /** Po uložení webináře s `isPast: true` — např. přepnutí na záložku Uplynulé webináře. */
+  onMarkedPast?: (webinarId: string) => void;
+};
+
 /* ─ Main component ───────────────────────────────────────────────── */
-export default function WebinareEditor() {
+export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {}) {
   const { refresh: refreshContext } = useWebinars();
 
   const [items, setItems] = useState<Webinar[]>([]);
@@ -174,7 +180,7 @@ export default function WebinareEditor() {
     const id = selected?.id;
     if (!id || isNew) return;
     try {
-      const res = await fetch(`${SERVER}/admin/webinare/${id}`, {
+      const res = await fetch(`${SERVER}/admin/webinare/${encodeURIComponent(String(id))}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
         body: JSON.stringify(body),
@@ -382,8 +388,9 @@ export default function WebinareEditor() {
       }
       /* Minulý = po skončení (datum + čas + odhad délky), ne jen po půlnoci dne akce. */
       if (key === 'day' || key === 'monthNum' || key === 'year' || key === 'time' || key === 'durationMinutes') {
+        const clock = new Date();
         next.isPast = computeWebinarIsPastFromSchedule({
-          year: next.year ?? now.getFullYear(),
+          year: next.year ?? clock.getFullYear(),
           monthNum: next.monthNum ?? 1,
           day: next.day ?? 1,
           time: next.time ?? '18:00',
@@ -407,18 +414,26 @@ export default function WebinareEditor() {
         id: selected.id || `webinar-${Date.now()}`,
         slug: selected.slug || slugify(selected.title || ''),
         updatedAt: new Date().toISOString(),
+        /** Explicitně — některé klienty / serializace mohly vynechat příznak. */
+        isPast: !!selected.isPast,
       };
-      const url = isNew ? `${SERVER}/admin/webinare` : `${SERVER}/admin/webinare/${selected.id}`;
+      const url = isNew ? `${SERVER}/admin/webinare` : `${SERVER}/admin/webinare/${encodeURIComponent(String(selected.id))}`;
       const method = isNew ? 'POST' : 'PUT';
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.statusText); }
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(typeof e.error === 'string' ? e.error : res.statusText || `HTTP ${res.status}`);
+      }
       toast.success(isNew ? 'Webin\u00e1\u0159 ulo\u017een!' : 'Ulo\u017eeno!');
       await loadList();
       refreshContext();
+      if (payload.isPast) {
+        onMarkedPast?.(String(payload.id));
+      }
       setIsNew(false);
       setSlugManual(true);
     } catch (e: any) {
@@ -433,7 +448,7 @@ export default function WebinareEditor() {
     if (!confirm('Opravdu smazat tento webin\u00e1\u0159?')) return;
     setSaving(true);
     try {
-      await fetch(`${SERVER}/admin/webinare/${selected.id}`, {
+      await fetch(`${SERVER}/admin/webinare/${encodeURIComponent(String(selected.id))}`, {
         method: 'DELETE', headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       toast.success('Smaz\u00e1no!');
@@ -1043,19 +1058,75 @@ export default function WebinareEditor() {
                   </div>
                 </div>
 
-                {/* ── Zoom link ──────────────────────────────────── */}
+                {/* ── Živý přenos: Meet vs stream ───────────────── */}
                 <div className="bg-white rounded-2xl border border-gray-200 p-5">
                   <h3 className="text-[12px] font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5 mb-3">
-                    <Link2 className="w-3.5 h-3.5" /> Zoom / odkaz na registraci
+                    <Link2 className="w-3.5 h-3.5" /> Živý přenos (/live)
                   </h3>
-                  <input type="url" value={selected.zoomLink || ''} onChange={e => updateField('zoomLink', e.target.value)}
-                    placeholder="https://zoom.us/j/…"
-                    className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
-                  <label className="text-[11px] font-bold text-gray-500 block mt-4 mb-1">YouTube URL (live stream / záznam)</label>
-                  <input type="url" value={(selected as any).youtubeUrl || ''} onChange={e => updateField('youtubeUrl', e.target.value)}
-                    placeholder="https://www.youtube.com/watch?v=…"
-                    className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
-                  <p className="text-[11px] text-gray-400 mt-1">{'Zobraz\u00ed se na live str\u00e1nce /webinar/[id]/live'}</p>
+                  <p className="text-[11px] text-gray-500 mb-3 leading-relaxed">
+                    Zvolte, zda účastníci půjdou přímo do Meetu, nebo sledují stream na webu s chatem.
+                  </p>
+                  <div className="flex flex-col gap-2 mb-4">
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-gray-200 p-3 hover:bg-gray-50/80 has-[:checked]:border-purple-400 has-[:checked]:bg-purple-50/50">
+                      <input
+                        type="radio"
+                        name="liveDeliveryMode"
+                        className="mt-0.5"
+                        checked={(selected.liveDeliveryMode ?? 'live_stream') === 'live_stream'}
+                        onChange={() => updateField('liveDeliveryMode', 'live_stream')}
+                      />
+                      <span>
+                        <span className="text-[13px] font-bold text-[#001161] block">Živý stream na webu</span>
+                        <span className="text-[11px] text-gray-500">YouTube embed vlevo, chat a reakce vpravo (doporučeno pro veřejný odkaz z webu).</span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-gray-200 p-3 hover:bg-gray-50/80 has-[:checked]:border-purple-400 has-[:checked]:bg-purple-50/50">
+                      <input
+                        type="radio"
+                        name="liveDeliveryMode"
+                        className="mt-0.5"
+                        checked={(selected.liveDeliveryMode ?? 'live_stream') === 'google_meet'}
+                        onChange={() => updateField('liveDeliveryMode', 'google_meet')}
+                      />
+                      <span>
+                        <span className="text-[13px] font-bold text-[#001161] block">Google Meet</span>
+                        <span className="text-[11px] text-gray-500">Na stránce jen tlačítko „Otevřít webinář na Google Meet“ — bez chatu na webu.</span>
+                      </span>
+                    </label>
+                  </div>
+                  <label className="text-[11px] font-bold text-gray-500 block mb-1">
+                    {(selected.liveDeliveryMode ?? 'live_stream') === 'google_meet'
+                      ? 'Odkaz na Google Meet (povinné pro tento režim)'
+                      : 'Odkaz na setkání (Zoom / Meet) — záloha'}
+                  </label>
+                  <input
+                    type="url"
+                    value={selected.zoomLink || ''}
+                    onChange={(e) => updateField('zoomLink', e.target.value)}
+                    placeholder="https://meet.google.com/… nebo https://zoom.us/j/…"
+                    className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
+                  />
+                  {(selected.liveDeliveryMode ?? 'live_stream') === 'live_stream' ? (
+                    <>
+                      <label className="text-[11px] font-bold text-gray-500 block mt-4 mb-1">
+                        YouTube URL (živý stream / záznam)
+                      </label>
+                      <input
+                        type="url"
+                        value={(selected as any).youtubeUrl || ''}
+                        onChange={(e) => updateField('youtubeUrl', e.target.value)}
+                        placeholder="https://www.youtube.com/watch?v=…"
+                        className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
+                      />
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        Vloží se na live stránku /webinar/[id]/live; bez URL se zobrazí text o začátku streamu.
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[11px] text-amber-700/90 mt-2 leading-relaxed">
+                      YouTube na této stránce nepoužijeme — účastníci po přihlášení uvidí jen odkaz do Meetu.
+                    </p>
+                  )}
                 </div>
 
                 {/* ── Popis (description) WYSIWYG ────────────────── */}

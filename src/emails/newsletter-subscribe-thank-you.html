@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <title>Děkujeme za odběr newsletteru</title>
+  <!--
+    Předmět (návrh): „Děkujeme za odběr — těší nás, že vám záleží na výuce“
+    nebo kratší: „Vítejte u newsletteru Vividbooks“
+
+    Placeholdery (Mandrill merge tags můžete mapovat 1:1):
+    {{OPENING_LINE}}     — celá první věta včetně pozdravu, např. „Ahoj, Petro,“ nebo „Dobrý den,“
+    {{SITE_URL}}         — https://www.vividbooks.com
+    {{LOGO_URL}}           — typicky {{SITE_URL}}/email-logo-vividbooks.png
+    {{UNSUBSCRIBE_URL}}  — platný odkaz pro odhlášení (povinné)
+    {{PRIVACY_URL}}      — URL zásad ochrany osobních údajů na webu
+    {{YEAR}}             — např. 2026
+  -->
+</head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb;padding:24px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
+          <!-- Hlavička -->
+          <tr>
+            <td style="background:#001161;padding:22px 24px 20px;text-align:center;border-radius:12px 12px 0 0;">
+              <a href="{{SITE_URL}}" style="text-decoration:none;border:0;display:inline-block;">
+                <img src="{{LOGO_URL}}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;" />
+              </a>
+              <p style="margin:12px 0 0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Newsletter pro učitele</p>
+            </td>
+          </tr>
+          <!-- Obsah -->
+          <tr>
+            <td style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
+              <p style="margin:0 0 1em;">{{OPENING_LINE}}</p>
+              <p style="margin:0 0 1em;">
+                moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — a že jste se k nám v tomto směru přihlásili. Jsme rádi, že můžeme být součástí vaší výuky a přinášet vám inspiraci, která má skutečný dopad na žáky.
+              </p>
+              <p style="margin:0 0 1em;">
+                Brzy vám začneme posílat vybrané novinky: metodické tipy, novinky o titulech, nabídky a pozvánky, které odpovídají tomu, co vás na webu zajímalo. Žádný spam — jen to, co dává smysl ve škole.
+              </p>
+              <p style="margin:0 0 1.25em;">
+                Když budete chtít napsat, co vám ve výuce chybí nebo co by vám pomohlo, stačí odpovědět na tento e-mail. Rádi vás vyslechneme.
+              </p>
+              <p style="margin:0 0 0.25em;color:#001161;font-weight:bold;font-size:15px;">Co můžete čekat</p>
+              <ul style="margin:0;padding:0 0 0 1.25em;color:#3d3d48;font-size:15px;line-height:1.55;">
+                <li style="margin:0 0 0.35em;">nové tituly a témata dřív než ostatní,</li>
+                <li style="margin:0 0 0.35em;">metodické tipy přímo do výuky,</li>
+                <li style="margin:0 0 0.35em;">exkluzivní slevy a pozvánky na webináře.</li>
+              </ul>
+            </td>
+          </tr>
+          <!-- CTA (volitelné — např. odkaz na blog nebo úvodní článek) -->
+          <tr>
+            <td style="padding:8px 28px 8px;" align="center">
+              <a href="{{SITE_URL}}" style="display:inline-block;padding:14px 28px;background:#E8942A;color:#ffffff !important;text-decoration:none;font-weight:bold;font-size:15px;border-radius:10px;">Přejít na Vividbooks</a>
+            </td>
+          </tr>
+          <!-- Právní a odběr -->
+          <tr>
+            <td style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
+              <p style="margin:0 0 1em;">
+                Tento e-mail vám posíláme, protože jste na webu <a href="{{SITE_URL}}" style="color:#001161;">vividbooks.com</a> vyjádřili zájem o odběr newsletteru. Zpracování osobních údajů (e-mail) probíhá v souladu s našimi
+                <a href="{{PRIVACY_URL}}" style="color:#001161;">zásadami ochrany osobních údajů</a>.
+                Můžete kdykoli <a href="{{UNSUBSCRIBE_URL}}" style="color:#001161;">odhlásit odběr</a> — v patičce každého newsletteru bude stejný odkaz.
+              </p>
+              <p style="margin:0;">
+                © {{YEAR}} Vividbooks · <a href="mailto:hello@vividbooks.com" style="color:#6b7280;">hello@vividbooks.com</a>
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:16px 0 0;font-size:11px;color:#9ca3af;text-align:center;max-width:560px;">
+          Pokud jste newsletter neobjednali vy, dejte nám prosím vědět odpovědí na tento e-mail — adresu z databáze smažeme.
+        </p>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

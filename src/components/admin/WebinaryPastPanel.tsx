@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search, RefreshCw, Radio, Play, Save, Loader2, X,
   Brain, CheckCircle2, AlertCircle, ChevronRight, Clock,
   FileText, Video, Trash2, ExternalLink, Info,
   BookOpen, Plus, Award, Zap, Link2,
   ChevronDown, ChevronUp, Link, Unlink, ClipboardList, Sparkles, Mail, Copy,
-  MessageSquare,
+  MessageSquare, Users,
 } from 'lucide-react';
 import type { PostWebinarQuizQuestion, PostWebinarPart2Step } from '../../data/webinars';
 import { DEFAULT_POST_WEBINAR_PART2_STEPS } from '../../utils/webinarSurveyDefaults';
@@ -14,6 +14,7 @@ import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebinars } from '../../contexts/WebinarsContext';
 import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
+import { parseJsonResponseBody } from '../../utils/parseJsonResponseBody';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -218,7 +219,12 @@ const inputCls    = "w-full px-3 py-2 text-[13px] border border-gray-200 rounded
 const textareaCls = "w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none transition-colors resize-none leading-relaxed bg-white";
 
 // ── Main component ───────────────────────────────────────────────────────
-export default function WebinaryPastPanel() {
+type WebinaryPastPanelProps = {
+  /** Když je panel skrytý (jiná záložka), nenačítáme. Po přepnutí na záložku znovu načteme seznam (čerstvá data z editoru). */
+  active?: boolean;
+};
+
+export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelProps) {
   const { refresh: refreshContext } = useWebinars();
   const [items, setItems]           = useState<any[]>([]);
   const [dvppVideos, setDvppVideos] = useState<any[]>([]);
@@ -239,6 +245,43 @@ export default function WebinaryPastPanel() {
   const [generatingDvppLearnings, setGeneratingDvppLearnings] = useState(false);
   const [followupTestEmail, setFollowupTestEmail] = useState('');
   const [followupSending, setFollowupSending] = useState(false);
+  const [regCount, setRegCount] = useState<number | null>(null);
+  const [regCountLoading, setRegCountLoading] = useState(false);
+  /** Položky z GET /webinar-registrace/:id — stejný dotaz jako u počtu. */
+  const [registrants, setRegistrants] = useState<
+    Array<{
+      name?: string;
+      email?: string;
+      position?: string;
+      phone?: string;
+      registeredAt?: string;
+    }>
+  >([]);
+  const [bulkFollowupSending, setBulkFollowupSending] = useState(false);
+  /** Sloučení KV registrací + Mailchimp (stejný tag jako u registrace na webu). */
+  const [followupPreview, setFollowupPreview] = useState<{
+    kvCount: number;
+    mailchimpCount: number;
+    uniqueTotal: number;
+    mailchimpTag: string | null;
+    mailchimpError: string | null;
+  } | null>(null);
+  const [followupPreviewLoading, setFollowupPreviewLoading] = useState(false);
+  /** Kontakty z Mailchimp (stejný tag jako u hromadného follow-upu). */
+  const [mcListState, setMcListState] = useState<{
+    loading: boolean;
+    tag: string | null;
+    rows: Array<{
+      email: string;
+      firstName: string;
+      lastName: string;
+      phone: string;
+      status: string;
+      school: string;
+      tags: string[];
+    }>;
+    error: string | null;
+  }>({ loading: false, tag: null, rows: [], error: null });
   /** Remount WYSIWYG po AI generování článku (stejné id webináře). */
   const [learningsRemountKey, setLearningsRemountKey] = useState(0);
 
@@ -264,7 +307,165 @@ export default function WebinaryPastPanel() {
     }
   }, []);
 
-  useEffect(() => { loadList(); }, [loadList]);
+  useEffect(() => {
+    if (!active) return;
+    void loadList();
+  }, [active, loadList]);
+
+  useEffect(() => {
+    if (!selected?.id || isNew) {
+      setRegCount(null);
+      setRegistrants([]);
+      return;
+    }
+    let cancelled = false;
+    setRegCountLoading(true);
+    void fetch(
+      `${SERVER}/webinar-registrace/${encodeURIComponent(String(selected.id))}`,
+      { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+    )
+      .then((r) => r.text())
+      .then((raw) => (parseJsonResponseBody(raw) || {}) as { count?: number; registrations?: unknown[] })
+      .then((d: { count?: number; registrations?: unknown[] }) => {
+        if (cancelled) return;
+        const raw = Array.isArray(d.registrations) ? d.registrations : [];
+        const mapped = raw.map((row: any) => ({
+          name: typeof row?.name === 'string' ? row.name : '',
+          email: typeof row?.email === 'string' ? row.email : '',
+          position: typeof row?.position === 'string' ? row.position : '',
+          phone: typeof row?.phone === 'string' ? row.phone : '',
+          registeredAt: typeof row?.registeredAt === 'string' ? row.registeredAt : '',
+        }));
+        mapped.sort((a, b) => {
+          const ta = a.registeredAt ? new Date(a.registeredAt).getTime() : 0;
+          const tb = b.registeredAt ? new Date(b.registeredAt).getTime() : 0;
+          return tb - ta;
+        });
+        setRegistrants(mapped);
+        const n =
+          typeof d.count === 'number'
+            ? d.count
+            : mapped.length;
+        setRegCount(n);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRegCount(0);
+          setRegistrants([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRegCountLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, isNew]);
+
+  useEffect(() => {
+    if (!selected?.id || isNew) {
+      setFollowupPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setFollowupPreviewLoading(true);
+    void fetch(
+      `${SERVER}/admin/webinar-post-followup-recipient-preview/${encodeURIComponent(String(selected.id))}`,
+      { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+    )
+      .then((r) => r.text())
+      .then((raw) => (parseJsonResponseBody(raw) || {}) as Record<string, unknown>)
+      .then((d) => {
+        if (cancelled) return;
+        if (typeof d.uniqueTotal === 'number') {
+          setFollowupPreview({
+            kvCount: typeof d.kvCount === 'number' ? d.kvCount : 0,
+            mailchimpCount: typeof d.mailchimpCount === 'number' ? d.mailchimpCount : 0,
+            uniqueTotal: d.uniqueTotal,
+            mailchimpTag: typeof d.mailchimpTag === 'string' ? d.mailchimpTag : null,
+            mailchimpError: typeof d.mailchimpError === 'string' ? d.mailchimpError : null,
+          });
+        } else {
+          setFollowupPreview(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setFollowupPreview(null);
+      })
+      .finally(() => {
+        if (!cancelled) setFollowupPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, isNew]);
+
+  useEffect(() => {
+    if (!selected?.id || isNew) {
+      setMcListState({ loading: false, tag: null, rows: [], error: null });
+      return;
+    }
+    let cancelled = false;
+    setMcListState((s) => ({ ...s, loading: true, error: null }));
+    void fetch(
+      `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}`,
+      { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+    )
+      .then(async (res) => {
+        const raw = await res.text();
+        const d = (parseJsonResponseBody(raw) || {}) as {
+          tag?: string;
+          members?: Array<{
+            email?: string;
+            firstName?: string;
+            lastName?: string;
+            phone?: string;
+            status?: string;
+            school?: string;
+            tags?: string[];
+          }>;
+          error?: string;
+        };
+        if (cancelled) return;
+        if (!res.ok) {
+          setMcListState({
+            loading: false,
+            tag: null,
+            rows: [],
+            error: d.error || raw.slice(0, 220) || `HTTP ${res.status}`,
+          });
+          return;
+        }
+        const rows = (Array.isArray(d.members) ? d.members : []).map((m) => ({
+          email: String(m.email || ''),
+          firstName: String(m.firstName || ''),
+          lastName: String(m.lastName || ''),
+          phone: String(m.phone || ''),
+          status: String(m.status || ''),
+          school: String(m.school || ''),
+          tags: Array.isArray(m.tags) ? m.tags.map((t) => String(t)) : [],
+        }));
+        setMcListState({
+          loading: false,
+          tag: typeof d.tag === 'string' ? d.tag : null,
+          rows,
+          error: null,
+        });
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setMcListState({
+            loading: false,
+            tag: null,
+            rows: [],
+            error: e instanceof Error ? e.message : 'Chyba načtení Mailchimp',
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.id, isNew]);
 
   const loadRagStatus = useCallback(async (webinarId: string) => {
     setRagStatus(prev => ({ ...prev, [webinarId]: { ...prev[webinarId], loading: true, count: prev[webinarId]?.count ?? 0 } }));
@@ -398,6 +599,69 @@ export default function WebinaryPastPanel() {
     }
   }
 
+  async function handleBulkPostFollowupSend() {
+    if (!selected?.id) return;
+    const n = followupPreview?.uniqueTotal ?? regCount ?? 0;
+    if (n <= 0) {
+      toast.error(
+        'Žádní příjemci (registrace na webu ani Mailchimp tag). Zkontrolujte Mailchimp / tag u webináře.',
+      );
+      return;
+    }
+    const kv = followupPreview?.kvCount ?? regCount ?? 0;
+    const mc = followupPreview?.mailchimpCount ?? 0;
+    if (
+      !confirm(
+        `Odeslat e-mail se záznamem webináře a odkazem na dotazník?\n\n` +
+          `Příjemců (unikátní e-maily): ${n} — z toho z webu ${kv}, z Mailchimpu ${mc} (stejný tag jako při registraci; duplicity se sloučí).\n\n` +
+          `Akci nelze vrátit zpět.`,
+      )
+    ) {
+      return;
+    }
+    setBulkFollowupSending(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/webinar-post-followup-bulk-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({
+          webinarId: selected.id,
+          learningsHtml: form.postWebinarLearningsHtml || undefined,
+          postWebinarQuizQuestions:
+            form.postWebinarQuizQuestions && form.postWebinarQuizQuestions.length > 0
+              ? form.postWebinarQuizQuestions
+              : undefined,
+        }),
+      });
+      const rawText = await res.text();
+      let data: { error?: string; sent?: number; total?: number; failed?: number };
+      try {
+        data = (parseJsonResponseBody(rawText) || {}) as typeof data;
+      } catch {
+        throw new Error(
+          rawText?.slice(0, 200) || `Neplatná odpověď serveru (${res.status}).`,
+        );
+      }
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      const sent = typeof data.sent === 'number' ? data.sent : 0;
+      const total = typeof data.total === 'number' ? data.total : n;
+      const failed = typeof data.failed === 'number' ? data.failed : 0;
+      const br = (data as { breakdown?: { kvRegistrations?: number; mailchimpTagged?: number } }).breakdown;
+      let okMsg = `Odesláno ${sent} z ${total} e-mailů.`;
+      if (br && typeof br.mailchimpTagged === 'number' && br.mailchimpTagged > 0) {
+        okMsg += ` (KV ${br.kvRegistrations ?? '—'}, Mailchimp ${br.mailchimpTagged})`;
+      }
+      toast.success(okMsg);
+      if (failed > 0) {
+        toast.error(`${failed} e-mailů se nepodařilo odeslat — zkontrolujte Edge Function logy (Mandrill).`);
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Hromadné odeslání selhalo');
+    } finally {
+      setBulkFollowupSending(false);
+    }
+  }
+
   async function handlePostFollowupTestSend() {
     if (!selected?.id) return;
     const em = followupTestEmail.trim();
@@ -418,7 +682,8 @@ export default function WebinaryPastPanel() {
             form.postWebinarQuizQuestions?.length > 0 ? form.postWebinarQuizQuestions : undefined,
         }),
       });
-      const data = await res.json();
+      const rawText = await res.text();
+      const data = (parseJsonResponseBody(rawText) || {}) as { error?: string; template?: string };
       if (!res.ok) throw new Error(data.error || res.statusText);
       const tpl = typeof data.template === 'string' ? data.template : '';
       toast.success(
@@ -570,7 +835,12 @@ export default function WebinaryPastPanel() {
     finally { setIndexing(null); }
   }
 
-  const filtered = items.filter(w => !search || (w.title || '').toLowerCase().includes(search.toLowerCase()));
+  const searchTrim = search.trim();
+  const q = searchTrim.toLowerCase();
+  const filtered = items.filter((w) => {
+    if (!q) return true;
+    return (w.title || '').toLowerCase().includes(q);
+  });
   const videoId  = form.recordingUrl ? extractYoutubeId(form.recordingUrl) : null;
   const status   = selected ? ragStatus[selected.id] : null;
 
@@ -613,9 +883,27 @@ export default function WebinaryPastPanel() {
           {loadingList ? (
             <div className="flex justify-center p-8"><Loader2 className="w-5 h-5 text-gray-300 animate-spin" /></div>
           ) : filtered.length === 0 ? (
-            <div className="p-6 text-center">
+            <div className="p-6 text-center space-y-2">
               <Clock className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-              <div className="text-[12px] text-gray-400">{'Žádné minulé webináře'}</div>
+              {items.length > 0 && searchTrim ? (
+                <>
+                  <div className="text-[12px] text-gray-500">
+                    {'Žádný výsledek pro „'}
+                    <span className="font-semibold text-[#001161]">{searchTrim}</span>
+                    {'“. Zkuste jiný dotaz nebo '}
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="text-[#7C3AED] font-semibold underline underline-offset-2"
+                    >
+                      {'vymazat hledání'}
+                    </button>
+                    .
+                  </div>
+                </>
+              ) : (
+                <div className="text-[12px] text-gray-400">{'Žádné minulé webináře'}</div>
+              )}
             </div>
           ) : filtered.map(item => {
             const isSel     = !isNew && selected?.id === item.id;
@@ -721,13 +1009,44 @@ export default function WebinaryPastPanel() {
                     )}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
                   {isNew && (
                     <button onClick={() => setIsNew(false)}
                       className="flex items-center gap-1.5 border border-gray-200 text-gray-500 px-3 py-2 rounded-xl text-[12px] font-bold hover:bg-gray-50 transition-colors">
                       <X className="w-3.5 h-3.5" /> {'Zrušit'}
                     </button>
                   )}
+                  {!isNew && selected?.id ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleBulkPostFollowupSend()}
+                      disabled={
+                        bulkFollowupSending ||
+                        regCountLoading ||
+                        followupPreviewLoading ||
+                        ((followupPreview?.uniqueTotal ?? regCount ?? 0) <= 0)
+                      }
+                      className="flex items-center gap-1.5 border border-[#001161]/15 bg-[#001161]/[0.04] text-[#001161] px-3 py-2 rounded-xl text-[12px] font-bold hover:bg-[#001161]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      title={
+                        followupPreview
+                          ? `Unikátní příjemci: ${followupPreview.uniqueTotal} (web ${followupPreview.kvCount}, Mailchimp ${followupPreview.mailchimpCount}${followupPreview.mailchimpTag ? ` · tag „${followupPreview.mailchimpTag}“` : ''})`
+                          : 'Stejný obsah jako u testovacího e-mailu v záložce Dotazník — KV + Mailchimp se stejným tagem jako při registraci'
+                      }
+                    >
+                      {bulkFollowupSending ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      ) : (
+                        <Users className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      <span className="whitespace-nowrap">
+                        {'Odeslat záznam + dotazník ('}
+                        {followupPreviewLoading || regCountLoading
+                          ? '…'
+                          : followupPreview?.uniqueTotal ?? regCount ?? 0}
+                        {')'}
+                      </span>
+                    </button>
+                  ) : null}
                   <button onClick={handleSave} disabled={saving}
                     className="flex items-center gap-1.5 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-colors">
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -735,6 +1054,168 @@ export default function WebinaryPastPanel() {
                   </button>
                 </div>
               </div>
+
+              {!isNew && selected?.id ? (
+                <details className="group mt-4 pt-4 border-t border-gray-100">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
+                    <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
+                    <Users className="h-3.5 w-3.5 shrink-0 text-[#001161]/40" />
+                    {'Registrace na webu (KV)'}
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-gray-600">
+                      {regCountLoading ? '…' : registrants.length}
+                    </span>
+                  </summary>
+                  <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100 bg-gray-50/50">
+                    {regCountLoading ? (
+                      <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {'Načítám…'}
+                      </div>
+                    ) : registrants.length === 0 ? (
+                      <p className="px-4 py-6 text-center text-[12px] text-gray-400">{'Zatím žádné registrace.'}</p>
+                    ) : (
+                      <table className="w-full min-w-[520px] text-left text-[11px]">
+                        <thead>
+                          <tr className="border-b border-gray-200 bg-white">
+                            <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
+                            <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
+                            <th className="px-3 py-2 font-bold text-gray-500">Pozice</th>
+                            <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
+                            <th className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap">Registrace</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {registrants.map((r, i) => (
+                            <tr key={`${r.email || i}-${i}`} className="bg-white/80 hover:bg-white">
+                              <td className="px-3 py-2 text-[#001161] font-medium">{r.name?.trim() || '—'}</td>
+                              <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email?.trim() || '—'}</td>
+                              <td className="px-3 py-2 text-gray-600">{r.position?.trim() || '—'}</td>
+                              <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
+                              <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                                {r.registeredAt
+                                  ? new Date(r.registeredAt).toLocaleString('cs-CZ', {
+                                      day: 'numeric',
+                                      month: 'numeric',
+                                      year: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })
+                                  : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </details>
+              ) : null}
+
+              {!isNew && selected?.id ? (
+                <details className="group mt-3 pt-3 border-t border-gray-100">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
+                    <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
+                    <Mail className="h-3.5 w-3.5 shrink-0 text-[#FFE01B]" />
+                    {'Mailchimp (stejný tag jako u odeslání)'}
+                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-900 border border-amber-200/80">
+                      {mcListState.loading ? '…' : mcListState.rows.length}
+                    </span>
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {mcListState.tag && (
+                      <p className="text-[11px] text-gray-500 leading-snug px-0.5">
+                        {'Tag v audience: '}
+                        <span className="font-mono font-bold text-[#001161]">{mcListState.tag}</span>
+                        {' — kontakty, které mají v Mailchimpu tento tag (včetně těch z registrace na webu).'}
+                      </p>
+                    )}
+                    {mcListState.error && (
+                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        {mcListState.error}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={mcListState.loading || !!mcListState.error || mcListState.rows.length === 0}
+                        onClick={() => {
+                          if (!selected?.id) return;
+                          void (async () => {
+                            try {
+                              const res = await fetch(
+                                `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`,
+                                { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+                              );
+                              const raw = await res.text();
+                              if (!res.ok) {
+                                const err = (parseJsonResponseBody(raw) as { error?: string })?.error || raw.slice(0, 220);
+                                toast.error(err);
+                                return;
+                              }
+                              const blob = new Blob([raw], { type: 'text/csv;charset=utf-8' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `mailchimp-${String(selected.slug || selected.id).replace(/[^a-z0-9]+/gi, '-').slice(0, 80)}.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                              toast.success('CSV staženo');
+                            } catch (e: unknown) {
+                              toast.error(e instanceof Error ? e.message : 'Chyba');
+                            }
+                          })();
+                        }}
+                        className="text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-2.5 py-1 hover:bg-[#001161]/5 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {'Stáhnout CSV z Mailchimp'}
+                      </button>
+                    </div>
+                    <div className="overflow-x-auto rounded-xl border border-amber-100 bg-amber-50/30">
+                      {mcListState.loading ? (
+                        <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          {'Načítám Mailchimp…'}
+                        </div>
+                      ) : mcListState.error && mcListState.rows.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-[12px] text-gray-400">
+                          {'Tabulku nelze zobrazit — vyřešte chybu výše nebo zkontrolujte MAILCHIMP_API_KEY a audience.'}
+                        </p>
+                      ) : mcListState.rows.length === 0 ? (
+                        <p className="px-4 py-6 text-center text-[12px] text-gray-400">
+                          {'Žádné kontakty s tímto tagem v Mailchimpu (nebo tag v audience neexistuje).'}
+                        </p>
+                      ) : (
+                        <table className="w-full min-w-[560px] text-left text-[11px]">
+                          <thead>
+                            <tr className="border-b border-amber-200/80 bg-white">
+                              <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
+                              <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
+                              <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
+                              <th className="px-3 py-2 font-bold text-gray-500">Škola / org.</th>
+                              <th className="px-3 py-2 font-bold text-gray-500">Stav</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-amber-100">
+                            {mcListState.rows.map((r, i) => (
+                              <tr key={`${r.email}-${i}`} className="bg-white/80 hover:bg-white">
+                                <td className="px-3 py-2 text-[#001161] font-medium">
+                                  {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
+                                </td>
+                                <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email || '—'}</td>
+                                <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
+                                <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={r.school}>
+                                  {r.school?.trim() || '—'}
+                                </td>
+                                <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                </details>
+              ) : null}
             </div>
 
             {!isNew && selected && (
@@ -1466,6 +1947,7 @@ export default function WebinaryPastPanel() {
                       webinarId={String(selected.id)}
                       title="Odpovědi účastníků"
                       subtitle="Shromážděné odpovědi z kvízu DVPP, druhé části zpětné vazby a vlastních otázek — podle aktuálního záznamu webináře v CMS."
+                      showPublicLinkToolbar
                     />
                   </div>
                 ) : null}

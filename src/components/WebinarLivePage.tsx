@@ -43,6 +43,10 @@ function extractYoutubeId(url: string): string | null {
   for (const p of pats) { const m = url.match(p); if (m) return m[1]; }
   return null;
 }
+
+function isGoogleMeetDelivery(w: Webinar): boolean {
+  return w.liveDeliveryMode === 'google_meet';
+}
 function tsLabel(iso: string) {
   return new Date(iso).toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' });
 }
@@ -194,22 +198,48 @@ function YoutubePlayer({ videoId }: { videoId: string }) {
   );
 }
 
-/* ─── No-video placeholder ──────────────────────────────────────── */
-function NoVideoPlaceholder({ webinar }: { webinar: Webinar }) {
+/** Režim živý stream na webu — ještě není vložené YouTube video. */
+function LiveStreamWaitPlaceholder() {
   return (
     <div className="w-full h-full rounded-[16px] bg-[#001161] flex flex-col items-center justify-center gap-5 p-8 text-center">
       <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center">
         <Radio className="w-8 h-8 text-white animate-pulse" />
       </div>
-      <div>
-        <p className="text-white font-bold text-[20px] mb-2" style={{ fontFamily: FF }}>{'Webinář právě probíhá'}</p>
-        <p className="text-white/55 text-[14px]" style={{ fontFamily: FF }}>
-          {'\u017div\u00e9 video nen\u00ed na str\u00e1nce vlo\u017een\u00e9 \u2014 pou\u017eijte odkaz k p\u0159ipojen\u00ed n\u00ed\u017ee.'}
-        </p>
-        {webinar.zoomLink && (
-          <a href={webinar.zoomLink} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 mt-6 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-bold text-[15px] px-7 py-3.5 rounded-full transition-all hover:scale-105 no-underline"
-            style={{ fontFamily: FF }}>{'P\u0159ipojit se p\u0159es Zoom'}</a>
+      <p className="text-white font-bold text-[18px] max-w-md leading-snug px-2" style={{ fontFamily: FF }}>
+        {'Webinář m\u016f\u017eete sledovat zde, za\u010d\u00edn\u00e1 za chv\u00edli'}
+      </p>
+    </div>
+  );
+}
+
+/** Režim Google Meet — jen odkaz, bez chatu na stránce. */
+function GoogleMeetLiveLayout({ webinar }: { webinar: Webinar }) {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center p-8 min-h-0 overflow-auto">
+      <div className="w-full max-w-lg flex flex-col items-center text-center gap-6">
+        <VividbooksLogo />
+        <div>
+          <p className="text-[16px] font-bold text-[#001161] leading-snug" style={{ fontFamily: FF }}>{webinar.title}</p>
+          <p className="text-[12px] text-[#001161]/50 mt-1.5" style={{ fontFamily: FF }}>
+            {`${webinar.day}. ${webinar.monthName} ${webinar.year}`}
+            {webinar.time ? ` · ${webinar.time}` : ''}
+            {webinar.lecturer ? ` · ${webinar.lecturer}` : ''}
+          </p>
+        </div>
+        {webinar.zoomLink ? (
+          <a
+            href={webinar.zoomLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-2 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-[1.02] no-underline shadow-lg shadow-orange-500/20"
+            style={{ fontFamily: FF }}
+          >
+            {'Otev\u0159\u00edt webin\u00e1\u0159 na Google Meet'}
+          </a>
+        ) : (
+          <p className="text-[14px] text-red-600 max-w-sm" style={{ fontFamily: FF }}>
+            {'V administraci webin\u00e1\u0159e chyb\u00ed odkaz na setk\u00e1n\u00ed (pole odkazu na Meet / Zoom).'}
+          </p>
         )}
       </div>
     </div>
@@ -453,7 +483,14 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
   const lastReactionTs = useRef<number>(0);
   const sentReactionIds = useRef<Set<string>>(new Set());
 
-  const youtubeId = extractYoutubeId(webinar.liveUrl || webinar.youtubeUrl || webinar.recordingUrl || '');
+  const rawYoutubeUrl =
+    (webinar as { liveUrl?: string }).liveUrl ||
+    webinar.youtubeUrl ||
+    (webinar as { recordingUrl?: string }).recordingUrl ||
+    '';
+  /** V režimu Meet se na /live neembeduje YouTube; po skončení akce může být záznam stejné URL. */
+  const youtubeIdLive = isGoogleMeetDelivery(webinar) ? null : extractYoutubeId(rawYoutubeUrl);
+  const youtubeIdEnded = extractYoutubeId(rawYoutubeUrl);
 
   useEffect(() => {
     if (isPreview) return;
@@ -512,9 +549,9 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
     return () => clearInterval(id);
   }, [webinar, isPreview]);
 
-  /* Polling reakcí od serveru každé 2s */
+  /* Polling reakcí od serveru každé 2s (jen režim stream + chat) */
   useEffect(() => {
-    if (isPreview || status !== 'live') return;
+    if (isPreview || status !== 'live' || isGoogleMeetDelivery(webinar)) return;
     const poll = async () => {
       try {
         const res = await fetch(
@@ -604,50 +641,56 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
       {/* ══ LIVE ══════════════════════════════════════════════════ */}
       {status === 'live' && checkedIn && (
         <>
-          {/* Video — zabírá vše vlevo */}
-          <div className="flex-1 p-4 min-w-0 min-h-0">
-            {youtubeId ? <YoutubePlayer videoId={youtubeId} /> : <NoVideoPlaceholder webinar={webinar} />}
-          </div>
-
-          {/* Pravý panel */}
-          <div className="w-[340px] shrink-0 flex flex-col bg-white border-l border-[#001161]/8 h-full">
-
-            {/* Logo + název webináře */}
-            <div className="shrink-0 px-5 pt-5 pb-4 border-b border-[#001161]/8">
-              <VividbooksLogo />
-              <div className="mt-4">
-                <p className="text-[15px] font-bold text-[#001161] leading-snug" style={{ fontFamily: FF }}>{webinar.title}</p>
-                <p className="text-[12px] text-[#001161]/45 mt-1" style={{ fontFamily: FF }}>
-                  {`${webinar.day}. ${webinar.monthName} ${webinar.year}`}
-                  {webinar.time ? ` · ${webinar.time}` : ''}
-                  {webinar.lecturer ? ` · ${webinar.lecturer}` : ''}
-                </p>
+          {isGoogleMeetDelivery(webinar) ? (
+            <GoogleMeetLiveLayout webinar={webinar} />
+          ) : (
+            <>
+              {/* Video — zabírá vše vlevo */}
+              <div className="flex-1 p-4 min-w-0 min-h-0">
+                {youtubeIdLive ? <YoutubePlayer videoId={youtubeIdLive} /> : <LiveStreamWaitPlaceholder />}
               </div>
-            </div>
 
-            {/* Chat */}
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <ChatPanel webinarId={webinar.id} myName={attendeeName} isPreview={isPreview} />
-            </div>
+              {/* Pravý panel */}
+              <div className="w-[340px] shrink-0 flex flex-col bg-white border-l border-[#001161]/8 h-full">
 
-            {/* Reakce — 4 velká kolečka */}
-            <div className="shrink-0 border-t border-[#001161]/8 px-4 py-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-[#001161]/30 mb-3 text-center" style={{ fontFamily: FF }}>{'Reagujte živě'}</p>
-              <div className="flex justify-around items-center">
-                {REACTION_EMOJIS.map(emoji => (
-                  <button
-                    key={emoji}
-                    onClick={e => fireReaction(emoji, e)}
-                    className="flex items-center justify-center w-16 h-16 rounded-full bg-[#F0F2F8] hover:bg-[#E0E4F5] active:scale-90 hover:scale-110 transition-all text-[30px] shadow-sm border-2 border-transparent hover:border-[#001161]/15 select-none"
-                    title={emoji}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+                {/* Logo + název webináře */}
+                <div className="shrink-0 px-5 pt-5 pb-4 border-b border-[#001161]/8">
+                  <VividbooksLogo />
+                  <div className="mt-4">
+                    <p className="text-[15px] font-bold text-[#001161] leading-snug" style={{ fontFamily: FF }}>{webinar.title}</p>
+                    <p className="text-[12px] text-[#001161]/45 mt-1" style={{ fontFamily: FF }}>
+                      {`${webinar.day}. ${webinar.monthName} ${webinar.year}`}
+                      {webinar.time ? ` · ${webinar.time}` : ''}
+                      {webinar.lecturer ? ` · ${webinar.lecturer}` : ''}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Chat */}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <ChatPanel webinarId={webinar.id} myName={attendeeName} isPreview={isPreview} />
+                </div>
+
+                {/* Reakce — 4 velká kolečka */}
+                <div className="shrink-0 border-t border-[#001161]/8 px-4 py-4">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#001161]/30 mb-3 text-center" style={{ fontFamily: FF }}>{'Reagujte živě'}</p>
+                  <div className="flex justify-around items-center">
+                    {REACTION_EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        onClick={e => fireReaction(emoji, e)}
+                        className="flex items-center justify-center w-16 h-16 rounded-full bg-[#F0F2F8] hover:bg-[#E0E4F5] active:scale-90 hover:scale-110 transition-all text-[30px] shadow-sm border-2 border-transparent hover:border-[#001161]/15 select-none"
+                        title={emoji}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
               </div>
-            </div>
-
-          </div>
+            </>
+          )}
         </>
       )}
 
@@ -660,12 +703,12 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
             </div>
             <div>
               <p className="font-bold text-[#001161] text-[15px]" style={{ fontFamily: FF }}>{'Webinář proběhl úspěšně'}</p>
-              <p className="text-[13px] text-[#001161]/50" style={{ fontFamily: FF }}>{youtubeId ? 'Níže najdete záznam.' : 'Záznam bude brzy k dispozici.'}</p>
+              <p className="text-[13px] text-[#001161]/50" style={{ fontFamily: FF }}>{youtubeIdEnded ? 'Níže najdete záznam.' : 'Záznam bude brzy k dispozici.'}</p>
             </div>
           </div>
-          {youtubeId && (
+          {youtubeIdEnded && (
             <div className="relative rounded-[20px] overflow-hidden bg-black" style={{ paddingBottom: '56.25%' }}>
-              <iframe src={`https://www.youtube.com/embed/${youtubeId}?rel=0`} className="absolute inset-0 w-full h-full" frameBorder="0" allowFullScreen />
+              <iframe src={`https://www.youtube.com/embed/${youtubeIdEnded}?rel=0`} className="absolute inset-0 w-full h-full" frameBorder="0" allowFullScreen />
             </div>
           )}
           <div className="text-center pt-2">

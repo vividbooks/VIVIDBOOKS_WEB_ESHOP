@@ -26,7 +26,18 @@ export interface Shortcut {
 export interface AppSettings {
   openaiKey: string;
   language: string;
+  /** Jméno pro kampanové emaily (Outreach) — „Jsi … z firmy Vividbooks“. */
+  marketingSenderName: string;
+  /** Víceřádkový podpis přidaný ke každému vygenerovanému emailu. */
+  marketingEmailSignature: string;
 }
+
+const DEFAULT_APP_SETTINGS: AppSettings = {
+  openaiKey: '',
+  language: 'cs',
+  marketingSenderName: '',
+  marketingEmailSignature: '',
+};
 
 export interface RagDocument {
   id: string;
@@ -131,13 +142,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     { id: '2', trigger: 'ičo', replacement: '12345678' }
   ]));
 
-  const [settings, setSettings] = useState<AppSettings>(() => safeParse('dictation_app_settings', { openaiKey: '', language: 'cs' }));
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    safeParse('dictation_app_settings', DEFAULT_APP_SETTINGS),
+  );
   
   // RAG Library state
   const [ragDocuments, setRagDocuments] = useState<RagDocument[]>([]);
   const [ragLoading, setRagLoading] = useState(false);
   const [agentProcessing, setAgentProcessing] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  /** Ve výchozím stavu zobrazit levé menu (včetně Nastavení), ať je přístup vidět. */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
 
   const toggleLeftNav = useCallback(() => {
@@ -193,7 +207,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           { id: '2', trigger: 'ičo', replacement: '12345678' },
         ]),
       );
-      setSettings(safeParse(lsSettingsKey(uid), { openaiKey: '', language: 'cs' }));
+      setSettings(safeParse(lsSettingsKey(uid), DEFAULT_APP_SETTINGS));
     };
 
     const applySession = (s: Session | null) => {
@@ -320,7 +334,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         typeof remoteSettings === 'object' &&
         !Array.isArray(remoteSettings)
       ) {
-        setSettings((prev) => ({ ...prev, ...remoteSettings }));
+        setSettings((prev) => ({ ...DEFAULT_APP_SETTINGS, ...prev, ...remoteSettings }));
       }
     };
     loadData();
@@ -400,7 +414,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const clearAllData = () => {
     setTasks([]);
     setShortcuts([]);
-    setSettings({ openaiKey: '', language: 'cs' });
+    setSettings({ ...DEFAULT_APP_SETTINGS });
     localStorage.clear();
   };
 
@@ -518,7 +532,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-954b19ad/smart-edit`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ currentText, newVoiceText, context, googleAccessToken, selection }),
+        body: JSON.stringify({
+          currentText,
+          newVoiceText,
+          context,
+          googleAccessToken,
+          selection,
+          marketingSenderName: settings.marketingSenderName,
+          marketingEmailSignature: settings.marketingEmailSignature,
+        }),
         signal: opts?.signal,
       });
 

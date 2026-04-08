@@ -1,24 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ClipboardList, Download, Loader2 } from 'lucide-react';
+import { ChevronDown, ClipboardList, Download, Link2, Loader2, RefreshCw } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { parseJsonResponseBody } from '../../utils/parseJsonResponseBody';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
-
-function parseJsonResponseBody(text: string): unknown {
-  const strippedBom = text.replace(/\uFEFF/g, '').trim();
-  if (!strippedBom) return null;
-  try {
-    return JSON.parse(strippedBom);
-  } catch {
-    let candidate = strippedBom;
-    for (let s = 0; s < 8; s++) {
-      const m = candidate.match(/^(true|false|null)\b\s*(?:,\s*)?/i);
-      if (!m) break;
-      candidate = candidate.slice(m[0].length).trim();
-    }
-    return JSON.parse(candidate);
-  }
-}
 
 export type SurveyQuestionRow = { id: string; type: string; label: string; options?: string[] };
 
@@ -59,11 +44,14 @@ function ChoiceOptionBar({
   count,
   maxCount,
   responders,
+  hideEmails,
 }: {
   label: string;
   count: number;
   maxCount: number;
   responders: Responder[];
+  /** Veřejný náhled — bez e-mailů u jmen. */
+  hideEmails?: boolean;
 }) {
   const pct = maxCount > 0 ? Math.round((count / maxCount) * 100) : 0;
   return (
@@ -86,9 +74,9 @@ function ChoiceOptionBar({
           </summary>
           <ul className="mt-1.5 ml-4 space-y-1 border-l border-emerald-200/80 pl-2.5 text-[11px] text-gray-800">
             {responders.map((p, i) => (
-              <li key={`${p.email}-${i}`}>
+              <li key={`${p.email || 'x'}-${i}`}>
                 <span className="font-semibold text-[#001161]">{p.name}</span>
-                {p.email ? (
+                {!hideEmails && p.email ? (
                   <span className="text-gray-500 font-mono text-[10px]">{` · ${p.email}`}</span>
                 ) : null}
               </li>
@@ -111,17 +99,28 @@ export function WebinarSurveyResponsesPanel({
   title = 'Přehled odpovědí dotazníku',
   subtitle,
   className = '',
+  /** Přednačtená data (veřejná stránka) — bez dotazu na admin API. */
+  embedded,
+  /** Skrytí e-mailů v tabulce a u „Kdo odpověděl“ (veřejný odkaz). */
+  publicView = false,
+  /** Tlačítka veřejného odkazu vedle CSV (jen admin). */
+  showPublicLinkToolbar = false,
 }: {
   webinarId: string;
   title?: string;
   /** Např. vysvětlení, že jde o kvíz DVPP + zpětnou vazbu + otázky z CMS. */
   subtitle?: string;
   className?: string;
+  embedded?: { questions: SurveyQuestionRow[]; responses: SurveyResponseRow[] } | null;
+  publicView?: boolean;
+  showPublicLinkToolbar?: boolean;
 }) {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!embedded);
   const [error, setError] = useState<string | null>(null);
-  const [questions, setQuestions] = useState<SurveyQuestionRow[]>([]);
-  const [responses, setResponses] = useState<SurveyResponseRow[]>([]);
+  const [questions, setQuestions] = useState<SurveyQuestionRow[]>(embedded?.questions ?? []);
+  const [responses, setResponses] = useState<SurveyResponseRow[]>(embedded?.responses ?? []);
+  const [publicLinkUrl, setPublicLinkUrl] = useState<string | null>(null);
+  const [publicLinkBusy, setPublicLinkBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!webinarId) return;
@@ -133,7 +132,7 @@ export function WebinarSurveyResponsesPanel({
         { headers: { Authorization: `Bearer ${publicAnonKey}` } },
       );
       const rawText = await res.text();
-      const d = parseJsonResponseBody(rawText) as {
+      const d = (parseJsonResponseBody(rawText) || {}) as {
         error?: string;
         questions?: SurveyQuestionRow[];
         responses?: SurveyResponseRow[];
@@ -151,17 +150,92 @@ export function WebinarSurveyResponsesPanel({
   }, [webinarId]);
 
   useEffect(() => {
+    if (embedded) {
+      setQuestions(embedded.questions);
+      setResponses(embedded.responses);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [embedded, load]);
+
+  useEffect(() => {
+    if (!showPublicLinkToolbar || !webinarId || embedded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${SERVER}/admin/webinar-survey-public-link/${encodeURIComponent(webinarId)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const rawText = await res.text();
+        const d = parseJsonResponseBody(rawText) as { url?: string | null };
+        if (!cancelled && typeof d?.url === 'string' && d.url) setPublicLinkUrl(d.url);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showPublicLinkToolbar, webinarId, embedded]);
+
+  const createOrCopyPublicLink = useCallback(
+    async (rotate: boolean) => {
+      if (!webinarId) return;
+      setPublicLinkBusy(true);
+      try {
+        const res = await fetch(`${SERVER}/admin/webinar-survey-public-link`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ webinarId, rotate }),
+        });
+        const rawText = await res.text();
+        const d = (parseJsonResponseBody(rawText) || {}) as { error?: string; url?: string };
+        if (!res.ok) throw new Error(d?.error || rawText.slice(0, 200) || 'Chyba');
+        const u = typeof d?.url === 'string' ? d.url : '';
+        if (!u && res.ok) {
+          throw new Error('Server nevrátil platný odkaz — zkuste znovu nebo Edge logy.');
+        }
+        if (u) {
+          setPublicLinkUrl(u);
+          await navigator.clipboard.writeText(u);
+        }
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Chyba odkazu');
+      } finally {
+        setPublicLinkBusy(false);
+      }
+    },
+    [webinarId],
+  );
+
+  const copyOrCreatePublicLink = useCallback(async () => {
+    if (publicLinkUrl) {
+      try {
+        await navigator.clipboard.writeText(publicLinkUrl);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    await createOrCopyPublicLink(false);
+  }, [publicLinkUrl, createOrCopyPublicLink]);
 
   const exportCsv = useCallback(() => {
     const qh = questions.map((q) => q.label.replace(/\s+/g, ' ').trim());
-    const headers = ['Datum odeslání', 'Jméno', 'E-mail', ...qh];
+    const headers = publicView
+      ? ['Datum odeslání', 'Jméno', ...qh]
+      : ['Datum odeslání', 'Jméno', 'E-mail', ...qh];
     const rows = responses.map((r) => {
       const date = r.submittedAt
         ? `${r.partial ? 'rozpracováno · ' : ''}${new Date(r.submittedAt).toLocaleString('cs-CZ')}`
         : '';
-      const base = [date, r.name || '', r.email || ''];
+      const base = publicView ? [date, r.name || ''] : [date, r.name || '', r.email || ''];
       const ans = questions.map((q) => {
         const raw = r.answers?.[q.id] != null ? String(r.answers![q.id]) : '';
         return formatAnswerForCell(q, raw);
@@ -178,7 +252,7 @@ export function WebinarSurveyResponsesPanel({
     a.download = `dotaznik-${webinarId}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [webinarId, questions, responses]);
+  }, [webinarId, questions, responses, publicView]);
 
   return (
     <div className={className}>
@@ -191,21 +265,60 @@ export function WebinarSurveyResponsesPanel({
               <p className="text-[10px] text-emerald-800/80 mt-0.5 leading-snug">{subtitle}</p>
             ) : (
               <p className="text-[10px] text-emerald-800/80 mt-0.5 leading-snug">
-                Odpovědi jsou uložené pod e-mailem účastníka. Průběžné uložení po jednotlivých otázkách se zobrazí jako
-                rozpracováno, dokud účastník neodešle celý dotazník. Zahrnuje DVPP, druhou část zpětné vazby a otázky z CMS.
+                {publicView
+                  ? 'Sdílený přehled bez e-mailů účastníků. Počty a textové odpovědi odpovídají stavu v době načtení stránky.'
+                  : 'Odpovědi jsou uložené pod e-mailem účastníka. Průběžné uložení po jednotlivých otázkách se zobrazí jako rozpracováno, dokud účastník neodešle celý dotazník. Zahrnuje DVPP, druhou část zpětné vazby a otázky z CMS.'}
               </p>
             )}
           </div>
         </div>
         {responses.length > 0 && questions.length > 0 ? (
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-900 hover:bg-emerald-50"
-          >
-            <Download className="h-3.5 w-3.5" />
-            CSV
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+            {showPublicLinkToolbar ? (
+              <>
+                <button
+                  type="button"
+                  disabled={publicLinkBusy}
+                  onClick={() => void copyOrCreatePublicLink()}
+                  className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-900 hover:bg-emerald-50 disabled:opacity-50"
+                  title={
+                    publicLinkUrl
+                      ? 'Zkopírovat adresu do schránky'
+                      : 'Vytvoří tajný odkaz a zkopíruje ho do schránky'
+                  }
+                >
+                  {publicLinkBusy ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Link2 className="h-3.5 w-3.5" />
+                  )}
+                  {publicLinkUrl ? 'Zkopírovat veřejný odkaz' : 'Vytvořit veřejný odkaz'}
+                </button>
+                {publicLinkUrl ? (
+                  <button
+                    type="button"
+                    disabled={publicLinkBusy}
+                    onClick={() => {
+                      if (!confirm('Starý odkaz přestane fungovat. Pokračovat?')) return;
+                      void createOrCopyPublicLink(true);
+                    }}
+                    className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-1.5 text-[11px] font-bold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Obnovit odkaz
+                  </button>
+                ) : null}
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={exportCsv}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-bold text-emerald-900 hover:bg-emerald-50"
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -252,7 +365,7 @@ export function WebinarSurveyResponsesPanel({
                         >
                           <p className="text-[11px] leading-snug">
                             <span className="font-bold text-[#001161]">{name}</span>
-                            {email ? (
+                            {!publicView && email ? (
                               <span className="font-mono text-[10px] text-gray-500">{` · ${email}`}</span>
                             ) : null}
                           </p>
@@ -274,8 +387,20 @@ export function WebinarSurveyResponsesPanel({
                   <div key={q.id} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
                     <p className="text-[12px] font-bold text-[#001161] mb-3 leading-snug">{q.label}</p>
                     <div className="space-y-4">
-                      <ChoiceOptionBar label="Ano" count={ano.length} maxCount={max} responders={ano} />
-                      <ChoiceOptionBar label="Ne" count={ne.length} maxCount={max} responders={ne} />
+                      <ChoiceOptionBar
+                        label="Ano"
+                        count={ano.length}
+                        maxCount={max}
+                        responders={ano}
+                        hideEmails={publicView}
+                      />
+                      <ChoiceOptionBar
+                        label="Ne"
+                        count={ne.length}
+                        maxCount={max}
+                        responders={ne}
+                        hideEmails={publicView}
+                      />
                     </div>
                   </div>
                 );
@@ -300,6 +425,7 @@ export function WebinarSurveyResponsesPanel({
                           count={responders.length}
                           maxCount={maxCount}
                           responders={responders}
+                          hideEmails={publicView}
                         />
                       ))}
                     </div>
@@ -333,7 +459,9 @@ export function WebinarSurveyResponsesPanel({
                         Datum
                       </th>
                       <th className="px-2 py-2 font-bold text-gray-600 whitespace-nowrap min-w-[100px]">Jméno</th>
-                      <th className="px-2 py-2 font-bold text-gray-600 whitespace-nowrap min-w-[160px]">E-mail</th>
+                      {!publicView ? (
+                        <th className="px-2 py-2 font-bold text-gray-600 whitespace-nowrap min-w-[160px]">E-mail</th>
+                      ) : null}
                       {questions.map((q) => (
                         <th
                           key={q.id}
@@ -359,7 +487,9 @@ export function WebinarSurveyResponsesPanel({
                             : '—'}
                         </td>
                         <td className="px-2 py-2 text-gray-800">{r.name || '—'}</td>
-                        <td className="px-2 py-2 text-gray-700 font-mono text-[10px]">{r.email || '—'}</td>
+                        {!publicView ? (
+                          <td className="px-2 py-2 text-gray-700 font-mono text-[10px]">{r.email || '—'}</td>
+                        ) : null}
                         {questions.map((q) => {
                           const raw = r.answers?.[q.id] != null ? String(r.answers[q.id]) : '';
                           const cell = formatAnswerForCell(q, raw);

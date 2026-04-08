@@ -96,6 +96,10 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/WebinarDvppDotaznikRedirectRoute'), 'WebinarDvppDotaznikRedirectRoute'),
             },
             {
+              path: 'webinar-dotaznik-vysledky/:token',
+              lazy: lazyNamed(() => import('./components/WebinarSurveyPublicResultsPage'), 'WebinarSurveyPublicResultsPage'),
+            },
+            {
               path: 'webinar/:id',
               lazy: lazyNamed(() => import('./components/WebinarDetailRoute'), 'WebinarDetailRoute'),
             },

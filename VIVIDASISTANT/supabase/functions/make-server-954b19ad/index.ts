@@ -294,7 +294,15 @@ app.post("/make-server-954b19ad/smart-edit", async (c) => {
     const geminiKey = Deno.env.get("GEMINI_API_KEY_RAG");
     if (!geminiKey) return c.json({ error: "Missing API Key" }, 500);
 
-    const { currentText, newVoiceText, context, selection } = await c.req.json();
+    const body = await c.req.json();
+    const { currentText, newVoiceText, context, selection } = body;
+    const marketingSenderName =
+      typeof body.marketingSenderName === "string" ? body.marketingSenderName.trim() : "";
+    const marketingEmailSignature =
+      typeof body.marketingEmailSignature === "string" ? body.marketingEmailSignature.trim() : "";
+    const displayName = marketingSenderName || "Vítek Škop";
+    const signatureForPrompt =
+      marketingEmailSignature || `S pozdravem,\n${displayName}`;
 
     /** Tlačítko „Doplnit z knihovny“ posílá prázdný hlas — nesmíme skončit před RAG. */
     const voiceNorm = typeof newVoiceText === "string" ? newVoiceText : "";
@@ -441,7 +449,11 @@ FORMÁTOVÁNÍ EMAILU:
 - Prázdný řádek po oslovení
 - Odstavce max 2-3 věty
 - Prázdné řádky mezi odstavci
-- Podpis: "S pozdravem,\\nVítek Škop"
+- Podpis na konci — použij PŘESNĚ tento blok od uživatele (jméno z nastavení aplikace):
+---
+${signatureForPrompt}
+---
+- Při vykání v češtině piš Váš, Vaše, Vám… s velkým V.
 
 STÁVAJÍCÍ TEXT:
 ${currentText || "(prázdný)"}
@@ -5086,7 +5098,15 @@ app.post('/make-server-954b19ad/outreach/organizations', async (c) => {
 // Generate email sequence using AI
 app.post('/make-server-954b19ad/outreach/generate-emails', async (c) => {
   try {
-    const { goal, organizations } = await c.req.json();
+    const body = await c.req.json();
+    const { goal, organizations } = body;
+    const senderNameRaw = typeof body.senderName === 'string' ? body.senderName.trim() : '';
+    const signatureRaw = typeof body.signature === 'string' ? body.signature.trim() : '';
+    const displayName = senderNameRaw || 'Vítek Škop';
+    const defaultSignatureBlock =
+      '\n\nS pozdravem,\nVítek Škop\nvitek@vividbooks.com\n728 417 279';
+    const signatureBlock =
+      signatureRaw.length > 0 ? '\n\n' + signatureRaw : defaultSignatureBlock;
     
     const geminiKey = Deno.env.get("GEMINI_API_KEY_RAG") || Deno.env.get("GEMINI_API_KEY");
     if (!geminiKey) {
@@ -5117,7 +5137,7 @@ app.post('/make-server-954b19ad/outreach/generate-emails', async (c) => {
       if (!contact || !contact.email || processedEmails.has(contact.email)) continue;
       processedEmails.add(contact.email);
 
-      const prompt = `Jsi Vítek Škop z firmy Vividbooks. Piš krátké, osobní a konkrétní obchodní emaily.
+      const prompt = `Jsi ${displayName} z firmy Vividbooks. Piš krátké, osobní a konkrétní obchodní emaily.
 
 O VIVIDBOOKS (použij tyto informace):
 ${ragContext || 'Vividbooks vytváří interaktivní digitální učebnice pro základní a střední školy. Nabízíme matematiku, fyziku a další předměty.'}
@@ -5133,10 +5153,12 @@ PRAVIDLA:
 4. Žádné fráze typu "Doufám, že se máte dobře", "Rád bych Vám představil"
 5. Použij informace z kontextu o Vividbooks
 
+ČEŠTINA (vykání): Když píšeš na vykání (řediteli, škole), piš zájmena a slovesa s VELKÝM počátečním V: Váš, Vaše, Vám, Vás, Vaši, Vašeho, Vaší, Vašemu, Vašimi (nikdy na začátku věty u vykání malé „vás“, „vaš“, „vám“ místo správného tvaru s velkým V).
+
 Vrať POUZE JSON:
 {"subject": "stručný předmět", "body": "text emailu bez podpisu"}
 
-Podpis přidám automaticky: Vítek Škop, vitek@vividbooks.com, 728 417 279`;
+Podpis k emailu přidám automaticky z nastavení uživatele (neopakuj ho v poli body).`;
 
       try {
         const geminiResponse = await fetch(
@@ -5158,7 +5180,6 @@ Podpis přidám automaticky: Vítek Škop, vitek@vividbooks.com, 728 417 279`;
           
           try {
             const emailData = JSON.parse(text);
-            const signature = '\n\nS pozdravem,\nVítek Škop\nvitek@vividbooks.com\n728 417 279';
             
             // Create initial + 2 follow-ups
             ['initial', 'followup1', 'followup2'].forEach((type, idx) => {
@@ -5172,7 +5193,7 @@ Podpis přidám automaticky: Vítek Škop, vitek@vividbooks.com, 728 417 279`;
               emails.push({
                 id: `${org.id}-${contact.id}-${type}`,
                 subject: idx === 0 ? emailData.subject : `Re: ${emailData.subject}`,
-                body: body + signature,
+                body: body + signatureBlock,
                 to: contact,
                 type,
                 approved: false,

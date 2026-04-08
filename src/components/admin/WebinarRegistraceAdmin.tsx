@@ -854,6 +854,7 @@ export default function WebinarRegistraceAdmin() {
                     <WebinarSurveyResponsesPanel
                       webinarId={w.webinarId}
                       title="Dotazník — přehled odpovědí"
+                      showPublicLinkToolbar
                     />
                   </div>
 
