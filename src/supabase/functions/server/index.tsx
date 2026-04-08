@@ -3544,9 +3544,14 @@ function remEscHtmlReminder(s: string) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/** PNG logo z `/public/email-logo-vividbooks.png` — stejná hlavička u webinářových Mandrill mailů. */
+/**
+ * Logo v hlavičce všech Mandrill e-mailů (veřejný soubor v Supabase Storage).
+ * Volitelně: secret EMAIL_HEADER_LOGO_URL (jiná absolutní URL).
+ */
 function webinarEmailHeaderLogoAbsoluteUrl(): string {
-  return `${normalizePublicSiteOrigin(getPublicSiteOrigin())}/email-logo-vividbooks.png`;
+  const fromEnv = Deno.env.get('EMAIL_HEADER_LOGO_URL')?.trim();
+  if (fromEnv) return fromEnv;
+  return 'https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/Admin%20math/logo_vividbooks.png';
 }
 
 /** Vycentrované logo + podnadpis (uppercase v CSS u příjemce). */
@@ -3969,7 +3974,7 @@ ${thanksLine}
       : 'Tento e-mail je testovací odeslaný z administrace.';
 
   return `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
-<!-- vb-post-followup-email-template: v6 (PNG logo /public; deploy make-server-93a20b6f) -->
+<!-- vb-post-followup-email-template: v6 (logo ze Supabase Storage; deploy make-server-93a20b6f) -->
 <body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
 <table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
 <table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
