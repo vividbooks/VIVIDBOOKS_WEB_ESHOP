@@ -2841,7 +2841,55 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     }
 
     const key = `webinar_reg_${webinarId}_${cleanEmail}`;
-    const existing = await kv.get(key);
+    let existing = (await kv.get(key)) as Record<string, unknown> | null | undefined;
+
+    /** Light lead / odeslaný dotazník / webinář bez povinné registrace nemají původně `webinar_reg_*` — doplníme před uložením certifikátu. */
+    if (!existing || typeof existing !== 'object') {
+      const lightKey = `webinar_survey_light_${webinarId}_${cleanEmail}`;
+      const light = await kv.get(lightKey);
+      if (light && typeof light === 'object') {
+        existing = {
+          name: String((light as any).name || ''),
+          email: cleanEmail,
+          phone: String((light as any).phone || ''),
+          gdpr: true,
+          createdFromLightLeadForCertificate: true,
+          createdAt: new Date().toISOString(),
+        };
+        await kv.set(key, existing);
+      }
+    }
+
+    if (!existing || typeof existing !== 'object') {
+      const answerKey = `webinar_survey_${webinarId}_${md5(cleanEmail)}`;
+      const answered = (await kv.get(answerKey)) as { name?: string; email?: string } | null;
+      if (answered && typeof answered === 'object') {
+        existing = {
+          name: String(answered.name || participantName || '').trim() || participantName,
+          email: cleanEmail,
+          gdpr: true,
+          createdFromSurveyAnswersForCertificate: true,
+          createdAt: new Date().toISOString(),
+        };
+        await kv.set(key, existing);
+      }
+    }
+
+    if (!existing || typeof existing !== 'object') {
+      const items = await getCollection(WEBINARS_KEY);
+      const w = (items as any[]).find((x: any) => String(x.id) === String(webinarId));
+      if (w?.surveyRequireFullRegistration === false) {
+        existing = {
+          name: participantName,
+          email: cleanEmail,
+          gdpr: true,
+          createdFromOpenSurveyCertificate: true,
+          createdAt: new Date().toISOString(),
+        };
+        await kv.set(key, existing);
+      }
+    }
+
     if (!existing || typeof existing !== 'object') {
       return c.json({ error: 'Registrace na webinář nenalezena.' }, 404);
     }
