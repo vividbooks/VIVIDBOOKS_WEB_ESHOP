@@ -3554,6 +3554,31 @@ function webinarEmailHeaderLogoAbsoluteUrl(): string {
   return 'https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/Admin%20math/logo_vividbooks.png';
 }
 
+/** Logo v hlavičce: původně 60px, +10 % = 66px. */
+const WEBINAR_EMAIL_HEADER_LOGO_PX = 66;
+
+/**
+ * Banner dvppzdarma.cz v patičce webinářových e-mailů.
+ * Veřejně: /email-dvppzdarma-banner.png na PUBLIC_SITE_URL, nebo secret EMAIL_WEBINAR_DVPP_BANNER_URL.
+ */
+function webinarEmailDvppPromoBannerAbsoluteUrl(): string {
+  const fromEnv = Deno.env.get('EMAIL_WEBINAR_DVPP_BANNER_URL')?.trim();
+  if (fromEnv) return fromEnv;
+  return `${normalizePublicSiteOrigin(getPublicSiteOrigin())}/email-dvppzdarma-banner.png`;
+}
+
+/** Obrázek pod obsahem, nad šedým patičkovým blokem — odkaz na dvppzdarma.cz. */
+function webinarEmailDvppPromoBannerRow(): string {
+  const esc = remEscHtmlReminder;
+  const imgUrl = esc(webinarEmailDvppPromoBannerAbsoluteUrl());
+  const href = esc('https://dvppzdarma.cz');
+  return `<tr><td style="padding:0;line-height:0;font-size:0;">
+<a href="${href}" target="_blank" rel="noopener noreferrer" style="display:block;text-decoration:none;border:0;">
+<img src="${imgUrl}" alt="dvppzdarma.cz — záznamy DVPP webinářů s možností certifikátu" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;outline:none;margin:0;" />
+</a>
+</td></tr>`;
+}
+
 /** Vycentrované logo + podnadpis (uppercase v CSS u příjemce). */
 function webinarEmailBrandedHeaderRow(
   subtitlePlain: string,
@@ -3565,10 +3590,11 @@ function webinarEmailBrandedHeaderRow(
   const sub = esc(subtitlePlain);
   const padding = style?.headerPadding ?? '22px 24px 20px';
   const radius = style?.headerRadius ?? '12px 12px 0 0';
+  const w = WEBINAR_EMAIL_HEADER_LOGO_PX;
   return `<tr><td class="dm-header" style="background:#001161;padding:${padding};border-radius:${radius};text-align:center;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:0 0 12px;">
 <a href="${site}" style="text-decoration:none;border:0;display:inline-block;">
-<img src="${logoSrc}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;outline:none;" />
+<img src="${logoSrc}" alt="Vividbooks" width="${w}" style="display:block;margin:0 auto;width:${w}px;max-width:${w}px;height:auto;border:0;outline:none;" />
 </a>
 </td></tr><tr><td align="center" style="padding:0;">
 <p style="margin:0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">${sub}</p>
@@ -3987,6 +4013,7 @@ ${trialBlock}
 ${certificateBlock}
 ${learningsBlock}
 </td></tr>
+${webinarEmailDvppPromoBannerRow()}
 <tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">${esc(footerNote)}<br>
 &copy; ${new Date().getFullYear()} Vividbooks</p>
@@ -4260,7 +4287,7 @@ async function resolveSurveyInviteUrlForRegistrant(
 }
 
 function buildWebinarReminderEmailFooter(): string {
-  return `<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
+  return `${webinarEmailDvppPromoBannerRow()}<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
 Tento e-mail byl odeslán automaticky jako připomínka webináře.<br>
 &copy; ${new Date().getFullYear()} Vividbooks
@@ -4580,6 +4607,7 @@ ${opts.gcalStr ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="1
 ${opts.outlookUrl ? `<table class="dm-cal" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:8px;"><tr><td><a class="dm-cal-link" href="${opts.outlookUrl}" style="display:block;background:#f0f2f8;border-radius:12px;padding:14px 18px;text-decoration:none;color:#001161;font-weight:700;font-size:14px;">&#128197;&nbsp; Outlook / Office 365</a></td></tr></table>` : ''}
 <p class="dm-ics-note" style="margin:12px 0 0;font-size:13px;color:#718096;">Příloha .ics funguje s Apple Calendar, Thunderbird a dalšími.</p>
 </td></tr>
+${webinarEmailDvppPromoBannerRow()}
 <tr><td class="dm-footer" style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
 <p class="dm-footer-text" style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
 Tento e-mail byl odeslán automaticky po registraci na webinář.<br>
@@ -8836,7 +8864,7 @@ function buildNewsletterSubscribeConfirmationHtml(): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
 <tr><td style="background:#001161;padding:22px 24px 20px;text-align:center;border-radius:12px 12px 0 0;">
 <a href="${site}" style="text-decoration:none;border:0;display:inline-block;">
-<img src="${logoSrc}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;"/>
+<img src="${logoSrc}" alt="Vividbooks" width="${WEBINAR_EMAIL_HEADER_LOGO_PX}" style="display:block;margin:0 auto;width:${WEBINAR_EMAIL_HEADER_LOGO_PX}px;max-width:${WEBINAR_EMAIL_HEADER_LOGO_PX}px;height:auto;border:0;"/>
 </a>
 <p style="margin:12px 0 0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Newsletter pro učitele</p>
 </td></tr>

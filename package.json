@@ -46,6 +46,7 @@
     "embla-carousel-react": "^8.6.0",
     "framer-motion": "*",
     "hono": "*",
+    "html-to-image": "^1.11.13",
     "input-otp": "^1.4.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.487.0",

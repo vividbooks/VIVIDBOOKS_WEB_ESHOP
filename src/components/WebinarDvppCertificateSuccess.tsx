@@ -1,6 +1,7 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { Award, Download } from 'lucide-react';
+import { Award, Download, ImageDown } from 'lucide-react';
+import { toast } from 'sonner';
 import type { Webinar } from '../data/webinars';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -9,6 +10,9 @@ const SERVER_EDGE = `https://${projectId}.supabase.co/functions/v1/make-server-9
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 const COOPER = { fontFamily: "'Cooper Light', serif" } as const;
+
+/** Export PNG z náhledu — 4× oproti 1:1 CSS pixelům (ostřejší drobný text v patičce). */
+const CERTIFICATE_PNG_PIXEL_RATIO = 4;
 
 /** Stejné URL jako `src/styles/globals.css` — tisk/PDF z blob URL nezdědí globální CSS. */
 const FONT_FACE_PRINT_BLOCK = `
@@ -813,9 +817,11 @@ function buildPrintableCertificateDocument(opts: {
 function CertificatePreviewIframe({
   srcDoc,
   className = '',
+  iframeRef,
 }: {
   srcDoc: string;
   className?: string;
+  iframeRef?: React.RefObject<HTMLIFrameElement | null>;
 }) {
   return (
     <div className={`w-full text-left ${className}`}>
@@ -824,6 +830,7 @@ function CertificatePreviewIframe({
       </p>
       <div className="overflow-hidden rounded-xl border border-[#001161]/12 bg-slate-100 shadow-inner">
         <iframe
+          ref={iframeRef}
           title="Náhled potvrzení"
           srcDoc={srcDoc}
           className="block aspect-[297/210] h-auto w-full border-0 bg-white"
@@ -858,6 +865,8 @@ export function WebinarDvppCertificateSuccess({
   const [birthDateIso, setBirthDateIso] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState('');
+  const [pngDownloading, setPngDownloading] = useState(false);
+  const certificateIframeRef = useRef<HTMLIFrameElement>(null);
 
   const birthOk = useMemo(() => {
     if (!needProfile) return true;
@@ -878,6 +887,44 @@ export function WebinarDvppCertificateSuccess({
       }),
     [webinar, email, participantName, displayName, birthDateIso, certificateKind, needProfile],
   );
+
+  const downloadCertificatePng = useCallback(async () => {
+    const iframe = certificateIframeRef.current;
+    const doc = iframe?.contentDocument;
+    if (!doc) {
+      toast.error('Náhled ještě není připraven — zkuste za chvíli znovu.');
+      return;
+    }
+    const sheet = doc.querySelector('.sheet') as HTMLElement | null;
+    if (!sheet) {
+      toast.error('Certifikát v náhledu nebyl nalezen.');
+      return;
+    }
+    setPngDownloading(true);
+    try {
+      await doc.fonts?.ready;
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      const { toPng } = await import('html-to-image');
+      const dataUrl = await toPng(sheet, {
+        pixelRatio: CERTIFICATE_PNG_PIXEL_RATIO,
+        cacheBust: true,
+        backgroundColor: '#ffffff',
+      });
+      const slug = String(webinar.slug || webinar.id || 'webinar').replace(/[^a-zA-Z0-9-_]+/g, '-');
+      const a = document.createElement('a');
+      a.download = `certifikat-dvpp-${slug}.png`;
+      a.href = dataUrl;
+      a.rel = 'noopener';
+      a.click();
+    } catch (e) {
+      console.error('[certificate] PNG export', e);
+      toast.error(e instanceof Error ? e.message : 'PNG se nepodařilo vytvořit.');
+    } finally {
+      setPngDownloading(false);
+    }
+  }, [webinar.id, webinar.slug]);
 
   const openPrintablePdf = useCallback(() => {
     const html = buildPrintableCertificateDocument({
@@ -1004,8 +1051,21 @@ export function WebinarDvppCertificateSuccess({
         </div>
         <CertificatePreviewIframe
           srcDoc={previewSrcDoc}
+          iframeRef={certificateIframeRef}
           className="mx-auto mt-8 w-full max-w-[min(920px,100%)] px-0"
         />
+        <div className="mx-auto mt-4 flex w-full max-w-[min(920px,100%)] justify-center px-0">
+          <button
+            type="button"
+            onClick={() => void downloadCertificatePng()}
+            disabled={pngDownloading}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#001161]/20 bg-white px-5 py-2.5 text-[13px] font-semibold text-[#001161] shadow-sm transition hover:bg-[#001161]/5 disabled:cursor-not-allowed disabled:opacity-50"
+            style={FF}
+          >
+            <ImageDown className="h-4 w-4 shrink-0" />
+            {pngDownloading ? 'Generuji PNG…' : 'Stáhnout PNG (4× rozlišení)'}
+          </button>
+        </div>
         <div className={fs ? 'w-full max-w-md' : 'mx-auto w-full max-w-[480px]'}>
           {profileSaveError ? (
             <p style={FF} className="mt-4 text-[12px] text-red-600">
@@ -1057,11 +1117,15 @@ export function WebinarDvppCertificateSuccess({
         </h2>
         <p style={FF} className="mt-3 text-[14px] leading-relaxed text-[#001161]/70">
           {certificateKind === 'dvpp'
-            ? 'Níže je náhled stejný jako při tisku / PDF. Stáhněte PDF přes tisk v prohlížeči (Uložit jako PDF).'
-            : 'Níže je náhled; můžete vytisknout nebo uložit potvrzení o vyplnění zpětné vazby.'}
+            ? 'Níže je náhled stejný jako při tisku / PDF. PNG lze stáhnout ve vysokém rozlišení (4×); PDF přes tisk v prohlížeči (Uložit jako PDF).'
+            : 'Níže je náhled; můžete vytisknout nebo uložit potvrzení o vyplnění zpětné vazby (PNG ve 4× rozlišení nebo PDF přes tisk).'}
         </p>
 
-        <CertificatePreviewIframe srcDoc={previewSrcDoc} className="mx-auto mt-8" />
+        <CertificatePreviewIframe
+          srcDoc={previewSrcDoc}
+          iframeRef={certificateIframeRef}
+          className="mx-auto mt-8"
+        />
 
         <div className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:justify-center">
           <button
@@ -1072,6 +1136,16 @@ export function WebinarDvppCertificateSuccess({
           >
             <Download className="h-4 w-4 shrink-0" />
             {'Stáhnout PDF (tisk → Uložit jako PDF)'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadCertificatePng()}
+            disabled={pngDownloading}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-[#001161]/12 bg-white px-6 py-3 text-[14px] font-bold text-[#001161] shadow-sm transition hover:bg-[#001161]/5 disabled:cursor-not-allowed disabled:opacity-50"
+            style={FF}
+          >
+            <ImageDown className="h-4 w-4 shrink-0" />
+            {pngDownloading ? 'Generuji PNG…' : 'Stáhnout PNG (4× rozlišení)'}
           </button>
         </div>
         {needProfile ? (

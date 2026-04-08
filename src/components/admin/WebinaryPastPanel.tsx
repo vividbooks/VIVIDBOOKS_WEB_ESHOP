@@ -1697,6 +1697,36 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   {'Každé tlačítko volá Gemini zvlášť — můžete generovat jen otázky, jen článek, nebo postupně obojí.'}
                 </p>
 
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Mail className="w-4 h-4 text-gray-600 shrink-0" />
+                    <span className="text-[12px] font-bold text-gray-700">{'Test e-mailu (Mandrill)'}</span>
+                  </div>
+                  <p className="text-[11px] text-gray-500">
+                    {
+                      'Odešle náhled: shrnutí, seznam otázek kvízu a odkaz „Otevřít kvíz a dotazník“ (stejný jako po registraci). Vyžaduje MANDRILL_API_KEY na serveru.'
+                    }
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2 sm:items-stretch">
+                    <input
+                      type="email"
+                      value={followupTestEmail}
+                      onChange={(e) => setFollowupTestEmail(e.target.value)}
+                      placeholder="vas@email.cz"
+                      className={`${inputCls} flex-1 min-w-0`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handlePostFollowupTestSend()}
+                      disabled={followupSending}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#001161] text-white text-[13px] font-bold hover:opacity-95 disabled:opacity-40 shrink-0 sm:w-auto w-full"
+                    >
+                      {followupSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                      {'Odeslat test'}
+                    </button>
+                  </div>
+                </div>
+
                 <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
                   <div className="flex items-center gap-2">
                     <BookOpen className="w-4 h-4 text-[#7C3AED] shrink-0" />
@@ -1718,36 +1748,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     >
                       <Copy className="w-3.5 h-3.5" />
                       {'Kopírovat blok pro e-mail'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-gray-600 shrink-0" />
-                    <span className="text-[12px] font-bold text-gray-700">{'Test e-mailu (Mandrill)'}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-500">
-                    {
-                      'Odešle náhled: shrnutí, seznam otázek kvízu a odkaz „Otevřít kvíz a dotazník“ (stejný jako po registraci). Vyžaduje MANDRILL_API_KEY na serveru.'
-                    }
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="email"
-                      value={followupTestEmail}
-                      onChange={(e) => setFollowupTestEmail(e.target.value)}
-                      placeholder="vas@email.cz"
-                      className={`${inputCls} flex-1`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handlePostFollowupTestSend()}
-                      disabled={followupSending}
-                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#001161] text-white text-[13px] font-bold hover:opacity-95 disabled:opacity-40"
-                    >
-                      {followupSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                      {'Odeslat test'}
                     </button>
                   </div>
                 </div>
