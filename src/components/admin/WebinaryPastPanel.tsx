@@ -304,6 +304,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     lastBulkSucceeded: number | null;
     recipients: Record<string, { sentAt?: string; openedAt?: string; openCount?: number }>;
   }>({ loading: false, lastBulkAt: null, lastBulkSucceeded: null, recipients: {} });
+  const [mandrillFollowupSyncLoading, setMandrillFollowupSyncLoading] = useState(false);
   /** Více tagů v audience — prázdné pole = výchozí tag webináře; odesílá se jako `tagA|tagB`. */
   const [mailchimpTagsSelected, setMailchimpTagsSelected] = useState<string[]>([]);
   const [mailchimpTagDraftInput, setMailchimpTagDraftInput] = useState('');
@@ -531,6 +532,39 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       });
     }
   }, [selected?.id, isNew]);
+
+  const handleMandrillFollowupSync = useCallback(async () => {
+    if (!selected?.id) return;
+    setMandrillFollowupSyncLoading(true);
+    try {
+      const res = await fetch(
+        `${SERVER}/admin/webinar-post-followup-mandrill-sync/${encodeURIComponent(String(selected.id))}`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${publicAnonKey}` },
+        },
+      );
+      const raw = await res.text();
+      const d = (parseJsonResponseBody(raw) || {}) as {
+        error?: string;
+        matchedMessages?: number;
+        matchedRecipients?: number;
+      };
+      if (!res.ok) throw new Error(d.error || raw.slice(0, 220) || `HTTP ${res.status}`);
+      const n = typeof d.matchedRecipients === 'number' ? d.matchedRecipients : 0;
+      const m = typeof d.matchedMessages === 'number' ? d.matchedMessages : 0;
+      toast.success(
+        n > 0 || m > 0
+          ? `Mandrill: doplněno ${n} adres (z ${m} záznamů v historii).`
+          : 'Mandrill: žádné shodné záznamy za posledních 120 dní (zkontrolujte předmět e-mailu nebo metadata).',
+      );
+      await loadFollowupTracking();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Synchronizace selhala');
+    } finally {
+      setMandrillFollowupSyncLoading(false);
+    }
+  }, [selected?.id, loadFollowupTracking]);
 
   useEffect(() => {
     void loadFollowupTracking();
@@ -1207,6 +1241,20 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
+                disabled={!selected?.id || mandrillFollowupSyncLoading}
+                onClick={() => void handleMandrillFollowupSync()}
+                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-900 border border-emerald-300/80 bg-emerald-50/90 rounded-lg px-2.5 py-1 hover:bg-emerald-100/90 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={
+                  'Načte z Mandrill API historii odeslání a otevření e-mailů „Záznam webináře“ pro tento webinář (až 1000 záznamů / 120 dní).'
+                }
+              >
+                {mandrillFollowupSyncLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                ) : null}
+                {'Načíst stav z Mandrillu'}
+              </button>
+              <button
+                type="button"
                 disabled={mcListState.loading || !!mcListState.error || mcListState.rows.length === 0}
                 onClick={() => {
                   if (!selected?.id) return;
@@ -1334,7 +1382,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             </div>
             <p className="text-[10px] text-gray-500 px-1 pt-1.5 leading-snug">
               {
-                'Sledování follow-upu: sloupce „Záznam e-mail“ a „Otevřeno“ jsou hned za sloupcem E-mail. Po odeslání z karty Dotazník → Poslat se vyplní datum odeslání; otevření doplní webhook Mandrill (pokud je nastavený).'
+                'Sloupce „Záznam e-mail“ a „Otevřeno“ nečtou přímo Mandrill dashboard — ukládají se u nás (KV) po hromadném odeslání z této stránky, přes webhook nebo tlačítkem „Načíst stav z Mandrillu“ (API messages/search, až 1000 záznamů / 120 dní).'
               }
             </p>
           </div>

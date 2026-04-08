@@ -4193,6 +4193,129 @@ async function mergeFollowupOpenInKv(webinarId: string, email: string): Promise<
   await saveFollowupTrackingState(webinarId, state);
 }
 
+function followupEarliestIso(a?: string, b?: string): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return new Date(a).getTime() <= new Date(b).getTime() ? a : b;
+}
+
+/**
+ * Doplní KV stav z Mandrill messages/search (odeslání / otevření).
+ * Filtr: metadata webinar_id (+ vb_kind), případně předmět obsahuje „Záznam webináře“ a začátek názvu webináře (starší odeslání bez metadat).
+ */
+async function syncFollowupTrackingFromMandrillSearch(
+  webinarId: string,
+  w: Record<string, unknown>,
+): Promise<{ matchedMessages: number; matchedRecipients: number }> {
+  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  if (!mandrillKey) throw new Error('MANDRILL_API_KEY missing');
+
+  const state = await getFollowupTrackingState(webinarId);
+  const titleT = String((w as any).title || '').trim();
+  const titleProbe = titleT.slice(0, 28);
+
+  const dateTo = new Date();
+  const dateFrom = new Date(dateTo);
+  dateFrom.setDate(dateFrom.getDate() - 120);
+  const df = dateFrom.toISOString().slice(0, 10);
+  const dt = dateTo.toISOString().slice(0, 10);
+
+  const res = await fetch('https://mandrillapp.com/api/1.0/messages/search.json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      key: mandrillKey,
+      query: 'Záznam webináře',
+      date_from: df,
+      date_to: dt,
+      limit: 1000,
+    }),
+  });
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    const msg =
+      typeof data === 'object' && data && (data as any).message
+        ? String((data as any).message)
+        : 'Mandrill search: neplatná odpověď';
+    throw new Error(msg);
+  }
+
+  const aggregated = new Map<string, { sentAt?: string; openedAt?: string; openCount: number }>();
+  let matchedMessages = 0;
+  const widTarget = String(webinarId).trim();
+
+  for (const row of data) {
+    if (!row || typeof row !== 'object') continue;
+    const msg = row as Record<string, unknown>;
+    const mraw = msg.metadata;
+    const meta = mraw && typeof mraw === 'object' ? (mraw as Record<string, unknown>) : {};
+    const wid = String(meta.webinar_id || '').trim();
+    const kind = String(meta.vb_kind || '');
+    const byMeta =
+      wid === widTarget &&
+      (kind === '' || kind === 'post_followup_bulk' || kind === 'post_followup_test');
+
+    const subj = String(msg.subject || '');
+    const bySubject =
+      titleProbe.length >= 3 &&
+      subj.includes('Záznam webináře') &&
+      subj.includes(titleProbe);
+
+    if (!byMeta && !bySubject) continue;
+
+    matchedMessages++;
+
+    const email = String(msg.email || '')
+      .toLowerCase()
+      .trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+
+    const tsSec = typeof msg.ts === 'number' ? msg.ts : null;
+    const sentAt = tsSec != null ? new Date(tsSec * 1000).toISOString() : undefined;
+
+    let openedAt: string | undefined;
+    let openCount = typeof msg.opens === 'number' ? msg.opens : 0;
+    const details = Array.isArray(msg.opens_detail) ? msg.opens_detail : [];
+    if (details.length > 0) {
+      const tss: number[] = [];
+      for (const d of details) {
+        if (d && typeof d === 'object' && typeof (d as Record<string, unknown>).ts === 'number') {
+          tss.push((d as Record<string, unknown>).ts as number);
+        }
+      }
+      if (tss.length) {
+        const minTs = Math.min(...tss);
+        openedAt = new Date(minTs * 1000).toISOString();
+        openCount = Math.max(openCount, details.length);
+      }
+    }
+
+    const prevAgg = aggregated.get(email) || { openCount: 0 };
+    aggregated.set(email, {
+      sentAt: followupEarliestIso(prevAgg.sentAt, sentAt),
+      openedAt: followupEarliestIso(prevAgg.openedAt, openedAt),
+      openCount: Math.max(prevAgg.openCount, openCount),
+    });
+  }
+
+  for (const [email, v] of aggregated) {
+    const prev = state.recipients[email] || {};
+    state.recipients[email] = {
+      ...prev,
+      sentAt: followupEarliestIso(prev.sentAt, v.sentAt),
+      openedAt: followupEarliestIso(prev.openedAt, v.openedAt),
+      openCount: Math.max(prev.openCount || 0, v.openCount),
+    };
+  }
+
+  await saveFollowupTrackingState(webinarId, state);
+
+  return {
+    matchedMessages,
+    matchedRecipients: aggregated.size,
+  };
+}
+
 async function sendWebinarPostFollowupEmailToRecipient(opts: {
   webinarId: string;
   w: Record<string, unknown>;
@@ -4459,6 +4582,35 @@ app.get(
   adminWebinarPostFollowupTrackingHandler,
 );
 app.get('/admin/webinar-post-followup-tracking/:webinarId', adminWebinarPostFollowupTrackingHandler);
+
+async function adminWebinarPostFollowupMandrillSyncHandler(c: Context) {
+  try {
+    const webinarId = String(c.req.param('webinarId') || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+    const items = await getCollection(WEBINARS_KEY);
+    const w = items.find((x: any) => String(x.id) === String(webinarId)) as Record<string, unknown> | undefined;
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+    const { matchedMessages, matchedRecipients } = await syncFollowupTrackingFromMandrillSearch(webinarId, w);
+    const state = await getFollowupTrackingState(webinarId);
+    return c.json({
+      ok: true,
+      matchedMessages,
+      matchedRecipients,
+      lastBulkAt: state.lastBulkAt,
+      lastBulkSucceeded: state.lastBulkSucceeded,
+      recipients: state.recipients,
+    });
+  } catch (e: any) {
+    console.log(`[webinar-post-followup-mandrill-sync] ${e.message}`);
+    return c.json({ error: e.message || 'Chyba' }, 500);
+  }
+}
+
+app.post(
+  '/make-server-93a20b6f/admin/webinar-post-followup-mandrill-sync/:webinarId',
+  adminWebinarPostFollowupMandrillSyncHandler,
+);
+app.post('/admin/webinar-post-followup-mandrill-sync/:webinarId', adminWebinarPostFollowupMandrillSyncHandler);
 
 /** Mandrill webhook: události „open“ u follow-up e-mailů (metadata webinar_id). Volitelný query ?key= = MANDRILL_WEBHOOK_SECRET. */
 async function mandrillFollowupWebhookHandler(c: Context) {
