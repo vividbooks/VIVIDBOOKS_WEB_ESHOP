@@ -4127,6 +4127,72 @@ ${webinarEmailDvppPromoBannerRow()}
 </table></td></tr></table></body></html>`;
 }
 
+const FOLLOWUP_TRACK_KV_PREFIX = 'webinar_post_followup_track_v1_';
+
+type FollowupRecipientTrack = {
+  sentAt?: string;
+  openedAt?: string;
+  openCount?: number;
+};
+
+type FollowupCampaignState = {
+  lastBulkAt: string | null;
+  lastBulkSucceeded: number | null;
+  recipients: Record<string, FollowupRecipientTrack>;
+};
+
+function normalizeFollowupState(raw: unknown): FollowupCampaignState {
+  if (!raw || typeof raw !== 'object') {
+    return { lastBulkAt: null, lastBulkSucceeded: null, recipients: {} };
+  }
+  const o = raw as Record<string, unknown>;
+  const rec = o.recipients;
+  const recipients: Record<string, FollowupRecipientTrack> = {};
+  if (rec && typeof rec === 'object') {
+    for (const [k, v] of Object.entries(rec as Record<string, unknown>)) {
+      if (!v || typeof v !== 'object') continue;
+      const t = v as Record<string, unknown>;
+      const emailKey = String(k).toLowerCase().trim();
+      if (!emailKey) continue;
+      recipients[emailKey] = {
+        sentAt: typeof t.sentAt === 'string' ? t.sentAt : undefined,
+        openedAt: typeof t.openedAt === 'string' ? t.openedAt : undefined,
+        openCount: typeof t.openCount === 'number' ? t.openCount : undefined,
+      };
+    }
+  }
+  return {
+    lastBulkAt: typeof o.lastBulkAt === 'string' ? o.lastBulkAt : null,
+    lastBulkSucceeded: typeof o.lastBulkSucceeded === 'number' ? o.lastBulkSucceeded : null,
+    recipients,
+  };
+}
+
+async function getFollowupTrackingState(webinarId: string): Promise<FollowupCampaignState> {
+  const key = `${FOLLOWUP_TRACK_KV_PREFIX}${webinarId}`;
+  const raw = await kv.get(key);
+  return normalizeFollowupState(raw);
+}
+
+async function saveFollowupTrackingState(webinarId: string, state: FollowupCampaignState): Promise<void> {
+  const key = `${FOLLOWUP_TRACK_KV_PREFIX}${webinarId}`;
+  await kv.set(key, state);
+}
+
+async function mergeFollowupOpenInKv(webinarId: string, email: string): Promise<void> {
+  const clean = email.toLowerCase().trim();
+  if (!clean) return;
+  const state = await getFollowupTrackingState(webinarId);
+  const prev = state.recipients[clean] || {};
+  const now = new Date().toISOString();
+  state.recipients[clean] = {
+    ...prev,
+    openedAt: prev.openedAt || now,
+    openCount: (prev.openCount || 0) + 1,
+  };
+  await saveFollowupTrackingState(webinarId, state);
+}
+
 async function sendWebinarPostFollowupEmailToRecipient(opts: {
   webinarId: string;
   w: Record<string, unknown>;
@@ -4188,6 +4254,10 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
     toName: toName.trim() || toEmail.split('@')[0],
     subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Záznam webináře: ${titleShort}`,
     html,
+    metadata: {
+      webinar_id: String(webinarId),
+      vb_kind: emailKind === 'bulk' ? 'post_followup_bulk' : 'post_followup_test',
+    },
   });
   return result.ok ? { ok: true } : { ok: false, detail: result.detail };
 }
@@ -4308,6 +4378,8 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
 
     let sent = 0;
     const failures: { email: string; detail?: string }[] = [];
+    const track = await getFollowupTrackingState(webinarId);
+    const nowIso = new Date().toISOString();
     for (const rec of recipients) {
       const out = await sendWebinarPostFollowupEmailToRecipient({
         webinarId,
@@ -4320,9 +4392,19 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
       });
       if (out.ok) {
         sent++;
+        const prev = track.recipients[rec.email] || {};
+        track.recipients[rec.email] = {
+          ...prev,
+          sentAt: prev.sentAt || nowIso,
+        };
       } else {
         failures.push({ email: rec.email, detail: out.detail });
       }
+    }
+    if (sent > 0) {
+      track.lastBulkAt = nowIso;
+      track.lastBulkSucceeded = sent;
+      await saveFollowupTrackingState(webinarId, track);
     }
 
     const overlap =
@@ -4355,6 +4437,85 @@ app.post('/make-server-93a20b6f/admin/webinar-post-followup-test-send', adminWeb
 app.post('/admin/webinar-post-followup-test-send', adminWebinarPostFollowupTestSendHandler);
 app.post('/make-server-93a20b6f/admin/webinar-post-followup-bulk-send', adminWebinarPostFollowupBulkSendHandler);
 app.post('/admin/webinar-post-followup-bulk-send', adminWebinarPostFollowupBulkSendHandler);
+
+async function adminWebinarPostFollowupTrackingHandler(c: Context) {
+  try {
+    const webinarId = String(c.req.param('webinarId') || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+    const state = await getFollowupTrackingState(webinarId);
+    return c.json({
+      lastBulkAt: state.lastBulkAt,
+      lastBulkSucceeded: state.lastBulkSucceeded,
+      recipients: state.recipients,
+    });
+  } catch (e: any) {
+    console.log(`[webinar-post-followup-tracking] ${e.message}`);
+    return c.json({ error: e.message || 'Chyba' }, 500);
+  }
+}
+
+app.get(
+  '/make-server-93a20b6f/admin/webinar-post-followup-tracking/:webinarId',
+  adminWebinarPostFollowupTrackingHandler,
+);
+app.get('/admin/webinar-post-followup-tracking/:webinarId', adminWebinarPostFollowupTrackingHandler);
+
+/** Mandrill webhook: události „open“ u follow-up e-mailů (metadata webinar_id). Volitelný query ?key= = MANDRILL_WEBHOOK_SECRET. */
+async function mandrillFollowupWebhookHandler(c: Context) {
+  const webhookSecret = Deno.env.get('MANDRILL_WEBHOOK_SECRET');
+  if (webhookSecret) {
+    const q = c.req.query('key') || '';
+    if (q !== webhookSecret) return c.text('Forbidden', 403);
+  } else {
+    console.warn('[mandrill-followup-webhook] MANDRILL_WEBHOOK_SECRET missing — webhook URL is not authenticated');
+  }
+  let raw = '';
+  try {
+    const ct = (c.req.header('content-type') || '').toLowerCase();
+    if (ct.includes('application/x-www-form-urlencoded')) {
+      const body = await c.req.parseBody();
+      const me = (body as Record<string, unknown>)['mandrill_events'];
+      raw = typeof me === 'string' ? me : '';
+    } else {
+      const j = await c.req.json();
+      if (typeof j === 'object' && j && 'mandrill_events' in j) {
+        raw = String((j as any).mandrill_events || '');
+      } else if (typeof j === 'string') {
+        raw = j;
+      }
+    }
+  } catch {
+    return c.text('Bad Request', 400);
+  }
+  let events: unknown[] = [];
+  try {
+    events = JSON.parse(raw) as unknown[];
+  } catch {
+    return c.text('Bad Request', 400);
+  }
+  if (!Array.isArray(events)) return c.text('OK', 200);
+  for (const ev of events) {
+    if (!ev || typeof ev !== 'object') continue;
+    const e = ev as Record<string, unknown>;
+    if (String(e.event || '') !== 'open') continue;
+    const msg = (e.msg && typeof e.msg === 'object' ? e.msg : e) as Record<string, unknown>;
+    const email = String(msg.email || '')
+      .toLowerCase()
+      .trim();
+    const meta = (msg.metadata && typeof msg.metadata === 'object'
+      ? msg.metadata
+      : {}) as Record<string, unknown>;
+    const webinarId = String(meta.webinar_id || '').trim();
+    const kind = String(meta.vb_kind || '');
+    if (!email || !webinarId) continue;
+    if (kind !== 'post_followup_bulk' && kind !== 'post_followup_test') continue;
+    await mergeFollowupOpenInKv(webinarId, email);
+  }
+  return c.text('OK', 200);
+}
+
+app.post('/make-server-93a20b6f/webhooks/mandrill-followup', mandrillFollowupWebhookHandler);
+app.post('/webhooks/mandrill-followup', mandrillFollowupWebhookHandler);
 
 /** Počty příjemců hromadného follow-upu: KV + Mailchimp (stejný tag jako registrace), unikátní e-maily. */
 async function adminWebinarPostFollowupRecipientPreviewHandler(c: Context) {
@@ -4816,10 +4977,18 @@ async function sendMandrillHtmlResult(opts: {
   toName: string;
   subject: string;
   html: string;
+  /** Metadata (jen řetězce) — např. webinar_id pro webhook „open“ u follow-up e-mailů. */
+  metadata?: Record<string, string>;
 }): Promise<{ ok: boolean; detail?: string }> {
   const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
   if (!mandrillKey) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
   try {
+    const meta =
+      opts.metadata && Object.keys(opts.metadata).length > 0
+        ? Object.fromEntries(
+            Object.entries(opts.metadata).map(([k, v]) => [k, String(v ?? '').slice(0, 500)]),
+          )
+        : undefined;
     const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4834,6 +5003,7 @@ async function sendMandrillHtmlResult(opts: {
           headers: { 'Reply-To': 'hello@vividbooks.com' },
           track_opens: true,
           track_clicks: false,
+          ...(meta ? { metadata: meta } : {}),
         },
       }),
     });

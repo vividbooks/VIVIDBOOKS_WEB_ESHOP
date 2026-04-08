@@ -5,7 +5,7 @@ import {
   FileText, Video, Trash2, ExternalLink, Info,
   BookOpen, Plus, Award, Zap, Link2,
   ChevronDown, ChevronUp, Link, Unlink, ClipboardList, Sparkles, Mail, Copy,
-  MessageSquare, Users,
+  MessageSquare, Users, Send, BarChart3,
 } from 'lucide-react';
 import type { PostWebinarQuizQuestion, PostWebinarPart2Step } from '../../data/webinars';
 import { DEFAULT_POST_WEBINAR_PART2_STEPS } from '../../utils/webinarSurveyDefaults';
@@ -56,6 +56,8 @@ const MONTH_NAMES = [
 type RagStatus = { count: number; loading: boolean; lastIndexed?: string };
 
 type PastPanelTab = 'uprava' | 'dotaznik';
+
+type DotaznikSubTab = 'clanek' | 'dotaznik' | 'vysledky' | 'poslat';
 
 interface FormState {
   title: string; subtitle: string;
@@ -253,6 +255,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
   const [ragStatus, setRagStatus] = useState<Record<string, RagStatus>>({});
   const [indexing, setIndexing]   = useState<string | null>(null);
   const [pastPanelTab, setPastPanelTab] = useState<PastPanelTab>('uprava');
+  const [dotaznikSubTab, setDotaznikSubTab] = useState<DotaznikSubTab>('dotaznik');
   const [generatingDvppQuestions, setGeneratingDvppQuestions] = useState(false);
   const [generatingDvppLearnings, setGeneratingDvppLearnings] = useState(false);
   const [followupTestEmail, setFollowupTestEmail] = useState('');
@@ -294,6 +297,13 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     }>;
     error: string | null;
   }>({ loading: false, tag: null, rows: [], error: null });
+  /** Sledování hromadného follow-up e-mailu (KV): odeslání / otevření podle e-mailu. */
+  const [followupTracking, setFollowupTracking] = useState<{
+    loading: boolean;
+    lastBulkAt: string | null;
+    lastBulkSucceeded: number | null;
+    recipients: Record<string, { sentAt?: string; openedAt?: string; openCount?: number }>;
+  }>({ loading: false, lastBulkAt: null, lastBulkSucceeded: null, recipients: {} });
   /** Více tagů v audience — prázdné pole = výchozí tag webináře; odesílá se jako `tagA|tagB`. */
   const [mailchimpTagsSelected, setMailchimpTagsSelected] = useState<string[]>([]);
   const [mailchimpTagDraftInput, setMailchimpTagDraftInput] = useState('');
@@ -474,6 +484,57 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       cancelled = true;
     };
   }, [selected?.id, isNew, mailchimpTagOverride]);
+
+  const loadFollowupTracking = useCallback(async () => {
+    if (!selected?.id || isNew) {
+      setFollowupTracking({
+        loading: false,
+        lastBulkAt: null,
+        lastBulkSucceeded: null,
+        recipients: {},
+      });
+      return;
+    }
+    setFollowupTracking((s) => ({ ...s, loading: true }));
+    try {
+      const res = await fetch(
+        `${SERVER}/admin/webinar-post-followup-tracking/${encodeURIComponent(String(selected.id))}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const raw = await res.text();
+      const d = (parseJsonResponseBody(raw) || {}) as {
+        lastBulkAt?: string;
+        lastBulkSucceeded?: number;
+        recipients?: Record<string, { sentAt?: string; openedAt?: string; openCount?: number }>;
+      };
+      if (!res.ok) {
+        setFollowupTracking({
+          loading: false,
+          lastBulkAt: null,
+          lastBulkSucceeded: null,
+          recipients: {},
+        });
+        return;
+      }
+      setFollowupTracking({
+        loading: false,
+        lastBulkAt: typeof d.lastBulkAt === 'string' ? d.lastBulkAt : null,
+        lastBulkSucceeded: typeof d.lastBulkSucceeded === 'number' ? d.lastBulkSucceeded : null,
+        recipients: d.recipients && typeof d.recipients === 'object' ? d.recipients : {},
+      });
+    } catch {
+      setFollowupTracking({
+        loading: false,
+        lastBulkAt: null,
+        lastBulkSucceeded: null,
+        recipients: {},
+      });
+    }
+  }, [selected?.id, isNew]);
+
+  useEffect(() => {
+    void loadFollowupTracking();
+  }, [loadFollowupTracking]);
 
   useEffect(() => {
     if (!selected?.id || isNew) {
@@ -707,7 +768,8 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       : 'Mailchimp (výchozí tag webináře)';
     if (
       !confirm(
-        `Odeslat e-mail se záznamem webináře a odkazem na dotazník?\n\n` +
+        `Určitě odeslat hromadný e-mail?\n\n` +
+          `Odešle se e-mail se záznamem webináře a odkazem na dotazník.\n` +
           `Příjemců (unikátní e-maily): ${n} — z toho z webu ${kv}, z Mailchimpu ${mc} (${tagLine}; duplicity se sloučí).\n\n` +
           `Akci nelze vrátit zpět.`,
       )
@@ -751,6 +813,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       if (failed > 0) {
         toast.error(`${failed} e-mailů se nepodařilo odeslat — zkontrolujte Edge Function logy (Mandrill).`);
       }
+      void loadFollowupTracking();
     } catch (e: any) {
       toast.error(e?.message || 'Hromadné odeslání selhalo');
     } finally {
@@ -765,6 +828,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       toast.error('Zadejte platný e-mail pro test.');
       return;
     }
+    if (!confirm(`Určitě odeslat testovací e-mail na ${em}?`)) return;
     setFollowupSending(true);
     try {
       const res = await fetch(`${SERVER}/admin/webinar-post-followup-test-send`, {
@@ -945,6 +1009,334 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
   const videoId  = form.recordingUrl ? extractYoutubeId(form.recordingUrl) : null;
   const status   = selected ? ragStatus[selected.id] : null;
 
+  const kvAndMailchimpBlocks =
+    !isNew && selected?.id ? (
+      <>
+        <details className="group mt-4 pt-4 border-t border-gray-100">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
+            <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
+            <Users className="h-3.5 w-3.5 shrink-0 text-[#001161]/40" />
+            {'Registrace na webu (KV)'}
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-gray-600">
+              {regCountLoading ? '…' : registrants.length}
+            </span>
+          </summary>
+          <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100 bg-gray-50/50">
+            {regCountLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {'Načítám…'}
+              </div>
+            ) : registrants.length === 0 ? (
+              <p className="px-4 py-6 text-center text-[12px] text-gray-400">{'Zatím žádné registrace.'}</p>
+            ) : (
+              <table className="w-full min-w-[520px] text-left text-[11px]">
+                <thead>
+                  <tr className="border-b border-gray-200 bg-white">
+                    <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
+                    <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
+                    <th className="px-3 py-2 font-bold text-gray-500">Pozice</th>
+                    <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
+                    <th className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap">Registrace</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {registrants.map((r, i) => (
+                    <tr key={`${r.email || i}-${i}`} className="bg-white/80 hover:bg-white">
+                      <td className="px-3 py-2 text-[#001161] font-medium">{r.name?.trim() || '—'}</td>
+                      <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email?.trim() || '—'}</td>
+                      <td className="px-3 py-2 text-gray-600">{r.position?.trim() || '—'}</td>
+                      <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
+                      <td className="px-3 py-2 whitespace-nowrap text-gray-500">
+                        {r.registeredAt
+                          ? new Date(r.registeredAt).toLocaleString('cs-CZ', {
+                              day: 'numeric',
+                              month: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </details>
+
+        <details className="group mt-3 pt-3 border-t border-gray-100">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
+            <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
+            <Mail className="h-3.5 w-3.5 shrink-0 text-[#FFE01B]" />
+            {'Mailchimp (audience)'}
+            <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-900 border border-amber-200/80">
+              {mcListState.loading ? '…' : mcListState.rows.length}
+            </span>
+          </summary>
+          <div className="mt-2 space-y-2">
+            <div className="rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2.5 space-y-2">
+              <label className="block text-[11px] font-bold text-gray-600">
+                {'Tagy v audience (volitelně jiné než výchozí u webináře)'}
+              </label>
+              {mailchimpTagsSelected.length > 0 && (
+                <ul className="flex flex-wrap gap-1.5">
+                  {mailchimpTagsSelected.map((tg) => (
+                    <li
+                      key={tg}
+                      className="inline-flex items-center gap-1 rounded-lg border border-[#001161]/15 bg-white pl-2.5 pr-1 py-1 text-[11px] font-semibold text-[#001161]"
+                    >
+                      <span className="max-w-[220px] truncate" title={tg}>
+                        {tg}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMailchimpTagsSelected((prev) => prev.filter((x) => x !== tg))
+                        }
+                        className="rounded-md p-0.5 text-gray-400 hover:bg-[#001161]/10 hover:text-[#001161]"
+                        aria-label={`Odebrat tag ${tg}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  value={mailchimpTagDraftInput}
+                  onChange={(e) => setMailchimpTagDraftInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      const v = mailchimpTagDraftInput.trim();
+                      if (v) addMailchimpTag(v);
+                    }
+                  }}
+                  placeholder="Napište začátek názvu — Enter nebo klik přidá tag"
+                  className={inputCls + ' flex-1 min-w-0 text-[13px]'}
+                  list="mailchimp-tag-suggest-past"
+                  autoComplete="off"
+                />
+                {mailchimpTagsSelected.length > 0 || mailchimpTagDraftInput.trim() ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMailchimpTagsSelected([]);
+                      setMailchimpTagDraftInput('');
+                      setTagSuggestOptions([]);
+                    }}
+                    className="shrink-0 text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-3 py-2 hover:bg-[#001161]/5"
+                  >
+                    {'Výchozí tag webináře'}
+                  </button>
+                ) : null}
+              </div>
+              <datalist id="mailchimp-tag-suggest-past">
+                {tagSuggestOptions.map((t) => (
+                  <option key={t.name} value={t.name} />
+                ))}
+              </datalist>
+              {tagSuggestOptions.length > 0 && (
+                <ul className="flex flex-wrap gap-1.5 pt-1">
+                  {tagSuggestOptions.slice(0, 10).map((t) => (
+                    <li key={t.name}>
+                      <button
+                        type="button"
+                        onClick={() => addMailchimpTag(t.name)}
+                        className="text-[10px] font-semibold rounded-lg border border-amber-200/90 bg-white px-2 py-1 text-[#001161] hover:bg-amber-50/80"
+                      >
+                        {'+ '}
+                        {t.name}
+                        {typeof t.memberCount === 'number' ? (
+                          <span className="text-gray-500 font-normal">{' · '}{t.memberCount}</span>
+                        ) : null}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-[10px] text-gray-500 leading-snug">
+                {
+                  'Bez vybraného tagu = stejný tag jako při registraci na web. Můžete přidat více tagů — kontakty se sjednotí (každý e-mail jen jednou). Po úpravě se přepočítají čísla u hromadného odeslání i tabulka níže.'
+                }
+              </p>
+            </div>
+            {mcListState.tag && (
+              <p className="text-[11px] text-gray-500 leading-snug px-0.5">
+                {'Tag v audience: '}
+                <span className="font-mono font-bold text-[#001161]">{mcListState.tag}</span>
+                {' — kontakty s tímto tagem (sloučení s KV u hromadného odeslání).'}
+              </p>
+            )}
+            {followupTracking.loading ? (
+              <p className="text-[10px] text-gray-400 px-0.5 flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin shrink-0" />
+                {'Načítám stav follow-up e-mailů…'}
+              </p>
+            ) : null}
+            {followupTracking.lastBulkAt ? (
+              <p className="text-[11px] text-emerald-900 bg-emerald-50/90 border border-emerald-200 rounded-lg px-3 py-2">
+                <span className="font-bold">{'Hromadný follow-up: '}</span>
+                {'odesláno '}
+                {new Date(followupTracking.lastBulkAt).toLocaleString('cs-CZ', {
+                  day: 'numeric',
+                  month: 'numeric',
+                  year: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+                {typeof followupTracking.lastBulkSucceeded === 'number' ? (
+                  <span className="text-emerald-800/90">
+                    {' · '}
+                    {followupTracking.lastBulkSucceeded}
+                    {' úspěšných odeslání'}
+                  </span>
+                ) : null}
+                {'.'}
+              </p>
+            ) : null}
+            {mcListState.error && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                {mcListState.error}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={mcListState.loading || !!mcListState.error || mcListState.rows.length === 0}
+                onClick={() => {
+                  if (!selected?.id) return;
+                  void (async () => {
+                    try {
+                      let csvUrl = `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`;
+                      if (mailchimpTagOverride) {
+                        csvUrl += `?mailchimpTag=${encodeURIComponent(mailchimpTagOverride)}`;
+                      }
+                      const res = await fetch(csvUrl, {
+                        headers: { Authorization: `Bearer ${publicAnonKey}` },
+                      });
+                      const raw = await res.text();
+                      if (!res.ok) {
+                        const err = (parseJsonResponseBody(raw) as { error?: string })?.error || raw.slice(0, 220);
+                        toast.error(err);
+                        return;
+                      }
+                      const blob = new Blob([raw], { type: 'text/csv;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `mailchimp-${String(selected.slug || selected.id).replace(/[^a-z0-9]+/gi, '-').slice(0, 80)}.csv`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success('CSV staženo');
+                    } catch (e: unknown) {
+                      toast.error(e instanceof Error ? e.message : 'Chyba');
+                    }
+                  })();
+                }}
+                className="text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-2.5 py-1 hover:bg-[#001161]/5 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {'Stáhnout CSV z Mailchimp'}
+              </button>
+            </div>
+            <div className="overflow-x-auto rounded-xl border border-amber-100 bg-amber-50/30">
+              {mcListState.loading ? (
+                <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {'Načítám Mailchimp…'}
+                </div>
+              ) : mcListState.error && mcListState.rows.length === 0 ? (
+                <p className="px-4 py-6 text-center text-[12px] text-gray-400">
+                  {'Tabulku nelze zobrazit — vyřešte chybu výše nebo zkontrolujte MAILCHIMP_API_KEY a audience.'}
+                </p>
+              ) : mcListState.rows.length === 0 ? (
+                <p className="px-4 py-6 text-center text-[12px] text-gray-400">
+                  {'Žádné kontakty s tímto tagem v Mailchimpu (nebo tag v audience neexistuje).'}
+                </p>
+              ) : (
+                <table className="w-full min-w-[820px] text-left text-[11px]">
+                  <thead>
+                    <tr className="border-b border-amber-200/80 bg-white">
+                      <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
+                      <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
+                      <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
+                      <th className="px-3 py-2 font-bold text-gray-500">Škola / org.</th>
+                      <th
+                        className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
+                        title="Stav členství v Mailchimpu"
+                      >
+                        {'Stav (MC)'}
+                      </th>
+                      <th
+                        className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
+                        title="Úspěšné odeslání e-mailu se záznamem z administrace (Mandrill)"
+                      >
+                        {'Záznam e-mail'}
+                      </th>
+                      <th
+                        className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
+                        title="První otevření — webhook Mandrill (open), pokud je nastavený"
+                      >
+                        {'Otevřeno'}
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-amber-100">
+                    {mcListState.rows.map((r, i) => {
+                      const em = (r.email || '').toLowerCase().trim();
+                      const tr = em ? followupTracking.recipients[em] : undefined;
+                      const fmtIso = (iso?: string) =>
+                        iso
+                          ? new Date(iso).toLocaleString('cs-CZ', {
+                              day: 'numeric',
+                              month: 'numeric',
+                              year: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })
+                          : null;
+                      return (
+                        <tr key={`${r.email}-${i}`} className="bg-white/80 hover:bg-white">
+                          <td className="px-3 py-2 text-[#001161] font-medium">
+                            {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
+                          </td>
+                          <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email || '—'}</td>
+                          <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
+                          <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={r.school}>
+                            {r.school?.trim() || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status || '—'}</td>
+                          <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-[10px]">
+                            {fmtIso(tr?.sentAt) || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-[10px]">
+                            {fmtIso(tr?.openedAt) ? (
+                              <span>
+                                {fmtIso(tr?.openedAt)}
+                                {typeof tr?.openCount === 'number' && tr.openCount > 1 ? (
+                                  <span className="text-gray-400">{' · '}{tr.openCount}×</span>
+                                ) : null}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </details>
+      </>
+    ) : null;
+
   return (
     <div className="h-full flex overflow-hidden bg-[#f7f8fc]" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
 
@@ -1073,7 +1465,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-[860px] mx-auto p-6 space-y-4">
 
-            {/* Header */}
+            {/* Header — stejná karta pro Úprava záznamu i Dotazník (KV / Mailchimp / hromadné odeslání jen v Dotazník → Poslat) */}
             <div className="bg-white rounded-2xl border border-gray-200 p-5">
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-4">
@@ -1117,37 +1509,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                       <X className="w-3.5 h-3.5" /> {'Zrušit'}
                     </button>
                   )}
-                  {!isNew && selected?.id ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleBulkPostFollowupSend()}
-                      disabled={
-                        bulkFollowupSending ||
-                        regCountLoading ||
-                        followupPreviewLoading ||
-                        ((followupPreview?.uniqueTotal ?? regCount ?? 0) <= 0)
-                      }
-                      className="flex items-center gap-1.5 border border-[#001161]/15 bg-[#001161]/[0.04] text-[#001161] px-3 py-2 rounded-xl text-[12px] font-bold hover:bg-[#001161]/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={
-                        followupPreview
-                          ? `Unikátní příjemci: ${followupPreview.uniqueTotal} (web ${followupPreview.kvCount}, Mailchimp ${followupPreview.mailchimpCount}${followupPreview.mailchimpTag ? ` · tag „${followupPreview.mailchimpTag}“` : ''})`
-                          : 'Stejný obsah jako u testovacího e-mailu v záložce Dotazník — KV + Mailchimp (výchozí tag webináře nebo zvolený tag v sekci Mailchimp)'
-                      }
-                    >
-                      {bulkFollowupSending ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      ) : (
-                        <Users className="w-3.5 h-3.5 shrink-0" />
-                      )}
-                      <span className="whitespace-nowrap">
-                        {'Odeslat záznam + dotazník ('}
-                        {followupPreviewLoading || regCountLoading
-                          ? '…'
-                          : followupPreview?.uniqueTotal ?? regCount ?? 0}
-                        {')'}
-                      </span>
-                    </button>
-                  ) : null}
                   <button onClick={handleSave} disabled={saving}
                     className="flex items-center gap-1.5 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-[13px] font-bold transition-colors">
                     {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
@@ -1155,260 +1516,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   </button>
                 </div>
               </div>
-
-              {!isNew && selected?.id ? (
-                <details className="group mt-4 pt-4 border-t border-gray-100">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
-                    <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
-                    <Users className="h-3.5 w-3.5 shrink-0 text-[#001161]/40" />
-                    {'Registrace na webu (KV)'}
-                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold tabular-nums text-gray-600">
-                      {regCountLoading ? '…' : registrants.length}
-                    </span>
-                  </summary>
-                  <div className="mt-3 overflow-x-auto rounded-xl border border-gray-100 bg-gray-50/50">
-                    {regCountLoading ? (
-                      <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        {'Načítám…'}
-                      </div>
-                    ) : registrants.length === 0 ? (
-                      <p className="px-4 py-6 text-center text-[12px] text-gray-400">{'Zatím žádné registrace.'}</p>
-                    ) : (
-                      <table className="w-full min-w-[520px] text-left text-[11px]">
-                        <thead>
-                          <tr className="border-b border-gray-200 bg-white">
-                            <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
-                            <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
-                            <th className="px-3 py-2 font-bold text-gray-500">Pozice</th>
-                            <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
-                            <th className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap">Registrace</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {registrants.map((r, i) => (
-                            <tr key={`${r.email || i}-${i}`} className="bg-white/80 hover:bg-white">
-                              <td className="px-3 py-2 text-[#001161] font-medium">{r.name?.trim() || '—'}</td>
-                              <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email?.trim() || '—'}</td>
-                              <td className="px-3 py-2 text-gray-600">{r.position?.trim() || '—'}</td>
-                              <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
-                              <td className="px-3 py-2 whitespace-nowrap text-gray-500">
-                                {r.registeredAt
-                                  ? new Date(r.registeredAt).toLocaleString('cs-CZ', {
-                                      day: 'numeric',
-                                      month: 'numeric',
-                                      year: 'numeric',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })
-                                  : '—'}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </details>
-              ) : null}
-
-              {!isNew && selected?.id ? (
-                <details className="group mt-3 pt-3 border-t border-gray-100">
-                  <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
-                    <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
-                    <Mail className="h-3.5 w-3.5 shrink-0 text-[#FFE01B]" />
-                    {'Mailchimp (audience)'}
-                    <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-900 border border-amber-200/80">
-                      {mcListState.loading ? '…' : mcListState.rows.length}
-                    </span>
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    <div className="rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2.5 space-y-2">
-                      <label className="block text-[11px] font-bold text-gray-600">
-                        {'Tagy v audience (volitelně jiné než výchozí u webináře)'}
-                      </label>
-                      {mailchimpTagsSelected.length > 0 && (
-                        <ul className="flex flex-wrap gap-1.5">
-                          {mailchimpTagsSelected.map((tg) => (
-                            <li
-                              key={tg}
-                              className="inline-flex items-center gap-1 rounded-lg border border-[#001161]/15 bg-white pl-2.5 pr-1 py-1 text-[11px] font-semibold text-[#001161]"
-                            >
-                              <span className="max-w-[220px] truncate" title={tg}>
-                                {tg}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setMailchimpTagsSelected((prev) => prev.filter((x) => x !== tg))
-                                }
-                                className="rounded-md p-0.5 text-gray-400 hover:bg-[#001161]/10 hover:text-[#001161]"
-                                aria-label={`Odebrat tag ${tg}`}
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <input
-                          type="text"
-                          value={mailchimpTagDraftInput}
-                          onChange={(e) => setMailchimpTagDraftInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const v = mailchimpTagDraftInput.trim();
-                              if (v) addMailchimpTag(v);
-                            }
-                          }}
-                          placeholder="Napište začátek názvu — Enter nebo klik přidá tag"
-                          className={inputCls + ' flex-1 min-w-0 text-[13px]'}
-                          list="mailchimp-tag-suggest-past"
-                          autoComplete="off"
-                        />
-                        {mailchimpTagsSelected.length > 0 || mailchimpTagDraftInput.trim() ? (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMailchimpTagsSelected([]);
-                              setMailchimpTagDraftInput('');
-                              setTagSuggestOptions([]);
-                            }}
-                            className="shrink-0 text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-3 py-2 hover:bg-[#001161]/5"
-                          >
-                            {'Výchozí tag webináře'}
-                          </button>
-                        ) : null}
-                      </div>
-                      <datalist id="mailchimp-tag-suggest-past">
-                        {tagSuggestOptions.map((t) => (
-                          <option key={t.name} value={t.name} />
-                        ))}
-                      </datalist>
-                      {tagSuggestOptions.length > 0 && (
-                        <ul className="flex flex-wrap gap-1.5 pt-1">
-                          {tagSuggestOptions.slice(0, 10).map((t) => (
-                            <li key={t.name}>
-                              <button
-                                type="button"
-                                onClick={() => addMailchimpTag(t.name)}
-                                className="text-[10px] font-semibold rounded-lg border border-amber-200/90 bg-white px-2 py-1 text-[#001161] hover:bg-amber-50/80"
-                              >
-                                {'+ '}
-                                {t.name}
-                                {typeof t.memberCount === 'number' ? (
-                                  <span className="text-gray-500 font-normal">{' · '}{t.memberCount}</span>
-                                ) : null}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                      <p className="text-[10px] text-gray-500 leading-snug">
-                        {
-                          'Bez vybraného tagu = stejný tag jako při registraci na web. Můžete přidat více tagů — kontakty se sjednotí (každý e-mail jen jednou). Po úpravě se přepočítají čísla u „Odeslat záznam“ i tabulka níže.'
-                        }
-                      </p>
-                    </div>
-                    {mcListState.tag && (
-                      <p className="text-[11px] text-gray-500 leading-snug px-0.5">
-                        {'Tag v audience: '}
-                        <span className="font-mono font-bold text-[#001161]">{mcListState.tag}</span>
-                        {' — kontakty s tímto tagem (sloučení s KV u hromadného odeslání).'}
-                      </p>
-                    )}
-                    {mcListState.error && (
-                      <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                        {mcListState.error}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={mcListState.loading || !!mcListState.error || mcListState.rows.length === 0}
-                        onClick={() => {
-                          if (!selected?.id) return;
-                          void (async () => {
-                            try {
-                              let csvUrl = `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`;
-                              if (mailchimpTagOverride) {
-                                csvUrl += `?mailchimpTag=${encodeURIComponent(mailchimpTagOverride)}`;
-                              }
-                              const res = await fetch(csvUrl, {
-                                headers: { Authorization: `Bearer ${publicAnonKey}` },
-                              });
-                              const raw = await res.text();
-                              if (!res.ok) {
-                                const err = (parseJsonResponseBody(raw) as { error?: string })?.error || raw.slice(0, 220);
-                                toast.error(err);
-                                return;
-                              }
-                              const blob = new Blob([raw], { type: 'text/csv;charset=utf-8' });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = `mailchimp-${String(selected.slug || selected.id).replace(/[^a-z0-9]+/gi, '-').slice(0, 80)}.csv`;
-                              a.click();
-                              URL.revokeObjectURL(url);
-                              toast.success('CSV staženo');
-                            } catch (e: unknown) {
-                              toast.error(e instanceof Error ? e.message : 'Chyba');
-                            }
-                          })();
-                        }}
-                        className="text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-2.5 py-1 hover:bg-[#001161]/5 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        {'Stáhnout CSV z Mailchimp'}
-                      </button>
-                    </div>
-                    <div className="overflow-x-auto rounded-xl border border-amber-100 bg-amber-50/30">
-                      {mcListState.loading ? (
-                        <div className="flex items-center justify-center gap-2 py-8 text-[12px] text-gray-400">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          {'Načítám Mailchimp…'}
-                        </div>
-                      ) : mcListState.error && mcListState.rows.length === 0 ? (
-                        <p className="px-4 py-6 text-center text-[12px] text-gray-400">
-                          {'Tabulku nelze zobrazit — vyřešte chybu výše nebo zkontrolujte MAILCHIMP_API_KEY a audience.'}
-                        </p>
-                      ) : mcListState.rows.length === 0 ? (
-                        <p className="px-4 py-6 text-center text-[12px] text-gray-400">
-                          {'Žádné kontakty s tímto tagem v Mailchimpu (nebo tag v audience neexistuje).'}
-                        </p>
-                      ) : (
-                        <table className="w-full min-w-[560px] text-left text-[11px]">
-                          <thead>
-                            <tr className="border-b border-amber-200/80 bg-white">
-                              <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
-                              <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
-                              <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
-                              <th className="px-3 py-2 font-bold text-gray-500">Škola / org.</th>
-                              <th className="px-3 py-2 font-bold text-gray-500">Stav</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-amber-100">
-                            {mcListState.rows.map((r, i) => (
-                              <tr key={`${r.email}-${i}`} className="bg-white/80 hover:bg-white">
-                                <td className="px-3 py-2 text-[#001161] font-medium">
-                                  {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
-                                </td>
-                                <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email || '—'}</td>
-                                <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
-                                <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={r.school}>
-                                  {r.school?.trim() || '—'}
-                                </td>
-                                <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status || '—'}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
-                  </div>
-                </details>
-              ) : null}
             </div>
 
             {!isNew && selected && (
@@ -1426,7 +1533,10 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPastPanelTab('dotaznik')}
+                  onClick={() => {
+                    setPastPanelTab('dotaznik');
+                    setDotaznikSubTab('dotaznik');
+                  }}
                   className={`flex-1 px-3 py-2 rounded-lg text-[12px] font-bold transition-colors ${
                     pastPanelTab === 'dotaznik'
                       ? 'bg-white text-[#001161] shadow-sm border border-gray-200'
@@ -1846,244 +1956,305 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
 
             {!isNew && selected && pastPanelTab === 'dotaznik' && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5 space-y-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-                  <div className="flex items-start gap-2.5 min-w-0">
-                    <div className="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center shrink-0">
-                      <ClipboardList className="w-4 h-4 text-purple-500" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">{'Dotazník (DVPP)'}</h3>
-                      <p className="text-[11px] text-gray-400 mt-0.5">
-                        {'Čtyři otázky s výběrem odpovědí podle přepisu — ověření pochopení tématu po webináři.'}
-                      </p>
-                    </div>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+                  <div className="flex flex-wrap gap-1 p-1 bg-gray-100/90 rounded-xl border border-gray-200/80 min-w-0">
+                    {(
+                      [
+                        { id: 'clanek' as const, label: 'Článek', Icon: BookOpen },
+                        { id: 'dotaznik' as const, label: 'Dotazník', Icon: ClipboardList },
+                        { id: 'vysledky' as const, label: 'Výsledky dotazníků', Icon: BarChart3 },
+                        { id: 'poslat' as const, label: 'Poslat', Icon: Send },
+                      ] as const
+                    ).map(({ id, label, Icon }) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setDotaznikSubTab(id)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg text-[11px] sm:text-[12px] font-bold transition-colors ${
+                          dotaznikSubTab === id
+                            ? 'bg-white text-[#001161] shadow-sm border border-gray-200'
+                            : 'text-gray-500 hover:text-[#001161] hover:bg-white/60 border border-transparent'
+                        }`}
+                      >
+                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                        {label}
+                      </button>
+                    ))}
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleSave()}
                     disabled={saving || generatingDvppQuestions || generatingDvppLearnings}
-                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white px-4 py-2.5 text-[13px] font-bold transition-colors shadow-sm"
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white px-4 py-2.5 text-[13px] font-bold transition-colors shadow-sm self-start lg:self-center"
                   >
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                     {saving ? 'Ukládám…' : 'Uložit'}
                   </button>
                 </div>
 
-                <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50/90 px-4 py-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[12px] font-bold text-gray-800 leading-snug">
-                      {'Vyžadovat registraci pro vyplnění dotazníku'}
-                    </span>
+                {dotaznikSubTab === 'clanek' && (
+                  <>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">
+                      {'Generování mění jen obsah v tomto okně — po úpravách klikněte '}
+                      <strong>{'Uložit'}</strong>
+                      {', jinak se po obnovení stránky ztratí.'}
+                    </div>
+                    {!form.prepis.trim() && (
+                      <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                        <Info className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span className="text-[12px] text-amber-700">
+                          {'V záložce „Úprava záznamu“ vložte přepis webináře, pak sem přepněte a klikněte na Generovat článek.'}
+                        </span>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      role="switch"
-                      aria-checked={form.surveyRequireFullRegistration}
-                      onClick={() =>
-                        upd({ surveyRequireFullRegistration: !form.surveyRequireFullRegistration })
-                      }
-                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                        form.surveyRequireFullRegistration ? 'bg-emerald-600' : 'bg-gray-300'
-                      }`}
+                      onClick={() => void callDvppGenerate('learnings')}
+                      disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-[#001161] hover:opacity-95 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
                     >
-                      <span
-                        className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
-                          form.surveyRequireFullRegistration ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
+                      {generatingDvppLearnings ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji článek…'}</>
+                      ) : (
+                        <><BookOpen className="w-4 h-4" />{'Generovat článek z přepisu'}</>
+                      )}
                     </button>
-                  </div>
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    {
-                      'Vypnuto: u záznamu DVPP i u celostránkového dotazníku stačí jméno, e-mail a telefon (bez školy a pozice).'
-                    }
-                  </p>
-                </div>
+                    <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                      {'Volá Gemini — můžete článek upravit v editoru níže a uložit.'}
+                    </p>
+                    <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <BookOpen className="w-4 h-4 text-[#7C3AED] shrink-0" />
+                        <span className="text-[12px] font-bold text-[#001161]">{'Co jsme se na webináři dozvěděli (do e-mailu)'}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        {'Dlouhý text z přepisu — stejný obsah můžete použít v Mailchimp nebo v follow-up e-mailu. Upravujte přímo v náhledu (formátování jako v editoru).'}
+                      </p>
+                      <WebinarLearningsRichEditor
+                        key={`${selected?.id ?? 'new'}-${learningsRemountKey}`}
+                        value={form.postWebinarLearningsHtml}
+                        onChange={(html) => upd({ postWebinarLearningsHtml: html })}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleCopyLearningsBlock}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-[12px] font-bold text-gray-700 hover:bg-gray-50"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          {'Kopírovat blok pro e-mail'}
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
 
-                <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">
-                  {'Generování mění jen obsah v tomto okně — po úpravách klikněte '}
-                  <strong>{'Uložit'}</strong>
-                  {', jinak se po obnovení stránky ztratí.'}
-                </div>
+                {dotaznikSubTab === 'dotaznik' && (
+                  <>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">
+                      {'Generování mění jen obsah v tomto okně — po úpravách klikněte '}
+                      <strong>{'Uložit'}</strong>
+                      {', jinak se po obnovení stránky ztratí.'}
+                    </div>
+                    {!form.prepis.trim() && (
+                      <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
+                        <Info className="w-4 h-4 text-amber-500 shrink-0" />
+                        <span className="text-[12px] text-amber-700">
+                          {'V záložce „Úprava záznamu“ vložte přepis webináře, pak sem přepněte a klikněte na Generovat otázky.'}
+                        </span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void callDvppGenerate('questions')}
+                      disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
+                      className="w-full flex items-center justify-center gap-2 py-3 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
+                    >
+                      {generatingDvppQuestions ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji otázky…'}</>
+                      ) : (
+                        <><Sparkles className="w-4 h-4" />{'Generovat otázky z přepisu'}</>
+                      )}
+                    </button>
+                    <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                      {'Volá Gemini — zkontrolujte otázky níže a uložte.'}
+                    </p>
+                  </>
+                )}
 
-                <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/90 p-4 space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/90 px-2 py-0.5 rounded">
-                      DEV
-                    </span>
-                    <span className="text-[12px] font-bold text-amber-950">
-                      {'Follow-up e-mail: žluté tlačítko + modrý odkaz'}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-amber-950/85 leading-relaxed">
-                    {
-                      'Přepíše „Otevřít záznam webináře“ a „Vyzkoušet Vividbooks…“. Platí i pro hromadné odeslání po uložení. Stejná pole jsou v záložce Úprava záznamu → Tlačítka a odkazy.'
-                    }
-                  </p>
-                  <Field
-                    label={'DEV — „Otevřít záznam webináře“ (žluté tlačítko)'}
-                    hint={'Plná https://… nebo cesta od kořene webu, např. /webinare/zaznam/…'}
-                  >
-                    <input
-                      value={form.devFollowupRecordingUrl}
-                      onChange={e => upd({ devFollowupRecordingUrl: e.target.value })}
-                      placeholder={'Prázdné = automaticky záznam + ?email & from=email'}
-                      className={inputCls + ' font-mono text-[12px]'}
+                {dotaznikSubTab === 'vysledky' && selected?.id ? (
+                  <div className="rounded-2xl border border-emerald-200 overflow-hidden bg-white shadow-sm">
+                    <WebinarSurveyResponsesPanel
+                      webinarId={String(selected.id)}
+                      title="Odpovědi účastníků"
+                      subtitle="Shromážděné odpovědi z kvízu DVPP, druhé části zpětné vazby a vlastních otázek — podle aktuálního záznamu webináře v CMS."
+                      showPublicLinkToolbar
                     />
-                  </Field>
-                  <Field
-                    label={'DEV — „Vyzkoušet Vividbooks na 14 dní zdarma“ (modrý odkaz)'}
-                    hint={'Plná URL nebo cesta; prázdné = odkaz z pole „Odkaz“ u fialového CTA v Úprava záznamu.'}
-                  >
-                    <input
-                      value={form.devFollowupTrialUrl}
-                      onChange={e => upd({ devFollowupTrialUrl: e.target.value })}
-                      placeholder={'Prázdné = stejné jako „Odkaz“ u Vyzkoušejte'}
-                      className={inputCls + ' font-mono text-[12px]'}
-                    />
-                  </Field>
-                </div>
+                  </div>
+                ) : null}
 
-                {!form.prepis.trim() && (
-                  <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
-                    <Info className="w-4 h-4 text-amber-500 shrink-0" />
-                    <span className="text-[12px] text-amber-700">
-                      {'V záložce „Úprava záznamu“ vložte přepis webináře, pak sem přepněte a klikněte na Generovat.'}
-                    </span>
+                {dotaznikSubTab === 'poslat' && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col gap-2 rounded-xl border border-gray-200 bg-gray-50/90 px-4 py-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[12px] font-bold text-gray-800 leading-snug">
+                          {'Vyžadovat registraci pro vyplnění dotazníku'}
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={form.surveyRequireFullRegistration}
+                          onClick={() =>
+                            upd({ surveyRequireFullRegistration: !form.surveyRequireFullRegistration })
+                          }
+                          className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+                            form.surveyRequireFullRegistration ? 'bg-emerald-600' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform ${
+                              form.surveyRequireFullRegistration ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-gray-500 leading-relaxed">
+                        {
+                          'Vypnuto: u záznamu DVPP i u celostránkového dotazníku stačí jméno, e-mail a telefon (bez školy a pozice).'
+                        }
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-900/90 leading-snug">
+                      {'Po úpravě článku nebo otázek nezapomeňte '}
+                      <strong>{'Uložit'}</strong>
+                      {' — hromadné odeslání bere uložený obsah z webináře.'}
+                    </div>
+
+                    <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Mail className="w-4 h-4 text-gray-600 shrink-0" />
+                        <span className="text-[12px] font-bold text-gray-700">{'Test e-mailu (Mandrill)'}</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500">
+                        {
+                          'Odešle náhled: shrnutí, seznam otázek kvízu a odkaz „Otevřít kvíz a dotazník“ (stejný jako po registraci). Vyžaduje MANDRILL_API_KEY na serveru.'
+                        }
+                      </p>
+                      <div className="flex flex-col sm:flex-row gap-2 sm:items-stretch">
+                        <input
+                          type="email"
+                          value={followupTestEmail}
+                          onChange={(e) => setFollowupTestEmail(e.target.value)}
+                          placeholder="vas@email.cz"
+                          className={`${inputCls} flex-1 min-w-0`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void handlePostFollowupTestSend()}
+                          disabled={followupSending}
+                          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#001161] text-white text-[13px] font-bold hover:opacity-95 disabled:opacity-40 shrink-0 sm:w-auto w-full"
+                        >
+                          {followupSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
+                          {'Odeslat test'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {kvAndMailchimpBlocks}
+
+                    <div className="rounded-xl border border-[#001161]/10 bg-[#001161]/[0.03] p-4 space-y-3">
+                      <p className="text-[11px] text-gray-600 leading-relaxed">
+                        {
+                          'Stejný obsah jako u testu — odešle se všem unikátním příjemcům (KV + Mailchimp podle tagů výše). Před odesláním se znovu zeptáme v dialogu.'
+                        }
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void handleBulkPostFollowupSend()}
+                        disabled={
+                          bulkFollowupSending ||
+                          regCountLoading ||
+                          followupPreviewLoading ||
+                          ((followupPreview?.uniqueTotal ?? regCount ?? 0) <= 0)
+                        }
+                        className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl border-2 border-[#001161]/20 bg-[#001161] text-white text-[14px] font-bold hover:opacity-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={
+                          followupPreview
+                            ? `Unikátní příjemci: ${followupPreview.uniqueTotal}`
+                            : undefined
+                        }
+                      >
+                        {bulkFollowupSending ? (
+                          <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+                        ) : (
+                          <Send className="w-5 h-5 shrink-0" />
+                        )}
+                        <span>
+                          {'Odeslat záznam + dotazník ('}
+                          {followupPreviewLoading || regCountLoading
+                            ? '…'
+                            : followupPreview?.uniqueTotal ?? regCount ?? 0}
+                          {')'}
+                        </span>
+                      </button>
+                    </div>
                   </div>
                 )}
 
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void callDvppGenerate('questions')}
-                    disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
-                  >
-                    {generatingDvppQuestions ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji otázky…'}</>
-                    ) : (
-                      <><Sparkles className="w-4 h-4" />{'Generovat otázky z přepisu'}</>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void callDvppGenerate('learnings')}
-                    disabled={generatingDvppQuestions || generatingDvppLearnings || !form.prepis.trim()}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-[#001161] hover:opacity-95 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
-                  >
-                    {generatingDvppLearnings ? (
-                      <><Loader2 className="w-4 h-4 animate-spin" />{'Generuji článek…'}</>
-                    ) : (
-                      <><BookOpen className="w-4 h-4" />{'Generovat článek z přepisu'}</>
-                    )}
-                  </button>
-                </div>
-                <p className="text-[11px] text-gray-400 text-center leading-relaxed">
-                  {'Každé tlačítko volá Gemini zvlášť — můžete generovat jen otázky, jen článek, nebo postupně obojí.'}
-                </p>
-
-                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50/80 p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-gray-600 shrink-0" />
-                    <span className="text-[12px] font-bold text-gray-700">{'Test e-mailu (Mandrill)'}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-500">
-                    {
-                      'Odešle náhled: shrnutí, seznam otázek kvízu a odkaz „Otevřít kvíz a dotazník“ (stejný jako po registraci). Vyžaduje MANDRILL_API_KEY na serveru.'
-                    }
-                  </p>
-                  <div className="flex flex-col sm:flex-row gap-2 sm:items-stretch">
-                    <input
-                      type="email"
-                      value={followupTestEmail}
-                      onChange={(e) => setFollowupTestEmail(e.target.value)}
-                      placeholder="vas@email.cz"
-                      className={`${inputCls} flex-1 min-w-0`}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handlePostFollowupTestSend()}
-                      disabled={followupSending}
-                      className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-[#001161] text-white text-[13px] font-bold hover:opacity-95 disabled:opacity-40 shrink-0 sm:w-auto w-full"
-                    >
-                      {followupSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                      {'Odeslat test'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3">
-                  <div className="flex items-center gap-2">
-                    <BookOpen className="w-4 h-4 text-[#7C3AED] shrink-0" />
-                    <span className="text-[12px] font-bold text-[#001161]">{'Co jsme se na webináři dozvěděli (do e-mailu)'}</span>
-                  </div>
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    {'Dlouhý text z přepisu — stejný obsah můžete použít v Mailchimp nebo v follow-up e-mailu. Upravujte přímo v náhledu (formátování jako v editoru).'}
-                  </p>
-                  <WebinarLearningsRichEditor
-                    key={`${selected?.id ?? 'new'}-${learningsRemountKey}`}
-                    value={form.postWebinarLearningsHtml}
-                    onChange={(html) => upd({ postWebinarLearningsHtml: html })}
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCopyLearningsBlock}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-[12px] font-bold text-gray-700 hover:bg-gray-50"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      {'Kopírovat blok pro e-mail'}
-                    </button>
-                  </div>
-                </div>
-
-                {form.postWebinarQuizQuestions.length > 0 && (
-                  <div className="space-y-4">
-                    {form.postWebinarQuizQuestions.map((q, qi) => (
-                      <div key={q.id} className="rounded-xl border border-gray-200 p-4 space-y-3 bg-gray-50/80">
-                        <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1">
-                          {`Otázka ${qi + 1}`}
-                        </div>
-                        <label className="block">
-                          <span className="sr-only">Text otázky</span>
-                          <textarea
-                            value={q.label}
-                            onChange={(e) => updateQuizQuestion(qi, { label: e.target.value })}
-                            rows={2}
-                            className={textareaCls + ' w-full bg-white'}
-                          />
-                        </label>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                          {q.options.map((opt, oi) => (
-                            <label key={oi} className="block text-[11px] font-semibold text-gray-500">
-                              {`Možnost ${oi + 1}`}
-                              <input
-                                type="text"
-                                value={opt}
-                                onChange={(e) => updateQuizOption(qi, oi, e.target.value)}
-                                className={`${inputCls} mt-1 w-full bg-white`}
+                {dotaznikSubTab === 'dotaznik' && (
+                  <>
+                    {form.postWebinarQuizQuestions.length > 0 ? (
+                      <div className="space-y-4">
+                        {form.postWebinarQuizQuestions.map((q, qi) => (
+                          <div key={q.id} className="rounded-xl border border-gray-200 p-4 space-y-3 bg-gray-50/80">
+                            <div className="text-[11px] font-bold text-gray-400 uppercase tracking-wide mb-1">
+                              {`Otázka ${qi + 1}`}
+                            </div>
+                            <label className="block">
+                              <span className="sr-only">Text otázky</span>
+                              <textarea
+                                value={q.label}
+                                onChange={(e) => updateQuizQuestion(qi, { label: e.target.value })}
+                                rows={2}
+                                className={textareaCls + ' w-full bg-white'}
                               />
                             </label>
-                          ))}
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[11px] font-bold text-gray-500">{'Správná odpověď'}</span>
-                          <select
-                            value={q.correctIndex ?? 0}
-                            onChange={(e) =>
-                              updateQuizQuestion(qi, { correctIndex: Number(e.target.value) as 0 | 1 | 2 | 3 })
-                            }
-                            className="text-[13px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
-                          >
-                            {[0, 1, 2, 3].map((i) => (
-                              <option key={i} value={i}>{`Možnost ${i + 1}`}</option>
-                            ))}
-                          </select>
-                        </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              {q.options.map((opt, oi) => (
+                                <label key={oi} className="block text-[11px] font-semibold text-gray-500">
+                                  {`Možnost ${oi + 1}`}
+                                  <input
+                                    type="text"
+                                    value={opt}
+                                    onChange={(e) => updateQuizOption(qi, oi, e.target.value)}
+                                    className={`${inputCls} mt-1 w-full bg-white`}
+                                  />
+                                </label>
+                              ))}
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-[11px] font-bold text-gray-500">{'Správná odpověď'}</span>
+                              <select
+                                value={q.correctIndex ?? 0}
+                                onChange={(e) =>
+                                  updateQuizQuestion(qi, { correctIndex: Number(e.target.value) as 0 | 1 | 2 | 3 })
+                                }
+                                className="text-[13px] border border-gray-200 rounded-lg px-2 py-1.5 bg-white"
+                              >
+                                {[0, 1, 2, 3].map((i) => (
+                                  <option key={i} value={i}>{`Možnost ${i + 1}`}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    ) : (
+                      <p className="text-[12px] text-gray-500 px-1 py-2">
+                        {'Zatím žádné otázky — použijte tlačítko „Generovat otázky z přepisu“ výše.'}
+                      </p>
+                    )}
 
                 <div className="mt-6 pt-6 border-t border-gray-200 space-y-4">
                   <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
@@ -2239,18 +2410,10 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     </div>
                   )}
                 </div>
+                  </>
+                )}
 
-                {selected?.id ? (
-                  <div className="mt-6 rounded-2xl border border-emerald-200 overflow-hidden bg-white shadow-sm">
-                    <WebinarSurveyResponsesPanel
-                      webinarId={String(selected.id)}
-                      title="Odpovědi účastníků"
-                      subtitle="Shromážděné odpovědi z kvízu DVPP, druhé části zpětné vazby a vlastních otázek — podle aktuálního záznamu webináře v CMS."
-                      showPublicLinkToolbar
-                    />
-                  </div>
-                ) : null}
-
+                {(dotaznikSubTab === 'clanek' || dotaznikSubTab === 'dotaznik') && (
                 <div className="mt-2 pt-4 border-t border-gray-200 space-y-2">
                   <button
                     type="button"
@@ -2262,9 +2425,10 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     {saving ? 'Ukládám…' : 'Uložit otázky a článek do webináře'}
                   </button>
                   <p className="text-[11px] text-gray-400 text-center leading-relaxed">
-                    {'Stejné tlačítko je i v horní liště vedle názvu webináře.'}
+                    {'Stejné tlačítko je i nahoře v podzáložkách (fialové Uložit).'}
                   </p>
                 </div>
+                )}
               </div>
             )}
 
