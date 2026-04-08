@@ -1160,7 +1160,7 @@ export function WebinarDvppCertificateSuccess({
         ) : null}
         <p style={FF} className="mt-4 text-[12px] text-[#001161]/45">
           {
-            'V Chrome nebo Edge v okně tisku zvolte „Uložit jako PDF“. Obsah potvrzení odpovídá údajům o webináři a vaší registraci.'
+            'V Chrome nebo Edge v okně tisku zvolte „Uložit jako PDF“. Obsah potvrzení odpovídá údajům o webináři a údajům v certifikátu.'
           }
         </p>
       </div>
