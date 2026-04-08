@@ -79,11 +79,14 @@ const WEBINAR_EMAIL_DARK_HEAD = `<meta name="color-scheme" content="light dark">
 const WEBINAR_EMAIL_SUBJECT_PREFIX = '🔴 ';
 
 /**
- * Veřejná doména webu (odkazy v e-mailech a JSON po /webinar-registrace, připomínky).
- * Produkce na vividbooks.com: nastav v Supabase → Edge Functions → Secrets:
+ * Veřejná báze URL webu (odkazy v e-mailech a JSON po /webinar-registrace, připomínky).
+ * Pro ostrý web na vlastní doméně: Supabase → Edge Functions → Secrets např.
  * PUBLIC_SITE_URL=https://www.vividbooks.com
- * Bez secretu: lokální dev na http://localhost:3000 (sjednoceno s běžným dev serverem).
+ * Bez PUBLIC_SITE_URL: výchozí je GitHub Pages (stejný `base` jako ve vite.config.ts u GITHUB_ACTIONS).
+ * Pro lokální test e-mailů: PUBLIC_SITE_URL=http://localhost:3000
  */
+const DEFAULT_PUBLIC_SITE_ORIGIN_GITHUB_PAGES = 'https://vividbooks.github.io/VIVIDBOOKS_WEB_ESHOP';
+
 function normalizePublicSiteOrigin(raw: string): string {
   let s = raw.replace(/\/$/, '');
   try {
@@ -104,7 +107,7 @@ function normalizePublicSiteOrigin(raw: string): string {
 function getPublicSiteOrigin(): string {
   const u = Deno.env.get('PUBLIC_SITE_URL')?.trim();
   if (u) return normalizePublicSiteOrigin(u);
-  return 'http://localhost:3000';
+  return normalizePublicSiteOrigin(DEFAULT_PUBLIC_SITE_ORIGIN_GITHUB_PAGES);
 }
 
 app.use('*', cors());
