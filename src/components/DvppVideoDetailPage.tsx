@@ -6,6 +6,7 @@ import { useDvppVideos } from '../contexts/DvppVideosContext';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { SEOHead } from './SEOHead';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { absoluteAppUrl } from '../utils/appBaseUrl';
 
 const ff = "'Fenomen Sans', sans-serif";
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -211,13 +212,14 @@ export function DvppVideoDetailPage() {
     certMode === 'survey'
       ? surveySlug
         ? (() => {
-            const origin = typeof window !== 'undefined' ? window.location.origin : '';
-            const path = `/webinar/${encodeURIComponent(surveySlug)}/dvpp-dotaznik`;
+            /** Stejná cesta jako v routeru (`webinar/:id/dvpp-dotaznik`); `absoluteAppUrl` doplní basename na GH Pages. */
+            const path = `webinar/${encodeURIComponent(surveySlug)}/dvpp-dotaznik`;
             const em = (emailFromUrl || form.email || '').trim().toLowerCase();
-            if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
-              return `${origin}${path}?email=${encodeURIComponent(em)}`;
-            }
-            return `${origin}${path}`;
+            const qs =
+              em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)
+                ? `?email=${encodeURIComponent(em)}`
+                : '';
+            return typeof window !== 'undefined' ? absoluteAppUrl(`${path}${qs}`) : '';
           })()
         : ''
       : String(video?.certificateUrl || '').trim();
