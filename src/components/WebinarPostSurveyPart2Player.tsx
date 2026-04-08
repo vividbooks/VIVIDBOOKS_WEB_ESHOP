@@ -30,7 +30,6 @@ function canAdvance(
   answers: Record<string, string>,
 ): boolean {
   if (step.type === 'intro') return true;
-  if (step.type === 'open') return true;
   return !!answers[step.id]?.trim();
 }
 

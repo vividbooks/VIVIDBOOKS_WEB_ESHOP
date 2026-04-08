@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Check, ClipboardList, Loader2 } from 'lucide-react';
-import type { PostWebinarQuizQuestion, Webinar } from '../data/webinars';
+import type { PostWebinarQuizQuestion, Webinar, WebinarSurveyQuestion } from '../data/webinars';
 import {
   getMergedWebinarSurveyQuestions,
   getPostWebinarPart2AnswerIds,
@@ -18,6 +18,14 @@ import { saveWebinarSurveyPartialAnswer } from '../utils/webinarSurveyPartialSav
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
+
+function isRestQuestionAnswered(q: WebinarSurveyQuestion, answers: Record<string, string>): boolean {
+  const v = (answers[q.id] || '').trim();
+  if (q.type === 'open') return v.length > 0;
+  if (q.type === 'abc') return v.length > 0;
+  if (q.type === 'yes_no') return v === 'yes' || v === 'no';
+  return true;
+}
 
 /** Jen lokální `npm run dev` — přeskočení na konec (certifikát) bez vyplňování. */
 function DevPostSurveySkipBar({
@@ -140,6 +148,11 @@ export function WebinarPostSurvey({
   const [restPartialFlashId, setRestPartialFlashId] = useState<string | null>(null);
   const [restPartialErr, setRestPartialErr] = useState('');
 
+  const restQuestionsComplete = useMemo(
+    () => restQuestions.every((q) => isRestQuestionAnswered(q, answers)),
+    [restQuestions, answers],
+  );
+
   useEffect(() => {
     onAnswersChange?.(answers);
   }, [answers, onAnswersChange]);
@@ -213,6 +226,10 @@ export function WebinarPostSurvey({
   }, []);
 
   const submit = useCallback(async () => {
+    if (restQuestions.length > 0 && !restQuestionsComplete) {
+      setError('Vyplňte prosím všechny otázky v této části.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -249,7 +266,7 @@ export function WebinarPostSurvey({
     } finally {
       setSubmitting(false);
     }
-  }, [answers, email, webinar.id]);
+  }, [answers, email, webinar.id, restQuestions.length, restQuestionsComplete]);
 
   const savePartialAnswer = useCallback(
     async (questionId: string, value: string) => {
@@ -653,7 +670,7 @@ export function WebinarPostSurvey({
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={submitting}
+          disabled={submitting || (restQuestions.length > 0 && !restQuestionsComplete)}
           onClick={submit}
           className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-5 py-2.5 text-[14px] font-bold text-white shadow-lg shadow-[#001161]/20 transition-all hover:scale-[1.02] disabled:opacity-50"
           style={FF}
