@@ -1258,19 +1258,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   {'Žádné kontakty s tímto tagem v Mailchimpu (nebo tag v audience neexistuje).'}
                 </p>
               ) : (
-                <table className="w-full min-w-[820px] text-left text-[11px]">
+                <table className="w-full min-w-[780px] text-left text-[11px]">
                   <thead>
                     <tr className="border-b border-amber-200/80 bg-white">
                       <th className="px-3 py-2 font-bold text-gray-500">Jméno</th>
                       <th className="px-3 py-2 font-bold text-gray-500">E-mail</th>
-                      <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
-                      <th className="px-3 py-2 font-bold text-gray-500">Škola / org.</th>
-                      <th
-                        className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
-                        title="Stav členství v Mailchimpu"
-                      >
-                        {'Stav (MC)'}
-                      </th>
                       <th
                         className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
                         title="Úspěšné odeslání e-mailu se záznamem z administrace (Mandrill)"
@@ -1282,6 +1274,14 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                         title="První otevření — webhook Mandrill (open), pokud je nastavený"
                       >
                         {'Otevřeno'}
+                      </th>
+                      <th className="px-3 py-2 font-bold text-gray-500">Telefon</th>
+                      <th className="px-3 py-2 font-bold text-gray-500">Škola / org.</th>
+                      <th
+                        className="px-3 py-2 font-bold text-gray-500 whitespace-nowrap"
+                        title="Stav členství v Mailchimpu"
+                      >
+                        {'Stav (MC)'}
                       </th>
                     </tr>
                   </thead>
@@ -1305,11 +1305,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                             {[r.firstName, r.lastName].filter(Boolean).join(' ') || '—'}
                           </td>
                           <td className="px-3 py-2 font-mono text-[10px] text-gray-700">{r.email || '—'}</td>
-                          <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
-                          <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={r.school}>
-                            {r.school?.trim() || '—'}
-                          </td>
-                          <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status || '—'}</td>
                           <td className="px-3 py-2 text-gray-600 whitespace-nowrap text-[10px]">
                             {fmtIso(tr?.sentAt) || '—'}
                           </td>
@@ -1325,6 +1320,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                               '—'
                             )}
                           </td>
+                          <td className="px-3 py-2 text-gray-600 font-mono text-[10px]">{r.phone?.trim() || '—'}</td>
+                          <td className="px-3 py-2 text-gray-600 max-w-[200px] truncate" title={r.school}>
+                            {r.school?.trim() || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-gray-500 whitespace-nowrap">{r.status || '—'}</td>
                         </tr>
                       );
                     })}
@@ -1332,6 +1332,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                 </table>
               )}
             </div>
+            <p className="text-[10px] text-gray-500 px-1 pt-1.5 leading-snug">
+              {
+                'Sledování follow-upu: sloupce „Záznam e-mail“ a „Otevřeno“ jsou hned za sloupcem E-mail. Po odeslání z karty Dotazník → Poslat se vyplní datum odeslání; otevření doplní webhook Mandrill (pokud je nastavený).'
+              }
+            </p>
           </div>
         </details>
       </>
