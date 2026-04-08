@@ -221,9 +221,10 @@ export default function CatalogLayout() {
   const isSchoolCountsStep = isSchoolOrderView && orderStep === 2;
   const schoolOrderCount = itemCount + extraCount;
 
+  const searchParams = new URLSearchParams(location.search);
+
   /* ── distributor mode ──────────────────────────────────────── */
-  const isDistributorMode =
-    new URLSearchParams(location.search).get('mode') === 'distributor';
+  const isDistributorMode = searchParams.get('mode') === 'distributor';
 
   /* ── scroll to catalog section ─────────────────────────────── */
   const scrollToSection = (id: string) => {
@@ -290,8 +291,18 @@ export default function CatalogLayout() {
 
   /** Po webináři: `?dvppDotaznik=1` — jen DVPP/dotazník, bez katalogové navigace. */
   const isWebinarSurveyFullscreen =
-    /^\/webinar\/[^/]+$/.test(location.pathname) &&
-    new URLSearchParams(location.search).get('dvppDotaznik') === '1';
+    /^\/webinar\/[^/]+$/.test(location.pathname) && searchParams.get('dvppDotaznik') === '1';
+
+  /** Odkaz ze záznamu v e-mailu (`?email=…&from=email`) — jen obsah, bez bočního menu a horní lišty. */
+  const isZaznamFromEmailFullscreen =
+    /^\/webinare\/zaznam\/[^/]+$/.test(location.pathname) &&
+    String(searchParams.get('from') || '').toLowerCase() === 'email';
+
+  /** Stránka trial — bez katalogového chrome (stejně jako e-mailové vstupy). */
+  const isTrialPageFullscreen = location.pathname === '/vyzkousejte';
+
+  const isMinimalCatalogChrome =
+    isWebinarSurveyFullscreen || isZaznamFromEmailFullscreen || isTrialPageFullscreen;
 
   const catalogContextValue = {
     groupingMode, setGroupingMode,
@@ -302,11 +313,23 @@ export default function CatalogLayout() {
     isDownloadingPack,
   };
 
-  if (isWebinarSurveyFullscreen) {
+  if (isMinimalCatalogChrome) {
     return (
       <CatalogContext.Provider value={catalogContextValue}>
-        <div className="flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#E8EBF4]">
-          <main className="flex min-h-0 w-full flex-1 flex-col overflow-hidden">
+        <div
+          className={
+            isWebinarSurveyFullscreen
+              ? 'flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#E8EBF4]'
+              : 'min-h-dvh w-full bg-[#E8EBF4]'
+          }
+        >
+          <main
+            className={
+              isWebinarSurveyFullscreen
+                ? 'flex min-h-0 w-full flex-1 flex-col overflow-hidden'
+                : 'min-h-dvh w-full'
+            }
+          >
             <Outlet />
           </main>
         </div>

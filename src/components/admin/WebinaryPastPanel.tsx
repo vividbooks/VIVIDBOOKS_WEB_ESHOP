@@ -1905,6 +1905,44 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   {', jinak se po obnovení stránky ztratí.'}
                 </div>
 
+                <div className="rounded-xl border-2 border-dashed border-amber-300 bg-amber-50/90 p-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-200/90 px-2 py-0.5 rounded">
+                      DEV
+                    </span>
+                    <span className="text-[12px] font-bold text-amber-950">
+                      {'Follow-up e-mail: žluté tlačítko + modrý odkaz'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-amber-950/85 leading-relaxed">
+                    {
+                      'Přepíše „Otevřít záznam webináře“ a „Vyzkoušet Vividbooks…“. Platí i pro hromadné odeslání po uložení. Stejná pole jsou v záložce Úprava záznamu → Tlačítka a odkazy.'
+                    }
+                  </p>
+                  <Field
+                    label={'DEV — „Otevřít záznam webináře“ (žluté tlačítko)'}
+                    hint={'Plná https://… nebo cesta od kořene webu, např. /webinare/zaznam/…'}
+                  >
+                    <input
+                      value={form.devFollowupRecordingUrl}
+                      onChange={e => upd({ devFollowupRecordingUrl: e.target.value })}
+                      placeholder={'Prázdné = automaticky záznam + ?email & from=email'}
+                      className={inputCls + ' font-mono text-[12px]'}
+                    />
+                  </Field>
+                  <Field
+                    label={'DEV — „Vyzkoušet Vividbooks na 14 dní zdarma“ (modrý odkaz)'}
+                    hint={'Plná URL nebo cesta; prázdné = odkaz z pole „Odkaz“ u fialového CTA v Úprava záznamu.'}
+                  >
+                    <input
+                      value={form.devFollowupTrialUrl}
+                      onChange={e => upd({ devFollowupTrialUrl: e.target.value })}
+                      placeholder={'Prázdné = stejné jako „Odkaz“ u Vyzkoušejte'}
+                      className={inputCls + ' font-mono text-[12px]'}
+                    />
+                  </Field>
+                </div>
+
                 {!form.prepis.trim() && (
                   <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl">
                     <Info className="w-4 h-4 text-amber-500 shrink-0" />
