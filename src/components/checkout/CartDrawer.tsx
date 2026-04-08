@@ -5,7 +5,6 @@ import { X, ShoppingCart, Minus, Plus, Trash2, ArrowRight } from 'lucide-react';
 import { getCartLineKey, useCart } from '../../contexts/CartContext';
 import { useProducts } from '../../contexts/ProductsContext';
 import { getProductUnitPriceInHaler } from '../cartUpsellUtils';
-import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 import { BookCoverThumb } from './BookCoverThumb';
 
 function formatPrice(amountInHaler: number): string {
@@ -194,7 +193,6 @@ export function CartDrawer() {
                       />
                     ))}
                   </div>
-                  <InternalCartUpsellSection cartItems={items} />
                 </div>
 
                 <div className="border-t border-[#001161]/6 px-5 py-4 space-y-3">

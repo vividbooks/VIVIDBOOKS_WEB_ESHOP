@@ -1171,10 +1171,20 @@ app.post('/make-server-93a20b6f/admin/webinare', async (c) => {
 
 app.put('/make-server-93a20b6f/admin/webinare/:id', async (c) => {
   try {
-    const id = c.req.param('id');
+    const idParam = String(c.req.param('id'));
     const updates = await c.req.json();
     const items = await getCollection(WEBINARS_KEY);
-    const updated = items.map((i: any) => i.id === id ? { ...i, ...updates } : i);
+    let found = false;
+    const updated = items.map((i: any) => {
+      if (String(i?.id) === idParam) {
+        found = true;
+        return { ...i, ...updates };
+      }
+      return i;
+    });
+    if (!found) {
+      return c.json({ error: `Webinář id=${idParam} nebyl nalezen v úložišti (nesedí id?).` }, 404);
+    }
     await saveCollection(WEBINARS_KEY, updated);
     return c.json({ success: true });
   } catch (e: any) {
@@ -1184,9 +1194,13 @@ app.put('/make-server-93a20b6f/admin/webinare/:id', async (c) => {
 
 app.delete('/make-server-93a20b6f/admin/webinare/:id', async (c) => {
   try {
-    const id = c.req.param('id');
+    const idParam = String(c.req.param('id'));
     const items = await getCollection(WEBINARS_KEY);
-    await saveCollection(WEBINARS_KEY, items.filter((i: any) => i.id !== id));
+    const next = items.filter((i: any) => String(i?.id) !== idParam);
+    if (next.length === items.length) {
+      return c.json({ error: `Webinář id=${idParam} nebyl nalezen.` }, 404);
+    }
+    await saveCollection(WEBINARS_KEY, next);
     return c.json({ success: true });
   } catch (e: any) {
     return c.json({ error: `Chyba webinare DELETE: ${e.message}` }, 500);
@@ -2400,6 +2414,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const cal = computeWebinarRegistrationCalendarAndIcs(webinarId, merged, liveUrl);
     const { humanDate, hasSchedule, icsContent, icsBase64, gcalStr, outlookUrl } = cal;
 
+    const suppressLiveRegistrationEmail = isWebinarEventAlreadyPastForRegistration(webinarFromKv, merged);
+
     // ── Mandrill confirmation email ────────────────────────────────
     type MandrillSyncState = {
       ok: boolean;
@@ -2413,7 +2429,15 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     };
 
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
-    if (mandrillKey) {
+    if (suppressLiveRegistrationEmail) {
+      mandrillSync = {
+        ok: true,
+        skipped: true,
+        detail:
+          'Webinář již proběhl — potvrzovací e-mail s termínem a odkazem na přenos se neodesílá (např. registrace kvůli dotazníku po akci).',
+      };
+      console.log(`[Mandrill] Preskoceno (webinar uz probehl): ${webinarId} -> ${cleanEmail}`);
+    } else if (mandrillKey) {
       try {
         const payload = buildWebinarRegistrationConfirmationEmailPayload({
           webinarFromKv,
@@ -3462,6 +3486,34 @@ function webinarEndEpochMsPrague(w: {
   time?: string;
 }): number {
   return webinarStartEpochMsPrague(w) + webinarDefaultDurationMinutes(w as any) * 60 * 1000;
+}
+
+/** Po skončení akce neposílat „potvrzení registrace“ s termínem a live odkazem (např. přístup k dotazníku ze záznamu). */
+function isWebinarEventAlreadyPastForRegistration(
+  webinarFromKv: Record<string, unknown> | undefined,
+  merged: {
+    day: number;
+    monthNum: number;
+    year: number;
+    time: string;
+    monthName: string;
+    title: string;
+  },
+): boolean {
+  if (webinarFromKv && webinarFromKv.isPast === true) return true;
+  const hasSchedule =
+    Number.isFinite(merged.day) &&
+    Number.isFinite(merged.monthNum) &&
+    Number.isFinite(merged.year);
+  if (!hasSchedule) return false;
+  const w = {
+    ...(webinarFromKv || {}),
+    year: merged.year,
+    monthNum: merged.monthNum,
+    day: merged.day,
+    time: merged.time,
+  } as Record<string, unknown>;
+  return webinarEndEpochMsPrague(w as any) < Date.now();
 }
 
 async function markPastWebinarsInCollection(): Promise<{ updated: number }> {
