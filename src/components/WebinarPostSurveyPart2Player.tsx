@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import type { PostWebinarPart2Step } from '../data/webinars';
 import { SurveyFlowProgressBar } from './SurveyFlowProgressBar';
 
@@ -49,7 +49,6 @@ export function WebinarPostSurveyPart2Player({
   const total = steps.length;
   const [step, setStep] = useState(0);
   const [partialSaving, setPartialSaving] = useState(false);
-  const [partialOk, setPartialOk] = useState(false);
   const [partialErr, setPartialErr] = useState('');
 
   const current = total > 0 ? steps[step] : null;
@@ -62,7 +61,6 @@ export function WebinarPostSurveyPart2Player({
 
   useEffect(() => {
     setPartialErr('');
-    setPartialOk(false);
   }, [step]);
 
   const useFlowProgress =
@@ -72,15 +70,39 @@ export function WebinarPostSurveyPart2Player({
     setStep((s) => Math.max(0, s - 1));
   }, []);
 
-  const goNext = useCallback(() => {
+  const saveCurrentIfNeeded = useCallback(async (): Promise<boolean> => {
+    if (!onSavePartialAnswer || !current || current.type === 'intro') return true;
+    let v = '';
+    if (current.type === 'open' || current.type === 'abc') {
+      v = (answers[current.id] || '').trim();
+    } else {
+      return true;
+    }
+    if (!v) return true;
+    setPartialErr('');
+    setPartialSaving(true);
+    try {
+      await onSavePartialAnswer(current.id, v);
+      return true;
+    } catch (e) {
+      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+      return false;
+    } finally {
+      setPartialSaving(false);
+    }
+  }, [current, answers, onSavePartialAnswer]);
+
+  const goNext = useCallback(async () => {
     if (!current || total === 0) return;
     if (!canAdvance(current, answers)) return;
+    const ok = await saveCurrentIfNeeded();
+    if (!ok) return;
     if (step >= total - 1) {
       onComplete();
       return;
     }
     setStep((s) => s + 1);
-  }, [current, answers, step, total, onComplete]);
+  }, [current, answers, step, total, onComplete, saveCurrentIfNeeded]);
 
   const handleSavePartial = useCallback(async () => {
     if (!current || current.type === 'intro' || !onSavePartialAnswer) return;
@@ -94,12 +116,9 @@ export function WebinarPostSurveyPart2Player({
     }
     if (!v) return;
     setPartialErr('');
-    setPartialOk(false);
     setPartialSaving(true);
     try {
       await onSavePartialAnswer(current.id, v);
-      setPartialOk(true);
-      window.setTimeout(() => setPartialOk(false), 2200);
     } catch (e) {
       setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
     } finally {
@@ -196,12 +215,6 @@ export function WebinarPostSurveyPart2Player({
                     {partialErr}
                   </p>
                 ) : null}
-                {partialOk ? (
-                  <p style={FF} className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
-                    <Check className="h-4 w-4 shrink-0" />
-                    {'Ulo\u017eeno'}
-                  </p>
-                ) : null}
               </div>
             ) : null}
           </div>
@@ -283,12 +296,6 @@ export function WebinarPostSurveyPart2Player({
                   {partialErr}
                 </p>
               ) : null}
-              {partialOk ? (
-                <p style={FF} className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
-                  <Check className="h-4 w-4 shrink-0" />
-                  {'Ulo\u017eeno'}
-                </p>
-              ) : null}
             </div>
           ) : null}
           <p style={{ ...FF }} className="mt-4 text-center text-[12px] text-slate-400 sm:mt-5">
@@ -301,7 +308,7 @@ export function WebinarPostSurveyPart2Player({
     );
   };
 
-  const nextDisabled = !canAdvance(current, answers);
+  const nextDisabled = !canAdvance(current, answers) || partialSaving;
 
   if (!fs) {
     return (

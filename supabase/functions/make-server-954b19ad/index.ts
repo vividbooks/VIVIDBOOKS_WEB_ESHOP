@@ -2533,6 +2533,88 @@ app.post("/make-server-954b19ad/crm/build-school-cache", async (c) => {
   }
 });
 
+/** Sdílené stavy objíždění škol (Pipedrive org id → checkboxy). Ukládá se do kv_store. */
+const SCHOOL_TOUR_FLAGS_KEY = "school_tour_flags";
+
+function sanitizeSchoolTourFlags(raw: any): Record<string, boolean> {
+  const keys = ["vitekVisited", "vitekPlanned", "ivetaVisited", "ivetaPlanned", "danVisited", "danPlanned"];
+  const out: Record<string, boolean> = {};
+  for (const k of keys) {
+    out[k] = Boolean(raw?.[k]);
+  }
+  return out;
+}
+
+app.get("/make-server-954b19ad/crm/school-tour-flags", async (c) => {
+  try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const data = (await kv.get(SCHOOL_TOUR_FLAGS_KEY)) || { flags: {} };
+    const flags = data.flags && typeof data.flags === "object" ? data.flags : {};
+    return c.json({
+      success: true,
+      flags,
+      updatedAt: data.updatedAt ?? null,
+    });
+  } catch (error: any) {
+    console.error("[CRM] school-tour-flags GET:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Jedna škola (celý objekt příznaků)
+app.post("/make-server-954b19ad/crm/school-tour-flags", async (c) => {
+  try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const body = await c.req.json();
+    const orgId = Number(body.orgId);
+    if (!Number.isFinite(orgId) || orgId <= 0) {
+      return c.json({ error: "orgId required" }, 400);
+    }
+    const flags = sanitizeSchoolTourFlags(body.flags);
+    const prev = (await kv.get(SCHOOL_TOUR_FLAGS_KEY)) || { flags: {} };
+    const map = { ...(prev.flags || {}) };
+    map[String(orgId)] = flags;
+    await kv.set(SCHOOL_TOUR_FLAGS_KEY, {
+      flags: map,
+      updatedAt: new Date().toISOString(),
+    });
+    return c.json({ success: true, orgId, flags });
+  } catch (error: any) {
+    console.error("[CRM] school-tour-flags POST:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
+// Hromadné sloučení (migrace z localStorage / hromadná úprava)
+app.put("/make-server-954b19ad/crm/school-tour-flags", async (c) => {
+  try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const body = await c.req.json();
+    const incoming = body.flags;
+    if (!incoming || typeof incoming !== "object") {
+      return c.json({ error: "flags object required" }, 400);
+    }
+    const prev = (await kv.get(SCHOOL_TOUR_FLAGS_KEY)) || { flags: {} };
+    const map = { ...(prev.flags || {}) };
+    for (const [k, v] of Object.entries(incoming)) {
+      const id = Number(k);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      map[String(id)] = sanitizeSchoolTourFlags(v);
+    }
+    await kv.set(SCHOOL_TOUR_FLAGS_KEY, {
+      flags: map,
+      updatedAt: new Date().toISOString(),
+    });
+    return c.json({ success: true, count: Object.keys(map).length });
+  } catch (error: any) {
+    console.error("[CRM] school-tour-flags PUT:", error);
+    return c.json({ error: error.message }, 500);
+  }
+});
+
 
 // Gmail endpoints
 app.post("/make-server-954b19ad/gmail/messages", async (c) => {

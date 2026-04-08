@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import type { PostWebinarQuizQuestion } from '../data/webinars';
 import { SurveyFlowProgressBar } from './SurveyFlowProgressBar';
 
@@ -54,7 +54,6 @@ export function WebinarDvppQuizPlayer({
   const fs = variant === 'fullscreen';
   const total = questions.length;
   const [partialSaving, setPartialSaving] = useState(false);
-  const [partialOk, setPartialOk] = useState(false);
   const [partialErr, setPartialErr] = useState('');
   /** -1 = úvodní obrazovka, 0..total-1 = otázky */
   const [step, setStep] = useState(-1);
@@ -65,7 +64,6 @@ export function WebinarDvppQuizPlayer({
 
   useEffect(() => {
     setPartialErr('');
-    setPartialOk(false);
   }, [step]);
 
   /** Pruh jen pro otázky (úvod = žádný segment nevyplněný). */
@@ -81,30 +79,44 @@ export function WebinarDvppQuizPlayer({
     setStep((s) => Math.max(-1, s - 1));
   }, []);
 
-  const goNext = useCallback(() => {
+  const saveCurrentIfNeeded = useCallback(async (): Promise<boolean> => {
+    if (!onSavePartialAnswer || !currentQ || !selectedForCurrent) return true;
+    setPartialErr('');
+    setPartialSaving(true);
+    try {
+      await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+      return true;
+    } catch (e) {
+      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+      return false;
+    } finally {
+      setPartialSaving(false);
+    }
+  }, [currentQ, selectedForCurrent, onSavePartialAnswer]);
+
+  const goNext = useCallback(async () => {
     if (step === -1) {
       setStep(0);
       return;
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
+      const ok = await saveCurrentIfNeeded();
+      if (!ok) return;
       if (step === total - 1) {
         onComplete();
         return;
       }
       setStep((s) => s + 1);
     }
-  }, [step, total, selectedForCurrent, onComplete]);
+  }, [step, total, selectedForCurrent, onComplete, saveCurrentIfNeeded]);
 
   const handleSavePartial = useCallback(async () => {
     if (!currentQ || !selectedForCurrent || !onSavePartialAnswer) return;
     setPartialErr('');
-    setPartialOk(false);
     setPartialSaving(true);
     try {
       await onSavePartialAnswer(currentQ.id, selectedForCurrent);
-      setPartialOk(true);
-      window.setTimeout(() => setPartialOk(false), 2200);
     } catch (e) {
       setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
     } finally {
@@ -136,7 +148,11 @@ export function WebinarDvppQuizPlayer({
             type="button"
             onClick={goNext}
             disabled={
-              step === -1 ? false : step >= 0 && step < total ? !selectedForCurrent : true
+              step === -1
+                ? false
+                : step >= 0 && step < total
+                  ? !selectedForCurrent || partialSaving
+                  : true
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
             style={{ backgroundColor: PURPLE }}
@@ -261,12 +277,6 @@ export function WebinarDvppQuizPlayer({
                         {partialErr}
                       </p>
                     ) : null}
-                    {partialOk ? (
-                      <p style={FF} className="flex items-center gap-1.5 text-[12px] font-semibold text-emerald-600">
-                        <Check className="h-4 w-4 shrink-0" />
-                        {'Ulo\u017eeno'}
-                      </p>
-                    ) : null}
                   </div>
                 ) : null}
 
@@ -307,7 +317,13 @@ export function WebinarDvppQuizPlayer({
         <button
           type="button"
           onClick={goNext}
-          disabled={step === -1 ? false : step >= 0 && step < total ? !selectedForCurrent : true}
+          disabled={
+            step === -1
+              ? false
+              : step >= 0 && step < total
+                ? !selectedForCurrent || partialSaving
+                : true
+          }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
           aria-label={step === total - 1 ? 'Dokončit' : 'Další'}
         >
@@ -439,12 +455,6 @@ export function WebinarDvppQuizPlayer({
                         {partialErr ? (
                           <p style={FF} className="text-center text-[12px] text-red-600">
                             {partialErr}
-                          </p>
-                        ) : null}
-                        {partialOk ? (
-                          <p style={FF} className="flex items-center gap-1.5 text-[13px] font-semibold text-emerald-600">
-                            <Check className="h-4 w-4 shrink-0" />
-                            {'Ulo\u017eeno'}
                           </p>
                         ) : null}
                       </div>

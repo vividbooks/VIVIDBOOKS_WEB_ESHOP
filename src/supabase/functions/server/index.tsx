@@ -2746,6 +2746,129 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
 app.get('/make-server-93a20b6f/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
 app.get('/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
 
+/**
+ * Údaje pro certifikát DVPP (jméno + datum narození) — doplnění k existující registraci na webinář.
+ * Uloží do KV (`certificateParticipantName`, `birthDateIso`) a pokusí se aktualizovat kontakt v Mailchimp
+ * (stejná audience jako při registraci podle newsletter). Volitelné merge pole pro celé datum: secret MAILCHIMP_MERGE_BIRTHDATE.
+ */
+app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body.webinarId || '').trim();
+    const emailRaw = String(body.email || '').trim();
+    const participantName = String(body.participantName || '').trim();
+    const birthDateIso = String(body.birthDateIso || '').trim();
+
+    if (!webinarId || !emailRaw || !participantName) {
+      return c.json({ error: 'Chybí webinarId, e-mail nebo jméno.' }, 400);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birthDateIso)) {
+      return c.json({ error: 'Neplatné datum narození (očekává se YYYY-MM-DD).' }, 400);
+    }
+    const cleanEmail = emailRaw.toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return c.json({ error: 'Neplatný e-mail.' }, 400);
+    }
+
+    const key = `webinar_reg_${webinarId}_${cleanEmail}`;
+    const existing = await kv.get(key);
+    if (!existing || typeof existing !== 'object') {
+      return c.json({ error: 'Registrace na webinář nenalezena.' }, 404);
+    }
+
+    const reg = existing as Record<string, unknown>;
+    const merged = {
+      ...reg,
+      certificateParticipantName: participantName,
+      birthDateIso,
+      certificateProfileSavedAt: new Date().toISOString(),
+    };
+    await kv.set(key, merged);
+    console.log(`[Webinar] DVPP cert profil ulozen: ${cleanEmail} webinar=${webinarId}`);
+
+    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
+    const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
+    const newsletter = !!reg.newsletter;
+    const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+
+    type McMini = { ok: boolean; skipped?: boolean; detail?: string };
+    let mailchimp: McMini = { ok: false, skipped: true, detail: 'Mailchimp není nakonfigurován.' };
+
+    if (mcApiKey && audienceId) {
+      try {
+        const subscriberHash = md5(cleanEmail);
+        const dc = mcApiKey.split('-').pop() || 'us19';
+        const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+        const mcAuth = btoa(`anystring:${mcApiKey}`);
+        const nameParts = participantName.split(/\s+/).filter(Boolean);
+        const fname = nameParts[0] || '';
+        const lname = nameParts.slice(1).join(' ') || '';
+
+        const y = parseInt(birthDateIso.slice(0, 4), 10);
+        const m = parseInt(birthDateIso.slice(5, 7), 10);
+        const d = parseInt(birthDateIso.slice(8, 10), 10);
+        const ddmmyyyy = `${d}. ${m}. ${y}`;
+        const mmdd = `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`;
+
+        const checkRes = await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
+          method: 'GET',
+          headers: { 'Authorization': `Basic ${mcAuth}` },
+        });
+
+        if (checkRes.status === 404) {
+          mailchimp = {
+            ok: false,
+            skipped: true,
+            detail: 'Kontakt v této Mailchimp audience není — údaje jsou uložené jen u registrace.',
+          };
+        } else if (!checkRes.ok) {
+          const te = await checkRes.text();
+          mailchimp = { ok: false, detail: `Mailchimp GET: ${checkRes.status} ${te.slice(0, 200)}` };
+        } else {
+          const customTag = Deno.env.get('MAILCHIMP_MERGE_BIRTHDATE')?.trim();
+          const useBirthdayField = Deno.env.get('MAILCHIMP_USE_BIRTHDAY_FIELD') !== '0';
+
+          const mergeFields: Record<string, string> = { FNAME: fname, LNAME: lname };
+          if (customTag) mergeFields[customTag] = ddmmyyyy;
+          if (useBirthdayField) mergeFields['BIRTHDAY'] = mmdd;
+
+          const patchMember = async (fields: Record<string, string>) => {
+            return await fetch(`${mcBase}/lists/${audienceId}/members/${subscriberHash}`, {
+              method: 'PATCH',
+              headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ merge_fields: fields }),
+            });
+          };
+
+          let patchRes = await patchMember(mergeFields);
+          if (!patchRes.ok && useBirthdayField && mergeFields['BIRTHDAY']) {
+            const withoutBirth: Record<string, string> = { ...mergeFields };
+            delete withoutBirth['BIRTHDAY'];
+            patchRes = await patchMember(withoutBirth);
+          }
+          if (patchRes.ok) {
+            mailchimp = { ok: true };
+            console.log(`[Mailchimp] DVPP cert profil sync: ${cleanEmail}`);
+          } else {
+            const pe = await patchRes.text();
+            mailchimp = { ok: false, detail: `PATCH ${patchRes.status}: ${pe.slice(0, 220)}` };
+          }
+        }
+      } catch (mcErr: any) {
+        const msg = mcErr?.message || String(mcErr);
+        mailchimp = { ok: false, detail: msg };
+        console.log(`[Mailchimp] DVPP cert profil chyba: ${msg}`);
+      }
+    }
+
+    return c.json({ success: true, mailchimp });
+  } catch (err: any) {
+    console.log(`[Webinar] DVPP cert profil: ${err.message}`);
+    return c.json({ error: err?.message || 'Chyba' }, 500);
+  }
+});
+
 /* ── DVPP Video registrations ──────────────────────────────────── */
 app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
   try {

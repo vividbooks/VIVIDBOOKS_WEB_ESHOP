@@ -321,11 +321,11 @@ export const MapTab: React.FC = () => {
               zoom={defaultZoom}
               className="w-full h-full"
               ref={mapRef}
-              style={{ background: '#1C1C1E' }}
+              style={{ background: '#cfd8dc' }}
             >
               <TileLayer
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://carto.com/attributions">CARTO</a>'
+                url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
               />
               
               <FitBounds schools={schools} />

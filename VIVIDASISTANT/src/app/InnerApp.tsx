@@ -12,6 +12,7 @@ import { OutreachTab } from '@/app/components/tabs/OutreachTab';
 import { ScrapingTab } from '@/app/components/tabs/ScrapingTab';
 import { SettingsTab } from '@/app/components/tabs/SettingsTab';
 import { MapTab } from '@/app/components/tabs/MapTab';
+import { SchoolTourTab } from '@/app/components/tabs/SchoolTourTab';
 import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
 import { Onboarding } from '@/app/components/Onboarding';
 import { isAssistantEmailAllowed, isAssistantExtendedUi, isAssistantRagWebDictation } from '@/config/assistantAllowlist';
@@ -226,6 +227,8 @@ export const InnerApp: React.FC = () => {
         <ScrapingTab />
       ) : currentTab === 'map' ? (
         <MapTab />
+      ) : currentTab === 'schoolTour' ? (
+        <SchoolTourTab />
       ) : (
         <SettingsTab />
       )}

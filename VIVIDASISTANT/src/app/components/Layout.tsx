@@ -9,6 +9,7 @@ import {
   MapPin,
   Menu,
   Send,
+  Route,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'motion/react';
@@ -23,6 +24,7 @@ export type AssistantTabId =
   | 'outreach'
   | 'scraping'
   | 'map'
+  | 'schoolTour'
   | 'settings';
 
 type TabId = AssistantTabId;
@@ -128,6 +130,12 @@ function SidebarNav({
           onClick={() => go('map')}
           icon={<MapPin size={22} />}
           label="Mapa škol"
+        />
+        <NavItem
+          active={currentTab === 'schoolTour'}
+          onClick={() => go('schoolTour')}
+          icon={<Route size={22} />}
+          label="Objíždění škol"
         />
       </nav>
       <div className="mt-auto pt-4 w-full flex justify-center pb-2">
@@ -330,6 +338,19 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
                     <span>Mapa</span>
                 </button>
                 <button
+                    type="button"
+                    onClick={() => onTabChange('schoolTour')}
+                    className={clsx(
+                        'shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2',
+                        currentTab === 'schoolTour'
+                          ? 'bg-[#0A84FF] text-white shadow-lg shadow-blue-500/30'
+                          : 'bg-[#252525] text-[#8E8E93] active:bg-[#353535]',
+                    )}
+                >
+                    <Route size={16} />
+                    <span>Objíždění</span>
+                </button>
+                <button
                     onClick={() => onTabChange('settings')}
                     className={clsx(
                         "shrink-0 rounded-xl px-4 py-2.5 text-xs font-semibold transition-all flex items-center gap-2",
@@ -345,11 +366,11 @@ export const ResponsiveLayout: React.FC<ResponsiveLayoutProps> = ({
         {/* Scrollable Content */}
         <div className={clsx(
           "flex-1 flex flex-col",
-          (currentTab === 'dictation' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'tasks' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "overflow-hidden" : "overflow-y-auto scrollbar-hide"
+          (currentTab === 'dictation' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'tasks' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map' || currentTab === 'schoolTour') ? "overflow-hidden" : "overflow-y-auto scrollbar-hide"
         )}>
           <div className={clsx(
             "w-full flex min-h-0 flex-1 flex-col",
-            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map') ? "h-full min-h-0" : "",
+            (currentTab === 'tasks' || currentTab === 'agent' || currentTab === 'webOperator' || currentTab === 'outreach' || currentTab === 'scraping' || currentTab === 'map' || currentTab === 'schoolTour') ? "h-full min-h-0" : "",
             currentTab === 'dictation' ? "h-full max-w-5xl mx-auto" : "",
             currentTab === 'settings' ? "max-w-5xl mx-auto p-5 md:p-10 pb-[100px] md:pb-10" : ""
           )}>
