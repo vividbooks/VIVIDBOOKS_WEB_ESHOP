@@ -139,9 +139,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
 
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
-  /** `null` = probíhá ověření e-mailu v KV; `false` = zobrazit registraci; `true` = dotazník. */
-  const [surveyRegOk, setSurveyRegOk] = useState<boolean | null>(false);
-  const regCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** `false` = zobrazit registraci / light lead; `true` = dotazník. Ověření e-mailu vůči KV jen po kliknutí na Pokračovat. */
+  const [surveyRegOk, setSurveyRegOk] = useState(false);
   /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
   const [surveyDeepLink, setSurveyDeepLink] = useState(false);
   const [error, setError] = useState('');
@@ -209,7 +208,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       if (!webinar.isPast || postSurveyMerged.length === 0) return;
       setForm((prev) => ({ ...prev, email: em }));
       setSurveyDeepLink(true);
-      setSurveyRegOk(null);
+      setSurveyRegOk(false);
       window.history.replaceState({}, '', `${window.location.pathname}?dvppDotaznik=1`);
       return;
     }
@@ -367,6 +366,31 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       setError('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.');
       return;
     }
+    if (isSurveyFullPage && requireFullSurveyReg) {
+      const em = form.email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+        setError('Vypl\u0148te pros\u00edm platn\u00fd e-mail.');
+        return;
+      }
+      setSubmitting(true);
+      setError('');
+      try {
+        const checkRes = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/public/webinar-registration-check?webinarId=${encodeURIComponent(String(webinar.id))}&email=${encodeURIComponent(em)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const checkData = await checkRes.json().catch(() => ({}));
+        if (checkData.registered) {
+          setSurveyRegOk(true);
+          return;
+        }
+      } catch {
+        setError('Nepoda\u0159ilo se ov\u011b\u0159it registraci. Zkuste to pros\u00edm znovu.');
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -474,32 +498,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }
   };
 
-  useEffect(() => {
-    if (!isSurveyFullPage) return;
-    const em = form.email.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
-      setSurveyRegOk(false);
-      return;
-    }
-    setSurveyRegOk(null);
-    if (regCheckTimerRef.current) clearTimeout(regCheckTimerRef.current);
-    regCheckTimerRef.current = window.setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/public/webinar-registration-check?webinarId=${encodeURIComponent(String(webinar.id))}&email=${encodeURIComponent(em)}`,
-          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
-        );
-        const data = await res.json().catch(() => ({}));
-        setSurveyRegOk(!!data.registered);
-      } catch {
-        setSurveyRegOk(false);
-      }
-    }, 420);
-    return () => {
-      if (regCheckTimerRef.current) clearTimeout(regCheckTimerRef.current);
-    };
-  }, [isSurveyFullPage, webinar.id, form.email]);
-
   if (isSurveyFullPage) {
     if (needsDvppForSurveyFlag && dvppVideosLoading) {
       return (
@@ -518,27 +516,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
           <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
           <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/70">
             {'Na\u010d\u00edt\u00e1m nastaven\u00ed dotazn\u00edku\u2026'}
-          </p>
-        </div>
-      );
-    }
-    if (surveyRegOk === null) {
-      return (
-        <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-[#E8EBF4] px-6 py-16">
-          <SEOHead
-            title={`${webinar.title} — dotazník`}
-            path={`/webinar/${webinar.id}`}
-            description={`Dotazník po webináři: ${webinar.title}`}
-            jsonLd={webinarJsonLd({
-              name: webinar.title,
-              description: webinar.title,
-              startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
-            })}
-          />
-          <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
-          <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/70">
-            {'Ov\u011b\u0159uji registraci\u2026'}
           </p>
         </div>
       );

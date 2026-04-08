@@ -70,39 +70,26 @@ export function WebinarPostSurveyPart2Player({
     setStep((s) => Math.max(0, s - 1));
   }, []);
 
-  const saveCurrentIfNeeded = useCallback(async (): Promise<boolean> => {
-    if (!onSavePartialAnswer || !current || current.type === 'intro') return true;
-    let v = '';
-    if (current.type === 'open' || current.type === 'abc') {
-      v = (answers[current.id] || '').trim();
-    } else {
-      return true;
-    }
-    if (!v) return true;
-    setPartialErr('');
-    setPartialSaving(true);
-    try {
-      await onSavePartialAnswer(current.id, v);
-      return true;
-    } catch (e) {
-      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-      return false;
-    } finally {
-      setPartialSaving(false);
-    }
-  }, [current, answers, onSavePartialAnswer]);
-
-  const goNext = useCallback(async () => {
+  const goNext = useCallback(() => {
     if (!current || total === 0) return;
     if (!canAdvance(current, answers)) return;
-    const ok = await saveCurrentIfNeeded();
-    if (!ok) return;
+    if (onSavePartialAnswer && current.type !== 'intro') {
+      let v = '';
+      if (current.type === 'open' || current.type === 'abc') {
+        v = (answers[current.id] || '').trim();
+      }
+      if (v) {
+        void onSavePartialAnswer(current.id, v).catch((e) => {
+          setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+        });
+      }
+    }
     if (step >= total - 1) {
       onComplete();
       return;
     }
     setStep((s) => s + 1);
-  }, [current, answers, step, total, onComplete, saveCurrentIfNeeded]);
+  }, [current, answers, step, total, onComplete, onSavePartialAnswer]);
 
   const handleSavePartial = useCallback(async () => {
     if (!current || current.type === 'intro' || !onSavePartialAnswer) return;
@@ -308,7 +295,7 @@ export function WebinarPostSurveyPart2Player({
     );
   };
 
-  const nextDisabled = !canAdvance(current, answers) || partialSaving;
+  const nextDisabled = !canAdvance(current, answers);
 
   if (!fs) {
     return (

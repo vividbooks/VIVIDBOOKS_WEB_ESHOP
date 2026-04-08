@@ -79,37 +79,25 @@ export function WebinarDvppQuizPlayer({
     setStep((s) => Math.max(-1, s - 1));
   }, []);
 
-  const saveCurrentIfNeeded = useCallback(async (): Promise<boolean> => {
-    if (!onSavePartialAnswer || !currentQ || !selectedForCurrent) return true;
-    setPartialErr('');
-    setPartialSaving(true);
-    try {
-      await onSavePartialAnswer(currentQ.id, selectedForCurrent);
-      return true;
-    } catch (e) {
-      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-      return false;
-    } finally {
-      setPartialSaving(false);
-    }
-  }, [currentQ, selectedForCurrent, onSavePartialAnswer]);
-
-  const goNext = useCallback(async () => {
+  const goNext = useCallback(() => {
     if (step === -1) {
       setStep(0);
       return;
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
-      const ok = await saveCurrentIfNeeded();
-      if (!ok) return;
+      if (onSavePartialAnswer && currentQ && selectedForCurrent) {
+        void onSavePartialAnswer(currentQ.id, selectedForCurrent).catch((e) => {
+          setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+        });
+      }
       if (step === total - 1) {
         onComplete();
         return;
       }
       setStep((s) => s + 1);
     }
-  }, [step, total, selectedForCurrent, onComplete, saveCurrentIfNeeded]);
+  }, [step, total, selectedForCurrent, onComplete, onSavePartialAnswer, currentQ]);
 
   const handleSavePartial = useCallback(async () => {
     if (!currentQ || !selectedForCurrent || !onSavePartialAnswer) return;
@@ -151,7 +139,7 @@ export function WebinarDvppQuizPlayer({
               step === -1
                 ? false
                 : step >= 0 && step < total
-                  ? !selectedForCurrent || partialSaving
+                  ? !selectedForCurrent
                   : true
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
@@ -204,6 +192,11 @@ export function WebinarDvppQuizPlayer({
                 <p style={{ ...FF, color: NAVY }} className="mt-5 text-[14px] leading-relaxed opacity-90 sm:text-[15px]">
                   {'Po webináři '}
                   <span className="font-semibold">{`„${webinarTitle}“`}</span>
+                </p>
+                <p style={{ ...FF, color: NAVY }} className="mt-4 text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
+                  {
+                    'U každé otázky musíte vybrat odpověď — bez výběru se neposunete dál. Ukládání probíhá na pozadí, nemusíte na něj čekat.'
+                  }
                 </p>
               </motion.div>
             )}
@@ -321,7 +314,7 @@ export function WebinarDvppQuizPlayer({
             step === -1
               ? false
               : step >= 0 && step < total
-                ? !selectedForCurrent || partialSaving
+                ? !selectedForCurrent
                 : true
           }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
@@ -379,6 +372,11 @@ export function WebinarDvppQuizPlayer({
                     <p style={{ ...FF, color: NAVY }} className="mt-6 text-[15px] leading-relaxed opacity-90 sm:text-[16px]">
                       {'Po webináři '}
                       <span className="font-semibold">{`„${webinarTitle}“`}</span>
+                    </p>
+                    <p style={{ ...FF, color: NAVY }} className="mt-4 max-w-xl text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
+                      {
+                        'U každé otázky musíte vybrat odpověď — bez výběru se neposunete dál. Ukládání probíhá na pozadí, nemusíte na něj čekat.'
+                      }
                     </p>
                   </div>
                 </motion.div>

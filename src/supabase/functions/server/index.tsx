@@ -2843,7 +2843,7 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     const key = `webinar_reg_${webinarId}_${cleanEmail}`;
     let existing = (await kv.get(key)) as Record<string, unknown> | null | undefined;
 
-    /** Light lead / odeslaný dotazník / webinář bez povinné registrace nemají původně `webinar_reg_*` — doplníme před uložením certifikátu. */
+    /** Light lead / odeslaný dotazník nemusí mít `webinar_reg_*` — doplníme před uložením certifikátu (viz i bootstrap níže). */
     if (!existing || typeof existing !== 'object') {
       const lightKey = `webinar_survey_light_${webinarId}_${cleanEmail}`;
       const light = await kv.get(lightKey);
@@ -2878,12 +2878,17 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     if (!existing || typeof existing !== 'object') {
       const items = await getCollection(WEBINARS_KEY);
       const w = (items as any[]).find((x: any) => String(x.id) === String(webinarId));
-      if (w?.surveyRequireFullRegistration === false) {
+      /**
+       * Krok k certifikátu znamená dokončený dotazník — pokud v KV stále není `webinar_reg_*`
+       * (např. jen light lead, nebo starší data), doplníme záznam z údajů z tohoto formuláře.
+       * Dřívější podmínka `surveyRequireFullRegistration === false` nestačila (výchozí true / chybějící pole).
+       */
+      if (w) {
         existing = {
           name: participantName,
           email: cleanEmail,
           gdpr: true,
-          createdFromOpenSurveyCertificate: true,
+          createdFromCertificateBootstrap: true,
           createdAt: new Date().toISOString(),
         };
         await kv.set(key, existing);
