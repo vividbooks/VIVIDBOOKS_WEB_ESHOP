@@ -2817,9 +2817,9 @@ app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
 });
 
 /**
- * Údaje pro certifikát DVPP (jméno + datum narození) — doplnění k existující registraci na webinář.
- * Uloží do KV (`certificateParticipantName`, `birthDateIso`) a pokusí se aktualizovat kontakt v Mailchimp
- * (stejná audience jako při registraci podle newsletter). Volitelné merge pole pro celé datum: secret MAILCHIMP_MERGE_BIRTHDATE.
+ * Údaje pro certifikát DVPP (jméno + datum narození). **Nezávislé na registraci na webinář** — uloží do KV
+ * pod `webinar_reg_{webinarId}_{email}` (sloučení s existujícím záznamem nebo nový minimální z formuláře).
+ * Mailchimp: pokus o PATCH jen pokud kontakt v audience už existuje.
  */
 app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => {
   try {
@@ -2841,101 +2841,27 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     }
 
     const key = `webinar_reg_${webinarId}_${cleanEmail}`;
-    let existing = (await kv.get(key)) as Record<string, unknown> | null | undefined;
-
-    /** Light lead / odeslaný dotazník nemusí mít `webinar_reg_*` — doplníme před uložením certifikátu (viz i bootstrap níže). */
-    if (!existing || typeof existing !== 'object') {
-      const lightKey = `webinar_survey_light_${webinarId}_${cleanEmail}`;
-      const light = await kv.get(lightKey);
-      if (light && typeof light === 'object') {
-        existing = {
-          name: String((light as any).name || ''),
-          email: cleanEmail,
-          phone: String((light as any).phone || ''),
-          gdpr: true,
-          createdFromLightLeadForCertificate: true,
-          createdAt: new Date().toISOString(),
-        };
-        await kv.set(key, existing);
-      }
-    }
-
-    if (!existing || typeof existing !== 'object') {
-      const answerKey = `webinar_survey_${webinarId}_${md5(cleanEmail)}`;
-      const answered = (await kv.get(answerKey)) as { name?: string; email?: string } | null;
-      if (answered && typeof answered === 'object') {
-        existing = {
-          name: String(answered.name || participantName || '').trim() || participantName,
-          email: cleanEmail,
-          gdpr: true,
-          createdFromSurveyAnswersForCertificate: true,
-          createdAt: new Date().toISOString(),
-        };
-        await kv.set(key, existing);
-      }
-    }
-
-    if (!existing || typeof existing !== 'object') {
-      const partialKey = webinarSurveyPartialKey(webinarId, cleanEmail);
-      const partialDoc = (await kv.get(partialKey)) as { name?: string; answers?: Record<string, string> } | null;
-      if (partialDoc && typeof partialDoc === 'object') {
-        existing = {
-          name: String(partialDoc.name || participantName || '').trim() || participantName,
-          email: cleanEmail,
-          gdpr: true,
-          createdFromPartialSurveyForCertificate: true,
-          createdAt: new Date().toISOString(),
-        };
-        await kv.set(key, existing);
-      }
-    }
-
-    if (!existing || typeof existing !== 'object') {
-      const items = await getCollection(WEBINARS_KEY);
-      const w = (items as any[]).find(
-        (x: any) =>
-          String(x.id) === String(webinarId) || String(x.slug || '').trim() === String(webinarId),
-      );
-      /**
-       * Krok k certifikátu = dokončený dotazník v UI; `webinar_reg_*` může chybět (sync KV, slug vs id).
-       * Pokud webinář v kolekci najdeme (id nebo slug), doplníme z formuláře certifikátu.
-       */
-      if (w) {
-        existing = {
-          name: participantName,
-          email: cleanEmail,
-          gdpr: true,
-          createdFromCertificateBootstrap: true,
-          createdAt: new Date().toISOString(),
-        };
-        await kv.set(key, existing);
-      }
-    }
-
-    if (!existing || typeof existing !== 'object') {
-      /**
-       * Poslední záchrana: uživatel je na obrazovce certifikátu po průchodu dotazníkem — neblokovat
-       * kvůli prázdné kolekci WEBINARS v KV nebo neshodě id/slug mezi klientem a adminem.
-       */
-      existing = {
-        name: participantName,
-        email: cleanEmail,
-        gdpr: true,
-        createdFromCertificateBootstrap: true,
-        createdAt: new Date().toISOString(),
-      };
-      await kv.set(key, existing);
-    }
-
-    const reg = existing as Record<string, unknown>;
+    const prev = (await kv.get(key)) as Record<string, unknown> | null | undefined;
+    const base: Record<string, unknown> =
+      prev && typeof prev === 'object'
+        ? { ...prev }
+        : {
+            name: participantName,
+            email: cleanEmail,
+            gdpr: true,
+            createdFromCertificateOnly: true,
+            createdAt: new Date().toISOString(),
+          };
     const merged = {
-      ...reg,
+      ...base,
       certificateParticipantName: participantName,
       birthDateIso,
       certificateProfileSavedAt: new Date().toISOString(),
     };
     await kv.set(key, merged);
     console.log(`[Webinar] DVPP cert profil ulozen: ${cleanEmail} webinar=${webinarId}`);
+
+    const reg = merged as Record<string, unknown>;
 
     const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');

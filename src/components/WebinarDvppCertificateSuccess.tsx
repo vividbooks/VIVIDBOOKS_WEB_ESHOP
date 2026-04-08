@@ -1010,7 +1010,7 @@ export function WebinarDvppCertificateSuccess({
           </h2>
           <p style={FF} className="mt-2 text-[13px] leading-relaxed text-[#001161]/70">
             {
-              'Zkontrolujte jméno a doplňte datum narození. Údaje se uloží k registraci a do Mailchimpu (kontakt v téže audience) a propíšou se do tisku / PDF.'
+              'Zkontrolujte jméno a doplňte datum narození. Údaje se uloží pro certifikát (bez nutnosti být registrovaný na webinář). Mailchimp se doplní jen pokud tam už kontakt máte. Propíšou se do tisku a PDF.'
             }
           </p>
           <div className="mt-6 flex flex-col gap-4 text-left">
