@@ -1,4 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Bus,
   Loader2,
@@ -121,6 +129,129 @@ function schoolNameMatchesSearch(name: string, query: string): boolean {
   return foldCs(name).includes(foldCs(q));
 }
 
+function flagsEqual(a: SchoolTourFlags, b: SchoolTourFlags): boolean {
+  return (
+    a.vitekVisited === b.vitekVisited &&
+    a.vitekPlanned === b.vitekPlanned &&
+    a.ivetaVisited === b.ivetaVisited &&
+    a.ivetaPlanned === b.ivetaPlanned &&
+    a.danVisited === b.danVisited &&
+    a.danPlanned === b.danPlanned
+  );
+}
+
+type TourRowProps = {
+  school: CachedSchool;
+  flags: SchoolTourFlags;
+  primary: TourPrimaryCategory;
+  onToggleFlag: (id: number, patch: Partial<SchoolTourFlags>) => void;
+  onOpenDetail: (school: CachedSchool) => void;
+};
+
+const SchoolTourListRow = memo(
+  function SchoolTourListRow({ school, flags, primary, onToggleFlag, onOpenDetail }: TourRowProps) {
+    return (
+      <div className="p-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:gap-4 md:items-start [content-visibility:auto] [contain-intrinsic-size:auto_200px]">
+        <div className="min-w-0">
+          <div className="flex items-start gap-2 flex-wrap">
+            <span
+              className="inline-block w-2 h-2 rounded-full mt-1.5 shrink-0"
+              style={{ backgroundColor: TOUR_CATEGORY_COLORS[primary] }}
+              title={TOUR_CATEGORY_LABELS[primary]}
+            />
+            <div>
+              <div className="font-semibold text-white">{school.name}</div>
+              {school.address ? (
+                <div className="text-xs text-[#8E8E93] mt-0.5">{school.address}</div>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-3 flex flex-nowrap items-center gap-x-3 gap-y-0 overflow-x-auto pb-1 min-w-0 scrollbar-hide [-webkit-overflow-scrolling:touch]">
+            {TOUR_FLAG_LABELS.map(({ key, label }) => (
+              <label
+                key={key}
+                className="flex shrink-0 items-center gap-2 text-sm text-white/90 cursor-pointer select-none whitespace-nowrap"
+              >
+                <input
+                  type="checkbox"
+                  checked={flags[key]}
+                  onChange={(e) => onToggleFlag(school.id, { [key]: e.target.checked })}
+                  className="rounded border-white/30 bg-[#2C2C2E] text-[#0A84FF] focus:ring-[#0A84FF]"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 md:mt-0 flex md:flex-col md:items-end shrink-0">
+          <button
+            type="button"
+            onClick={() => void onOpenDetail(school)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0A84FF] hover:bg-[#0077ED] text-white text-sm font-medium w-full md:w-auto justify-center"
+          >
+            <ExternalLink size={16} />
+            CRM detail
+          </button>
+        </div>
+      </div>
+    );
+  },
+  (prev, next) =>
+    prev.school.id === next.school.id &&
+    prev.primary === next.primary &&
+    flagsEqual(prev.flags, next.flags) &&
+    prev.school.name === next.school.name &&
+    prev.school.address === next.school.address,
+);
+
+type TourMarkerProps = {
+  school: CachedSchool;
+  primary: TourPrimaryCategory;
+  onOpen: (school: CachedSchool) => void;
+};
+
+const SchoolTourMarker = memo(
+  function SchoolTourMarker({ school, primary, onOpen }: TourMarkerProps) {
+    const handlers = useMemo(
+      () => ({
+        click: () => {
+          void onOpen(school);
+        },
+      }),
+      [school, onOpen],
+    );
+    return (
+      <Marker
+        position={[school.lat, school.lng]}
+        icon={iconByCategory[primary]}
+        eventHandlers={handlers}
+      >
+        <Popup className="school-popup">
+          <div className="min-w-[200px] p-1">
+            <h3 className="font-bold text-base text-gray-900 mb-1">{school.name}</h3>
+            <p className="text-xs mb-2" style={{ color: TOUR_CATEGORY_COLORS[primary] }}>
+              {TOUR_CATEGORY_LABELS[primary]}
+            </p>
+            <button
+              type="button"
+              onClick={() => void onOpen(school)}
+              className="w-full py-2 bg-[#0A84FF] text-white rounded text-sm font-medium"
+            >
+              Otevřít CRM detail
+            </button>
+          </div>
+        </Popup>
+      </Marker>
+    );
+  },
+  (prev, next) =>
+    prev.school.id === next.school.id &&
+    prev.primary === next.primary &&
+    prev.school.lat === next.school.lat &&
+    prev.school.lng === next.school.lng &&
+    prev.school.name === next.school.name,
+);
+
 export const SchoolTourTab: React.FC = () => {
   const [schools, setSchools] = useState<CachedSchool[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -131,6 +262,8 @@ export const SchoolTourTab: React.FC = () => {
   const [visibleCategories, setVisibleCategories] =
     useState<Record<TourPrimaryCategory, boolean>>(defaultVisibleCategories);
   const [nameSearch, setNameSearch] = useState('');
+  /** Odlehčí filtrování při psaní do vyhledávání (velké seznamy). */
+  const deferredNameSearch = useDeferredValue(nameSearch);
 
   const [selectedSchool, setSelectedSchool] = useState<CachedSchool | null>(null);
   const [schoolDetail, setSchoolDetail] = useState<any | null>(null);
@@ -145,8 +278,8 @@ export const SchoolTourTab: React.FC = () => {
   );
 
   const regionalSchoolsByName = useMemo(
-    () => regionalSchools.filter((s) => schoolNameMatchesSearch(s.name, nameSearch)),
-    [regionalSchools, nameSearch],
+    () => regionalSchools.filter((s) => schoolNameMatchesSearch(s.name, deferredNameSearch)),
+    [regionalSchools, deferredNameSearch],
   );
 
   const updateFlags = useCallback((id: number, patch: Partial<SchoolTourFlags>) => {
@@ -207,7 +340,7 @@ export const SchoolTourTab: React.FC = () => {
     }
   };
 
-  const fetchSchoolDetail = async (school: CachedSchool) => {
+  const fetchSchoolDetail = useCallback(async (school: CachedSchool) => {
     setSelectedSchool(school);
     setSchoolDetail(null);
     setLoadingDetail(true);
@@ -226,7 +359,7 @@ export const SchoolTourTab: React.FC = () => {
     } finally {
       setLoadingDetail(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     void fetchFromCache();
@@ -297,40 +430,43 @@ export const SchoolTourTab: React.FC = () => {
     return c;
   }, [schoolsWithMeta]);
 
-  const toggleCategory = (cat: TourPrimaryCategory) => {
+  const toggleCategory = useCallback((cat: TourPrimaryCategory) => {
     setVisibleCategories((prev) => ({ ...prev, [cat]: !prev[cat] }));
-  };
+  }, []);
 
   const defaultCenter: [number, number] = [49.95, 14.45];
   const defaultZoom = 9;
 
-  const filterRow = (
-    <div className="flex flex-wrap gap-2 mt-3">
-      {(Object.keys(TOUR_CATEGORY_LABELS) as TourPrimaryCategory[]).map((cat) => (
-        <button
-          key={cat}
-          type="button"
-          onClick={() => toggleCategory(cat)}
-          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-            visibleCategories[cat]
-              ? 'border-white/20 bg-white/10'
-              : 'border-transparent bg-white/5 opacity-50'
-          }`}
-        >
-          <span
-            className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-            style={{ backgroundColor: TOUR_CATEGORY_COLORS[cat] }}
-          />
-          <span className="text-white/90">{TOUR_CATEGORY_LABELS[cat]}</span>
-          <span className="text-[#8E8E93]">({countsByCategory[cat]})</span>
-          {visibleCategories[cat] ? (
-            <Eye size={12} className="text-emerald-400" />
-          ) : (
-            <EyeOff size={12} className="text-gray-500" />
-          )}
-        </button>
-      ))}
-    </div>
+  const filterRow = useMemo(
+    () => (
+      <div className="flex flex-wrap gap-2 mt-3">
+        {(Object.keys(TOUR_CATEGORY_LABELS) as TourPrimaryCategory[]).map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => toggleCategory(cat)}
+            className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+              visibleCategories[cat]
+                ? 'border-white/20 bg-white/10'
+                : 'border-transparent bg-white/5 opacity-50'
+            }`}
+          >
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+              style={{ backgroundColor: TOUR_CATEGORY_COLORS[cat] }}
+            />
+            <span className="text-white/90">{TOUR_CATEGORY_LABELS[cat]}</span>
+            <span className="text-[#8E8E93]">({countsByCategory[cat]})</span>
+            {visibleCategories[cat] ? (
+              <Eye size={12} className="text-emerald-400" />
+            ) : (
+              <EyeOff size={12} className="text-gray-500" />
+            )}
+          </button>
+        ))}
+      </div>
+    ),
+    [countsByCategory, toggleCategory, visibleCategories],
   );
 
   const mapSelectedFlags = selectedSchool
@@ -500,52 +636,14 @@ export const SchoolTourTab: React.FC = () => {
             <div className="absolute inset-0 overflow-y-auto scrollbar-hide">
               <div className="divide-y divide-white/10">
                 {filteredForDisplay.map(({ school, flags, primary }) => (
-                  <div
+                  <SchoolTourListRow
                     key={school.id}
-                    className="p-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:gap-4 md:items-start"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-start gap-2 flex-wrap">
-                        <span
-                          className="inline-block w-2 h-2 rounded-full mt-1.5 shrink-0"
-                          style={{ backgroundColor: TOUR_CATEGORY_COLORS[primary] }}
-                          title={TOUR_CATEGORY_LABELS[primary]}
-                        />
-                        <div>
-                          <div className="font-semibold text-white">{school.name}</div>
-                          {school.address ? (
-                            <div className="text-xs text-[#8E8E93] mt-0.5">{school.address}</div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="mt-3 flex flex-nowrap items-center gap-x-3 gap-y-0 overflow-x-auto pb-1 min-w-0 scrollbar-hide [-webkit-overflow-scrolling:touch]">
-                        {TOUR_FLAG_LABELS.map(({ key, label }) => (
-                          <label
-                            key={key}
-                            className="flex shrink-0 items-center gap-2 text-sm text-white/90 cursor-pointer select-none whitespace-nowrap"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={flags[key]}
-                              onChange={(e) => updateFlags(school.id, { [key]: e.target.checked })}
-                              className="rounded border-white/30 bg-[#2C2C2E] text-[#0A84FF] focus:ring-[#0A84FF]"
-                            />
-                            {label}
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="mt-3 md:mt-0 flex md:flex-col md:items-end shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => void fetchSchoolDetail(school)}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0A84FF] hover:bg-[#0077ED] text-white text-sm font-medium w-full md:w-auto justify-center"
-                      >
-                        <ExternalLink size={16} />
-                        CRM detail
-                      </button>
-                    </div>
-                  </div>
+                    school={school}
+                    flags={flags}
+                    primary={primary}
+                    onToggleFlag={updateFlags}
+                    onOpenDetail={fetchSchoolDetail}
+                  />
                 ))}
               </div>
             </div>
@@ -563,28 +661,12 @@ export const SchoolTourTab: React.FC = () => {
               />
               <FitBounds schools={schoolsForMapBounds} />
               {filteredForDisplay.map(({ school, primary }) => (
-                <Marker
+                <SchoolTourMarker
                   key={school.id}
-                  position={[school.lat, school.lng]}
-                  icon={iconByCategory[primary]}
-                  eventHandlers={{ click: () => void fetchSchoolDetail(school) }}
-                >
-                  <Popup className="school-popup">
-                    <div className="min-w-[200px] p-1">
-                      <h3 className="font-bold text-base text-gray-900 mb-1">{school.name}</h3>
-                      <p className="text-xs mb-2" style={{ color: TOUR_CATEGORY_COLORS[primary] }}>
-                        {TOUR_CATEGORY_LABELS[primary]}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => void fetchSchoolDetail(school)}
-                        className="w-full py-2 bg-[#0A84FF] text-white rounded text-sm font-medium"
-                      >
-                        Otevřít CRM detail
-                      </button>
-                    </div>
-                  </Popup>
-                </Marker>
+                  school={school}
+                  primary={primary}
+                  onOpen={fetchSchoolDetail}
+                />
               ))}
             </MapContainer>
           )}
