@@ -193,11 +193,6 @@ export function WebinarDvppQuizPlayer({
                   {'Po webináři '}
                   <span className="font-semibold">{`„${webinarTitle}“`}</span>
                 </p>
-                <p style={{ ...FF, color: NAVY }} className="mt-4 text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
-                  {
-                    'U každé otázky musíte vybrat odpověď — bez výběru se neposunete dál. Ukládání probíhá na pozadí, nemusíte na něj čekat.'
-                  }
-                </p>
               </motion.div>
             )}
 
@@ -372,11 +367,6 @@ export function WebinarDvppQuizPlayer({
                     <p style={{ ...FF, color: NAVY }} className="mt-6 text-[15px] leading-relaxed opacity-90 sm:text-[16px]">
                       {'Po webináři '}
                       <span className="font-semibold">{`„${webinarTitle}“`}</span>
-                    </p>
-                    <p style={{ ...FF, color: NAVY }} className="mt-4 max-w-xl text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
-                      {
-                        'U každé otázky musíte vybrat odpověď — bez výběru se neposunete dál. Ukládání probíhá na pozadí, nemusíte na něj čekat.'
-                      }
                     </p>
                   </div>
                 </motion.div>
