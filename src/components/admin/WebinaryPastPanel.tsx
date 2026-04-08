@@ -69,7 +69,7 @@ interface FormState {
   postWebinarLearningsHtml: string;
   postWebinarQuizQuestions: PostWebinarQuizQuestion[];
   postWebinarPart2: PostWebinarPart2Step[];
-  /** Výchozí true — plná registrace před záznamem / dotazníkem; false = jen jméno, e-mail, telefon. */
+  /** Výchozí true — plná registrace před záznamem / dotazníkem; false = u záznamu jen kontakt; u ?dvppDotaznik=1 rovnou dotazník (e-mail při odeslání). */
   surveyRequireFullRegistration: boolean;
 }
 
@@ -1845,7 +1845,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   </div>
                   <p className="text-[11px] text-gray-500 leading-relaxed">
                     {
-                      'Vypnuto: u záznamu DVPP i u celostránkového dotazníku stačí jméno, e-mail a telefon (bez školy a pozice).'
+                      'Vypnuto: u záznamu DVPP stačí jméno, e-mail a telefon (bez školy a pozice). Celostránkový dotazník se otevře rovnou; e-mail a jméno při odeslání v dotazníku.'
                     }
                   </p>
                 </div>

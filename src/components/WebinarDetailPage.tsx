@@ -141,6 +141,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const [submitted, setSubmitted] = useState(false);
   /** `null` = probíhá ověření e-mailu v KV; `false` = zobrazit registraci; `true` = dotazník. */
   const [surveyRegOk, setSurveyRegOk] = useState<boolean | null>(false);
+  /** E-mail/jméno přímo v dotazníku, když není vyžadována registrace (`surveyRequireFullRegistration === false`). */
+  const [surveyOpenEmail, setSurveyOpenEmail] = useState('');
+  const [surveyOpenName, setSurveyOpenName] = useState('');
   const regCheckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
   const [surveyDeepLink, setSurveyDeepLink] = useState(false);
@@ -208,8 +211,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     if (isDvpp) {
       if (!webinar.isPast || postSurveyMerged.length === 0) return;
       setForm((prev) => ({ ...prev, email: em }));
+      setSurveyOpenEmail(em);
       setSurveyDeepLink(true);
-      setSurveyRegOk(null);
+      if (requireFullSurveyReg) setSurveyRegOk(null);
       window.history.replaceState({}, '', `${window.location.pathname}?dvppDotaznik=1`);
       return;
     }
@@ -221,7 +225,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       setSurveyDeepLink(true);
       window.history.replaceState({}, '', `${window.location.pathname}?dotaznik=1`);
     }
-  }, [webinar.id, webinar.isPast, postSurveyMerged.length, preSurveyQuestions.length]);
+  }, [webinar.id, webinar.isPast, postSurveyMerged.length, preSurveyQuestions.length, requireFullSurveyReg]);
 
   /** Scroll k #webinar-dotazník — jen před webinářem (deep link z připomínky). */
   useEffect(() => {
@@ -434,48 +438,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }
   };
 
-  const handleLightLeadSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name.trim() || !form.email.trim() || !form.phone.trim()) {
-      setError('Vyplňte prosím jméno, e-mail a telefon.');
-      return;
-    }
-    if (!form.gdpr) {
-      setError('Souhlas se zpracováním osobních údajů je povinný.');
-      return;
-    }
-    setSubmitting(true);
-    setError('');
-    try {
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/webinar-survey-light-lead`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-          body: JSON.stringify({
-            webinarId: webinar.id,
-            webinarTitle: webinar.title,
-            webinarSlug: webinar.slug || webinar.id,
-            name: form.name.trim(),
-            email: form.email.trim(),
-            phone: form.phone.trim(),
-            gdpr: true,
-          }),
-        },
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Odeslání se nezdařilo.');
-      setSurveyRegOk(true);
-    } catch (err: any) {
-      console.error('Webinar light lead error:', err);
-      setError(err.message || 'Nastala chyba při odesílání. Zkuste to prosím znovu.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   useEffect(() => {
-    if (!isSurveyFullPage) return;
+    if (!isSurveyFullPage || !requireFullSurveyReg) return;
     const em = form.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
       setSurveyRegOk(false);
@@ -498,7 +462,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     return () => {
       if (regCheckTimerRef.current) clearTimeout(regCheckTimerRef.current);
     };
-  }, [isSurveyFullPage, webinar.id, form.email]);
+  }, [isSurveyFullPage, requireFullSurveyReg, webinar.id, form.email]);
 
   if (isSurveyFullPage) {
     if (needsDvppForSurveyFlag && dvppVideosLoading) {
@@ -522,59 +486,57 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         </div>
       );
     }
-    if (surveyRegOk === null) {
-      return (
-        <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-[#E8EBF4] px-6 py-16">
-          <SEOHead
-            title={`${webinar.title} — dotazník`}
-            path={`/webinar/${webinar.id}`}
-            description={`Dotazník po webináři: ${webinar.title}`}
-            jsonLd={webinarJsonLd({
-              name: webinar.title,
-              description: webinar.title,
-              startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
-            })}
-          />
-          <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
-          <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/70">
-            {'Ov\u011b\u0159uji registraci\u2026'}
-          </p>
-        </div>
-      );
-    }
-    if (!surveyRegOk) {
-      return (
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3 }}
-          className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-[#E8EBF4]"
-        >
-          <SEOHead
-            title={`${webinar.title} — registrace`}
-            path={`/webinar/${webinar.id}`}
-            description={`Registrace a dotazník po webináři: ${webinar.title}`}
-            jsonLd={webinarJsonLd({
-              name: webinar.title,
-              description: webinar.title,
-              startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
-            })}
-          />
-          <div className="mx-auto grid w-full max-w-[560px] flex-1 content-start gap-4 px-4 py-8 sm:px-6">
-            <h1 className="font-['Cooper_Light',serif] text-center text-[26px] text-[#001161] sm:text-[30px]">
-              {requireFullSurveyReg
-                ? 'Nejd\u0159\u00edve registrace k webin\u00e1\u0159i'
-                : 'Nejd\u0159\u00edve vypl\u0148te kontakt'}
-            </h1>
-            <p className="text-center font-['Fenomen_Sans',sans-serif] text-[14px] leading-relaxed text-[#001161]/75">
-              {requireFullSurveyReg
-                ? 'Pro odesl\u00e1n\u00ed odpov\u011bd\u00ed v dotazn\u00edku mus\u00edte b\u00fdt p\u0159ihl\u00e1\u0161eni stejn\u00fdm e-mailem jako u registrace na webin\u00e1\u0159. Vypl\u0148te formul\u00e1\u0159 \u2014 po ulo\u017een\u00ed pokra\u010dujete k dotazn\u00edku.'
-                : 'Pro dokon\u010den\u00ed dotazn\u00edku pot\u0159ebujeme jm\u00e9no, e-mail a telefon. Po odesl\u00e1n\u00ed pokra\u010dujete k dotazn\u00edku.'}
+    if (requireFullSurveyReg) {
+      if (surveyRegOk === null) {
+        return (
+          <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-[#E8EBF4] px-6 py-16">
+            <SEOHead
+              title={`${webinar.title} — dotazník`}
+              path={`/webinar/${webinar.id}`}
+              description={`Dotazník po webináři: ${webinar.title}`}
+              jsonLd={webinarJsonLd({
+                name: webinar.title,
+                description: webinar.title,
+                startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
+                url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              })}
+            />
+            <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
+            <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/70">
+              {'Ov\u011b\u0159uji registraci\u2026'}
             </p>
-            <div className="rounded-[28px] bg-[#F0F2F8] px-5 py-8 md:px-10">
-              {requireFullSurveyReg ? (
+          </div>
+        );
+      }
+      if (!surveyRegOk) {
+        return (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-[#E8EBF4]"
+          >
+            <SEOHead
+              title={`${webinar.title} — registrace`}
+              path={`/webinar/${webinar.id}`}
+              description={`Registrace a dotazník po webináři: ${webinar.title}`}
+              jsonLd={webinarJsonLd({
+                name: webinar.title,
+                description: webinar.title,
+                startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
+                url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              })}
+            />
+            <div className="mx-auto grid w-full max-w-[560px] flex-1 content-start gap-4 px-4 py-8 sm:px-6">
+              <h1 className="font-['Cooper_Light',serif] text-center text-[26px] text-[#001161] sm:text-[30px]">
+                {'Nejd\u0159\u00edve registrace k webin\u00e1\u0159i'}
+              </h1>
+              <p className="text-center font-['Fenomen_Sans',sans-serif] text-[14px] leading-relaxed text-[#001161]/75">
+                {
+                  'Pro odesl\u00e1n\u00ed odpov\u011bd\u00ed v dotazn\u00edku mus\u00edte b\u00fdt p\u0159ihl\u00e1\u0161eni stejn\u00fdm e-mailem jako u registrace na webin\u00e1\u0159. Vypl\u0148te formul\u00e1\u0159 \u2014 po ulo\u017een\u00ed pokra\u010dujete k dotazn\u00edku.'
+                }
+              </p>
+              <div className="rounded-[28px] bg-[#F0F2F8] px-5 py-8 md:px-10">
                 <WebinarRegistrationFormFields
                   form={form}
                   notTeacher={notTeacher}
@@ -594,71 +556,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   positions={POSITIONS}
                   submitButtonText={'Pokra\u010dovat k dotazn\u00edku'}
                 />
-              ) : (
-                <form onSubmit={handleLightLeadSubmit} noValidate className="flex flex-col gap-3">
-                  <input
-                    type="text"
-                    required
-                    value={form.name}
-                    onChange={(e) => handleChange('name', e.target.value)}
-                    placeholder="Jméno a příjmení *"
-                    className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-                  />
-                  <input
-                    type="email"
-                    required
-                    value={form.email}
-                    onChange={(e) => handleChange('email', e.target.value)}
-                    placeholder="E-mail *"
-                    className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-                  />
-                  <input
-                    type="tel"
-                    required
-                    value={form.phone}
-                    onChange={(e) => handleChange('phone', e.target.value)}
-                    placeholder="Telefon *"
-                    className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-                  />
-                  <label className="mt-1 flex cursor-pointer items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={form.gdpr}
-                      onChange={() => handleChange('gdpr', !form.gdpr)}
-                      className="mt-1 h-4 w-4 shrink-0 rounded border-[#001161]/20 text-[#5B4FD8] focus:ring-[#5B4FD8]/30"
-                    />
-                    <span className="font-['Fenomen_Sans',sans-serif] text-[13px] leading-snug text-[#001161]/70">
-                      {'Souhlas\u00edm se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f podle\u00a0'}
-                      <a
-                        href="https://www.vividbooks.cz/gdpr"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-semibold text-[#5B4FD8] underline"
-                      >
-                        {'Z\u00e1sad ochrany osobn\u00edch \u00fadaj\u016f'}
-                      </a>
-                      {'. *'}
-                    </span>
-                  </label>
-                  {error && (
-                    <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-                      <AlertCircle className="h-4 w-4 shrink-0 text-red-500" />
-                      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-red-600">{error}</p>
-                    </div>
-                  )}
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    className="mt-2 w-full rounded-[14px] bg-[#FF8C00] py-4 font-['Fenomen_Sans',sans-serif] text-[16px] font-bold text-white shadow-[0_6px_20px_rgba(255,140,0,0.35)] transition-all hover:bg-[#e67d00] hover:scale-[1.02] active:scale-[0.98] disabled:opacity-60"
-                  >
-                    {submitting ? 'Odesílám…' : 'Pokračovat k dotazníku'}
-                  </button>
-                </form>
-              )}
+              </div>
             </div>
-          </div>
-        </motion.div>
-      );
+          </motion.div>
+        );
+      }
     }
     return (
       <motion.div
@@ -681,8 +583,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <WebinarPostSurvey
             webinar={webinar}
-            email={form.email}
-            participantName={form.name}
+            email={requireFullSurveyReg ? form.email : surveyOpenEmail}
+            participantName={requireFullSurveyReg ? form.name : surveyOpenName}
+            surveyIdentityInline={!requireFullSurveyReg}
+            onSurveyIdentityEmailChange={setSurveyOpenEmail}
+            onSurveyIdentityNameChange={setSurveyOpenName}
             onAnswersChange={onPostSurveyAnswersChange}
             scope="post"
             variant="fullscreen"
