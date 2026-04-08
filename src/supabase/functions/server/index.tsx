@@ -5828,8 +5828,26 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', a
     }
 
     const raw = await mailchimpFetchAllSegmentMembers(adminListId, hit.id, mcBase, mcAuth);
-    const members = await mailchimpEnrichMembersForAdmin(adminListId, raw, mcBase, mcAuth);
-    return c.json({ tag, members });
+    const lite =
+      c.req.query('lite') === '1' ||
+      c.req.query('lite') === 'true' ||
+      c.req.query('fast') === '1';
+    const members = lite
+      ? raw.map((m: any) => {
+        const mf = m.merge_fields || {};
+        return {
+          email: String(m.email_address || ''),
+          firstName: String(mf.FNAME || ''),
+          lastName: String(mf.LNAME || ''),
+          phone: String(mf.PHONE || ''),
+          status: String(m.status || ''),
+          school: '',
+          mergeExtra: '',
+          tags: [] as string[],
+        };
+      })
+      : await mailchimpEnrichMembersForAdmin(adminListId, raw, mcBase, mcAuth);
+    return c.json({ tag, members, lite: !!lite });
   } catch (err: any) {
     console.log(`[Admin] Mailchimp members JSON chyba: ${err.message}`);
     return c.json({ error: err?.message ? String(err.message) : 'Neznámá chyba při načítání Mailchimp kontaktů.' }, 500);

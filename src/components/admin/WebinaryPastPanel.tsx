@@ -406,10 +406,13 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       return;
     }
     let cancelled = false;
+    const ac = new AbortController();
+    const timeoutMs = 120_000;
+    const to = window.setTimeout(() => ac.abort(), timeoutMs);
     setMcListState((s) => ({ ...s, loading: true, error: null }));
     void fetch(
-      `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}`,
-      { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}?lite=1`,
+      { headers: { Authorization: `Bearer ${publicAnonKey}` }, signal: ac.signal },
     )
       .then(async (res) => {
         const raw = await res.text();
@@ -454,16 +457,27 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       })
       .catch((e: unknown) => {
         if (!cancelled) {
+          const msg =
+            e instanceof Error && e.name === 'AbortError'
+              ? `Časový limit (${timeoutMs / 1000} s) — Mailchimp odpovídá příliš dlouho. Zkuste znovu nebo Edge Function logy.`
+              : e instanceof Error
+                ? e.message
+                : 'Chyba načtení Mailchimp';
           setMcListState({
             loading: false,
             tag: null,
             rows: [],
-            error: e instanceof Error ? e.message : 'Chyba načtení Mailchimp',
+            error: msg,
           });
         }
+      })
+      .finally(() => {
+        window.clearTimeout(to);
       });
     return () => {
       cancelled = true;
+      ac.abort();
+      window.clearTimeout(to);
     };
   }, [selected?.id, isNew]);
 
