@@ -4145,6 +4145,9 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
       merged.postWebinarQuizQuestions = body.postWebinarQuizQuestions;
     }
 
+    const mailchimpTagOverride =
+      typeof (body as any)?.mailchimpTag === 'string' ? String((body as any).mailchimpTag).trim() : '';
+
     const prefix = `webinar_reg_${webinarId}_`;
     const registrations = (await kv.getByPrefix(prefix)) as any[];
     const list = Array.isArray(registrations) ? registrations : [];
@@ -4157,7 +4160,10 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
       }))
       .filter((r) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));
 
-    const mcData = await mailchimpFetchFollowupRecipientsForWebinar(w);
+    const mcData = await mailchimpFetchFollowupRecipientsForWebinar(
+      w,
+      mailchimpTagOverride || undefined,
+    );
     const recipients = mergeKvAndMailchimpFollowupRecipients(kvRecipients, mcData.rows);
 
     if (recipients.length === 0) {
@@ -4165,7 +4171,7 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
         kvRecipients.length === 0 && mcData.error
           ? ` ${mcData.error}`
           : kvRecipients.length === 0 && mcData.rows.length === 0
-            ? ' Zkontrolujte tag v Mailchimpu (stejný jako u registrace na webu).'
+            ? ' Zkontrolujte tag v Mailchimpu (výchozí = tag u registrace, nebo zvolený tag v adminu).'
             : '';
       return c.json(
         {
@@ -4240,6 +4246,9 @@ async function adminWebinarPostFollowupRecipientPreviewHandler(c: Context) {
     const w = items.find((x: any) => String(x.id) === String(webinarId)) as Record<string, unknown> | undefined;
     if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
 
+    const tagOverride =
+      c.req.query('mailchimpTag')?.trim() || c.req.query('tag')?.trim() || '';
+
     const prefix = `webinar_reg_${webinarId}_`;
     const registrations = (await kv.getByPrefix(prefix)) as any[];
     const list = Array.isArray(registrations) ? registrations : [];
@@ -4252,7 +4261,7 @@ async function adminWebinarPostFollowupRecipientPreviewHandler(c: Context) {
       }))
       .filter((r) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));
 
-    const mcData = await mailchimpFetchFollowupRecipientsForWebinar(w);
+    const mcData = await mailchimpFetchFollowupRecipientsForWebinar(w, tagOverride || undefined);
     const merged = mergeKvAndMailchimpFollowupRecipients(kvRecipients, mcData.rows);
     const overlap = kvRecipients.length + mcData.rows.length - merged.length;
     return c.json({
@@ -5656,8 +5665,11 @@ async function mailchimpWebinarTagCountCached(w: any): Promise<{ count: number |
   return { count, tag };
 }
 
-/** Kontakty z Mailchimp se stejným tagem jako u registrací na webinář (admin audience). */
-async function mailchimpFetchFollowupRecipientsForWebinar(w: any): Promise<{
+/** Kontakty z Mailchimp — výchozí stejný tag jako u registrací; `overrideTag` = přesný název tagu v audience. */
+async function mailchimpFetchFollowupRecipientsForWebinar(
+  w: any,
+  overrideTag?: string,
+): Promise<{
   rows: { email: string; name: string }[];
   tag: string;
   error?: string;
@@ -5668,7 +5680,10 @@ async function mailchimpFetchFollowupRecipientsForWebinar(w: any): Promise<{
     return { rows: [], tag: '', error: 'Mailchimp není nakonfigurován (MAILCHIMP_API_KEY / audience).' };
   }
   try {
-    const { tag } = await mailchimpWebinarTagCountCached(w);
+    const trimmed = typeof overrideTag === 'string' ? overrideTag.trim() : '';
+    const tag = trimmed
+      ? trimmed
+      : (await mailchimpWebinarTagCountCached(w)).tag;
     const dc = mcApiKey.split('-').pop() || 'us19';
     const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
     const mcAuth = btoa(`anystring:${mcApiKey}`);
@@ -5807,7 +5822,8 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-csv/:webinarId', async
     const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
     const mcAuth = btoa(`anystring:${mcApiKey}`);
 
-    const { tag } = await mailchimpWebinarTagCountCached(w);
+    const qTag = c.req.query('mailchimpTag')?.trim() || c.req.query('tag')?.trim() || '';
+    const { tag } = qTag ? { tag: qTag } : await mailchimpWebinarTagCountCached(w);
     const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
     if (!hit) {
       return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
@@ -5857,7 +5873,8 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', a
     const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
     const mcAuth = btoa(`anystring:${mcApiKey}`);
 
-    const { tag } = await mailchimpWebinarTagCountCached(w);
+    const qTag = c.req.query('mailchimpTag')?.trim() || c.req.query('tag')?.trim() || '';
+    const { tag } = qTag ? { tag: qTag } : await mailchimpWebinarTagCountCached(w);
     const hit = await mailchimpResolveTagSegmentHit(adminListId, tag, mcBase, mcAuth);
     if (!hit) {
       return c.json({ error: `Tag v Mailchimp nenalezen v admin audience: ${tag}` }, 404);
@@ -5889,6 +5906,46 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', a
     return c.json({ error: err?.message ? String(err.message) : 'Neznámá chyba při načítání Mailchimp kontaktů.' }, 500);
   }
 });
+
+/** Našeptávač názvů tagů v admin audience (Mailchimp tag-search + member_count u každého). */
+async function adminMailchimpTagSuggestHandler(c: Context) {
+  try {
+    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const adminListId = getMailchimpAdminListId();
+    if (!mcApiKey || !adminListId) {
+      return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
+    }
+    const q = (c.req.query('q') || '').trim();
+    if (q.length < 1) {
+      return c.json({ tags: [] as { name: string; memberCount: number | null }[] });
+    }
+    const dc = mcApiKey.split('-').pop() || 'us19';
+    const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
+    const mcAuth = btoa(`anystring:${mcApiKey}`);
+    const found = await mailchimpFetchTagsByPrefix(adminListId, q.slice(0, 80), mcBase, mcAuth);
+    const seen = new Set<string>();
+    const uniq: Array<{ id: number; name: string }> = [];
+    for (const t of found) {
+      if (!t?.name || seen.has(t.name)) continue;
+      seen.add(t.name);
+      uniq.push({ id: t.id, name: t.name });
+      if (uniq.length >= 16) break;
+    }
+    const tags = await Promise.all(
+      uniq.map(async (t) => ({
+        name: t.name,
+        memberCount: await mailchimpMemberCountForTag(adminListId, t.name, mcBase, mcAuth),
+      })),
+    );
+    return c.json({ tags });
+  } catch (err: any) {
+    console.log(`[Admin] mailchimp-tag-suggest: ${err.message}`);
+    return c.json({ error: err?.message ? String(err.message) : 'Chyba' }, 500);
+  }
+}
+
+app.get('/make-server-93a20b6f/admin/mailchimp-tag-suggest', adminMailchimpTagSuggestHandler);
+app.get('/admin/mailchimp-tag-suggest', adminMailchimpTagSuggestHandler);
 
 const MARKETING_CONTACTS_TABLE = 'marketing_contacts_93a20b6f';
 const MARKETING_CONTACTS_META_KEY = 'marketing_contacts_sync_meta_v1';

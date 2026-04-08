@@ -282,6 +282,13 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     }>;
     error: string | null;
   }>({ loading: false, tag: null, rows: [], error: null });
+  /** Volitelný přepínač Mailchimp tagu (audience); prázdné = výchozí tag webináře. */
+  const [mailchimpTagOverride, setMailchimpTagOverride] = useState('');
+  const [mailchimpTagForFetch, setMailchimpTagForFetch] = useState('');
+  const [tagSuggestOptions, setTagSuggestOptions] = useState<
+    Array<{ name: string; memberCount: number | null }>
+  >([]);
+  const prevWebinarIdForMcTagRef = useRef<string | undefined>(undefined);
   /** Remount WYSIWYG po AI generování článku (stejné id webináře). */
   const [learningsRemountKey, setLearningsRemountKey] = useState(0);
 
@@ -363,14 +370,59 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
   }, [selected?.id, isNew]);
 
   useEffect(() => {
+    const id = selected?.id;
+    if (id !== prevWebinarIdForMcTagRef.current) {
+      prevWebinarIdForMcTagRef.current = id;
+      setMailchimpTagOverride('');
+      setMailchimpTagForFetch('');
+      setTagSuggestOptions([]);
+    }
+  }, [selected?.id]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setMailchimpTagForFetch(mailchimpTagOverride.trim());
+    }, 380);
+    return () => clearTimeout(t);
+  }, [mailchimpTagOverride]);
+
+  useEffect(() => {
+    const q = mailchimpTagOverride.trim();
+    if (q.length < 1) {
+      setTagSuggestOptions([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void fetch(`${SERVER}/admin/mailchimp-tag-suggest?q=${encodeURIComponent(q)}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      })
+        .then((r) => r.text())
+        .then(
+          (raw) =>
+            (parseJsonResponseBody(raw) || {}) as {
+              tags?: Array<{ name: string; memberCount: number | null }>;
+            },
+        )
+        .then((d) => {
+          setTagSuggestOptions(Array.isArray(d.tags) ? d.tags : []);
+        })
+        .catch(() => setTagSuggestOptions([]));
+    }, 280);
+    return () => clearTimeout(t);
+  }, [mailchimpTagOverride]);
+
+  useEffect(() => {
     if (!selected?.id || isNew) {
       setFollowupPreview(null);
       return;
     }
     let cancelled = false;
     setFollowupPreviewLoading(true);
+    const params = new URLSearchParams();
+    if (mailchimpTagForFetch) params.set('mailchimpTag', mailchimpTagForFetch);
+    const qs = params.toString();
     void fetch(
-      `${SERVER}/admin/webinar-post-followup-recipient-preview/${encodeURIComponent(String(selected.id))}`,
+      `${SERVER}/admin/webinar-post-followup-recipient-preview/${encodeURIComponent(String(selected.id))}${qs ? `?${qs}` : ''}`,
       { headers: { Authorization: `Bearer ${publicAnonKey}` } },
     )
       .then((r) => r.text())
@@ -398,7 +450,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     return () => {
       cancelled = true;
     };
-  }, [selected?.id, isNew]);
+  }, [selected?.id, isNew, mailchimpTagForFetch]);
 
   useEffect(() => {
     if (!selected?.id || isNew) {
@@ -410,8 +462,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     const timeoutMs = 120_000;
     const to = window.setTimeout(() => ac.abort(), timeoutMs);
     setMcListState((s) => ({ ...s, loading: true, error: null }));
+    const mcUrl =
+      `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}?lite=1` +
+      (mailchimpTagForFetch ? `&mailchimpTag=${encodeURIComponent(mailchimpTagForFetch)}` : '');
     void fetch(
-      `${SERVER}/admin/registrace/mailchimp-members/${encodeURIComponent(String(selected.id))}?lite=1`,
+      mcUrl,
       { headers: { Authorization: `Bearer ${publicAnonKey}` }, signal: ac.signal },
     )
       .then(async (res) => {
@@ -479,7 +534,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       ac.abort();
       window.clearTimeout(to);
     };
-  }, [selected?.id, isNew]);
+  }, [selected?.id, isNew, mailchimpTagForFetch]);
 
   const loadRagStatus = useCallback(async (webinarId: string) => {
     setRagStatus(prev => ({ ...prev, [webinarId]: { ...prev[webinarId], loading: true, count: prev[webinarId]?.count ?? 0 } }));
@@ -624,10 +679,13 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     }
     const kv = followupPreview?.kvCount ?? regCount ?? 0;
     const mc = followupPreview?.mailchimpCount ?? 0;
+    const tagLine = followupPreview?.mailchimpTag
+      ? `Mailchimp tag „${followupPreview.mailchimpTag}“`
+      : 'Mailchimp (výchozí tag webináře)';
     if (
       !confirm(
         `Odeslat e-mail se záznamem webináře a odkazem na dotazník?\n\n` +
-          `Příjemců (unikátní e-maily): ${n} — z toho z webu ${kv}, z Mailchimpu ${mc} (stejný tag jako při registraci; duplicity se sloučí).\n\n` +
+          `Příjemců (unikátní e-maily): ${n} — z toho z webu ${kv}, z Mailchimpu ${mc} (${tagLine}; duplicity se sloučí).\n\n` +
           `Akci nelze vrátit zpět.`,
       )
     ) {
@@ -645,6 +703,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             form.postWebinarQuizQuestions && form.postWebinarQuizQuestions.length > 0
               ? form.postWebinarQuizQuestions
               : undefined,
+          ...(mailchimpTagForFetch ? { mailchimpTag: mailchimpTagForFetch } : {}),
         }),
       });
       const rawText = await res.text();
@@ -1044,7 +1103,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                       title={
                         followupPreview
                           ? `Unikátní příjemci: ${followupPreview.uniqueTotal} (web ${followupPreview.kvCount}, Mailchimp ${followupPreview.mailchimpCount}${followupPreview.mailchimpTag ? ` · tag „${followupPreview.mailchimpTag}“` : ''})`
-                          : 'Stejný obsah jako u testovacího e-mailu v záložce Dotazník — KV + Mailchimp se stejným tagem jako při registraci'
+                          : 'Stejný obsah jako u testovacího e-mailu v záložce Dotazník — KV + Mailchimp (výchozí tag webináře nebo zvolený tag v sekci Mailchimp)'
                       }
                     >
                       {bulkFollowupSending ? (
@@ -1130,17 +1189,76 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   <summary className="flex cursor-pointer list-none items-center gap-2 text-[12px] font-bold text-[#001161] hover:text-[#001161]/80 [&::-webkit-details-marker]:hidden">
                     <ChevronDown className="h-4 w-4 shrink-0 text-[#001161]/50 transition-transform group-open:rotate-180" />
                     <Mail className="h-3.5 w-3.5 shrink-0 text-[#FFE01B]" />
-                    {'Mailchimp (stejný tag jako u odeslání)'}
+                    {'Mailchimp (audience)'}
                     <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-amber-900 border border-amber-200/80">
                       {mcListState.loading ? '…' : mcListState.rows.length}
                     </span>
                   </summary>
                   <div className="mt-2 space-y-2">
+                    <div className="rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2.5 space-y-2">
+                      <label className="block text-[11px] font-bold text-gray-600">
+                        {'Tag (volitelně jiný než výchozí u webináře)'}
+                      </label>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <input
+                          type="text"
+                          value={mailchimpTagOverride}
+                          onChange={(e) => setMailchimpTagOverride(e.target.value)}
+                          placeholder="Napište začátek názvu — našeptávač z Mailchimp"
+                          className={inputCls + ' flex-1 min-w-0 text-[13px]'}
+                          list="mailchimp-tag-suggest-past"
+                          autoComplete="off"
+                        />
+                        {mailchimpTagOverride.trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMailchimpTagOverride('');
+                              setTagSuggestOptions([]);
+                            }}
+                            className="shrink-0 text-[11px] font-bold text-[#001161] border border-[#001161]/20 rounded-lg px-3 py-2 hover:bg-[#001161]/5"
+                          >
+                            {'Výchozí tag webináře'}
+                          </button>
+                        ) : null}
+                      </div>
+                      <datalist id="mailchimp-tag-suggest-past">
+                        {tagSuggestOptions.map((t) => (
+                          <option key={t.name} value={t.name} />
+                        ))}
+                      </datalist>
+                      {tagSuggestOptions.length > 0 && (
+                        <ul className="flex flex-wrap gap-1.5 pt-1">
+                          {tagSuggestOptions.slice(0, 10).map((t) => (
+                            <li key={t.name}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setMailchimpTagOverride(t.name);
+                                  setTagSuggestOptions([]);
+                                }}
+                                className="text-[10px] font-semibold rounded-lg border border-amber-200/90 bg-white px-2 py-1 text-[#001161] hover:bg-amber-50/80"
+                              >
+                                {t.name}
+                                {typeof t.memberCount === 'number' ? (
+                                  <span className="text-gray-500 font-normal">{' · '}{t.memberCount}</span>
+                                ) : null}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="text-[10px] text-gray-500 leading-snug">
+                        {
+                          'Prázdné pole = stejný tag jako při registraci na web (automaticky vybraný). Po úpravě se přepočítají čísla u „Odeslat záznam“ i tabulka níže.'
+                        }
+                      </p>
+                    </div>
                     {mcListState.tag && (
                       <p className="text-[11px] text-gray-500 leading-snug px-0.5">
                         {'Tag v audience: '}
                         <span className="font-mono font-bold text-[#001161]">{mcListState.tag}</span>
-                        {' — kontakty, které mají v Mailchimpu tento tag (včetně těch z registrace na webu).'}
+                        {' — kontakty s tímto tagem (sloučení s KV u hromadného odeslání).'}
                       </p>
                     )}
                     {mcListState.error && (
@@ -1156,10 +1274,13 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                           if (!selected?.id) return;
                           void (async () => {
                             try {
-                              const res = await fetch(
-                                `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`,
-                                { headers: { Authorization: `Bearer ${publicAnonKey}` } },
-                              );
+                              let csvUrl = `${SERVER}/admin/registrace/mailchimp-csv/${encodeURIComponent(String(selected.id))}`;
+                              if (mailchimpTagForFetch) {
+                                csvUrl += `?mailchimpTag=${encodeURIComponent(mailchimpTagForFetch)}`;
+                              }
+                              const res = await fetch(csvUrl, {
+                                headers: { Authorization: `Bearer ${publicAnonKey}` },
+                              });
                               const raw = await res.text();
                               if (!res.ok) {
                                 const err = (parseJsonResponseBody(raw) as { error?: string })?.error || raw.slice(0, 220);
