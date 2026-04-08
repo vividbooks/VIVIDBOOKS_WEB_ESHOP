@@ -4837,11 +4837,6 @@ async function sendMandrillHtml(opts: {
   return r.ok;
 }
 
-/** `surveyRequireFullRegistration === false` — dotazník bez povinné registrace / light leadu předem. */
-function webinarSurveyAllowWithoutPriorRegistration(webinar: any): boolean {
-  return webinar?.surveyRequireFullRegistration === false;
-}
-
 const webinarSurveyPartialHandler = async (c: Context) => {
   try {
     const body = await c.req.json();
@@ -4857,15 +4852,9 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     if (!value) {
       return c.json({ error: 'Chybí odpověď.' }, 400);
     }
-
-    const items = await getCollection(WEBINARS_KEY);
-    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
-      | Record<string, unknown>
-      | undefined;
-    const allowOpen = webinarSurveyAllowWithoutPriorRegistration(webinar);
     const regKey = `webinar_reg_${webinarId}_${email}`;
     const reg = await kv.get(regKey);
-    if (!allowOpen && !reg) {
+    if (!reg) {
       return c.json(
         {
           error:
@@ -4879,6 +4868,10 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
     }
 
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
@@ -4895,12 +4888,10 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     const partialKey = webinarSurveyPartialKey(webinarId, email);
     const prev = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
     const nextAnswers = { ...(prev?.answers || {}), [questionId]: value };
-    const lightKey = `webinar_survey_light_${webinarId}_${email}`;
-    const light = (await kv.get(lightKey)) as { name?: string } | null;
     await kv.set(partialKey, {
       webinarId,
       email,
-      name: (reg as any)?.name || light?.name || '',
+      name: (reg as any).name || '',
       answers: nextAnswers,
       updatedAt: new Date().toISOString(),
     });
@@ -4921,16 +4912,10 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     if (!webinarId || !email || answers == null || typeof answers !== 'object') {
       return c.json({ error: 'Chybí webinarId, email nebo odpovědi.' }, 400);
     }
-
-    const items = await getCollection(WEBINARS_KEY);
-    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
-      | Record<string, unknown>
-      | undefined;
-    const allowOpen = webinarSurveyAllowWithoutPriorRegistration(webinar);
     const regKey = `webinar_reg_${webinarId}_${email}`;
     const reg = await kv.get(regKey);
     /** 403 + JSON — neplést s textovým „404 Not Found“ z Hona při chybějící route. */
-    if (!allowOpen && !reg) {
+    if (!reg) {
       return c.json(
         {
           error:
@@ -4940,6 +4925,10 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       );
     }
 
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
@@ -4968,12 +4957,10 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     const existing = await kv.get(webinarSurveyAnswerKey(webinarId, email));
     if (existing) return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
 
-    const lightKey = `webinar_survey_light_${webinarId}_${email}`;
-    const light = (await kv.get(lightKey)) as { name?: string } | null;
     await kv.set(webinarSurveyAnswerKey(webinarId, email), {
       webinarId,
       email,
-      name: (reg as any)?.name || light?.name || '',
+      name: (reg as any).name || '',
       answers: out,
       submittedAt: new Date().toISOString(),
     });

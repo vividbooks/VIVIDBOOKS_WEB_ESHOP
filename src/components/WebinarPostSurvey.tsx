@@ -68,9 +68,6 @@ export function WebinarPostSurvey({
   variant = 'default',
   scope = 'post',
   participantName = '',
-  surveyIdentityInline = false,
-  onSurveyIdentityEmailChange,
-  onSurveyIdentityNameChange,
 }: {
   webinar: Webinar;
   email: string;
@@ -82,47 +79,8 @@ export function WebinarPostSurvey({
   variant?: 'default' | 'fullscreen';
   /** Jméno z registrace — do potvrzení / certifikátu po odeslání. */
   participantName?: string;
-  /** Bez povinné registrace: kompaktní e-mail + jméno přímo v dotazníku (místo samostatné stránky). */
-  surveyIdentityInline?: boolean;
-  onSurveyIdentityEmailChange?: (v: string) => void;
-  onSurveyIdentityNameChange?: (v: string) => void;
 }) {
   const fs = variant === 'fullscreen';
-  const identityStrip =
-    fs && surveyIdentityInline && (onSurveyIdentityEmailChange || onSurveyIdentityNameChange) ? (
-      <div className="mx-auto mb-4 w-full max-w-[min(720px,100%)] shrink-0 rounded-2xl border border-[#001161]/12 bg-white px-4 py-3 shadow-sm">
-        <p style={FF} className="mb-2 text-[12px] font-semibold text-[#001161]/55">
-          {'E-mail pro ulo\u017een\u00ed a odesl\u00e1n\u00ed odpov\u011bd\u00ed'}
-        </p>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-          <label className="min-w-0 flex-1">
-            <span className="sr-only">E-mail</span>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => onSurveyIdentityEmailChange?.(e.target.value)}
-              autoComplete="email"
-              placeholder="E-mail *"
-              className="w-full rounded-xl border border-[#001161]/12 bg-[#F8FAFC] px-3 py-2.5 text-[14px] text-[#001161] outline-none placeholder:text-[#001161]/35 focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-              style={FF}
-            />
-          </label>
-          <label className="min-w-0 flex-1">
-            <span className="sr-only">Jméno</span>
-            <input
-              type="text"
-              value={participantName}
-              onChange={(e) => onSurveyIdentityNameChange?.(e.target.value)}
-              autoComplete="name"
-              placeholder="Jm\u00e9no (voliteln\u00e9)"
-              className="w-full rounded-xl border border-[#001161]/12 bg-[#F8FAFC] px-3 py-2.5 text-[14px] text-[#001161] outline-none placeholder:text-[#001161]/35 focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
-              style={FF}
-            />
-          </label>
-        </div>
-      </div>
-    ) : null;
-
   const mergedQuestions = useMemo(
     () =>
       scope === 'pre'
@@ -181,8 +139,6 @@ export function WebinarPostSurvey({
   const [restPartialSavingId, setRestPartialSavingId] = useState<string | null>(null);
   const [restPartialFlashId, setRestPartialFlashId] = useState<string | null>(null);
   const [restPartialErr, setRestPartialErr] = useState('');
-  /** U režimu bez registrace: pruh s e-mailem až po pokusu odeslat bez vyplnění nebo když už e-mail je. */
-  const [identityStripVisible, setIdentityStripVisible] = useState(false);
 
   useEffect(() => {
     onAnswersChange?.(answers);
@@ -194,7 +150,6 @@ export function WebinarPostSurvey({
     setDvppNavStep(-1);
     setPart2NavStep(0);
     autoSubmitEmptyRestRef.current = false;
-    setIdentityStripVisible(false);
   }, [webinar.id]);
 
   const postFlow = scope === 'post';
@@ -258,11 +213,6 @@ export function WebinarPostSurvey({
   }, []);
 
   const submit = useCallback(async () => {
-    if (surveyIdentityInline && !email.trim()) {
-      setIdentityStripVisible(true);
-      setError('Zadejte pros\u00edm e-mail pro odesl\u00e1n\u00ed odpov\u011bd\u00ed.');
-      return;
-    }
     setSubmitting(true);
     setError('');
     try {
@@ -299,12 +249,11 @@ export function WebinarPostSurvey({
     } finally {
       setSubmitting(false);
     }
-  }, [answers, email, webinar.id, surveyIdentityInline]);
+  }, [answers, email, webinar.id]);
 
   const savePartialAnswer = useCallback(
     async (questionId: string, value: string) => {
       if (scope !== 'post') return;
-      if (!email.trim()) return;
       const r = await saveWebinarSurveyPartialAnswer({
         webinarId: String(webinar.id ?? '').trim(),
         email: email.trim(),
@@ -426,7 +375,6 @@ export function WebinarPostSurvey({
             : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
         }
       >
-        {identityStrip}
         <WebinarDvppQuizPlayer
           variant={fs ? 'fullscreen' : 'default'}
           webinarTitle={webinar.title}
@@ -468,7 +416,6 @@ export function WebinarPostSurvey({
             : 'mt-6 w-full border-t border-[#001161]/10 pt-6 text-left'
         }
       >
-        {identityStrip}
         <WebinarPostSurveyPart2Player
           variant={fs ? 'fullscreen' : 'default'}
           steps={part2Steps}
@@ -522,7 +469,6 @@ export function WebinarPostSurvey({
             <SurveyFlowProgressBar total={totalProgressSegments} filled={progressFilled} />
           </div>
         ) : null}
-        {identityStrip}
         <div className={fs ? 'mx-auto flex w-full max-w-[min(720px,100%)] flex-col items-center' : 'flex flex-col items-center'}>
           {error ? (
             <>
@@ -578,7 +524,6 @@ export function WebinarPostSurvey({
           <SurveyFlowProgressBar total={totalProgressSegments} filled={progressFilled} />
         </div>
       ) : null}
-      {identityStrip}
       <div className={fs ? 'mx-auto w-full max-w-[min(720px,100%)]' : undefined}>
       {restQuestions.length > 0 && (
         <>
