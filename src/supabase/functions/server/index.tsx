@@ -2876,12 +2876,29 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     }
 
     if (!existing || typeof existing !== 'object') {
+      const partialKey = webinarSurveyPartialKey(webinarId, cleanEmail);
+      const partialDoc = (await kv.get(partialKey)) as { name?: string; answers?: Record<string, string> } | null;
+      if (partialDoc && typeof partialDoc === 'object') {
+        existing = {
+          name: String(partialDoc.name || participantName || '').trim() || participantName,
+          email: cleanEmail,
+          gdpr: true,
+          createdFromPartialSurveyForCertificate: true,
+          createdAt: new Date().toISOString(),
+        };
+        await kv.set(key, existing);
+      }
+    }
+
+    if (!existing || typeof existing !== 'object') {
       const items = await getCollection(WEBINARS_KEY);
-      const w = (items as any[]).find((x: any) => String(x.id) === String(webinarId));
+      const w = (items as any[]).find(
+        (x: any) =>
+          String(x.id) === String(webinarId) || String(x.slug || '').trim() === String(webinarId),
+      );
       /**
-       * Krok k certifikátu znamená dokončený dotazník — pokud v KV stále není `webinar_reg_*`
-       * (např. jen light lead, nebo starší data), doplníme záznam z údajů z tohoto formuláře.
-       * Dřívější podmínka `surveyRequireFullRegistration === false` nestačila (výchozí true / chybějící pole).
+       * Krok k certifikátu = dokončený dotazník v UI; `webinar_reg_*` může chybět (sync KV, slug vs id).
+       * Pokud webinář v kolekci najdeme (id nebo slug), doplníme z formuláře certifikátu.
        */
       if (w) {
         existing = {
@@ -2896,7 +2913,18 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     }
 
     if (!existing || typeof existing !== 'object') {
-      return c.json({ error: 'Registrace na webinář nenalezena.' }, 404);
+      /**
+       * Poslední záchrana: uživatel je na obrazovce certifikátu po průchodu dotazníkem — neblokovat
+       * kvůli prázdné kolekci WEBINARS v KV nebo neshodě id/slug mezi klientem a adminem.
+       */
+      existing = {
+        name: participantName,
+        email: cleanEmail,
+        gdpr: true,
+        createdFromCertificateBootstrap: true,
+        createdAt: new Date().toISOString(),
+      };
+      await kv.set(key, existing);
     }
 
     const reg = existing as Record<string, unknown>;
