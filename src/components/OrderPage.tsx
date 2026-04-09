@@ -38,6 +38,7 @@ import type { ProductBundleRecord } from '../utils/bundlePricing';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 import { clearSchoolOrderDraft, hasSchoolOrderDraft, readSchoolOrderDraft, writeSchoolOrderDraft } from '../utils/schoolOrderDraft';
+import { AddressStreetAutocomplete } from './AddressStreetAutocomplete';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -2078,15 +2079,35 @@ export function OrderPage() {
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                         {field.label}
                       </span>
-                      <input
-                        type={field.type ?? 'text'}
-                        value={form[field.key as keyof typeof form] as string}
-                        onChange={(event) => {
-                          setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
-                          setFormError('');
-                        }}
-                        className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
-                      />
+                      {field.key === 'street' ? (
+                        <AddressStreetAutocomplete
+                          id="order-field-street-input"
+                          value={form.street}
+                          onChange={(v) => {
+                            setForm((prev) => ({ ...prev, street: v }));
+                            setFormError('');
+                          }}
+                          onResolved={(parts) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              street: parts.street,
+                              city: parts.city,
+                              zip: parts.zip,
+                            }));
+                            setFormError('');
+                          }}
+                        />
+                      ) : (
+                        <input
+                          type={field.type ?? 'text'}
+                          value={form[field.key as keyof typeof form] as string}
+                          onChange={(event) => {
+                            setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
+                            setFormError('');
+                          }}
+                          className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                        />
+                      )}
                     </label>
                   ))}
                 </div>
@@ -2143,21 +2164,41 @@ export function OrderPage() {
                         { key: 'deliveryZip', label: 'Doručovací PSČ *', icon: MapPin },
                       ].map((field) => {
                         const Icon = field.icon;
+                        const isDeliveryStreet = field.key === 'deliveryStreet';
                         return (
                           <label key={field.key} id={`order-field-${field.key}`} className="block">
                             <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                               {field.label}
                             </span>
-                            <div className="relative">
-                              <input
-                                type="text"
-                                value={deliveryAddress[field.key as keyof DeliveryAddressState]}
-                                onChange={(event) => setDeliveryAddress((prev) => ({ ...prev, [field.key]: event.target.value }))}
-                                placeholder={field.placeholder}
-                                className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pl-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                            {isDeliveryStreet ? (
+                              <AddressStreetAutocomplete
+                                id="order-field-deliveryStreet-input"
+                                value={deliveryAddress.deliveryStreet}
+                                onChange={(v) => setDeliveryAddress((prev) => ({ ...prev, deliveryStreet: v }))}
+                                onResolved={(parts) => {
+                                  setDeliveryAddress((prev) => ({
+                                    ...prev,
+                                    deliveryStreet: parts.street,
+                                    deliveryCity: parts.city,
+                                    deliveryZip: parts.zip,
+                                  }));
+                                }}
+                                leftIcon={<Icon className="h-4 w-4" />}
                               />
-                              <Icon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#001161]/30" />
-                            </div>
+                            ) : (
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  value={deliveryAddress[field.key as keyof DeliveryAddressState]}
+                                  onChange={(event) =>
+                                    setDeliveryAddress((prev) => ({ ...prev, [field.key]: event.target.value }))
+                                  }
+                                  placeholder={field.placeholder}
+                                  className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pl-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                                />
+                                <Icon className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#001161]/30" />
+                              </div>
+                            )}
                           </label>
                         );
                       })}

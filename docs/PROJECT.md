@@ -86,6 +86,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `PIPEDRIVE_ESHOP_*` | E‑shop dealy v Pipedrivu (viz `.env.example`). |
 | `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN` | Slack integrace. |
 | `PUBLIC_SITE_URL` | Odkazy v e‑mailech webináře (`getPublicSiteOrigin()`). |
+| `GOOGLE_MAPS_API_KEY` nebo `GOOGLE_PLACES_API_KEY` | **Našeptávání adres** v objednávce / pokladně (Google Places API přes Edge: `GET …/address-autocomplete`, `GET …/place-details`). Bez klíče pole fungují ručně. V Google Cloud zapnout Places API (legacy) a fakturaci; klíč jen v Edge Secrets. |
 
 Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PUBLIC_SITE_URL` / `SITE_URL`.
 

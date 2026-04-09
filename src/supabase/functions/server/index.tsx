@@ -10069,6 +10069,129 @@ app.get('/make-server-93a20b6f/school-search', async (c) => {
   }
 });
 
+/** Google Places (legacy) — server-side, klíč jen v Edge Secrets. */
+function getGoogleMapsApiKeyForPlaces(): string {
+  return (Deno.env.get('GOOGLE_MAPS_API_KEY') || Deno.env.get('GOOGLE_PLACES_API_KEY') || '').trim();
+}
+
+function parseGoogleAddressComponents(
+  components: Array<{ long_name: string; short_name: string; types: string[] }>,
+): { street: string; city: string; zip: string } {
+  let streetNumber = '';
+  let route = '';
+  let city = '';
+  let zip = '';
+  for (const c of components) {
+    const t = c.types || [];
+    if (t.includes('street_number')) streetNumber = c.long_name;
+    if (t.includes('route')) route = c.long_name;
+    if (t.includes('locality')) city = c.long_name;
+    if (t.includes('postal_town') && !city) city = c.long_name;
+    if (t.includes('postal_code')) zip = String(c.long_name || '').replace(/\s/g, '');
+  }
+  if (!city) {
+    for (const c of components) {
+      if ((c.types || []).includes('administrative_area_level_2')) {
+        city = c.long_name;
+        break;
+      }
+    }
+  }
+  const street = [route, streetNumber].filter(Boolean).join(' ').trim();
+  return { street, city, zip };
+}
+
+const addressAutocompleteHandler = async (c: Context) => {
+  const raw = String(c.req.query('input') || '').trim();
+  if (raw.length < 2) {
+    return c.json({ ok: true, enabled: false, predictions: [] as Array<{ description: string; placeId: string }> });
+  }
+  if (raw.length > 120) {
+    return c.json({ ok: false, error: 'Dotaz je příliš dlouhý.' }, 400);
+  }
+  const key = getGoogleMapsApiKeyForPlaces();
+  if (!key) {
+    return c.json({ ok: true, enabled: false, predictions: [] as Array<{ description: string; placeId: string }> });
+  }
+  const url = new URL('https://maps.googleapis.com/maps/api/place/autocomplete/json');
+  url.searchParams.set('input', raw);
+  url.searchParams.set('key', key);
+  url.searchParams.set('language', 'cs');
+  url.searchParams.set('components', 'country:cz|country:sk');
+  try {
+    const res = await fetch(url.toString());
+    const data = (await res.json()) as {
+      status: string;
+      predictions?: Array<{ description: string; place_id: string }>;
+      error_message?: string;
+    };
+    if (data.status === 'REQUEST_DENIED' || data.status === 'INVALID_REQUEST') {
+      console.warn('[address-autocomplete]', data.status, data.error_message || '');
+      return c.json({ ok: true, enabled: false, predictions: [] });
+    }
+    const predictions = (data.predictions || []).slice(0, 8).map((p) => ({
+      description: p.description,
+      placeId: p.place_id,
+    }));
+    return c.json({ ok: true, enabled: true, predictions });
+  } catch (e: any) {
+    console.warn('[address-autocomplete]', e?.message || e);
+    return c.json({ ok: true, enabled: false, predictions: [] });
+  }
+};
+
+const placeDetailsForAddressHandler = async (c: Context) => {
+  const placeId = String(c.req.query('placeId') || '').trim();
+  if (!placeId || placeId.length > 512) {
+    return c.json({ ok: false, error: 'Chybí platné placeId.' }, 400);
+  }
+  const key = getGoogleMapsApiKeyForPlaces();
+  if (!key) {
+    return c.json({ ok: false, error: 'Adresní nápověda není nakonfigurovaná.' }, 503);
+  }
+  const url = new URL('https://maps.googleapis.com/maps/api/place/details/json');
+  url.searchParams.set('place_id', placeId);
+  url.searchParams.set('key', key);
+  url.searchParams.set('language', 'cs');
+  url.searchParams.set(
+    'fields',
+    'address_component,formatted_address',
+  );
+  try {
+    const res = await fetch(url.toString());
+    const data = (await res.json()) as {
+      status: string;
+      result?: { address_components?: Array<{ long_name: string; short_name: string; types: string[] }> };
+      error_message?: string;
+    };
+    if (data.status !== 'OK' || !data.result?.address_components) {
+      console.warn('[place-details]', data.status, data.error_message || '');
+      return c.json({ ok: false, error: 'Adresu se nepodařilo načíst.' }, 404);
+    }
+    const parsed = parseGoogleAddressComponents(data.result.address_components);
+    let street = parsed.street;
+    if (!street && data.result && (data.result as any).formatted_address) {
+      const fa = String((data.result as any).formatted_address);
+      const first = fa.split(',')[0]?.trim() || '';
+      if (first) street = first;
+    }
+    return c.json({
+      ok: true,
+      street: street || '',
+      city: parsed.city || '',
+      zip: parsed.zip || '',
+    });
+  } catch (e: any) {
+    console.warn('[place-details]', e?.message || e);
+    return c.json({ ok: false, error: e?.message || 'Chyba' }, 500);
+  }
+};
+
+app.get('/make-server-93a20b6f/address-autocomplete', addressAutocompleteHandler);
+app.get('/address-autocomplete', addressAutocompleteHandler);
+app.get('/make-server-93a20b6f/place-details', placeDetailsForAddressHandler);
+app.get('/place-details', placeDetailsForAddressHandler);
+
 type PipedriveOwnerSummary = {
   id: number | null;
   name: string;

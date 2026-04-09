@@ -33,6 +33,7 @@ import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
+import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
@@ -1197,12 +1198,27 @@ export function CheckoutPage() {
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                         {field.label}
                       </span>
-                      <input
-                        type={field.type ?? 'text'}
-                        value={customer[field.key as keyof CustomerFormState]}
-                        onChange={(event) => handleCustomerChange(field.key as keyof CustomerFormState, event.target.value)}
-                        className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
-                      />
+                      {field.key === 'street' ? (
+                        <AddressStreetAutocomplete
+                          id="checkout-field-street-input"
+                          value={customer.street}
+                          onChange={(v) => handleCustomerChange('street', v)}
+                          onResolved={(parts) => {
+                            handleCustomerChange('street', parts.street);
+                            handleCustomerChange('city', parts.city);
+                            handleCustomerChange('zip', parts.zip);
+                          }}
+                        />
+                      ) : (
+                        <input
+                          type={field.type ?? 'text'}
+                          value={customer[field.key as keyof CustomerFormState]}
+                          onChange={(event) =>
+                            handleCustomerChange(field.key as keyof CustomerFormState, event.target.value)
+                          }
+                          className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                        />
+                      )}
                       {formErrors[field.key as keyof CustomerFormState] && (
                         <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
                           {formErrors[field.key as keyof CustomerFormState]}
@@ -1251,18 +1267,34 @@ export function CheckoutPage() {
                         { key: 'deliveryCity', label: 'Doručovací město *' },
                         { key: 'deliveryZip', label: 'Doručovací PSČ *' },
                       ].map((field) => {
+                        const isDeliveryStreet = field.key === 'deliveryStreet';
                         return (
                           <label key={field.key} id={`checkout-field-${field.key}`} className="block">
                             <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                               {field.label}
                             </span>
-                            <input
-                              type="text"
-                              value={deliveryAddress[field.key as keyof DeliveryAddressState]}
-                              onChange={(event) => handleDeliveryAddressChange(field.key as keyof DeliveryAddressState, event.target.value)}
-                              placeholder={field.placeholder}
-                              className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
-                            />
+                            {isDeliveryStreet ? (
+                              <AddressStreetAutocomplete
+                                id="checkout-field-deliveryStreet-input"
+                                value={deliveryAddress.deliveryStreet}
+                                onChange={(v) => handleDeliveryAddressChange('deliveryStreet', v)}
+                                onResolved={(parts) => {
+                                  handleDeliveryAddressChange('deliveryStreet', parts.street);
+                                  handleDeliveryAddressChange('deliveryCity', parts.city);
+                                  handleDeliveryAddressChange('deliveryZip', parts.zip);
+                                }}
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={deliveryAddress[field.key as keyof DeliveryAddressState]}
+                                onChange={(event) =>
+                                  handleDeliveryAddressChange(field.key as keyof DeliveryAddressState, event.target.value)
+                                }
+                                placeholder={field.placeholder}
+                                className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                              />
+                            )}
                             {formErrors[field.key as keyof DeliveryAddressState] && (
                               <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
                                 {formErrors[field.key as keyof DeliveryAddressState]}
