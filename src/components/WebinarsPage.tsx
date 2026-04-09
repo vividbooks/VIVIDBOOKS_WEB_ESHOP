@@ -60,7 +60,7 @@ export function WebinarsPage() {
       />
 
       {/* Hero */}
-      <div className="bg-white border-b border-[#001161]/6 px-6 md:px-10 pt-10 pb-10 text-center">
+      <div className="bg-white px-6 md:px-10 pt-10 pb-10 text-center">
         <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[38px] md:text-[52px] leading-none mb-3">
           {'DVPP Webináře'}
         </h1>
@@ -105,9 +105,6 @@ export function WebinarsPage() {
           </div>
         )}
       </section>
-
-      {/* Oddělovač */}
-      <div className="h-px bg-[#001161]/8 mx-6 md:mx-10" />
 
       {/* ══ SEKCE 2: Záznamy (DVPP témata) ══ */}
       <section className="bg-[#F5F6FB]">

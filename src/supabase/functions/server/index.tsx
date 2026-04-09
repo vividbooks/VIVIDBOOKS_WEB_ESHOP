@@ -5181,6 +5181,32 @@ async function sendMandrillHtml(opts: {
   return r.ok;
 }
 
+/** Stejná logika jako u veřejného payloadu: výchozí je vyžadovat plnou registraci. */
+function webinarSurveyRequireFullRegistrationFromItem(
+  webinar: Record<string, unknown> | null | undefined,
+): boolean {
+  return webinar?.surveyRequireFullRegistration !== false;
+}
+
+/**
+ * Pro dotazník po webináři: plná registrace = `webinar_reg_*`.
+ * Pokud je u webináře `surveyRequireFullRegistration === false`, stačí `webinar_survey_light_*` nebo samotný platný e-mail v požadavku (bez předchozího kroku na klientu).
+ */
+async function kvGetWebinarSurveyParticipantForEmail(
+  webinarId: string,
+  email: string,
+  requireFullReg: boolean,
+): Promise<unknown | null> {
+  const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
+  if (reg) return reg;
+  if (!requireFullReg) {
+    const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
+    if (light) return light;
+    return { name: '', email, surveyNoPriorKvContact: true };
+  }
+  return null;
+}
+
 const webinarSurveyPartialHandler = async (c: Context) => {
   try {
     const body = await c.req.json();
@@ -5196,8 +5222,13 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     if (!value) {
       return c.json({ error: 'Chybí odpověď.' }, 400);
     }
-    const regKey = `webinar_reg_${webinarId}_${email}`;
-    const reg = await kv.get(regKey);
+
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
+    const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg);
     if (!reg) {
       return c.json(
         {
@@ -5212,10 +5243,6 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
     }
 
-    const items = await getCollection(WEBINARS_KEY);
-    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
-      | Record<string, unknown>
-      | undefined;
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
@@ -5256,8 +5283,13 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     if (!webinarId || !email || answers == null || typeof answers !== 'object') {
       return c.json({ error: 'Chybí webinarId, email nebo odpovědi.' }, 400);
     }
-    const regKey = `webinar_reg_${webinarId}_${email}`;
-    const reg = await kv.get(regKey);
+
+    const items = await getCollection(WEBINARS_KEY);
+    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
+      | Record<string, unknown>
+      | undefined;
+    const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg);
     /** 403 + JSON — neplést s textovým „404 Not Found“ z Hona při chybějící route. */
     if (!reg) {
       return c.json(
@@ -5269,10 +5301,6 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       );
     }
 
-    const items = await getCollection(WEBINARS_KEY);
-    const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
-      | Record<string, unknown>
-      | undefined;
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 

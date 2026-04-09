@@ -14,6 +14,12 @@ import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { getMergedWebinarSurveyQuestions, getPreWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
 
+/**
+ * Dočasně: před celostránkovým dotazníkem (`?dvppDotaznik=1`) se nezobrazuje krok registrace / light lead.
+ * Nastav na `false`, až budete chtít krok znovu zapnout.
+ */
+const SKIP_DVPP_SURVEY_REGISTRATION_STEP = true;
+
 const POSITIONS = [
   'U\u010ditel/ka na Z\u0160',
   'U\u010ditel/ka na S\u0160',
@@ -141,6 +147,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const [submitted, setSubmitted] = useState(false);
   /** `false` = zobrazit registraci / light lead; `true` = dotazník. Ověření e-mailu vůči KV jen po kliknutí na Pokračovat. */
   const [surveyRegOk, setSurveyRegOk] = useState(false);
+  /** Při `SKIP_DVPP_SURVEY_REGISTRATION_STEP` je vždy jako po „Pokračovat“ bez kroku registrace. */
+  const surveyRegOkEffective = SKIP_DVPP_SURVEY_REGISTRATION_STEP || surveyRegOk;
   /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
   const [surveyDeepLink, setSurveyDeepLink] = useState(false);
   const [error, setError] = useState('');
@@ -499,7 +507,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   };
 
   if (isSurveyFullPage) {
-    if (needsDvppForSurveyFlag && dvppVideosLoading) {
+    if (!SKIP_DVPP_SURVEY_REGISTRATION_STEP && needsDvppForSurveyFlag && dvppVideosLoading) {
       return (
         <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-[#E8EBF4] px-6 py-16">
           <SEOHead
@@ -520,7 +528,51 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         </div>
       );
     }
-    if (!surveyRegOk) {
+    if (SKIP_DVPP_SURVEY_REGISTRATION_STEP && !emailLooksValid) {
+      return (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="flex min-h-0 w-full flex-1 flex-col overflow-y-auto bg-[#E8EBF4]"
+        >
+          <SEOHead
+            title={`${webinar.title} — dotazník`}
+            path={`/webinar/${webinar.id}`}
+            description={`Dotazník po webináři: ${webinar.title}`}
+            jsonLd={webinarJsonLd({
+              name: webinar.title,
+              description: webinar.title,
+              startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
+              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+            })}
+          />
+          <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col justify-center gap-4 px-4 py-10 sm:px-6">
+            <h1 className="text-center font-['Cooper_Light',serif] text-[26px] text-[#001161] sm:text-[30px]">
+              {'Dotazn\u00edk po webin\u00e1\u0159i'}
+            </h1>
+            <p className="text-center font-['Fenomen_Sans',sans-serif] text-[14px] leading-relaxed text-[#001161]/75">
+              {'Vypl\u0148te e-mail pro ulo\u017een\u00ed odpov\u011bd\u00ed a certifik\u00e1tu.'}
+            </p>
+            <div className="rounded-[28px] border border-[#001161]/10 bg-[#F0F2F8] px-5 py-8 md:px-10">
+              <label className="mb-2 block font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]">
+                {'E-mail *'}
+              </label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => handleChange('email', e.target.value)}
+                className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                placeholder="vas@email.cz"
+                autoComplete="email"
+                autoFocus
+              />
+            </div>
+          </div>
+        </motion.div>
+      );
+    }
+    if (!surveyRegOkEffective) {
       return (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
