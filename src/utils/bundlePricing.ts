@@ -17,6 +17,18 @@ export type ProductBundleRecord = {
   validTo?: string;
 };
 
+/** Skryje automatickou poznámku z administrace balíčků (neukazovat zákazníkům na webu). */
+export function stripBundleAdminBoilerplate(text: string | undefined | null): string | undefined {
+  if (text == null || typeof text !== 'string') return undefined;
+  const cleaned = text
+    .replace(
+      /\s*Vytvořeno automaticky jako šablona\.?\s*Upravte nebo smažte v administraci E-shop\s*[→>]\s*Balíčky\.?\s*/gi,
+      '',
+    )
+    .trim();
+  return cleaned || undefined;
+}
+
 /**
  * Rozdělí cenu balíčku mezi položky podle katalogových cen (largest remainder),
  * součet unitPrice v haléřích = bundlePriceHaler (po 1 ks na produkt v balíčku).
@@ -78,6 +90,14 @@ export function allocateBundleUnitPrices(
     unitPrice: unitPrices[i] ?? 0,
     imageUrl: getProductImage(l.product),
   }));
+}
+
+/** Součet katalogových cen produktů v balíčku (haléře). */
+export function bundleCatalogListSumHaler(bundle: ProductBundleRecord, catalog: any[]): number {
+  return (bundle.productIds || []).reduce((sum, rawId) => {
+    const p = catalog.find((x) => String(x.id) === String(rawId));
+    return sum + (p ? getProductUnitPriceInHaler(p) : 0);
+  }, 0);
 }
 
 export function buildBundleCartLines(

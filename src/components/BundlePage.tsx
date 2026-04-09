@@ -4,7 +4,7 @@ import { ArrowLeft, Loader2, Package, ShoppingCart } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCart } from '../contexts/CartContext';
-import { buildBundleCartLines, type ProductBundleRecord } from '../utils/bundlePricing';
+import { buildBundleCartLines, stripBundleAdminBoilerplate, type ProductBundleRecord } from '../utils/bundlePricing';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import { BookCoverThumb } from './checkout/BookCoverThumb';
 import { SEOHead } from './SEOHead';
@@ -68,6 +68,11 @@ export function BundlePage() {
 
   const bundleShareCategory = resolvedProducts[0]?.category as string | undefined;
 
+  const bundleDescPublic = useMemo(
+    () => stripBundleAdminBoilerplate(bundle?.description),
+    [bundle?.description],
+  );
+
   const handleAddBundle = () => {
     if (!bundle || productsLoading || !products.length) return;
     setAdding(true);
@@ -98,7 +103,7 @@ export function BundlePage() {
     <div className="min-h-[60vh] px-4 md:px-8 py-8 max-w-3xl mx-auto">
       <SEOHead
         title={bundle ? bundle.title : 'Balíček'}
-        description={bundle?.description || 'Výhodný balíček produktů Vividbooks.'}
+        description={bundleDescPublic || 'Výhodný balíček produktů Vividbooks.'}
         path={bundleId ? `/balicek/${bundleId}` : ''}
         image={resolveShareImageUrl({ category: bundleShareCategory })}
         imageAlt={
@@ -139,9 +144,9 @@ export function BundlePage() {
           <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[32px] md:text-[40px] leading-tight mb-3">
             {bundle.title}
           </h1>
-          {bundle.description && (
+          {bundleDescPublic && (
             <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/65 leading-relaxed mb-8">
-              {bundle.description}
+              {bundleDescPublic}
             </p>
           )}
 

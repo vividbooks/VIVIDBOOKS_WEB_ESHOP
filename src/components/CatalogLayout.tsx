@@ -76,6 +76,10 @@ function MenuAttentionDot() {
 
 const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
   {
+    title: 'Akce',
+    items: [{ label: 'Akční balíčky', internal: '/akce' }],
+  },
+  {
     title: 'Vividboard',
     items: [
       { label: 'Vividboard', internal: '/vividboard' },
@@ -105,6 +109,7 @@ const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
 
 function SidebarAccordion() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
 
   const toggle = (title: string) =>
@@ -124,11 +129,16 @@ function SidebarAccordion() {
         // Sekce s jedinou položkou → přímý odkaz bez akordeonu
         if (section.items.length === 1) {
           const item = section.items[0];
+          const isActive = !!(item.internal && location.pathname === item.internal);
           return (
             <button
               key={section.title}
               onClick={() => handleItem(item)}
-              className="w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer flex items-center gap-2"
+              className={`w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer flex items-center gap-2 border ${
+                isActive
+                  ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
+                  : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
+              }`}
             >
               {section.attentionDot ? <MenuAttentionDot /> : null}
               {section.title}
@@ -454,6 +464,20 @@ export default function CatalogLayout() {
 
                 {/* Other nav */}
                 <div className="px-4 pt-2 pb-4 border-t border-gray-200 mt-2 flex flex-col gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/akce'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                  >
+                    {'Akce'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { navigate('/vividboard'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                  >
+                    {'Vividboard'}
+                  </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/webinare'); setMobileSidebarOpen(false); }}

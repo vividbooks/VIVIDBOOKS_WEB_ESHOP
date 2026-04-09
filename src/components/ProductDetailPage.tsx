@@ -16,8 +16,9 @@ import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessCom
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
-import { getProductImage, getProductUnitPriceInHaler, isPrintProduct, parseSubject } from './cartUpsellUtils';
-import { buildBundleCartLines, type ProductBundleRecord } from '../utils/bundlePricing';
+import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
+import { type ProductBundleRecord } from '../utils/bundlePricing';
+import { ProductBundlePromoTile } from './ProductBundlePromoTile';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
@@ -47,71 +48,6 @@ const MATH_SERIES_DIFF_YOUTUBE_ID = '3QfBy-xJ4Os';
 const MATH2_COVER_PREVIEW_H = 100;
 const MATH2_COVER_PREVIEW_W = 70;
 
-const BUNDLE_FAN_COVER_W = 64;
-const BUNDLE_FAN_COVER_H = 92;
-
-/** Rotace obálek ve vějíři podle počtu (společný střed dole — jako srovnání řad matik). */
-function bundleFanRotationDeg(index: number, total: number): number {
-  if (total <= 1) return 0;
-  if (total === 2) return index === 0 ? -12 : 12;
-  if (total === 3) return index === 0 ? -14 : index === 1 ? 0 : 14;
-  return ([-16, -6, 6, 16] as const)[Math.min(index, 3)] ?? 0;
-}
-
-function BundleFanCoverThumb({
-  book,
-  onClick,
-  index,
-  total,
-  className = '',
-}: {
-  book: any;
-  onClick: () => void;
-  index: number;
-  total: number;
-  className?: string;
-}) {
-  const src = getProductImage(book);
-  const rotation = bundleFanRotationDeg(index, total);
-  const zIndex = index + 1;
-  const wrapStyle: React.CSSProperties =
-    rotation !== 0
-      ? {
-          transform: `rotate(${rotation}deg)`,
-          transformOrigin: 'bottom center',
-          zIndex,
-        }
-      : { zIndex };
-
-  return (
-    <div className={`shrink-0 ${className}`} style={wrapStyle}>
-      <button
-        type="button"
-        onClick={onClick}
-        title={book?.name || 'Zobrazit produkt'}
-        className="block rounded-none overflow-hidden bg-white shadow-md border border-[#92400e]/22 hover:border-[#b45309]/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fff8e8] transition-colors cursor-pointer p-0"
-        style={{ width: BUNDLE_FAN_COVER_W, height: BUNDLE_FAN_COVER_H }}
-      >
-        {src ? (
-          <ImageWithFallback
-            src={src}
-            alt={book?.name || ''}
-            className="w-full h-full object-cover"
-            draggable={false}
-          />
-        ) : (
-          <div
-            className="w-full h-full flex items-center justify-center text-[9px] font-bold text-[#92400e]/35 text-center px-1 font-['Fenomen_Sans',sans-serif] leading-tight"
-            style={{ background: 'linear-gradient(145deg, #fffbeb, #fef3c7)' }}
-          >
-            Sešit
-          </div>
-        )}
-      </button>
-    </div>
-  );
-}
-
 function isMathWorkbookKrokName(name: string | undefined): boolean {
   return /krok\s+za\s+krokem/i.test(name || '');
 }
@@ -126,12 +62,6 @@ function detectMath2WorkbookLine(name: string | undefined): Math2WorkbookLine | 
   if (isMathWorkbookKrokName(name)) return 'krok';
   if (isMathWorkbookProVsechnyName(name)) return 'pro-vsechny';
   return null;
-}
-
-function titulSkloneni(n: number): string {
-  if (n === 1) return 'titul';
-  if (n >= 2 && n <= 4) return 'tituly';
-  return 'titul\u016f';
 }
 
 type RelatedRadaKey = 'krok' | 'pro-vsechny' | 'other';
@@ -167,51 +97,6 @@ function relatedExtractRadaKey(p: { name?: string }): RelatedRadaKey {
   if (isMathWorkbookKrokName(p.name)) return 'krok';
   if (isMathWorkbookProVsechnyName(p.name)) return 'pro-vsechny';
   return 'other';
-}
-
-/** Deterministický „náhodný“ výběr až 4 položek (stejné pořadí při stejném seedu). */
-function pickUpToFourSeeded<T>(items: T[], seed: string): T[] {
-  if (items.length <= 4) return items;
-  const copy = [...items];
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = Math.imul(31, h) + seed.charCodeAt(i);
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.abs(h + i * 7919) % (i + 1);
-    const t = copy[i]!;
-    copy[i] = copy[j]!;
-    copy[j] = t;
-  }
-  return copy.slice(0, 4);
-}
-
-const FAN_OTHER_SUBJECT = 'Ostatn\u00ed';
-
-function fanCoverSubjectKey(p: any): string {
-  return parseSubject(`${p.name || ''} ${p.category || ''}`) ?? FAN_OTHER_SUBJECT;
-}
-
-/** Až 4 obálky: z každého předmětu nejvýše jedna; při více než 4 předmětech seedovaný výběr. */
-function pickBundleFanCoversOnePerSubject(candidates: any[], seed: string): any[] {
-  if (candidates.length === 0) return [];
-  const bySubj = new Map<string, any[]>();
-  for (const p of candidates) {
-    const k = fanCoverSubjectKey(p);
-    if (!bySubj.has(k)) bySubj.set(k, []);
-    bySubj.get(k)!.push(p);
-  }
-  const onePerSubject: any[] = [];
-  for (const [subj, pool] of bySubj) {
-    const pick = pickUpToFourSeeded(pool, `${seed}|s:${subj}`)[0];
-    if (pick) onePerSubject.push(pick);
-  }
-  return pickUpToFourSeeded(onePerSubject, `${seed}|fan`);
-}
-
-function bundleCatalogListSumHaler(bundle: ProductBundleRecord, catalog: any[]): number {
-  return (bundle.productIds || []).reduce((sum, rawId) => {
-    const p = catalog.find((x) => String(x.id) === String(rawId));
-    return sum + (p ? getProductUnitPriceInHaler(p) : 0);
-  }, 0);
 }
 
 function parseRocnikDilFromProduct(p: any): { rocnik: number | null; dil: number | null } {
@@ -1441,96 +1326,16 @@ export function ProductDetailPage({
             {/* Balíček (KV) — jen tiskoviny v e-shopu */}
             {isPrintProduct(product) && !isDistributorMode && bundlesContainingThisProduct.length > 0 && (
               <div className="space-y-4 mt-4">
-                {bundlesContainingThisProduct.map((bundle) => {
-                  const ids = bundle.productIds || [];
-                  const nTit = ids.length;
-                  const listHaler = bundleCatalogListSumHaler(bundle, products);
-                  const packHaler = Math.max(0, Math.round(bundle.bundlePriceHaler || 0));
-                  const instanceProbe = 'pdp-bundle-probe';
-                  const linesOk = buildBundleCartLines(products, bundle, instanceProbe).length === nTit && nTit > 0;
-                  let coverCandidates: any[] = ids
-                    .filter((id) => String(id) !== String(product.id))
-                    .map((id) => products.find((p) => String(p.id) === String(id)))
-                    .filter((p): p is any => !!p && isPrintProduct(p) && !!getProductImage(p));
-                  if (coverCandidates.length === 0 && getProductImage(product)) {
-                    coverCandidates = [product];
-                  }
-                  const coverPick = pickUpToFourSeeded(coverCandidates, `${bundle.id}:${product.id}`);
-                  const fmtKc = (h: number) => `${(h / 100).toLocaleString('cs-CZ', {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}\u00a0K\u010d`;
-
-                  return (
-                    <div
-                      key={bundle.id}
-                      className="rounded-[20px] bg-[#fff8e8] border border-[#f5d08c] px-3 py-2.5 sm:px-4 sm:py-3 shadow-[0_1px_0_rgba(180,130,40,0.06)]"
-                      role="region"
-                      aria-label="Zvýhodněný balíček"
-                    >
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5">
-                        {coverPick.length > 0 && (
-                          <div className="flex items-center justify-center sm:justify-start shrink-0 mx-auto sm:mx-0 self-center sm:-translate-x-5">
-                            {coverPick.map((bp, idx) => (
-                              <BundleFanCoverThumb
-                                key={String(bp.id)}
-                                book={bp}
-                                index={idx}
-                                total={coverPick.length}
-                                onClick={() => navigate(`/produkt/${encodeURIComponent(String(bp.id))}`)}
-                                className={idx > 0 ? '-ml-[30px] sm:-ml-[34px]' : ''}
-                              />
-                            ))}
-                          </div>
-                        )}
-                        <div className="flex-1 min-w-0 flex flex-col gap-1.5 sm:gap-2 text-center sm:text-left">
-                          <p
-                            className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0"
-                          >
-                            {'Tento titul si m\u016f\u017eete po\u0159\u00eddit ve zv\u00fdhodn\u011bn\u00e9m bal\u00ed\u010dku:\u00a0'}
-                            <strong className="font-semibold">{bundle.title}</strong>
-                            {`\u00a0: ${nTit}\u00a0${titulSkloneni(nTit)}`}
-                          </p>
-                          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 sm:gap-x-2.5 gap-y-1.5 w-full min-w-0">
-                            {listHaler > 0 && listHaler > packHaler && (
-                              <span
-                                className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#78350f]/55 line-through"
-                              >
-                                {fmtKc(listHaler)}
-                              </span>
-                            )}
-                            <span className="font-['Fenomen_Sans',sans-serif] text-[17px] sm:text-[19px] font-bold text-[#001161]">
-                              {fmtKc(packHaler)}
-                            </span>
-                            <span className="font-['Fenomen_Sans',sans-serif] text-[10px] sm:text-[11px] uppercase tracking-wide text-[#92400e] font-normal">
-                              {'cena bal\u00ed\u010dku'}
-                            </span>
-                            <button
-                              type="button"
-                              disabled={!linesOk || kvBundleAddingId === bundle.id}
-                              onClick={() => handleAddKvBundleToSchoolOrder(bundle)}
-                              className="inline-flex items-center justify-center gap-1.5 sm:gap-2 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer border-0 min-w-0 text-center"
-                            >
-                              <ShoppingCart className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-                              {'P\u0159idat do objedn\u00e1vky'}
-                            </button>
-                            <Link
-                              to={`/balicek/${encodeURIComponent(bundle.id)}`}
-                              className="inline-flex items-center justify-center py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-normal text-[#92400e] underline underline-offset-2 hover:opacity-90 border border-[#d97706]/35 bg-white/90 whitespace-nowrap"
-                            >
-                              {'V\u00edce o akci'}
-                            </Link>
-                          </div>
-                          {!linesOk && (
-                            <p className="text-[11px] text-[#9a3412] m-0">
-                              {'Bal\u00ed\u010dek te\u010d nejde p\u0159idat do ko\u0161\u00edku \u2014 chyb\u00ed produkt v katalogu nebo varianta.'}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {bundlesContainingThisProduct.map((bundle) => (
+                  <ProductBundlePromoTile
+                    key={bundle.id}
+                    bundle={bundle}
+                    products={products}
+                    anchorProduct={product}
+                    onAddToSchoolOrder={handleAddKvBundleToSchoolOrder}
+                    addingBundleId={kvBundleAddingId}
+                  />
+                ))}
               </div>
             )}
 

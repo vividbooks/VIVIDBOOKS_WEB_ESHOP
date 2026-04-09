@@ -4,7 +4,7 @@ import { Award, ChevronRight, Loader2, Radio } from 'lucide-react';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { useDvppVideos } from '../contexts/DvppVideosContext';
 import type { Webinar } from '../data/webinars';
-import { WebinarThumbnail } from './WebinarThumbnail';
+import { WebinarCard } from './WebinarCard';
 import { DvppVideoCard } from './DvppVideoCard';
 
 const F = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -80,122 +80,14 @@ function defaultDvppTopicId(
   return hit?.id ?? null;
 }
 
-export function pickWebinarQuote(w: Webinar): string {
-  if (w.highlightQuote?.trim()) return w.highlightQuote.trim();
-  const raw = stripHtml(w.description || '');
-  const oneLine = raw.replace(/\s+/g, ' ').trim();
-  if (!oneLine) return '';
-  const parts = oneLine.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
-  const boring = (s: string) => /^na webináři/i.test(s) || s.length < 38;
-  let pick = parts.find((s) => !boring(s));
-  if (!pick) pick = parts[0] || oneLine;
-  if (pick.length > 220) pick = `${pick.slice(0, 217)}…`;
-  return pick;
-}
-
 function sortUpcoming(list: Webinar[]): Webinar[] {
   return [...list].sort((a, b) => webinarDateTs(a) - webinarDateTs(b));
 }
 
 const SCROLL_ROW =
   'flex gap-5 overflow-x-auto pb-2 -mx-1 px-1 snap-x snap-mandatory md:snap-none';
-const TILE_W = 'snap-center shrink-0 w-[min(100%,300px)]';
-
-function SubjectWebinarTile({
-  webinar: w,
-  quote,
-}: {
-  webinar: Webinar;
-  quote: string;
-}) {
-  const navigate = useNavigate();
-  const href = `/webinar/${w.slug || w.id}`;
-  const go = () => navigate(href);
-
-  return (
-    <div
-      className={`${TILE_W} rounded-[20px] overflow-hidden shadow-sm hover:shadow-md transition-shadow group flex flex-col bg-[#F0F2F8]`}
-      style={{ minWidth: 0 }}
-    >
-      <div
-        className="relative overflow-hidden cursor-pointer"
-        onClick={go}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            go();
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <span
-          style={F}
-          className="absolute top-2.5 left-2.5 z-[2] text-[9px] font-black uppercase tracking-wide text-white bg-[#E8942A] px-2 py-1 rounded-lg shadow-sm"
-        >
-          Plánovaný webinář
-        </span>
-        <WebinarThumbnail
-          title={w.title}
-          subtitle={w.subtitle}
-          day={w.day}
-          monthName={w.monthName}
-          time={w.time}
-          lecturer={w.lecturer}
-          lecturerAvatar={w.lecturerAvatar}
-          variant={w.thumbnailVariant}
-          coverImage={w.coverImage}
-        />
-      </div>
-
-      <div className="flex flex-col flex-1 min-h-0 bg-[#F0F2F8]">
-        {quote ? (
-          <blockquote
-            className="mx-3 mt-3 mb-0 text-[11px] md:text-[12px] leading-snug border-l-[3px] border-[#7C3AED]/35 pl-2.5 italic line-clamp-3 text-[#001158]/75"
-            style={F}
-          >
-            „{quote}“
-          </blockquote>
-        ) : null}
-
-        <div className="flex items-center gap-3 px-4 py-3 mt-auto">
-          <div className="shrink-0 flex flex-col items-center bg-white rounded-[10px] px-2.5 py-1.5 min-w-[46px] shadow-[0_1px_4px_rgba(0,17,88,0.06)]">
-            <span className="font-['Fenomen_Sans',sans-serif] font-black text-[#001158] text-[18px] leading-none">
-              {w.day}
-            </span>
-            <span className="font-['Fenomen_Sans',sans-serif] text-[10px] text-[#001158]/60 leading-tight">
-              {w.monthName}
-            </span>
-            <span
-              className="font-['Fenomen_Sans',sans-serif] font-bold text-[11px] leading-none mt-0.5"
-              style={{ color: '#FF8C00' }}
-            >
-              {w.time}
-            </span>
-          </div>
-
-          <p
-            className="font-['Fenomen_Sans',sans-serif] text-[#001158] text-[13px] font-semibold leading-snug flex-1 line-clamp-2 cursor-pointer hover:opacity-80 transition-opacity min-w-0"
-            onClick={go}
-          >
-            {w.title}
-            {w.subtitle ? (
-              <span className="font-medium text-[#001158]/50"> {w.subtitle}</span>
-            ) : null}
-          </p>
-
-          <button
-            type="button"
-            onClick={go}
-            className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[12px] px-3.5 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-          >
-            Přihlásit se
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+/** Stejná šířka dlaždice jako rozumný sloupec v gridu na /webinare (viz WebinarsSection). */
+const TILE_W = 'snap-center shrink-0 w-[min(100%,320px)]';
 
 interface SubjectWebinarsSliderProps {
   subject: string;
@@ -307,7 +199,9 @@ export function SubjectWebinarsSlider({
             </div>
             <div className={SCROLL_ROW} style={{ scrollbarWidth: 'thin' }}>
               {upcoming.map((w) => (
-                <SubjectWebinarTile key={w.id} webinar={w} quote={pickWebinarQuote(w)} />
+                <div key={w.id} className={TILE_W}>
+                  <WebinarCard webinar={w} />
+                </div>
               ))}
             </div>
           </div>

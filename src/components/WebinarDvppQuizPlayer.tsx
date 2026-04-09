@@ -379,20 +379,20 @@ export function WebinarDvppQuizPlayer({
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.2 }}
-                  className="flex min-h-0 flex-1 flex-col"
+                  className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-y-contain md:overflow-hidden"
                 >
-                  {/* Horní část ~ jako Vividboard: otázka vycentrovaná */}
-                  <div className="flex min-h-0 flex-[1.15] flex-col items-center justify-center px-5 py-4 sm:px-12 sm:py-6 md:px-14">
+                  {/* Mobil: otázka + tlačítka pod sebou, scroll — bez flex-shrink, který maže výšku textu */}
+                  <div className="flex min-h-0 shrink-0 flex-col items-center justify-center px-4 pb-3 pt-2 sm:px-8 sm:pb-4 md:flex md:min-h-0 md:flex-[1.15] md:px-14 md:py-6">
                     <p
                       style={{ ...FF, color: QUESTION_MUTED }}
-                      className="max-w-4xl text-center text-[clamp(1.35rem,3.5vw,2.05rem)] font-bold leading-snug md:leading-relaxed md:text-[1.85rem] lg:text-[2.1rem]"
+                      className="max-w-4xl text-center text-[clamp(1.05rem,4.2vw,1.85rem)] font-bold leading-snug sm:text-[clamp(1.1rem,3.5vw,2.05rem)] md:leading-relaxed md:text-[1.85rem] lg:text-[2.1rem]"
                     >
                       {currentQ.label}
                     </p>
                   </div>
 
-                  <div className="flex min-h-0 flex-1 flex-col justify-end pb-5 sm:pb-7">
-                    <div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-3 px-4 sm:grid-cols-2 sm:gap-4 sm:px-6 md:px-10">
+                  <div className="flex min-h-0 shrink-0 flex-col pb-[max(1rem,env(safe-area-inset-bottom))] pt-1 sm:pb-7 md:flex md:flex-1 md:justify-end md:pb-7">
+                    <div className="mx-auto grid w-full max-w-4xl grid-cols-1 gap-2.5 px-3 sm:grid-cols-2 sm:gap-4 sm:px-6 md:px-10">
                       {currentQ.options.slice(0, 4).map((opt, oi) => {
                         const letter = letters[oi];
                         const sel = answers[currentQ.id] === opt;

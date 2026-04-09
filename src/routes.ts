@@ -111,6 +111,7 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/NovinkaDetailRoute'), 'NovinkaDetailRoute'),
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
             { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
