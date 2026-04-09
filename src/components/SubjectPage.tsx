@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { TopNav } from './TopNav';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import digitalSeriesImg from 'figma:asset/cf223de1d9c5d972540d939e1fb808679daac389.png';
@@ -22,6 +22,10 @@ const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b
 const AUTH = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 
 const MATH_SERIES_DIFF_YOUTUBE_ID = '3QfBy-xJ4Os';
+
+/** Hodnoty `typ` v URL — odpovídají filtru řad (Matematika 2. stupeň). */
+type SeriesFilterId = 'all' | 'krok' | 'pro-vsechny' | 'digital';
+const SERIES_TYP_PARAMS = new Set(['krok', 'pro-vsechny', 'digital']);
 
 /* ─────────────────────────────────────────────
    Helpers
@@ -377,6 +381,7 @@ export function SubjectPage({
   hideTopNav = false,
 }: SubjectPageProps) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const baseSubject = subject.replace(/\s+\d+\.\s*stupe.*$/i, '').trim();
   const gradeNumMatch = subject.match(/(\d+)\.\s*stupe/i);
   const subjectGradeNum = gradeNumMatch ? gradeNumMatch[1] : null;
@@ -428,15 +433,103 @@ export function SubjectPage({
     return true;
   });
 
-  const [activeSeries, setActiveSeries] = useState<'all' | 'krok' | 'pro-vsechny' | 'digital'>('all');
-  const [subjectRocnikFilter, setSubjectRocnikFilter] = useState<string | null>(null);
+  /* Přepínání řad jen pro Matematiku 2. stupeň — musí být před odvozením filtrů z URL. */
+  const showSeriesPanels = baseSubject === 'Matematika' && subjectGradeNum === '2';
+
   const [mathDiffVideoOpen, setMathDiffVideoOpen] = useState(false);
   const [heroIntroOpen, setHeroIntroOpen] = useState(false);
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(0);
 
+  const rocnikParam = searchParams.get('rocnik');
+  const typParam = searchParams.get('typ');
+
+  const subjectRocnikOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const p of subjectProducts) {
+      const r = subjectPageExtractRocnik(p);
+      if (r) s.add(r);
+    }
+    return Array.from(s).sort((a, b) => Number(a) - Number(b));
+  }, [subjectProducts]);
+
+  const subjectRocnikFilter = useMemo(() => {
+    if (!rocnikParam) return null;
+    if (subjectRocnikOptions.length === 0) return null;
+    return subjectRocnikOptions.includes(rocnikParam) ? rocnikParam : null;
+  }, [rocnikParam, subjectRocnikOptions]);
+
+  const activeSeries: SeriesFilterId = useMemo(() => {
+    if (!showSeriesPanels) return 'all';
+    if (typParam && SERIES_TYP_PARAMS.has(typParam)) {
+      return typParam as Exclude<SeriesFilterId, 'all'>;
+    }
+    return 'all';
+  }, [typParam, showSeriesPanels]);
+
+  const prevSubjectRef = useRef<string | null>(null);
   useEffect(() => {
-    setSubjectRocnikFilter(null);
-  }, [subject]);
+    if (prevSubjectRef.current !== null && prevSubjectRef.current !== subject) {
+      setSearchParams({}, { replace: true });
+    }
+    prevSubjectRef.current = subject;
+  }, [subject, setSearchParams]);
+
+  useEffect(() => {
+    const r = searchParams.get('rocnik');
+    if (!r || subjectRocnikOptions.length === 0) return;
+    if (!subjectRocnikOptions.includes(r)) {
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('rocnik');
+        return next;
+      }, { replace: true });
+    }
+  }, [subjectRocnikOptions, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (showSeriesPanels || !searchParams.get('typ')) return;
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('typ');
+      return next;
+    }, { replace: true });
+  }, [showSeriesPanels, searchParams, setSearchParams]);
+
+  const toggleRocnik = (r: string) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      const cur = prev.get('rocnik');
+      if (cur === r) next.delete('rocnik');
+      else next.set('rocnik', r);
+      return next;
+    }, { replace: true });
+  };
+
+  const clearRocnikFilter = () => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('rocnik');
+      return next;
+    }, { replace: true });
+  };
+
+  const toggleSeries = (id: 'krok' | 'pro-vsechny' | 'digital') => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      const cur = prev.get('typ');
+      if (cur === id) next.delete('typ');
+      else next.set('typ', id);
+      return next;
+    }, { replace: true });
+  };
+
+  const clearSeriesFilter = () => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('typ');
+      return next;
+    }, { replace: true });
+  };
 
   useEffect(() => {
     if (!mathDiffVideoOpen) return;
@@ -477,18 +570,6 @@ export function SubjectPage({
     if (!isNaN(na) && !isNaN(nb)) return na - nb;
     return 0;
   };
-
-  /* Přepínání řad jen pro Matematiku 2. stupeň */
-  const showSeriesPanels = baseSubject === 'Matematika' && subjectGradeNum === '2';
-
-  const subjectRocnikOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const p of subjectProducts) {
-      const r = subjectPageExtractRocnik(p);
-      if (r) s.add(r);
-    }
-    return Array.from(s).sort((a, b) => Number(a) - Number(b));
-  }, [subjectProducts]);
 
   const matchesSubjectRocnik = (p: any) =>
     subjectRocnikFilter == null || subjectPageExtractRocnik(p) === subjectRocnikFilter;
@@ -731,9 +812,7 @@ export function SubjectPage({
                     <button
                       key={r}
                       type="button"
-                      onClick={() => {
-                        setSubjectRocnikFilter((prev) => (prev === r ? null : r));
-                      }}
+                      onClick={() => toggleRocnik(r)}
                       className={`px-[14px] py-[7px] rounded-full font-['Fenomen_Sans',sans-serif] text-[15.6px] font-normal leading-tight transition-colors cursor-pointer border-0 ${
                         on
                           ? 'bg-[#001161] text-white'
@@ -750,7 +829,7 @@ export function SubjectPage({
             {subjectRocnikFilter != null && (
               <button
                 type="button"
-                onClick={() => setSubjectRocnikFilter(null)}
+                onClick={clearRocnikFilter}
                 className="font-['Fenomen_Sans',sans-serif] text-[14.4px] text-[#001161]/45 hover:text-[#001161] underline underline-offset-2 self-start cursor-pointer bg-transparent border-0 p-0"
               >
                 Zrušit filtry
@@ -791,7 +870,7 @@ export function SubjectPage({
                   return (
                     <button
                       key={s.id}
-                      onClick={() => setActiveSeries(prev => prev === s.id ? 'all' : s.id)}
+                      onClick={() => toggleSeries(s.id)}
                       className="inline-flex items-center gap-2 transition-all cursor-pointer"
                       style={{
                         fontFamily: "'Fenomen Sans', sans-serif",
@@ -808,7 +887,7 @@ export function SubjectPage({
                 })}
                 {activeSeries !== 'all' && (
                   <button
-                    onClick={() => setActiveSeries('all')}
+                    onClick={clearSeriesFilter}
                     className="inline-flex items-center gap-1.5 transition-all cursor-pointer"
                     style={{ fontFamily: "'Fenomen Sans', sans-serif", fontSize: '12px', color: 'rgba(0,17,97,0.4)', background: 'rgba(0,17,97,0.05)', border: '1.5px solid rgba(0,17,97,0.08)', borderRadius: '16px', padding: '10px 14px' }}
                   >
