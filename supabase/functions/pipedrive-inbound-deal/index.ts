@@ -5,7 +5,8 @@
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
  *   Tělo = standardní JSON webhooku (meta.id / current.id = deal ID).
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
- * - GET/HEAD se stejným ?token= → 200 (kontrola dostupnosti Pipedrive; dříve jen POST → 405).
+ * - GET/HEAD → vždy 200 (Pipedrive při kontrole často volá URL bez ?token=; s tokenem vracíme bohatší JSON).
+ * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible“.
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
  * Bez osoby / bez e-mailu / nulová hodnota: objednávka se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
@@ -219,22 +220,26 @@ Deno.serve(async (req) => {
 
   const url = new URL(req.url);
 
-  /** Kontrola dostupnosti (Pipedrive / prohlížeč) — stejný token jako u POST, bez zpracování dealu. */
+  /** Reachability: Pipedrive ověření často volá GET/HEAD na základní URL bez query — 401 = „webhook inaccessible“. */
   if (req.method === 'GET' || req.method === 'HEAD') {
-    if (!verifyInboundToken(req, url)) {
-      logInbound('probe_unauthorized', { method: req.method });
-      return jsonResponse({ error: 'Unauthorized.' }, 401);
-    }
     if (req.method === 'HEAD') {
       return new Response(null, {
         status: 200,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    if (verifyInboundToken(req, url)) {
+      return jsonResponse({
+        ok: true,
+        service: 'pipedrive-inbound-deal',
+        hint: 'Webhook accepts POST with Pipedrive JSON or { "deal_id": number }.',
+      }, 200);
+    }
     return jsonResponse({
       ok: true,
       service: 'pipedrive-inbound-deal',
-      hint: 'Webhook accepts POST with Pipedrive JSON or { "deal_id": number }.',
+      probe: 'reachable',
+      hint: 'Pipedrive URL check: OK. Real deliveries: POST with ?token= or x-pipedrive-inbound-token header.',
     }, 200);
   }
 
@@ -247,6 +252,41 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Unauthorized.' }, 401);
   }
 
+  const rawBody = await req.text();
+  const trimmed = rawBody.trim();
+  if (!trimmed) {
+    return jsonResponse({
+      ok: true,
+      accepted: false,
+      hint: 'Empty body — no import. Send Pipedrive webhook JSON or { "deal_id": number }.',
+    }, 200);
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return jsonResponse({ ok: true, accepted: false, hint: 'Body must be a JSON object.' }, 200);
+    }
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    return jsonResponse({ ok: true, accepted: false, hint: 'Invalid JSON — use Pipedrive webhook payload or { "deal_id": number }.' }, 200);
+  }
+
+  const dealId = extractDealId(payload);
+  if (!dealId) {
+    logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20) });
+    return jsonResponse(
+      {
+        ok: true,
+        skipped: true,
+        reason: 'no_deal_id',
+        hint: 'Could not resolve deal id from payload (expected meta.id, current.id, or deal_id).',
+      },
+      200,
+    );
+  }
+
   const apiToken = (Deno.env.get('PIPEDRIVE_API_TOKEN') || '').trim();
   if (!apiToken) {
     return jsonResponse({ error: 'PIPEDRIVE_API_TOKEN not configured.' }, 500);
@@ -257,24 +297,12 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
   }
 
-  let payload: Record<string, unknown>;
-  try {
-    payload = await req.json();
-  } catch {
-    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
-  }
-
-  const dealId = extractDealId(payload);
-  if (!dealId) {
-    logInbound('bad_payload', { keys: Object.keys(payload).slice(0, 20) });
-    return jsonResponse({ error: 'Could not resolve Pipedrive deal id.' }, 400);
-  }
-
   logInbound('start', { dealId });
 
   const deal = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/deals/${dealId}`);
   if (!deal) {
-    return jsonResponse({ error: `Deal ${dealId} not found in Pipedrive.` }, 404);
+    logInbound('skipped', { dealId, reason: 'deal_not_found' });
+    return jsonResponse({ skipped: true, reason: 'deal_not_found', dealId }, 200);
   }
 
   const status = String(deal.status || '').toLowerCase();
