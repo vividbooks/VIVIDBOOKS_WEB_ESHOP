@@ -1,8 +1,9 @@
 import type { ComponentType } from 'react';
 import React from 'react';
 import type { RouteObject } from 'react-router';
-import { createBrowserRouter } from 'react-router';
+import { createBrowserRouter, Outlet } from 'react-router';
 import { ChunkLoadErrorFallback } from './components/ChunkLoadErrorFallback';
+import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
 
@@ -51,6 +52,10 @@ function lazyNamed<T extends Record<string, ComponentType<unknown>>>(
 
 export const router = createBrowserRouter(
   withLazyHydrateFallbacks([
+    {
+      element: React.createElement(Outlet),
+      errorElement: React.createElement(RouteErrorBoundary),
+      children: [
     {
       path: '/hub',
       lazy: lazyNamed(() => import('./components/AgentHubPage'), 'AgentHubPage'),
@@ -206,6 +211,8 @@ export const router = createBrowserRouter(
         },
         { path: 'image-agent', lazy: lazyDefault(() => import('./components/admin/ImageAgentPage')) },
         { path: 'rag', lazy: lazyDefault(() => import('./components/admin/RagPage')) },
+      ],
+    },
       ],
     },
   ]),
