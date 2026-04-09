@@ -7,8 +7,27 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
+import {
+  normalizeEmail,
+  isValidEmailFormat,
+  EMAIL_FORMAT_HINT_CS,
+  EMAIL_MX_REJECT_CS,
+} from '../../../utils/emailValidation.ts';
+import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 
 const app = new Hono();
+
+async function assertEmailDeliverable(emailRaw: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const e = normalizeEmail(emailRaw);
+  if (!isValidEmailFormat(e)) {
+    return { ok: false, message: EMAIL_FORMAT_HINT_CS };
+  }
+  const dom = e.split('@')[1];
+  if (!dom) return { ok: false, message: EMAIL_FORMAT_HINT_CS };
+  const mxOk = await domainAcceptsMailForForms(dom);
+  if (!mxOk) return { ok: false, message: EMAIL_MX_REJECT_CS };
+  return { ok: true };
+}
 const KV_KEY = 'vividbooks_master_products_v1';
 const OFFERS_KEY = 'vividbooks_special_offers_v1';
 const BUNDLES_KEY = 'vividbooks_product_bundles_v1';
@@ -840,9 +859,23 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
   }
 });
 
+/** Import z Webflow duplikuje text do `note`, `poznamka` a často i `metadata`. Při zápisu `note` musí být vše synchronní, jinak UI vymaže jen `note` a zobrazení dál bere `poznamka`. */
+function applyProductNoteSync<T extends Record<string, unknown>>(product: T, noteFromRequest: unknown): T {
+  const n = String(noteFromRequest ?? '');
+  const next = { ...product, note: n, poznamka: n } as T;
+  const meta = (next as any).metadata;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    (next as any).metadata = { ...meta, poznamka: n, 'poznámka': n };
+  }
+  return next;
+}
+
 app.post('/make-server-93a20b6f/products', async (c) => {
   const newProduct = await c.req.json();
   if (!newProduct.id) newProduct.id = `sb-${Date.now()}`;
+  if ('note' in newProduct) {
+    Object.assign(newProduct, applyProductNoteSync(newProduct, newProduct.note));
+  }
   const products = await getAllProducts();
   await saveAllProducts([...products, newProduct]);
   return c.json({ success: true, product: newProduct });
@@ -866,7 +899,14 @@ app.put('/make-server-93a20b6f/products/:id', async (c) => {
   const id = c.req.param('id');
   const updates = await c.req.json();
   const products = await getAllProducts();
-  const updated = products.map((p: any) => p.id === id ? { ...p, ...updates } : p);
+  const updated = products.map((p: any) => {
+    if (p.id !== id) return p;
+    let next: any = { ...p, ...updates };
+    if ('note' in updates) {
+      next = applyProductNoteSync(next, updates.note);
+    }
+    return next;
+  });
   await saveAllProducts(updated);
   return c.json({ success: true });
 });
@@ -2828,6 +2868,10 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     const emailRaw = String(body.email || '').trim();
     const participantName = String(body.participantName || '').trim();
     const birthDateIso = String(body.birthDateIso || '').trim();
+    const schoolNameOpt = String(body.schoolName || '').trim();
+    const schoolIcoOpt = String(body.schoolIco || '')
+      .replace(/\D/g, '')
+      .slice(0, 10);
 
     if (!webinarId || !emailRaw || !participantName) {
       return c.json({ error: 'Chybí webinarId, e-mail nebo jméno.' }, 400);
@@ -2856,6 +2900,8 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
       ...base,
       certificateParticipantName: participantName,
       birthDateIso,
+      ...(schoolNameOpt ? { certificateSchoolName: schoolNameOpt } : {}),
+      ...(schoolIcoOpt.length >= 8 ? { certificateSchoolIco: schoolIcoOpt } : {}),
       certificateProfileSavedAt: new Date().toISOString(),
     };
     await kv.set(key, merged);
@@ -5276,10 +5322,7 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       | Record<string, unknown>
       | undefined;
     const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, webinar);
-    const existingFinal = await kv.get(webinarSurveyAnswerKey(webinarId, email));
-    if (existingFinal) {
-      return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
-    }
+    /** Žádné 409 — uživatel může vyplnit znovu (stejný odkaz / opakování bez „autentizace“). */
 
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
@@ -5385,8 +5428,7 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       out[q.id] = s;
     }
 
-    const existing = await kv.get(webinarSurveyAnswerKey(webinarId, email));
-    if (existing) return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
+    /** Přepsat předchozí finální odeslání — opakované vyplnění je povolené. */
 
     await kv.set(webinarSurveyAnswerKey(webinarId, email), {
       webinarId,
@@ -6756,6 +6798,9 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
     if (!email || !name) return c.json({ error: 'Chybí jméno nebo e-mail.' }, 400);
 
     const cleanEmail = email.toLowerCase().trim();
+    const emailGate = await assertEmailDeliverable(cleanEmail);
+    if (!emailGate.ok) return c.json({ error: emailGate.message }, 400);
+
     const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
@@ -6850,14 +6895,32 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
   }
 });
 
+/* ── GET validate-email (formát + DNS MX/A) ─────────────────────── */
+const validateEmailHandler = async (c: Context) => {
+  const email = String(c.req.query('email') || '').trim();
+  const r = await assertEmailDeliverable(email);
+  if (!r.ok) return c.json({ ok: false, message: r.message });
+  return c.json({ ok: true });
+};
+app.get('/make-server-93a20b6f/validate-email', validateEmailHandler);
+app.get('/validate-email', validateEmailHandler);
+
 /* ── Check trial email (dedup, 6mesicni cooldown) ──────────────── */
 app.get('/make-server-93a20b6f/check-trial-email', async (c) => {
   const email = c.req.query('email') || '';
-  if (!email || !email.includes('@')) {
+  const cleanEmail = email.toLowerCase().trim();
+  if (!cleanEmail) {
     return c.json({ canRequest: true, alreadyRequested: false });
   }
+  if (!isValidEmailFormat(cleanEmail)) {
+    return c.json({
+      canRequest: false,
+      alreadyRequested: false,
+      emailInvalid: true,
+      message: EMAIL_FORMAT_HINT_CS,
+    });
+  }
   try {
-    const cleanEmail = email.toLowerCase().trim();
     const trialKey = `trial_request_email_${cleanEmail}`;
     const record = await kv.get(trialKey);
     if (!record) {
@@ -10117,6 +10180,7 @@ const addressAutocompleteHandler = async (c: Context) => {
   url.searchParams.set('input', raw);
   url.searchParams.set('key', key);
   url.searchParams.set('language', 'cs');
+  url.searchParams.set('types', 'address');
   url.searchParams.set('components', 'country:cz|country:sk');
   try {
     const res = await fetch(url.toString());
@@ -13179,6 +13243,249 @@ async function findOrCreatePipedrivePersonForEshopB2c(
   return created?.data || null;
 }
 
+/** Výchozí e‑shop pipeline (Pipedrive), pokud není v env. */
+const PIPEDRIVE_ESHOP_PIPELINE_ID_DEFAULT = 20;
+
+/** Výchozí ID štítků dealu (pole Label) — přepíše PIPEDRIVE_ESHOP_LABEL_IDS_* / auto z API. */
+const PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT = 419;
+const PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT = 488;
+
+function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
+  const L = (s: unknown) => String(s || '').trim().toLowerCase();
+  if (wanted === 'won') {
+    return (
+      options.find((o) => L(o.label) === 'won') ||
+      options.find((o) => /^(won|vyhran|výhr)/.test(L(o.label))) ||
+      options.find((o) => /\bwon\b/.test(L(o.label)))
+    );
+  }
+  return (
+    options.find((o) => L(o.label) === 'open') ||
+    options.find((o) => /^(open|otevř)/.test(L(o.label))) ||
+    options.find((o) => /\bopen\b/.test(L(o.label)))
+  );
+}
+
+/**
+ * Načte GET /dealFields a sestaví payload pro stav dealu: vlastní enum (OPEN/WON) nebo systémové `status`.
+ */
+async function resolveDealStatusPayloadFromFields(
+  apiToken: string,
+  wanted: 'open' | 'won',
+): Promise<Record<string, unknown>> {
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+
+    // 1) Systémové pole status (key === status) — GET /dealFields vrací field_id; POST /deals bere open|won
+    const sys = fields.find((f) => String(f.key || '') === 'status');
+    if (sys?.id != null) {
+      console.log(`[Pipedrive eshop] systémové pole status field_id=${sys.id} key=status → ${wanted}`);
+      if (sys.options?.length) {
+        const opt = findPipedriveStatusOption(sys.options, wanted);
+        if (opt) {
+          console.log(`[Pipedrive eshop] status option v dealFields: id=${opt.id} label=${opt.label}`);
+        }
+      }
+      return { status: wanted };
+    }
+
+    // 2) Vlastní enum s OPEN / WON (když účet nemá v metadatech systémové status)
+    for (const f of fields) {
+      const opts = f.options || [];
+      if (opts.length < 2 || !f.key) continue;
+      const hasOpen = opts.some((o: any) => /open|otevř/i.test(String(o.label || '')));
+      const hasWon = opts.some((o: any) => /won|vyhran|výhr/i.test(String(o.label || '')));
+      if (!hasOpen || !hasWon) continue;
+      const opt = findPipedriveStatusOption(opts, wanted);
+      if (opt?.id != null) {
+        console.log(
+          `[Pipedrive eshop] status z dealFields (vlastní pole): field_id=${f.id} key=${f.key} option_id=${opt.id} (${opt.label})`,
+        );
+        return { [String(f.key)]: opt.id };
+      }
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive eshop] resolveDealStatusPayloadFromFields: ${e.message}`);
+  }
+  return { status: wanted };
+}
+
+function parseCommaSeparatedPipedriveIds(raw: string | undefined): number[] {
+  if (!raw?.trim()) return [];
+  const out: number[] = [];
+  for (const part of raw.split(',')) {
+    const id = parsePipedriveNumericId(part.trim());
+    if (id) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Štítky dealu (pole `label`): nejdřív env, pak heuristika z /dealFields, jinak výchozí 419 (B2C) / 488 (B2B).
+ */
+async function resolveEshopDealLabelIds(
+  apiToken: string,
+  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+): Promise<number[]> {
+  const fromEnvB2c = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2C'));
+  const fromEnvB2b = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2B'));
+  if (mode === 'b2c_card_won' && fromEnvB2c.length) return fromEnvB2c;
+  if (mode !== 'b2c_card_won' && fromEnvB2b.length) return fromEnvB2b;
+
+  if (mode === 'b2c_card_won') {
+    const single = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_B2C_ID'));
+    if (single) return [single];
+  } else {
+    const single = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_B2B_ID'));
+    if (single) return [single];
+  }
+
+  const idToName = await getPipedriveDealLabelIdToName(apiToken);
+  const entries = Object.entries(idToName).map(([id, name]) => ({ id: Number(id), name: String(name) }));
+  const n = (s: string) => normalizePipedriveSearchText(s).toLowerCase();
+
+  if (mode === 'b2c_card_won') {
+    const exact = entries.find((e) => n(e.name) === n('Eshop B2C') || n(e.name) === n('E-shop B2C'));
+    if (exact) return [exact.id];
+    const fuzzy = entries.find(
+      (e) => n(e.name).includes('eshop') && n(e.name).includes('b2c') && !n(e.name).includes('b2b'),
+    );
+    if (fuzzy) {
+      console.log(`[Pipedrive eshop] label B2C: „${fuzzy.name}“ → id=${fuzzy.id}`);
+      return [fuzzy.id];
+    }
+  } else {
+    const ids: number[] = [];
+    const school = entries.find(
+      (e) => (n(e.name).includes('skol') || n(e.name).includes('school')) && n(e.name).includes('b2b'),
+    );
+    const eshopB2b = entries.find(
+      (e) => n(e.name).includes('eshop') && n(e.name).includes('b2b') && !n(e.name).includes('skol'),
+    );
+    if (school) {
+      ids.push(school.id);
+      console.log(`[Pipedrive eshop] label B2B škola: „${school.name}“ → id=${school.id}`);
+    }
+    if (eshopB2b) {
+      ids.push(eshopB2b.id);
+      console.log(`[Pipedrive eshop] label B2B eshop: „${eshopB2b.name}“ → id=${eshopB2b.id}`);
+    }
+    if (ids.length) return ids;
+    const fuzzy = entries.find((e) => n(e.name).includes('b2b') && n(e.name).includes('eshop'));
+    if (fuzzy) {
+      console.log(`[Pipedrive eshop] label B2B (fallback): „${fuzzy.name}“ → id=${fuzzy.id}`);
+      return [fuzzy.id];
+    }
+  }
+
+  if (mode === 'b2c_card_won') {
+    console.log(`[Pipedrive eshop] label B2C výchozí id=${PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT}`);
+    return [PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT];
+  }
+  console.log(`[Pipedrive eshop] label B2B výchozí id=${PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT}`);
+  return [PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT];
+}
+
+/** Custom pole (např. Source) = PRINT — option id z env nebo vyhledání volby PRINT v /dealFields. */
+async function resolveEshopPrintFieldPayload(apiToken: string): Promise<Record<string, unknown>> {
+  const key = (Deno.env.get('PIPEDRIVE_ESHOP_PRINT_FIELD_KEY') || '').trim();
+  const optId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PRINT_OPTION_ID'));
+  const textVal = (Deno.env.get('PIPEDRIVE_ESHOP_PRINT_VALUE') || '').trim();
+
+  if (key) {
+    if (optId != null) {
+      console.log(`[Pipedrive eshop] PRINT ${key}=${optId} (PIPEDRIVE_ESHOP_PRINT_OPTION_ID)`);
+      return { [key]: optId };
+    }
+    if (textVal) {
+      console.log(`[Pipedrive eshop] PRINT ${key}="${textVal}" (PIPEDRIVE_ESHOP_PRINT_VALUE)`);
+      return { [key]: textVal };
+    }
+    try {
+      const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+      const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+      const field = fields.find((f) => String(f.key) === key);
+      const opts = field?.options || [];
+      const hit = opts.find((o: any) => String(o.label || '').toUpperCase().includes('PRINT'));
+      if (hit?.id != null) {
+        console.log(`[Pipedrive eshop] PRINT ${key}=${hit.id} (${hit.label}) z dealFields`);
+        return { [key]: hit.id };
+      }
+    } catch (e: any) {
+      console.log(`[Pipedrive eshop] PRINT resolve: ${e.message}`);
+    }
+    console.log(`[Pipedrive eshop] PRINT ${key}=PRINT (text fallback)`);
+    return { [key]: 'PRINT' };
+  }
+
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    for (const f of fields) {
+      const opts = f.options || [];
+      if (opts.length < 2) continue;
+      const hit = opts.find((o: any) => String(o.label || '').toUpperCase().includes('PRINT'));
+      if (!hit?.id) continue;
+      const fname = String(f.name || '').toLowerCase();
+      if (fname.includes('source') || fname.includes('zdroj') || fname.includes('print')) {
+        console.log(`[Pipedrive eshop] PRINT auto: ${f.key} (${f.name}) → ${hit.id}`);
+        return { [String(f.key)]: hit.id };
+      }
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive eshop] PRINT auto: ${e.message}`);
+  }
+  return {};
+}
+
+/**
+ * Hodnota pole štítků pro POST/PUT deal — systémové `label` = vždy řetězec ID (CSV);
+ * vlastní `set` (multi) = pole čísel; `enum` = jedno ID (číslo).
+ * Viz Pipedrive changelog: pole label jako string.
+ */
+async function resolvePipedriveDealLabelPayloadValue(
+  apiToken: string,
+  labelFieldKey: string,
+  labelIds: number[],
+): Promise<unknown> {
+  if (!labelIds.length) return undefined;
+  const key = (labelFieldKey || 'label').trim() || 'label';
+
+  let fieldType: string | undefined;
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const f = fields.find((x) => String(x?.key) === key);
+    const rawFt = f?.field_type ?? f?.type;
+    if (typeof rawFt === 'string' || typeof rawFt === 'number') {
+      fieldType = String(rawFt);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  if (key === 'label') {
+    const s = labelIds.map(String).join(',');
+    console.log(`[Pipedrive eshop] pole label (string): "${s}"`);
+    return s;
+  }
+
+  if (fieldType?.toLowerCase() === 'set') {
+    console.log(`[Pipedrive eshop] pole ${key} (set): [${labelIds.join(',')}]`);
+    return labelIds;
+  }
+
+  if (fieldType?.toLowerCase() === 'enum') {
+    console.log(`[Pipedrive eshop] pole ${key} (enum): ${labelIds[0]}`);
+    return labelIds[0];
+  }
+
+  const fallback = labelIds.length === 1 ? labelIds[0] : labelIds.map(String).join(',');
+  console.log(`[Pipedrive eshop] pole ${key} (fallback field_type=${fieldType ?? '?'})`);
+  return fallback;
+}
+
 async function createPipedriveEshopDealAdvanced(
   apiToken: string,
   params: {
@@ -13189,9 +13496,10 @@ async function createPipedriveEshopDealAdvanced(
     valueHaler: number;
     pipelineId: number;
     stageId: number;
-    status: 'open' | 'won';
+    statusPayload: Record<string, unknown>;
     labelFieldKey?: string | null;
-    labelOptionId?: number | null;
+    labelIds?: number[];
+    extraPayload?: Record<string, unknown>;
   },
 ) {
   const payload: Record<string, any> = {
@@ -13199,14 +13507,19 @@ async function createPipedriveEshopDealAdvanced(
     person_id: params.personId,
     pipeline_id: params.pipelineId,
     stage_id: params.stageId,
-    status: params.status,
+    ...params.statusPayload,
     value: Math.max(0, Math.round(params.valueHaler / 100)),
     currency: 'CZK',
   };
   if (params.orgId) payload.org_id = params.orgId;
   if (params.ownerId) payload.user_id = params.ownerId;
-  if (params.labelFieldKey && params.labelOptionId) {
-    payload[params.labelFieldKey] = params.labelOptionId;
+  const labelKey = (params.labelFieldKey || 'label').trim() || 'label';
+  if (params.labelIds?.length) {
+    const v = await resolvePipedriveDealLabelPayloadValue(apiToken, labelKey, params.labelIds);
+    if (v !== undefined) payload[labelKey] = v;
+  }
+  if (params.extraPayload && Object.keys(params.extraPayload).length) {
+    Object.assign(payload, params.extraPayload);
   }
   const data = await pipedriveRequest<any>(apiToken, '/deals', {
     method: 'POST',
@@ -13252,20 +13565,224 @@ async function addPipedriveDealLineItemsFromOrder(
   }
 }
 
+function pipedriveStageNameLooksLost(name: unknown): boolean {
+  const n = String(name || '').toLowerCase();
+  return /\b(lost|zanedban|ztracen|prohran|rejected|zam[ií]tnut)\b/i.test(n);
+}
+
+/** Shrnutí fází pro pipedrive_sync_error / log (max ~1.2k znaků). */
+function formatEshopStagesDiagnosticPreview(stages: any[], max = 12): string {
+  const sorted = [...stages].sort((a, b) => (Number(a.order_nr) || 0) - (Number(b.order_nr) || 0));
+  const lines = sorted.slice(0, max).map((s) => {
+    const id = parsePipedriveNumericId(s?.id);
+    const prob = s?.deal_probability;
+    const ord = s?.order_nr;
+    const nm = String(s?.name || '').slice(0, 28);
+    return `${id ?? '?'}:${nm} p=${prob} o=${ord}`;
+  });
+  const more = stages.length > max ? ` …+${stages.length - max}` : '';
+  return lines.join(' | ') + more;
+}
+
+type ResolveEshopStagesResult =
+  | { ok: true; stageWonId: number; stageOpenId: number }
+  | { ok: false; diagnostic: string };
+
+/**
+ * Won / open fáze z Pipedrive API, pokud nejsou v secrets.
+ * Won: deal_probability === 100. Open: první fáze podle order_nr, která není won a neevidujeme jako lost (název).
+ */
+async function resolveEshopStageIdsFromApi(
+  apiToken: string,
+  pipelineId: number,
+): Promise<ResolveEshopStagesResult> {
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/stages', {}, { pipeline_id: pipelineId, limit: 500 });
+    const stages: any[] = Array.isArray(data?.data) ? data.data : [];
+    if (!stages.length) {
+      const d = `GET /stages pipeline_id=${pipelineId}: 0 fází (špatné ID pipeline nebo token bez přístupu k pipeline).`;
+      console.log(`[Pipedrive eshop] ${d}`);
+      return { ok: false, diagnostic: d };
+    }
+
+    const won = stages.find((s) => Number(s.deal_probability) === 100);
+    const sorted = [...stages].sort((a, b) => (Number(a.order_nr) || 0) - (Number(b.order_nr) || 0));
+
+    let open = sorted.find(
+      (s) => Number(s.deal_probability) < 100 && !pipedriveStageNameLooksLost(s.name),
+    );
+    if (!open) {
+      open = sorted.find((s) => Number(s.deal_probability) < 100);
+    }
+    const wonIdNum = parsePipedriveNumericId(won?.id);
+    if (!open && wonIdNum) {
+      open = sorted.find((s) => parsePipedriveNumericId(s?.id) !== wonIdNum);
+    }
+
+    const stageWonId = wonIdNum;
+    let stageOpenId = parsePipedriveNumericId(open?.id);
+
+    // Jedna fáze v pipeline (všechno má p=100 nebo jen jeden sloupec) — open nelze odvodit; stejné stage_id + status v POST /deals.
+    if (stageWonId && !stageOpenId && stages.length === 1) {
+      const onlyId = parsePipedriveNumericId(stages[0]?.id);
+      if (onlyId === stageWonId) {
+        stageOpenId = stageWonId;
+        console.log(
+          `[Pipedrive eshop] pipeline ${pipelineId}: jediná fáze id=${stageWonId} — dočasně open=won; v Pipedrive přidejte druhou fázi (např. „Lead“) s pravděpodobností pod 100 %.`,
+        );
+      }
+    }
+
+    if (stageWonId && stageOpenId) {
+      return { ok: true, stageWonId, stageOpenId };
+    }
+
+    const preview = formatEshopStagesDiagnosticPreview(stages);
+    const parts: string[] = [
+      `pipeline_id=${pipelineId} fází=${stages.length}`,
+      !wonIdNum ? 'won: žádná fáze s deal_probability=100 (v Pipedrive → Pipeline → nastavte pravděpodobnost u „vyhrané“ fáze, nebo nastavte PIPEDRIVE_ESHOP_STAGE_WON_ID ručně)' : `won_ok=${stageWonId}`,
+      !parsePipedriveNumericId(open?.id)
+        ? 'open: nelze určit otevřenou fázi (zkuste PIPEDRIVE_ESHOP_STAGE_OPEN_ID)'
+        : '',
+    ].filter(Boolean);
+    const d = `${parts.join('; ')}. Fáze: ${preview}`;
+    console.log(`[Pipedrive eshop] resolveEshopStageIdsFromApi: ${d}`);
+    return { ok: false, diagnostic: d };
+  } catch (e: any) {
+    const msg = String(e?.message || e || 'unknown');
+    const d = `GET /stages pipeline_id=${pipelineId} chyba: ${msg}`;
+    console.log(`[Pipedrive eshop] resolveEshopStageIdsFromApi: ${d}`);
+    return { ok: false, diagnostic: d };
+  }
+}
+
+async function persistPipedriveEshopOrderState(
+  sb: NonNullable<ReturnType<typeof getServiceSupabaseClient>>,
+  orderId: string,
+  update: {
+    pipedrive_sync_status: 'pending' | 'done' | 'failed' | null;
+    pipedrive_deal_id?: string | null;
+    pipedrive_sync_error?: string | null;
+    pipedrive_synced_at?: string | null;
+  },
+) {
+  const payload: Record<string, unknown> = {
+    pipedrive_sync_status: update.pipedrive_sync_status,
+    updated_at: new Date().toISOString(),
+  };
+  if (update.pipedrive_deal_id !== undefined) payload.pipedrive_deal_id = update.pipedrive_deal_id;
+  if (update.pipedrive_sync_error !== undefined) payload.pipedrive_sync_error = update.pipedrive_sync_error;
+  if (update.pipedrive_synced_at !== undefined) payload.pipedrive_synced_at = update.pipedrive_synced_at;
+  const { error } = await sb.from('orders').update(payload).eq('id', orderId);
+  if (error) console.log(`[Pipedrive eshop] orders update: ${error.message}`);
+}
+
+/** PUT /deals/:id — znovu propsat štítky + PRINT u už existujícího dealu (admin „obnovit“). */
+async function refreshEshopPipedriveDealFromDb(
+  orderId: string,
+  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+): Promise<Record<string, unknown>> {
+  const apiToken = getPipedriveApiToken();
+  const sb = getServiceSupabaseClient();
+
+  const fail = async (reason: string, detail?: string) => {
+    const msg = detail ? `${reason}: ${detail}` : reason;
+    if (sb) {
+      await persistPipedriveEshopOrderState(sb, orderId, {
+        pipedrive_sync_status: 'failed',
+        pipedrive_sync_error: msg.slice(0, 2000),
+        pipedrive_synced_at: null,
+      });
+    }
+    return { skipped: true, reason, detail };
+  };
+
+  if (!apiToken) return await fail('missing_api_token');
+  if (!sb) return { skipped: true, reason: 'missing_supabase' };
+
+  const { data: row, error: rowErr } = await sb
+    .from('orders')
+    .select('pipedrive_deal_id')
+    .eq('id', orderId)
+    .single();
+
+  if (rowErr || !row) {
+    return { skipped: true, reason: 'order_not_found', detail: rowErr?.message };
+  }
+
+  const existing = String((row as any).pipedrive_deal_id || '').trim();
+  if (!existing) {
+    return { skipped: true, reason: 'no_deal', detail: 'Nejdřív vytvořte deal v Pipedrive.' };
+  }
+
+  const dealIdNum = parsePipedriveNumericId(existing);
+  if (!dealIdNum) {
+    return await fail('invalid_deal_id', existing);
+  }
+
+  const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
+  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+
+  const patchBody: Record<string, unknown> = {};
+  if (labelIds.length) {
+    const v = await resolvePipedriveDealLabelPayloadValue(apiToken, labelFieldKey, labelIds);
+    if (v !== undefined) patchBody[labelFieldKey] = v;
+  }
+  Object.assign(patchBody, printPayload);
+
+  if (!Object.keys(patchBody).length) {
+    console.log('[Pipedrive eshop] refresh: žádné štítky ani PRINT v konfiguraci');
+    return { skipped: true, reason: 'nothing_to_update', detail: 'Nastavte štítky nebo PRINT (env / dealFields).' };
+  }
+
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealIdNum}`, {
+      method: 'PUT',
+      body: JSON.stringify(patchBody),
+    });
+  } catch (e: any) {
+    return await fail('pipedrive_put_failed', e.message);
+  }
+
+  console.log(`[Pipedrive eshop] refresh deal ${dealIdNum} OK (${Object.keys(patchBody).join(',')})`);
+
+  const nowIso = new Date().toISOString();
+  await persistPipedriveEshopOrderState(sb, orderId, {
+    pipedrive_sync_status: 'done',
+    pipedrive_sync_error: null,
+    pipedrive_synced_at: nowIso,
+  });
+
+  return { skipped: false, dealId: String(dealIdNum), refreshed: true };
+}
+
 async function syncEshopOrderToPipedriveFromDb(
   orderId: string,
   mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
-  if (!apiToken) return { skipped: true, reason: 'missing_api_token' };
-
   const sb = getServiceSupabaseClient();
+
+  const fail = async (reason: string, detail?: string) => {
+    const msg = detail ? `${reason}: ${detail}` : reason;
+    if (sb) {
+      await persistPipedriveEshopOrderState(sb, orderId, {
+        pipedrive_sync_status: 'failed',
+        pipedrive_sync_error: msg.slice(0, 2000),
+        pipedrive_synced_at: null,
+      });
+    }
+    return { skipped: true, reason, detail };
+  };
+
+  if (!apiToken) return await fail('missing_api_token');
   if (!sb) return { skipped: true, reason: 'missing_supabase' };
 
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -13274,24 +13791,65 @@ async function syncEshopOrderToPipedriveFromDb(
     return { skipped: true, reason: 'order_not_found', detail: orderError?.message };
   }
 
-  const pipelineId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PIPELINE_ID'));
-  const stageWonId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_STAGE_WON_ID'));
-  const stageOpenId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_STAGE_OPEN_ID'));
-  if (!pipelineId || !stageWonId || !stageOpenId) {
-    console.log('[Pipedrive eshop] Missing PIPEDRIVE_ESHOP_PIPELINE_ID or stage env');
-    return { skipped: true, reason: 'missing_pipeline_env' };
+  const existingDeal = String((order as any).pipedrive_deal_id || '').trim();
+  if (existingDeal) {
+    return { skipped: true, reason: 'already_synced', dealId: existingDeal };
   }
 
-  const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || null;
-  const labelB2c = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_B2C_ID'));
-  const labelB2b = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_B2B_ID'));
+  await persistPipedriveEshopOrderState(sb, orderId, {
+    pipedrive_sync_status: 'pending',
+    pipedrive_sync_error: null,
+  });
+
+  const envPipelineId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PIPELINE_ID'));
+  const pipelineId = envPipelineId ?? PIPEDRIVE_ESHOP_PIPELINE_ID_DEFAULT;
+  if (!envPipelineId) {
+    console.log(`[Pipedrive eshop] PIPEDRIVE_ESHOP_PIPELINE_ID unset → pipeline_id=${pipelineId}`);
+  }
+  let stageWonId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_STAGE_WON_ID'));
+  let stageOpenId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_STAGE_OPEN_ID'));
+  const envWonRaw = (Deno.env.get('PIPEDRIVE_ESHOP_STAGE_WON_ID') || '').trim();
+  const envOpenRaw = (Deno.env.get('PIPEDRIVE_ESHOP_STAGE_OPEN_ID') || '').trim();
+
+  let stageResolveDiag: string | undefined;
+  if (!stageWonId || !stageOpenId) {
+    const resolved = await resolveEshopStageIdsFromApi(apiToken, pipelineId);
+    if (resolved.ok) {
+      if (!stageWonId) stageWonId = resolved.stageWonId;
+      if (!stageOpenId) stageOpenId = resolved.stageOpenId;
+    } else {
+      stageResolveDiag = resolved.diagnostic;
+    }
+  }
+
+  if (!stageWonId || !stageOpenId) {
+    const detail = [
+      `effective_pipeline_id=${pipelineId}`,
+      envPipelineId != null
+        ? `PIPEDRIVE_ESHOP_PIPELINE_ID=${envPipelineId} (z env)`
+        : `PIPEDRIVE_ESHOP_PIPELINE_ID unset → výchozí ${PIPEDRIVE_ESHOP_PIPELINE_ID_DEFAULT}`,
+      `env WON=${envWonRaw ? (stageWonId ? String(stageWonId) : `neplatné(${envWonRaw.slice(0, 20)})`) : '(prázdné)'}`,
+      `env OPEN=${envOpenRaw ? (stageOpenId ? String(stageOpenId) : `neplatné(${envOpenRaw.slice(0, 20)})`) : '(prázdné)'}`,
+      `aktuální won_id=${stageWonId ?? '—'} open_id=${stageOpenId ?? '—'}`,
+      stageResolveDiag ? `API /stages: ${stageResolveDiag}` : 'API /stages: (bez detailu — zkontrolujte log Edge funkce)',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    console.log(`[Pipedrive eshop] missing_pipeline_env — ${detail}`);
+    return await fail(
+      'missing_pipeline_env',
+      `${detail}. Zkontrolujte ID pipeline v Pipedrive, že fáze „won“ má deal_probability 100 %, nebo nastavte PIPEDRIVE_ESHOP_STAGE_WON_ID a PIPEDRIVE_ESHOP_STAGE_OPEN_ID ručně (čísla fází v URL / nastavení pipeline).`,
+    );
+  }
+
+  const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
 
   const ico = String((order as any).ico || '').trim().replace(/\s/g, '');
   const isB2b = ico.length > 0;
   const personName = String((order as any).customer_name || '').trim() || 'Zákazník';
   const email = String((order as any).customer_email || '').trim();
   const phone = String((order as any).customer_phone || '').trim();
-  if (!email) return { skipped: true, reason: 'missing_email' };
+  if (!email) return await fail('missing_email');
 
   let orgId: number | null = null;
   if (isB2b) {
@@ -13302,7 +13860,7 @@ async function syncEshopOrderToPipedriveFromDb(
       address: [(order as any).street, (order as any).city, (order as any).zip].filter(Boolean).join(', '),
     });
     orgId = orgLookup.orgId;
-    if (!orgId) return { skipped: true, reason: 'missing_org' };
+    if (!orgId) return await fail('missing_org');
   }
 
   let person: any = null;
@@ -13324,28 +13882,24 @@ async function syncEshopOrderToPipedriveFromDb(
   }
 
   const personId = parsePipedriveNumericId(person?.id);
-  if (!personId) return { skipped: true, reason: 'missing_person' };
+  if (!personId) return await fail('missing_person');
 
   let status: 'open' | 'won' = 'open';
   let stageId = stageOpenId;
-  let labelOpt: number | null = labelB2b;
   let ownerId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_DEFAULT_OWNER_ID'));
 
   if (mode === 'b2c_card_won') {
     status = 'won';
     stageId = stageWonId;
-    labelOpt = labelB2c;
     ownerId =
       parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_B2C_OWNER_ID'))
       || ownerId;
   } else if (mode === 'b2b_card_won') {
     status = 'won';
     stageId = stageWonId;
-    labelOpt = labelB2b;
   } else if (mode === 'b2b_transfer_open') {
     status = 'open';
     stageId = stageOpenId;
-    labelOpt = labelB2b;
   }
 
   const orderNumber = String((order as any).order_number || '');
@@ -13353,6 +13907,13 @@ async function syncEshopOrderToPipedriveFromDb(
     mode === 'b2c_card_won'
       ? `${personName} + e-shop B2C`
       : `E-shop B2B — ${orderNumber}`;
+
+  const statusPayload = await resolveDealStatusPayloadFromFields(apiToken, status);
+  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  if (labelIds.length) {
+    console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
+  }
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
     title,
@@ -13362,22 +13923,34 @@ async function syncEshopOrderToPipedriveFromDb(
     valueHaler: Number((order as any).total) || 0,
     pipelineId,
     stageId,
-    status,
+    statusPayload,
     labelFieldKey,
-    labelOptionId: labelOpt ?? undefined,
+    labelIds: labelIds.length ? labelIds : undefined,
+    extraPayload: Object.keys(printPayload).length ? printPayload : undefined,
   });
 
   const dealId = parsePipedriveNumericId(deal?.id);
+  if (!dealId) return await fail('missing_deal');
+
   const catalogProducts = await getAllProducts();
   const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p]));
   const lineItems = Array.isArray((order as any).order_items) ? (order as any).order_items : [];
-  if (dealId && lineItems.length) {
+  if (lineItems.length) {
     await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
   }
 
+  const dealIdStr = String(dealId);
+  const nowIso = new Date().toISOString();
+  await persistPipedriveEshopOrderState(sb, orderId, {
+    pipedrive_sync_status: 'done',
+    pipedrive_deal_id: dealIdStr,
+    pipedrive_sync_error: null,
+    pipedrive_synced_at: nowIso,
+  });
+
   return {
     skipped: false,
-    dealId,
+    dealId: dealIdStr,
     personId,
     orgId,
     mode,
@@ -13515,7 +14088,7 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
     if (!expected || token !== expected) {
       return c.json({ error: 'Unauthorized.' }, 401);
     }
-    const body = (await c.req.json()) as { orderId?: string; mode?: string };
+    const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };
     const orderId = String(body.orderId || '').trim();
     const mode = String(body.mode || '').trim();
     if (
@@ -13524,14 +14097,66 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
     ) {
       return c.json({ error: 'Invalid orderId or mode.' }, 400);
     }
-    const result = await syncEshopOrderToPipedriveFromDb(
-      orderId,
-      mode as 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
-    );
+    const m = mode as 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open';
+    const result = body.refreshOnly === true
+      ? await refreshEshopPipedriveDealFromDb(orderId, m)
+      : await syncEshopOrderToPipedriveFromDb(orderId, m);
     return c.json(result);
   } catch (err: any) {
     console.log(`[eshop/pipedrive-sync] ${err.message}`);
     return c.json({ error: err.message || 'sync failed' }, 500);
+  }
+});
+
+/**
+ * Diagnostika: seznam ID štítků dealu z GET /dealFields (jen service role).
+ * GET …/admin/pipedrive-eshop-label-ids?fieldKey=label
+ * Volitelně fieldKey = hash vlastního pole (set/enum).
+ */
+app.get('/make-server-93a20b6f/admin/pipedrive-eshop-label-ids', async (c) => {
+  try {
+    const expected = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    const auth = c.req.header('Authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '').trim();
+    if (!expected || token !== expected) {
+      return c.json({ error: 'Unauthorized.' }, 401);
+    }
+    const apiToken = getPipedriveApiToken();
+    if (!apiToken) {
+      return c.json({ error: 'PIPEDRIVE_API_TOKEN not set in Edge secrets.' }, 500);
+    }
+    const fieldKey = (c.req.query('fieldKey') || 'label').trim() || 'label';
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const f = fields.find((x) => String(x?.key) === fieldKey);
+    if (!f) {
+      return c.json(
+        { error: `Pole s key="${fieldKey}" v /dealFields nenalezeno.`, knownKeys: fields.map((x) => x.key).slice(0, 80) },
+        404,
+      );
+    }
+    const opts = Array.isArray(f.options) ? f.options : [];
+    const options = opts.map((o: any) => ({
+      id: o.id,
+      label: String(o.label ?? ''),
+    }));
+    const rawFt = f.field_type ?? f.type;
+    const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : null;
+
+    return c.json({
+      fieldKey: String(f.key),
+      fieldName: String(f.name ?? ''),
+      fieldType,
+      options,
+      envExamples: {
+        PIPEDRIVE_ESHOP_LABEL_IDS_B2C: 'jedno ID z options (např. Eshop B2C)',
+        PIPEDRIVE_ESHOP_LABEL_IDS_B2B: 'více ID čárkou (např. škola + B2B)',
+        PIPEDRIVE_ESHOP_LABEL_FIELD_KEY: fieldKey === 'label' ? '(výchozí label — můžeš vynechat)' : fieldKey,
+      },
+    });
+  } catch (err: any) {
+    console.log(`[pipedrive-eshop-label-ids] ${err.message}`);
+    return c.json({ error: err.message || 'dealFields failed' }, 502);
   }
 });
 
@@ -13631,6 +14256,11 @@ app.post('/make-server-93a20b6f/orders', async (c) => {
             price: String(x.price || ''),
           }))
         : [];
+    }
+
+    const emailDeliverable = await assertEmailDeliverable(email);
+    if (!emailDeliverable.ok) {
+      return c.json({ error: emailDeliverable.message }, 400);
     }
 
     const order = {

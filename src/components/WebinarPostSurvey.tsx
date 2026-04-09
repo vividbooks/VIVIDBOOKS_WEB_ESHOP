@@ -76,6 +76,9 @@ export function WebinarPostSurvey({
   variant = 'default',
   scope = 'post',
   participantName = '',
+  participantBirthDateIso = '',
+  participantSchoolName = '',
+  participantSchoolIco = '',
 }: {
   webinar: Webinar;
   email: string;
@@ -87,6 +90,10 @@ export function WebinarPostSurvey({
   variant?: 'default' | 'fullscreen';
   /** Jméno z registrace — do potvrzení / certifikátu po odeslání. */
   participantName?: string;
+  /** Datum narození (YYYY-MM-DD) z brány DVPP — předvyplní certifikát. */
+  participantBirthDateIso?: string;
+  participantSchoolName?: string;
+  participantSchoolIco?: string;
 }) {
   const fs = variant === 'fullscreen';
   const mergedQuestions = useMemo(
@@ -356,6 +363,9 @@ export function WebinarPostSurvey({
             webinar={webinar}
             email={email}
             participantName={participantName}
+            participantBirthDateIso={participantBirthDateIso}
+            participantSchoolName={participantSchoolName}
+            participantSchoolIco={participantSchoolIco}
             variant={fs ? 'fullscreen' : 'default'}
             certificateKind={dvppRaw.length > 0 ? 'dvpp' : 'feedback'}
           />

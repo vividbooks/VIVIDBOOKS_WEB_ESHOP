@@ -49,6 +49,8 @@ interface FormState {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  /** YYYY-MM-DD — brána DVPP dotazníku */
+  birthDateIso: string;
 }
 
 interface WebinarDetailPageProps {
@@ -146,6 +148,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     newsletter: false,
     schoolName: '',
     ico: '',
+    birthDateIso: '',
   });
 
   const [submitting, setSubmitting] = useState(false);
@@ -230,7 +233,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       setForm((prev) => ({ ...prev, email: em }));
       setSurveyDeepLink(true);
       setSurveyRegOk(false);
-      setDvppEmailGateDone(true);
       window.history.replaceState({}, '', `${window.location.pathname}?dvppDotaznik=1`);
       return;
     }
@@ -357,6 +359,17 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setForm(prev => ({ ...prev, [field]: value }));
     setError('');
   };
+
+  const dvppGateValid = useMemo(() => {
+    const icoD = form.ico.replace(/\D/g, '');
+    return (
+      form.name.trim().length > 0 &&
+      form.email.trim().length > 0 &&
+      /^\d{4}-\d{2}-\d{2}$/.test(form.birthDateIso.trim()) &&
+      form.schoolName.trim().length > 0 &&
+      icoD.length >= 8
+    );
+  }, [form.name, form.email, form.birthDateIso, form.schoolName, form.ico]);
 
   const handleTogglePedagogMode = useCallback(() => {
     setNotTeacher((v) => {
@@ -566,9 +579,23 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               {'Dotazn\u00edk po webin\u00e1\u0159i'}
             </h1>
             <p className="text-center font-['Fenomen_Sans',sans-serif] text-[14px] leading-relaxed text-[#001161]/75">
-              {'Vypl\u0148te e-mail pro ulo\u017een\u00ed odpov\u011bd\u00ed a certifik\u00e1tu.'}
+              {
+                'Vypl\u0148te \u00fadaje pro ulo\u017een\u00ed odpov\u011bd\u00ed a certifik\u00e1t. Pot\u00e9 pokra\u010dujte k dotazn\u00edku \u2014 bez p\u0159ihl\u00e1\u0161en\u00ed.'
+              }
             </p>
             <div className="rounded-[28px] border border-[#001161]/10 bg-[#F0F2F8] px-5 py-8 md:px-10">
+              <label className="mb-2 block font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]">
+                {'Jm\u00e9no a p\u0159\u00edjmen\u00ed *'}
+              </label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => handleChange('name', e.target.value)}
+                className="mb-4 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                placeholder="Jana Nováková"
+                autoComplete="name"
+                autoFocus
+              />
               <label className="mb-2 block font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]">
                 {'E-mail *'}
               </label>
@@ -580,16 +607,84 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 spellCheck={false}
                 value={form.email}
                 onChange={(e) => handleChange('email', e.target.value)}
-                className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                className="mb-4 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
                 placeholder="vas@email.cz"
                 autoComplete="email"
-                autoFocus
+              />
+              <label className="mb-2 block font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]">
+                {'Datum narozen\u00ed *'}
+              </label>
+              <input
+                type="date"
+                value={form.birthDateIso}
+                onChange={(e) => handleChange('birthDateIso', e.target.value)}
+                className="mb-4 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+              />
+              <p className="mb-2 font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-wider text-[#001161]/40">
+                {'\u0160kola (vyhled\u00e1v\u00e1n\u00ed) *'}
+              </p>
+              <div ref={schoolContainerRef} className="relative mb-3">
+                <input
+                  type="text"
+                  value={form.schoolName}
+                  onChange={(e) => handleSchoolNameChange(e.target.value)}
+                  onFocus={() => schoolResults.length > 0 && setSchoolOpen(true)}
+                  placeholder="Název školy"
+                  autoComplete="off"
+                  className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 pr-10 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                />
+                <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30">
+                  {schoolSearching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                </div>
+                <AnimatePresence>
+                  {schoolOpen && schoolResults.length > 0 && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.15 }}
+                      className="absolute z-[100] mt-1 max-h-[220px] w-full overflow-y-auto rounded-2xl border border-[#001161]/10 bg-white py-1 shadow-xl"
+                    >
+                      {schoolResults.map((s, i) => (
+                        <button
+                          key={`${s.ico}-${i}`}
+                          type="button"
+                          onClick={() => handleSchoolSelect(s)}
+                          className="group flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-[#F0F2F8]"
+                        >
+                          <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-[#001161]/30 transition-colors group-hover:text-[#5B4FD8]" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold leading-tight text-[#001161]">
+                              {s.name}
+                            </p>
+                            {s.address ? (
+                              <p className="mt-0.5 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/40">
+                                {s.address}
+                                {' · IČO: '}
+                                {s.ico}
+                              </p>
+                            ) : null}
+                          </div>
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={form.ico}
+                onChange={(e) => handleIcoChange(e.target.value)}
+                placeholder="IČO školy"
+                maxLength={10}
+                className="mb-5 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
               />
               <button
                 type="button"
-                disabled={!form.email.trim()}
+                disabled={!dvppGateValid}
                 onClick={() => setDvppEmailGateDone(true)}
-                className="mt-5 w-full rounded-[14px] bg-[#001161] py-3.5 font-['Fenomen_Sans',sans-serif] text-[15px] font-bold text-white shadow-md transition hover:bg-[#001a8c] disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full rounded-[14px] bg-[#001161] py-3.5 font-['Fenomen_Sans',sans-serif] text-[15px] font-bold text-white shadow-md transition hover:bg-[#001a8c] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {'Pokra\u010dovat k dotazn\u00edku'}
               </button>
@@ -738,6 +833,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             webinar={webinar}
             email={form.email}
             participantName={form.name}
+            participantBirthDateIso={form.birthDateIso}
+            participantSchoolName={form.schoolName}
+            participantSchoolIco={form.ico.replace(/\D/g, '')}
             onAnswersChange={onPostSurveyAnswersChange}
             scope="post"
             variant="fullscreen"

@@ -11,6 +11,8 @@ export type WebinarRegFormState = {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  /** Volitelné — brána DVPP dotazníku na stránce webináře */
+  birthDateIso?: string;
 };
 
 type Props = {

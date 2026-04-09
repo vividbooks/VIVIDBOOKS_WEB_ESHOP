@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Award, Download, ImageDown } from 'lucide-react';
 import { toast } from 'sonner';
@@ -847,22 +847,34 @@ export function WebinarDvppCertificateSuccess({
   webinar,
   email,
   participantName = '',
+  participantBirthDateIso = '',
+  participantSchoolName = '',
+  participantSchoolIco = '',
   variant = 'default',
   certificateKind,
 }: {
   webinar: Webinar;
   email: string;
   participantName?: string;
+  /** YYYY-MM-DD z brány dotazníku — přeskočí modal „Údaje pro certifikát“, pokud je kompletní. */
+  participantBirthDateIso?: string;
+  participantSchoolName?: string;
+  participantSchoolIco?: string;
   variant?: 'default' | 'fullscreen';
   /** `dvpp` = text o ověření znalostí; `feedback` = jen dotazník bez DVPP kvízu. */
   certificateKind: 'dvpp' | 'feedback';
 }) {
   const fs = variant === 'fullscreen';
 
+  const gateBirth = (participantBirthDateIso || '').trim();
+  const gateNameOk = (participantName || '').trim().length > 0;
+  const gateBirthOk = /^\d{4}-\d{2}-\d{2}$/.test(gateBirth);
+  const skipProfileFromGate = certificateKind === 'dvpp' && gateNameOk && gateBirthOk;
+
   const needProfile = certificateKind === 'dvpp';
-  const [profileOpen, setProfileOpen] = useState(needProfile);
+  const [profileOpen, setProfileOpen] = useState(() => needProfile && !skipProfileFromGate);
   const [displayName, setDisplayName] = useState(() => (participantName || '').trim());
-  const [birthDateIso, setBirthDateIso] = useState('');
+  const [birthDateIso, setBirthDateIso] = useState(() => gateBirth);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState('');
   const [pngDownloading, setPngDownloading] = useState(false);
@@ -977,6 +989,8 @@ export function WebinarDvppCertificateSuccess({
           email: email.trim(),
           participantName: displayName.trim(),
           birthDateIso: birthDateIso.trim(),
+          schoolName: (participantSchoolName || '').trim(),
+          schoolIco: (participantSchoolIco || '').replace(/\D/g, '').slice(0, 10),
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; success?: boolean };
@@ -990,7 +1004,14 @@ export function WebinarDvppCertificateSuccess({
     } finally {
       setProfileSaving(false);
     }
-  }, [needProfile, webinar.id, email, displayName, birthDateIso]);
+  }, [needProfile, webinar.id, email, displayName, birthDateIso, participantSchoolName, participantSchoolIco]);
+
+  const didAutoSaveCert = useRef(false);
+  useEffect(() => {
+    if (!skipProfileFromGate || profileOpen || didAutoSaveCert.current) return;
+    didAutoSaveCert.current = true;
+    void saveCertificateProfileToServer();
+  }, [skipProfileFromGate, profileOpen, saveCertificateProfileToServer]);
 
   if (profileOpen && needProfile) {
     return (
