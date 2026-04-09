@@ -343,6 +343,7 @@ function buildPrintableCertificateDocument(opts: {
 <html lang="cs">
 <head>
   <meta charset="utf-8" />
+  <meta name="color-scheme" content="only light" />
   <title>${kind === 'dvpp' ? 'Certifik\u00e1t DVPP' : head}</title>
   <link rel="preconnect" href="https://iekkundgizzdbmkzatdl.supabase.co" crossorigin />
   <link rel="preload" href="https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/Admin%20math/Cooper-Light.otf" as="font" type="font/otf" crossorigin />
@@ -353,6 +354,8 @@ function buildPrintableCertificateDocument(opts: {
     * { box-sizing: border-box; }
     html {
       height: 100%;
+      background-color: #ffffff;
+      color-scheme: only light;
     }
     body {
       margin: 0;
@@ -363,6 +366,7 @@ function buildPrintableCertificateDocument(opts: {
       flex-direction: column;
       font-family: 'Fenomen Sans', ui-sans-serif, system-ui, sans-serif;
       color: #0f172a;
+      background-color: #ffffff;
       -webkit-print-color-adjust: exact;
       print-color-adjust: exact;
     }
@@ -793,6 +797,9 @@ function buildPrintableCertificateDocument(opts: {
     @media print {
       html, body {
         height: 100%;
+        background: #ffffff !important;
+        color: #0f172a;
+        color-scheme: only light;
       }
       .footer-grid { break-inside: avoid; }
       .sheet-dvpp {

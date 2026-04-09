@@ -348,17 +348,8 @@ export function WebinarPostSurvey({
             fs ? 'flex min-h-0 w-full flex-1 flex-col overflow-y-auto' : 'w-full'
           }
         >
-          {totalProgressSegments > 0 ? (
-            <div
-              className={
-                fs
-                  ? 'shrink-0 px-4 pt-4 sm:px-6'
-                  : 'mb-4 flex justify-center px-2'
-              }
-            >
-              <SurveyFlowProgressBar total={totalProgressSegments} filled={totalProgressSegments} />
-            </div>
-          ) : null}
+          {/* No progress bar on the certificate screen: full bar is redundant and the
+              segment row could visually overlap the intro paragraph in fullscreen. */}
           <WebinarDvppCertificateSuccess
             webinar={webinar}
             email={email}

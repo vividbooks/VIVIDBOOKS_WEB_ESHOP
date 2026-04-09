@@ -216,9 +216,7 @@ export function WebinarDvppQuizPlayer({
                   <span className="font-semibold">{`„${webinarTitle}“`}</span>
                 </p>
                 <p style={{ ...FF, color: NAVY }} className="mt-4 max-w-md mx-auto text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
-                  {
-                    'Certifik\u00e1t se v\u00e1m po \u00fasp\u011b\u0161n\u00e9m absolvov\u00e1n\u00ed v\u011bdomostn\u00edho testu zobraz\u00ed s\u00e1m.'
-                  }
+                  Po úspěšném dokončení testu se certifikát zobrazí automaticky v dalším kroku.
                 </p>
               </motion.div>
             )}
