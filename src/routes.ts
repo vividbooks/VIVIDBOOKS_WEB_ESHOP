@@ -2,6 +2,7 @@ import type { ComponentType } from 'react';
 import React from 'react';
 import type { RouteObject } from 'react-router';
 import { createBrowserRouter } from 'react-router';
+import { ChunkLoadErrorFallback } from './components/ChunkLoadErrorFallback';
 import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
 
@@ -22,8 +23,13 @@ function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
 /** Default export → RouteObject.lazy */
 function lazyDefault(importer: () => Promise<{ default: ComponentType<unknown> }>) {
   return async () => {
-    const m = await importer();
-    return { Component: m.default };
+    try {
+      const m = await importer();
+      return { Component: m.default };
+    } catch (e) {
+      console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
+      return { Component: ChunkLoadErrorFallback };
+    }
   };
 }
 
@@ -33,8 +39,13 @@ function lazyNamed<T extends Record<string, ComponentType<unknown>>>(
   name: keyof T,
 ) {
   return async () => {
-    const m = await importer();
-    return { Component: m[name] };
+    try {
+      const m = await importer();
+      return { Component: m[name] };
+    } catch (e) {
+      console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
+      return { Component: ChunkLoadErrorFallback };
+    }
   };
 }
 
