@@ -94,12 +94,15 @@ function buildFulfillmentPayload(order: {
   shipping_method: string;
 }): { phases: FulfillmentPhase[]; courier_label: string } {
   const paid = order.payment_status === 'paid';
-  const packed = ['exported', 'shipped', 'delivered'].includes(order.status);
-  const inTransit = ['shipped', 'delivered'].includes(order.status) || Boolean(order.shipped_at);
+  /**
+   * `exported` / `processing` = v naší DB včetně přenosu do BaseLinker/FF (např. „Vytvořeno v FF“),
+   * ještě to není „zabaleno“ ani odesláno. Sklad + kurýr až u `shipped` / `delivered`.
+   */
+  const leftWarehouse = ['shipped', 'delivered'].includes(order.status);
   const courier = shippingLabel(order.shipping_method);
 
   let phase4Detail: string | undefined;
-  if (inTransit) {
+  if (leftWarehouse) {
     phase4Detail = `Předáno kurýrovi ${courier}`;
   } else if (order.tracking_number?.trim()) {
     phase4Detail = `Sledovací číslo: ${order.tracking_number.trim()}`;
@@ -110,11 +113,11 @@ function buildFulfillmentPayload(order: {
     phases: [
       { key: 'received', label: 'Objednávka přijata', done: true },
       { key: 'paid', label: 'Objednávka zaplacena', done: paid },
-      { key: 'packed', label: 'Objednávka je zabalena', done: packed },
+      { key: 'packed', label: 'Objednávka je zabalena', done: leftWarehouse },
       {
         key: 'transit',
         label: 'Objednávka je na cestě k vám',
-        done: inTransit,
+        done: leftWarehouse,
         detail: phase4Detail,
       },
     ],
