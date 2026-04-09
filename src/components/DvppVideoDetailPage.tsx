@@ -227,7 +227,7 @@ export function DvppVideoDetailPage() {
     certMode === 'survey' ? surveySlug.length > 0 : !!certLinkResolved;
 
   /** Z párovaného webináře (GET `/dvpp-videos`); výchozí true. */
-  const requireFullReg = (video as any)?.surveyRequireFullRegistration !== false;
+  const requireFullReg = (video as any)?.surveyRequireFullRegistration === true;
 
   const handleOrangeClick = () => {
     if (orangeLink) window.open(orangeLink, '_blank');

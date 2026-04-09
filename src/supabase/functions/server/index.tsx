@@ -1135,8 +1135,8 @@ app.get('/make-server-93a20b6f/webinare', async (c) => {
     const itemsPublic = items.map((w: any) => {
       const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
       const pub = { ...rest } as any;
-      /* Vždy explicitní boolean — klient (`WebinarDetailPage`) jinak u undefined bere plnou registraci. */
-      pub.surveyRequireFullRegistration = w.surveyRequireFullRegistration !== false;
+      /* Vždy explicitní boolean — výchozí `false` (dotazník bez registrace na webinář). */
+      pub.surveyRequireFullRegistration = w.surveyRequireFullRegistration === true;
       if (Array.isArray(pub.postWebinarQuizQuestions)) {
         pub.postWebinarQuizQuestions = pub.postWebinarQuizQuestions.map((q: any) => {
           if (!q || typeof q !== 'object') return q;
@@ -3911,7 +3911,7 @@ function enrichDvppVideosWithWebinarCertificateFields(videos: any[], webinars: a
       certificateUrl: String(w.certificateUrl ?? v.certificateUrl ?? ''),
       greyButtonText: String(w.greyButtonText || v.greyButtonText || 'Certifikát DVPP'),
       webinarSlugForSurvey: String(w.slug || w.id),
-      surveyRequireFullRegistration: w.surveyRequireFullRegistration !== false,
+      surveyRequireFullRegistration: w.surveyRequireFullRegistration === true,
     };
   });
 }
@@ -5181,29 +5181,64 @@ async function sendMandrillHtml(opts: {
   return r.ok;
 }
 
-/** Stejná logika jako u veřejného payloadu: výchozí je vyžadovat plnou registraci. */
+/** Jen pokud je v KV explicitně `true` — výchozí je dotazník bez registrace na webinář. */
 function webinarSurveyRequireFullRegistrationFromItem(
   webinar: Record<string, unknown> | null | undefined,
 ): boolean {
-  return webinar?.surveyRequireFullRegistration !== false;
+  return webinar?.surveyRequireFullRegistration === true;
 }
 
 /**
  * Pro dotazník po webináři: plná registrace = `webinar_reg_*`.
- * Pokud je u webináře `surveyRequireFullRegistration === false`, stačí `webinar_survey_light_*` nebo samotný platný e-mail v požadavku (bez předchozího kroku na klientu).
+ * Pokud není `surveyRequireFullRegistration === true`, stačí `webinar_survey_light_*` nebo samotný platný e-mail v požadavku (bez registrace na webinář v KV).
+ *
+ * Doplňky: zkusí i `webinar.slug` jako část klíče (historicky se mohlo lišit od `id`) a e-mailový index účastníka.
  */
 async function kvGetWebinarSurveyParticipantForEmail(
   webinarId: string,
   email: string,
   requireFullReg: boolean,
+  webinarItem?: Record<string, unknown> | null,
 ): Promise<unknown | null> {
-  const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
+  const tryReg = (wid: string) => kv.get(`webinar_reg_${wid}_${email}`);
+  const tryLight = (wid: string) => kv.get(`webinar_survey_light_${wid}_${email}`);
+
+  const slugRaw = webinarItem?.slug;
+  const slug = typeof slugRaw === 'string' && slugRaw.trim() ? slugRaw.trim() : '';
+
+  let reg: unknown = await tryReg(webinarId);
   if (reg) return reg;
+  if (slug && slug !== webinarId) {
+    reg = await tryReg(slug);
+    if (reg) return reg;
+  }
+
   if (!requireFullReg) {
-    const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
+    let light: unknown = await tryLight(webinarId);
     if (light) return light;
+    if (slug && slug !== webinarId) {
+      light = await tryLight(slug);
+      if (light) return light;
+    }
     return { name: '', email, surveyNoPriorKvContact: true };
   }
+
+  try {
+    const rows = await getWebinarEmailIndexRows(email);
+    const canonicalId = String(webinarItem?.id ?? webinarId);
+    for (const r of rows) {
+      const sameEvent =
+        r.webinarId === canonicalId ||
+        r.webinarId === webinarId ||
+        (slug && (r.webinarSlug === slug || r.webinarId === slug));
+      if (!sameEvent) continue;
+      reg = await tryReg(r.webinarId);
+      if (reg) return reg;
+    }
+  } catch {
+    /* index není kritický */
+  }
+
   return null;
 }
 
@@ -5228,7 +5263,7 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       | Record<string, unknown>
       | undefined;
     const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
-    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg);
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg, webinar);
     if (!reg) {
       return c.json(
         {
@@ -5317,7 +5352,7 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       | Record<string, unknown>
       | undefined;
     const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
-    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg);
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg, webinar);
     /** 403 + JSON — neplést s textovým „404 Not Found“ z Hona při chybějící route. */
     if (!reg) {
       return c.json(

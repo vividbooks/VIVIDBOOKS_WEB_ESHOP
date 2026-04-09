@@ -91,6 +91,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   /**
    * Explicitní boolean z GET `/webinare` má přednost. U statického fallbacku v kontextu pole chybí —
    * server na GET `/dvpp-videos` doplní `surveyRequireFullRegistration` z KV u párového záznamu.
+   * Výchozí: bez plné registrace na webinář u dotazníku (`false`).
    */
   const needsDvppForSurveyFlag = typeof webinar.surveyRequireFullRegistration !== 'boolean';
   const requireFullSurveyReg = useMemo(() => {
@@ -99,7 +100,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }
     const vFlag = matchedDvppVideo?.surveyRequireFullRegistration;
     if (typeof vFlag === 'boolean') return vFlag;
-    return true;
+    return false;
   }, [webinar.surveyRequireFullRegistration, matchedDvppVideo]);
 
   /** Po webináři: DVPP + otevřené otázky (odeslání na stejný endpoint). */

@@ -134,7 +134,7 @@ const EMPTY_FORM: FormState = {
   postWebinarLearningsHtml: '',
   postWebinarQuizQuestions: [],
   postWebinarPart2: cloneDefaultPart2(),
-  surveyRequireFullRegistration: true,
+  surveyRequireFullRegistration: false,
   devFollowupRecordingUrl: '',
   devFollowupTrialUrl: '',
 };
@@ -180,7 +180,7 @@ function itemToForm(webinar: any, dvpp: any | null): FormState {
     postWebinarLearningsHtml: typeof webinar.postWebinarLearningsHtml === 'string' ? webinar.postWebinarLearningsHtml : '',
     postWebinarQuizQuestions: normalizeQuizFromItem(webinar.postWebinarQuizQuestions),
     postWebinarPart2: normalizePart2FromItem(webinar.postWebinarPart2),
-    surveyRequireFullRegistration: webinar.surveyRequireFullRegistration !== false,
+    surveyRequireFullRegistration: webinar.surveyRequireFullRegistration === true,
     devFollowupRecordingUrl: typeof webinar.devFollowupRecordingUrl === 'string' ? webinar.devFollowupRecordingUrl : '',
     devFollowupTrialUrl: typeof webinar.devFollowupTrialUrl === 'string' ? webinar.devFollowupTrialUrl : '',
   };
@@ -2173,7 +2173,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                       </div>
                       <p className="text-[11px] text-gray-500 leading-relaxed">
                         {
-                          'Vypnuto: u záznamu DVPP i u celostránkového dotazníku stačí jméno, e-mail a telefon (bez školy a pozice).'
+                          'Výchozí je vypnuto — dotazník nevyžaduje registraci na webinář v KV. Zapnuto: před dotazníkem se ověří registrace stejným e-mailem jako u přihlášení na webinář.'
                         }
                       </p>
                     </div>

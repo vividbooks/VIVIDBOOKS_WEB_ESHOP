@@ -84,8 +84,8 @@ export interface Webinar {
    */
   certificateLinkMode?: 'external' | 'survey';
   /**
-   * Pokud `true` (výchozí), před záznamem a dotazníkem DVPP platí plná registrace jako u webináře.
-   * Pokud `false`, stačí jméno, e-mail a telefon (záznam + `/webinar/…?dvppDotaznik=1`).
+   * Pokud `true`, před záznamem a dotazníkem DVPP se ověří plná registrace na webinář (KV).
+   * Pokud `false` nebo pole chybí (výchozí), dotazník registraci na webinář nevyžaduje.
    */
   surveyRequireFullRegistration?: boolean;
   /**
