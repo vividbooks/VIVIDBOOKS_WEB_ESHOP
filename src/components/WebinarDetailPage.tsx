@@ -148,15 +148,18 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     ico: '',
   });
 
-  const emailLooksValid = useMemo(
-    () => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((form.email || '').trim()),
-    [form.email],
-  );
-
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   /** `false` = zobrazit registraci / light lead; `true` = dotazník. Ověření e-mailu vůči KV jen po kliknutí na Pokračovat. */
   const [surveyRegOk, setSurveyRegOk] = useState(false);
+  /**
+   * Celostránkový DVPP bez kroku registrace: e-mail jen po kliknutí na Pokračovat — ne přepínat podle regexu při psaní
+   * (jinak např. `jmeno@domena.c` už „projde“ a uživatel nemůže doplnit `.cz`).
+   */
+  const [dvppEmailGateDone, setDvppEmailGateDone] = useState(false);
+  useEffect(() => {
+    setDvppEmailGateDone(false);
+  }, [webinar.id]);
   /** Při `SKIP_DVPP_SURVEY_REGISTRATION_STEP` je vždy jako po „Pokračovat“ bez kroku registrace. */
   const surveyRegOkEffective = SKIP_DVPP_SURVEY_REGISTRATION_STEP || surveyRegOk;
   /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
@@ -227,6 +230,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       setForm((prev) => ({ ...prev, email: em }));
       setSurveyDeepLink(true);
       setSurveyRegOk(false);
+      setDvppEmailGateDone(true);
       window.history.replaceState({}, '', `${window.location.pathname}?dvppDotaznik=1`);
       return;
     }
@@ -538,7 +542,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         </div>
       );
     }
-    if (SKIP_DVPP_SURVEY_REGISTRATION_STEP && !emailLooksValid) {
+    if (SKIP_DVPP_SURVEY_REGISTRATION_STEP && !dvppEmailGateDone) {
       return (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
@@ -569,7 +573,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 {'E-mail *'}
               </label>
               <input
-                type="email"
+                type="text"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 value={form.email}
                 onChange={(e) => handleChange('email', e.target.value)}
                 className="w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
@@ -577,6 +585,14 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 autoComplete="email"
                 autoFocus
               />
+              <button
+                type="button"
+                disabled={!form.email.trim()}
+                onClick={() => setDvppEmailGateDone(true)}
+                className="mt-5 w-full rounded-[14px] bg-[#001161] py-3.5 font-['Fenomen_Sans',sans-serif] text-[15px] font-bold text-white shadow-md transition hover:bg-[#001a8c] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {'Pokra\u010dovat k dotazn\u00edku'}
+              </button>
             </div>
           </div>
         </motion.div>
@@ -879,21 +895,23 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         {/* Minulý webinář: kvíz + dotazník (ne při ?dvppDotaznik=1 — ten je celostránkově výše) */}
         {webinar.isPast && postSurveyMerged.length > 0 && dvppDotaznikQ !== '1' && (
           <div className="mb-10 max-w-[560px] mx-auto">
-            {!emailLooksValid && (
-              <div className="mb-5 rounded-2xl border border-[#001161]/10 bg-[#F8FAFC] px-5 py-4">
-                <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161] mb-2">
-                  {'E-mail pro odesl\u00e1n\u00ed odpov\u011bd\u00ed'}
-                </p>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
-                  className="w-full rounded-xl border border-[#001161]/12 bg-white px-3 py-2.5 text-[14px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15 font-['Fenomen_Sans',sans-serif]"
-                  placeholder="vas@email.cz"
-                  autoComplete="email"
-                />
-              </div>
-            )}
+            <div className="mb-5 rounded-2xl border border-[#001161]/10 bg-[#F8FAFC] px-5 py-4">
+              <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161] mb-2">
+                {'E-mail pro odesl\u00e1n\u00ed odpov\u011bd\u00ed'}
+              </p>
+              <input
+                type="text"
+                inputMode="email"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+                value={form.email}
+                onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+                className="w-full rounded-xl border border-[#001161]/12 bg-white px-3 py-2.5 text-[14px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15 font-['Fenomen_Sans',sans-serif]"
+                placeholder="vas@email.cz"
+                autoComplete="email"
+              />
+            </div>
             <WebinarPostSurvey
               webinar={webinar}
               email={form.email}
