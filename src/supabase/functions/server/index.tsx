@@ -3429,6 +3429,31 @@ function mapPostWebinarQuizQuestionsForSurvey(
     }));
 }
 
+/**
+ * Text správné odpovědi u DVPP kvízu (`postWebinarQuizQuestions`), pokud je v CMS `correctIndex`.
+ * `null` = tuto otázku nevyhodnocujeme (zpětná kompatibilita nebo chybí index).
+ */
+function getDvppQuizCorrectAnswerText(
+  webinar: Record<string, unknown> | null | undefined,
+  questionId: string,
+): string | null {
+  const raw = webinar?.postWebinarQuizQuestions;
+  if (!Array.isArray(raw)) return null;
+  const q = raw.find((x: any) => x && String(x.id) === String(questionId));
+  const anyQ = q as Record<string, unknown> | undefined;
+  if (!anyQ || String(anyQ.type) !== 'abc') return null;
+  const options = Array.isArray(anyQ.options)
+    ? (anyQ.options as unknown[]).map((o) => String(o).trim())
+    : [];
+  const rawCi = anyQ.correctIndex ?? anyQ.correct;
+  let idx: number | null = null;
+  if (typeof rawCi === 'number' && Number.isFinite(rawCi)) idx = Math.floor(rawCi);
+  else if (typeof rawCi === 'string' && /^[0-3]$/.test(rawCi.trim())) idx = parseInt(rawCi.trim(), 10);
+  if (idx == null || idx < 0 || idx > 3 || idx >= options.length) return null;
+  const text = options[idx];
+  return text ? text : null;
+}
+
 function resolveSurveyQuestionsFromWebinarItem(w: Record<string, unknown> | null): typeof DEFAULT_SURVEY_QUESTIONS_SERVER {
   /** Chybí záznam v CMS — jako na klientu: jen výchozí part 2 (bez před-webinářových otázek). */
   if (!w) {
@@ -5269,6 +5294,17 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       if (!ok) return c.json({ error: `Neplatná volba u: ${q.label}` }, 400);
     }
 
+    const dvppCorrect = getDvppQuizCorrectAnswerText(webinar, questionId);
+    if (dvppCorrect != null && value.trim() !== dvppCorrect.trim()) {
+      return c.json(
+        {
+          error: 'Odpověď není správná. Vyberte jinou možnost.',
+          wrongAnswer: true,
+        },
+        400,
+      );
+    }
+
     const partialKey = webinarSurveyPartialKey(webinarId, email);
     const nameForPartial = (reg as any).name || '';
     /** Read–merge–write bez transakce: souběžné POSTy (dvojklik) si jinak přepisovaly `answers`. */
@@ -5352,6 +5388,16 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       if (q.type === 'abc' && q.options && q.options.length > 0) {
         const ok = q.options.some((o) => o === s);
         if (!ok) return c.json({ error: `Neplatná volba u: ${q.label}` }, 400);
+      }
+      const dvppCorrect = getDvppQuizCorrectAnswerText(webinar, q.id);
+      if (dvppCorrect != null && s !== dvppCorrect.trim()) {
+        return c.json(
+          {
+            error: 'DVPP kvíz obsahuje nesprávnou odpověď. Vraťte se k otázkám a opravte výběr.',
+            wrongAnswer: true,
+          },
+          400,
+        );
       }
       out[q.id] = s;
     }
