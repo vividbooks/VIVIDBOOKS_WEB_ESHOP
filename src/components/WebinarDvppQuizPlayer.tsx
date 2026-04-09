@@ -67,6 +67,7 @@ export function WebinarDvppQuizPlayer({
   const partialAnswerLockRef = useRef(false);
   /** -1 = úvodní obrazovka, 0..total-1 = otázky */
   const [step, setStep] = useState(-1);
+  const [wrongAnswerHint, setWrongAnswerHint] = useState('');
 
   useEffect(() => {
     onStepChange?.(step);

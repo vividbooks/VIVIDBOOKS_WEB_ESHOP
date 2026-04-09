@@ -394,6 +394,7 @@ export function WebinarPostSurvey({
         }
       >
         <WebinarDvppQuizPlayer
+          key={webinar.id}
           variant={fs ? 'fullscreen' : 'default'}
           webinarTitle={webinar.title}
           questions={dvppRaw}

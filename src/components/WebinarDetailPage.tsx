@@ -20,6 +20,15 @@ import { getMergedWebinarSurveyQuestions, getPreWebinarSurveyQuestions } from '.
  */
 const SKIP_DVPP_SURVEY_REGISTRATION_STEP = true;
 
+/** `decodeURIComponent` u neplatného % kódování vyhodí — nechceme shodit celou stránku. */
+function safeDecodeURIComponent(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 const POSITIONS = [
   'U\u010ditel/ka na Z\u0160',
   'U\u010ditel/ka na S\u0160',
@@ -207,7 +216,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     if (typeof window === 'undefined') return;
     const sp = new URLSearchParams(window.location.search);
     const raw = sp.get('email');
-    const em = raw ? decodeURIComponent(raw.trim()) : '';
+    const em = raw ? safeDecodeURIComponent(raw.trim()) : '';
     if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
 
     const isDvpp = sp.get('dvppDotaznik') === '1';
@@ -379,7 +388,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       const em = form.email.trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
         setError('Vypl\u0148te pros\u00edm platn\u00fd e-mail.');
-        return;
+      return;
       }
       setSubmitting(true);
       setError('');
@@ -457,7 +466,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       if (isSurveyFullPage) {
         setSurveyRegOk(true);
       } else {
-        setSubmitted(true);
+      setSubmitted(true);
       }
     } catch (err: any) {
       console.error('Webinar registration error:', err);
