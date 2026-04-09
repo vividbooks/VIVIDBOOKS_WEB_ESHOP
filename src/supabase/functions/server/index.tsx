@@ -5257,15 +5257,43 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     }
 
     const partialKey = webinarSurveyPartialKey(webinarId, email);
-    const prev = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
-    const nextAnswers = { ...(prev?.answers || {}), [questionId]: value };
-    await kv.set(partialKey, {
-      webinarId,
-      email,
-      name: (reg as any).name || '',
-      answers: nextAnswers,
-      updatedAt: new Date().toISOString(),
-    });
+    const nameForPartial = (reg as any).name || '';
+    /** Read–merge–write bez transakce: souběžné POSTy (dvojklik) si jinak přepisovaly `answers`. */
+    let mergedOk = false;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const prev = (await kv.get(partialKey)) as {
+        answers?: Record<string, string>;
+      } | null;
+      const base = { ...(prev?.answers || {}) };
+      const nextAnswers = { ...base, [questionId]: value };
+      await kv.set(partialKey, {
+        webinarId,
+        email,
+        name: nameForPartial,
+        answers: nextAnswers,
+        updatedAt: new Date().toISOString(),
+      });
+      const verify = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
+      const va = verify?.answers || {};
+      if (va[questionId] !== value) continue;
+      let allMatch = true;
+      for (const [k, val] of Object.entries(nextAnswers)) {
+        if (va[k] !== val) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) {
+        mergedOk = true;
+        break;
+      }
+    }
+    if (!mergedOk) {
+      return c.json(
+        { error: 'Nepodařilo se bezpečně uložit odpověď (konflikt). Obnovte stránku a zkuste znovu.' },
+        409,
+      );
+    }
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Survey partial] Chyba: ${err.message}`);

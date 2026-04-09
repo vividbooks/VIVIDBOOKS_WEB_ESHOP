@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import type { PostWebinarPart2Step } from '../data/webinars';
@@ -49,6 +49,9 @@ export function WebinarPostSurveyPart2Player({
   const [step, setStep] = useState(0);
   const [partialSaving, setPartialSaving] = useState(false);
   const [partialErr, setPartialErr] = useState('');
+  const [navBusy, setNavBusy] = useState(false);
+  const navBusyRef = useRef(false);
+  const partialAnswerLockRef = useRef(false);
 
   const current = total > 0 ? steps[step] : null;
 
@@ -72,26 +75,40 @@ export function WebinarPostSurveyPart2Player({
   const goNext = useCallback(() => {
     if (!current || total === 0) return;
     if (!canAdvance(current, answers)) return;
-    if (onSavePartialAnswer && current.type !== 'intro') {
-      let v = '';
-      if (current.type === 'open' || current.type === 'abc') {
-        v = (answers[current.id] || '').trim();
+    if (navBusyRef.current || partialSaving) return;
+    navBusyRef.current = true;
+    setNavBusy(true);
+    void (async () => {
+      try {
+        if (onSavePartialAnswer && current.type !== 'intro') {
+          let v = '';
+          if (current.type === 'open' || current.type === 'abc') {
+            v = (answers[current.id] || '').trim();
+          }
+          if (v) {
+            try {
+              await onSavePartialAnswer(current.id, v);
+            } catch (e) {
+              setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+              return;
+            }
+          }
+        }
+        if (step >= total - 1) {
+          onComplete();
+          return;
+        }
+        setStep((s) => s + 1);
+      } finally {
+        navBusyRef.current = false;
+        setNavBusy(false);
       }
-      if (v) {
-        void onSavePartialAnswer(current.id, v).catch((e) => {
-          setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-        });
-      }
-    }
-    if (step >= total - 1) {
-      onComplete();
-      return;
-    }
-    setStep((s) => s + 1);
-  }, [current, answers, step, total, onComplete, onSavePartialAnswer]);
+    })();
+  }, [current, answers, step, total, onComplete, onSavePartialAnswer, partialSaving]);
 
   const handleSavePartial = useCallback(async () => {
     if (!current || current.type === 'intro' || !onSavePartialAnswer) return;
+    if (partialAnswerLockRef.current) return;
     let v = '';
     if (current.type === 'open') {
       v = (answers[current.id] || '').trim();
@@ -101,6 +118,7 @@ export function WebinarPostSurveyPart2Player({
       return;
     }
     if (!v) return;
+    partialAnswerLockRef.current = true;
     setPartialErr('');
     setPartialSaving(true);
     try {
@@ -108,6 +126,7 @@ export function WebinarPostSurveyPart2Player({
     } catch (e) {
       setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
     } finally {
+      partialAnswerLockRef.current = false;
       setPartialSaving(false);
     }
   }, [current, answers, onSavePartialAnswer]);
@@ -187,7 +206,7 @@ export function WebinarPostSurveyPart2Player({
                 <button
                   type="button"
                   disabled={
-                    partialSaving || !(answers[current.id] || '').trim()
+                    partialSaving || navBusy || !(answers[current.id] || '').trim()
                   }
                   onClick={() => void handleSavePartial()}
                   className={ANSWER_BTN}
@@ -223,7 +242,7 @@ export function WebinarPostSurveyPart2Player({
         transition={{ duration: 0.2 }}
         className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-y-contain md:overflow-hidden"
       >
-        <div className="flex min-h-0 shrink-0 flex-col items-center justify-center px-4 pb-3 pt-2 sm:px-10 sm:pb-4 md:flex md:min-h-0 md:flex-[1.05] md:px-14 md:py-6">
+        <div className="flex min-h-0 shrink-0 flex-col items-center justify-center px-6 pb-7 pt-8 sm:px-10 sm:pb-6 sm:pt-7 md:flex md:min-h-0 md:flex-[1.05] md:px-14 md:py-6">
           <p
             style={{ ...FF, color: QUESTION_MUTED }}
             className="max-w-4xl text-center text-[clamp(1.05rem,4vw,1.85rem)] font-bold leading-snug sm:text-[clamp(1.2rem,3.2vw,1.85rem)] md:leading-relaxed md:text-[1.85rem] lg:text-[2.05rem]"
@@ -269,7 +288,7 @@ export function WebinarPostSurveyPart2Player({
             <div className="mx-auto mt-4 flex w-full max-w-4xl flex-col items-center gap-2 px-4 sm:px-6 md:px-10">
               <button
                 type="button"
-                disabled={partialSaving}
+                disabled={partialSaving || navBusy}
                 onClick={() => void handleSavePartial()}
                 className={ANSWER_BTN}
                 style={FF}
@@ -294,7 +313,7 @@ export function WebinarPostSurveyPart2Player({
     );
   };
 
-  const nextDisabled = !canAdvance(current, answers);
+  const nextDisabled = !canAdvance(current, answers) || navBusy || partialSaving;
 
   if (!fs) {
     return (

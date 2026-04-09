@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import type { PostWebinarQuizQuestion } from '../data/webinars';
@@ -55,6 +55,10 @@ export function WebinarDvppQuizPlayer({
   const total = questions.length;
   const [partialSaving, setPartialSaving] = useState(false);
   const [partialErr, setPartialErr] = useState('');
+  /** Zabrání dvojitému kliku na „Další“ před dokončením zápisu na server. */
+  const [navBusy, setNavBusy] = useState(false);
+  const navBusyRef = useRef(false);
+  const partialAnswerLockRef = useRef(false);
   /** -1 = úvodní obrazovka, 0..total-1 = otázky */
   const [step, setStep] = useState(-1);
 
@@ -80,27 +84,42 @@ export function WebinarDvppQuizPlayer({
   }, []);
 
   const goNext = useCallback(() => {
+    if (navBusyRef.current || partialSaving) return;
     if (step === -1) {
       setStep(0);
       return;
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
-      if (onSavePartialAnswer && currentQ && selectedForCurrent) {
-        void onSavePartialAnswer(currentQ.id, selectedForCurrent).catch((e) => {
-          setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-        });
-      }
-      if (step === total - 1) {
-        onComplete();
-        return;
-      }
-      setStep((s) => s + 1);
+      navBusyRef.current = true;
+      setNavBusy(true);
+      void (async () => {
+        try {
+          if (onSavePartialAnswer && currentQ && selectedForCurrent) {
+            try {
+              await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+            } catch (e) {
+              setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+              return;
+            }
+          }
+          if (step === total - 1) {
+            onComplete();
+            return;
+          }
+          setStep((s) => s + 1);
+        } finally {
+          navBusyRef.current = false;
+          setNavBusy(false);
+        }
+      })();
     }
-  }, [step, total, selectedForCurrent, onComplete, onSavePartialAnswer, currentQ]);
+  }, [step, total, selectedForCurrent, onComplete, onSavePartialAnswer, currentQ, partialSaving]);
 
   const handleSavePartial = useCallback(async () => {
     if (!currentQ || !selectedForCurrent || !onSavePartialAnswer) return;
+    if (partialAnswerLockRef.current) return;
+    partialAnswerLockRef.current = true;
     setPartialErr('');
     setPartialSaving(true);
     try {
@@ -108,6 +127,7 @@ export function WebinarDvppQuizPlayer({
     } catch (e) {
       setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
     } finally {
+      partialAnswerLockRef.current = false;
       setPartialSaving(false);
     }
   }, [currentQ, selectedForCurrent, onSavePartialAnswer]);
@@ -136,11 +156,13 @@ export function WebinarDvppQuizPlayer({
             type="button"
             onClick={goNext}
             disabled={
-              step === -1
+              navBusy ||
+              partialSaving ||
+              (step === -1
                 ? false
                 : step >= 0 && step < total
                   ? !selectedForCurrent
-                  : true
+                  : true)
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
             style={{ backgroundColor: PURPLE }}
@@ -252,7 +274,7 @@ export function WebinarDvppQuizPlayer({
                   <div className="mt-5 flex flex-col items-center gap-2">
                     <button
                       type="button"
-                      disabled={partialSaving}
+                      disabled={partialSaving || navBusy}
                       onClick={() => void handleSavePartial()}
                       className={ANSWER_BTN}
                       style={FF}
@@ -306,11 +328,13 @@ export function WebinarDvppQuizPlayer({
           type="button"
           onClick={goNext}
           disabled={
-            step === -1
+            navBusy ||
+            partialSaving ||
+            (step === -1
               ? false
               : step >= 0 && step < total
                 ? !selectedForCurrent
-                : true
+                : true)
           }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
           aria-label={step === total - 1 ? 'Dokončit' : 'Další'}
@@ -382,7 +406,7 @@ export function WebinarDvppQuizPlayer({
                   className="flex min-h-0 flex-1 flex-col max-md:overflow-y-auto max-md:overscroll-y-contain md:overflow-hidden"
                 >
                   {/* Mobil: otázka + tlačítka pod sebou, scroll — bez flex-shrink, který maže výšku textu */}
-                  <div className="flex min-h-0 shrink-0 flex-col items-center justify-center px-4 pb-3 pt-2 sm:px-8 sm:pb-4 md:flex md:min-h-0 md:flex-[1.15] md:px-14 md:py-6">
+                  <div className="flex min-h-0 shrink-0 flex-col items-center justify-center px-6 pb-7 pt-8 sm:px-8 sm:pb-6 sm:pt-7 md:flex md:min-h-0 md:flex-[1.15] md:px-14 md:py-6">
                     <p
                       style={{ ...FF, color: QUESTION_MUTED }}
                       className="max-w-4xl text-center text-[clamp(1.05rem,4.2vw,1.85rem)] font-bold leading-snug sm:text-[clamp(1.1rem,3.5vw,2.05rem)] md:leading-relaxed md:text-[1.85rem] lg:text-[2.1rem]"
@@ -432,7 +456,7 @@ export function WebinarDvppQuizPlayer({
                       <div className="mt-4 flex flex-col items-center gap-2 sm:mt-5">
                         <button
                           type="button"
-                          disabled={partialSaving}
+                          disabled={partialSaving || navBusy}
                           onClick={() => void handleSavePartial()}
                           className={`${ANSWER_BTN} py-3 text-[15px] shadow-lg`}
                           style={FF}
