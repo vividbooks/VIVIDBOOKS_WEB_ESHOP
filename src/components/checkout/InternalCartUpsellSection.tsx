@@ -448,7 +448,7 @@ export function InternalCartUpsellSection({
           className="text-[11px] font-black uppercase tracking-widest text-[#001161]/40"
           style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
         >
-          {'Mohlo by se vám hodit'}
+          {'Mohlo by se vám také hodit'}
         </p>
       </div>
 

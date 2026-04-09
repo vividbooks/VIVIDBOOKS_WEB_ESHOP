@@ -4,6 +4,7 @@
  */
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders } from '../_shared/idoklad-sdk-headers.ts';
+import { verifyOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -181,10 +182,9 @@ Deno.serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const orderId = (url.searchParams.get('orderId') || '').trim();
-  if (!orderId || !/^[0-9a-f-]{36}$/i.test(orderId)) {
-    return jsonResponse({ error: 'Missing or invalid orderId.' }, 400);
-  }
+  let orderId = (url.searchParams.get('orderId') || '').trim();
+  const orderNumberParam = (url.searchParams.get('orderNumber') || '').trim();
+  const trackingToken = (url.searchParams.get('t') || '').trim();
 
   const sql = postgres(databaseUrl, {
     prepare: false,
@@ -195,6 +195,32 @@ Deno.serve(async (req) => {
   });
 
   try {
+    if (!orderId && orderNumberParam && trackingToken) {
+      const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
+      if (!secret) {
+        return jsonResponse({ error: 'Missing ORDER_TRACKING_HMAC_SECRET.' }, 503);
+      }
+      const oidRows = await sql<{ id: string }[]>`
+        select id::text as id
+        from public.orders
+        where order_number = ${orderNumberParam}
+        limit 1
+      `;
+      const oid = oidRows[0]?.id;
+      if (!oid) {
+        return jsonResponse({ error: 'Order not found.' }, 404);
+      }
+      const valid = await verifyOrderTrackingToken(oid, secret, trackingToken);
+      if (!valid) {
+        return jsonResponse({ error: 'Invalid tracking token.' }, 403);
+      }
+      orderId = oid;
+    }
+
+    if (!orderId || !/^[0-9a-f-]{36}$/i.test(orderId)) {
+      return jsonResponse({ error: 'Missing or invalid orderId (or orderNumber + t).' }, 400);
+    }
+
     const rows = await sql<{ idoklad_invoice_id: string | null; invoice_status: string | null; invoice_number: string | null }[]>`
       select idoklad_invoice_id, invoice_status, invoice_number
       from public.orders

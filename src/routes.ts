@@ -98,6 +98,10 @@ export const router = createBrowserRouter(
               path: 'objednavka/dekujeme',
               lazy: lazyNamed(() => import('./components/checkout/OrderConfirmationPage'), 'OrderConfirmationPage'),
             },
+            {
+              path: 'objednavka/sledovani',
+              lazy: lazyNamed(() => import('./components/checkout/OrderTrackingPage'), 'OrderTrackingPage'),
+            },
             { path: 'webinare', lazy: lazyNamed(() => import('./components/WebinarsPage'), 'WebinarsPage') },
             {
               path: 'webinare/zaznam/:id',

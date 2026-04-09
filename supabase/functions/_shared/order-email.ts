@@ -1,4 +1,5 @@
 import type postgres from 'npm:postgres';
+import { computeOrderTrackingToken } from './order-tracking-token.ts';
 
 export type OrderEmailType =
   | 'order_confirmed'
@@ -101,6 +102,21 @@ function getPublicSiteUrl() {
   return 'https://vividbooks.com';
 }
 
+async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string): Promise<string | null> {
+  const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
+  if (!secret) return null;
+  try {
+    const token = await computeOrderTrackingToken(orderId, secret);
+    const site = getPublicSiteUrl().replace(/\/$/, '');
+    const u = new URL('objednavka/sledovani', `${site}/`);
+    u.searchParams.set('order', orderNumber);
+    u.searchParams.set('t', token);
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 function buildShell(title: string, content: string) {
   return `<!DOCTYPE html>
 <html lang="cs">
@@ -162,11 +178,18 @@ function buildOrderItemsTable(items: OrderItemRow[]) {
   `;
 }
 
-function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[]) {
+function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackingUrl: string | null) {
   const receiptBlock = order.stripe_receipt_url
     ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
         Účtenku od Stripe si můžete stáhnout zde:
         <a href="${escapeHtml(order.stripe_receipt_url)}" style="color:#2563eb;text-decoration:none;">Zobrazit účtenku</a>
+      </p>`
+    : '';
+
+  const trackingBlock = trackingUrl
+    ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
+        Stav objednávky a zásilky:
+        <a href="${escapeHtml(trackingUrl)}" style="color:#2563eb;text-decoration:none;">Sledovat objednávku</a>
       </p>`
     : '';
 
@@ -176,6 +199,7 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[]) {
       <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Děkujeme za objednávku!</h1>
       <p style="margin:0 0 8px;font-size:15px;line-height:1.7;color:#374151;">Číslo objednávky: <strong>${escapeHtml(order.order_number)}</strong></p>
       ${receiptBlock}
+      ${trackingBlock}
       ${buildOrderItemsTable(items)}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;">
         <tr>
@@ -195,7 +219,13 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[]) {
   );
 }
 
-function buildOrderShippedHtml(order: OrderRow) {
+function buildOrderShippedHtml(order: OrderRow, trackingUrl: string | null) {
+  const trackingPageBlock = trackingUrl
+    ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
+        <a href="${escapeHtml(trackingUrl)}" style="color:#2563eb;text-decoration:none;">Sledovat objednávku</a>
+      </p>`
+    : '';
+
   const trackingBlock = order.tracking_number
     ? order.shipping_method === 'zasilkovna'
       ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Sledujte zásilku: <a href="https://tracking.packeta.com/cs/?id=${encodeURIComponent(order.tracking_number)}" style="color:#2563eb;text-decoration:none;">https://tracking.packeta.com/cs/?id=${escapeHtml(order.tracking_number)}</a></p>`
@@ -209,6 +239,7 @@ function buildOrderShippedHtml(order: OrderRow) {
       <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
         Vaše objednávka <strong>${escapeHtml(order.order_number)}</strong> byla předána dopravci ${escapeHtml(shippingLabel(order.shipping_method))}.
       </p>
+      ${trackingPageBlock}
       ${trackingBlock}
       ${order.shipping_method === 'zasilkovna' && order.pickup_point_name ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Vyzvedněte si ji na: <strong>${escapeHtml(order.pickup_point_name)}</strong></p>` : ''}
       <p style="margin:0;font-size:15px;line-height:1.7;color:#374151;">Děkujeme za nákup — VividBooks</p>
@@ -357,15 +388,20 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
   const from = parseFromHeader(Deno.env.get('EMAIL_FROM') || 'VividBooks <objednavky@vividbooks.com>');
   const { order, items } = await loadOrderEmailData(sql, params.orderId);
 
+  let trackingUrl: string | null = null;
+  if (params.emailType === 'order_confirmed' || params.emailType === 'order_shipped') {
+    trackingUrl = await buildPublicOrderTrackingUrl(order.id, order.order_number);
+  }
+
   let subject = '';
   let html = '';
 
   if (params.emailType === 'order_confirmed') {
     subject = `Potvrzení objednávky ${order.order_number} — VividBooks`;
-    html = buildOrderConfirmedHtml(order, items);
+    html = buildOrderConfirmedHtml(order, items, trackingUrl);
   } else if (params.emailType === 'order_shipped') {
     subject = `Vaše objednávka ${order.order_number} byla odeslána — VividBooks`;
-    html = buildOrderShippedHtml(order);
+    html = buildOrderShippedHtml(order, trackingUrl);
   } else if (params.emailType === 'order_cancelled') {
     subject = `Objednávka ${order.order_number} byla zrušena — VividBooks`;
     html = buildOrderCancelledHtml(order);

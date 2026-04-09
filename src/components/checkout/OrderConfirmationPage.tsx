@@ -1,27 +1,37 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import { AlertCircle, CheckCircle2, Loader2, Mail } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router';
 import { SEOHead } from '../SEOHead';
-import { useCart } from '../../contexts/CartContext';
+import { CartItem, useCart } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { appPath } from '../../utils/appBaseUrl';
+import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
+const INVOICE_FN = `https://${projectId}.supabase.co/functions/v1/idoklad-invoice-pdf`;
 const PAYMENT_INTENT_MAX_POLLS = 10;
 const PAYMENT_INTENT_POLL_MS = 3000;
 
 interface OrderSummary {
   order_number: string;
   total: number;
+  subtotal?: number;
+  shipping_price?: number;
   shipping_method: string;
+  shipping_method_label?: string;
   pickup_point_name?: string | null;
   customer_email: string;
   status: string;
   payment_method?: string;
   transfer_flow?: boolean;
+  stripe_receipt_url?: string | null;
+  invoice_ready?: boolean;
+  tracking_token?: string | null;
   items?: OrderSummaryItem[];
 }
 
 interface OrderSummaryItem {
+  product_id?: string;
   product_name: string;
   variant?: string | null;
   quantity: number;
@@ -179,6 +189,22 @@ export function OrderConfirmationPage() {
 
   const showLoader = loading && !order && !pollExhausted && !error;
 
+  const upsellCartItems: CartItem[] = useMemo(() => {
+    if (!order?.items?.length) return [];
+    return order.items.map((item) => ({
+      productId: item.product_id ?? item.product_name,
+      productName: item.product_name,
+      variantId: item.product_id,
+      quantity: item.quantity,
+      unitPrice: item.unit_price,
+    }));
+  }, [order]);
+
+  const invoiceHref =
+    order?.invoice_ready && order.tracking_token
+      ? `${INVOICE_FN}?orderNumber=${encodeURIComponent(order.order_number)}&t=${encodeURIComponent(order.tracking_token)}`
+      : null;
+
   return (
     <div className="min-h-screen bg-[#f8f9fc]">
       <SEOHead
@@ -211,18 +237,6 @@ export function OrderConfirmationPage() {
                   <span className="font-bold text-[#001161]">{order.order_number}</span>
                 </div>
                 <div className="flex items-center justify-between gap-4 font-['Fenomen_Sans',sans-serif] text-[14px]">
-                  <span className="text-[#001161]/55">{'Celková částka'}</span>
-                  <span className="font-bold text-[#001161]">{formatPrice(order.total)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-4 font-['Fenomen_Sans',sans-serif] text-[14px]">
-                  <span className="text-[#001161]/55">{'Doprava'}</span>
-                  <span className="font-bold text-[#001161]">
-                    {order.pickup_point_name
-                      ? `${order.shipping_method} - ${order.pickup_point_name}`
-                      : order.shipping_method}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-4 font-['Fenomen_Sans',sans-serif] text-[14px]">
                   <span className="text-[#001161]/55">{'Potvrzení přijde na'}</span>
                   <span className="font-bold text-[#001161]">{order.customer_email}</span>
                 </div>
@@ -236,9 +250,7 @@ export function OrderConfirmationPage() {
                     {order.items.map((item, index) => (
                       <div
                         key={`${item.product_name}-${index}`}
-                        className={`px-4 md:px-5 py-4 ${
-                          index < order.items!.length - 1 ? 'border-b border-[#001161]/8' : ''
-                        }`}
+                        className={`px-4 md:px-5 py-4 border-b border-[#001161]/8`}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="min-w-0">
@@ -260,7 +272,69 @@ export function OrderConfirmationPage() {
                         </div>
                       </div>
                     ))}
+                    <div className="px-4 md:px-5 py-3 bg-[#fafbfd]">
+                      <div className="flex justify-between gap-4 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/70">
+                        <span>{'Doprava'}</span>
+                        <span className="font-bold text-[#001161] text-right">
+                          {`${order.shipping_method_label ?? order.shipping_method} — ${formatPrice(
+                            order.shipping_price ?? 0,
+                          )}`}
+                        </span>
+                      </div>
+                      {order.pickup_point_name && (
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45 mt-2 text-right">
+                          {order.pickup_point_name}
+                        </p>
+                      )}
+                    </div>
+                    <div className="px-4 md:px-5 py-4 flex justify-between items-baseline gap-4 border-t border-[#001161]/8">
+                      <span className="font-['Fenomen_Sans',sans-serif] text-[14px] font-bold text-[#001161]">
+                        {'Celkem'}
+                      </span>
+                      <span className="font-['Fenomen_Sans',sans-serif] text-[18px] font-bold text-[#001161]">
+                        {formatPrice(order.total)}
+                      </span>
+                    </div>
                   </div>
+                </div>
+              )}
+              {order && (
+                <div className="max-w-[560px] mx-auto mt-8 flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3">
+                  {order.tracking_token && (
+                    <Link
+                      to={`${appPath('/objednavka/sledovani')}?order=${encodeURIComponent(order.order_number)}&t=${encodeURIComponent(order.tracking_token)}`}
+                      className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#001161]/90 transition-colors"
+                    >
+                      {'Sledovat objednávku'}
+                    </Link>
+                  )}
+                  {invoiceHref && (
+                    <a
+                      href={invoiceHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"
+                    >
+                      {'Stáhnout fakturu'}
+                    </a>
+                  )}
+                  {order.stripe_receipt_url && (
+                    <a
+                      href={order.stripe_receipt_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"
+                    >
+                      {'Účtenka (Stripe)'}
+                    </a>
+                  )}
+                  <a
+                    href="mailto:hello@vividbooks.com"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"
+                  >
+                    <Mail className="w-4 h-4" />
+                    {'Kontaktujte nás'}
+                  </a>
                 </div>
               )}
             </>
@@ -332,6 +406,13 @@ export function OrderConfirmationPage() {
           )}
         </div>
       </div>
+      {order && upsellCartItems.length > 0 && (
+        <div className="max-w-[820px] mx-auto px-4 sm:px-6 pb-10 md:pb-16">
+          <div className="rounded-[28px] border border-[#001161]/10 bg-white overflow-hidden">
+            <InternalCartUpsellSection cartItems={upsellCartItems} openCartAfterAdd />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
