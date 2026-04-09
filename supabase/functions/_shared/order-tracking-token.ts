@@ -1,6 +1,8 @@
 /**
  * Veřejné odkazy na objednávku (sledování, PDF faktury) — HMAC podle `ORDER_TRACKING_HMAC_SECRET`.
  */
+import { timingSafeEqual } from 'node:crypto';
+
 const PREFIX = 'vb-order|';
 
 export async function computeOrderTrackingToken(orderId: string, secret: string): Promise<string> {
@@ -26,5 +28,7 @@ export async function verifyOrderTrackingToken(
   const t = token.trim().toLowerCase();
   if (t.length !== 32 || expected.length !== 32) return false;
   const enc = new TextEncoder();
-  return crypto.subtle.timingSafeEqual(enc.encode(expected), enc.encode(t));
+  const a = enc.encode(expected);
+  const b = enc.encode(t);
+  return timingSafeEqual(a, b);
 }

@@ -4,7 +4,6 @@ import { Link, useSearchParams } from 'react-router';
 import { SEOHead } from '../SEOHead';
 import { CartItem, useCart } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { appPath } from '../../utils/appBaseUrl';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
@@ -302,7 +301,7 @@ export function OrderConfirmationPage() {
                 <div className="max-w-[560px] mx-auto mt-8 flex flex-col sm:flex-row flex-wrap items-center justify-center gap-3">
                   {order.tracking_token && (
                     <Link
-                      to={`${appPath('/objednavka/sledovani')}?order=${encodeURIComponent(order.order_number)}&t=${encodeURIComponent(order.tracking_token)}`}
+                      to={`/objednavka/sledovani?order=${encodeURIComponent(order.order_number)}&t=${encodeURIComponent(order.tracking_token)}`}
                       className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#001161]/90 transition-colors"
                     >
                       {'Sledovat objednávku'}

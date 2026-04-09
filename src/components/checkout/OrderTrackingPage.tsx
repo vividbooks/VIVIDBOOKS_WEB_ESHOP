@@ -5,7 +5,6 @@ import { SEOHead } from '../SEOHead';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 import { CartItem } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { appPath } from '../../utils/appBaseUrl';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
 const INVOICE_FN = `https://${projectId}.supabase.co/functions/v1/idoklad-invoice-pdf`;
@@ -320,7 +319,7 @@ export function OrderTrackingPage() {
               </div>
 
               <p className="mt-8 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/40">
-                <Link to={appPath('/')} className="underline hover:text-[#001161]/60">
+                <Link to="/" className="underline hover:text-[#001161]/60">
                   {'Zpět do obchodu'}
                 </Link>
               </p>
