@@ -5181,25 +5181,16 @@ async function sendMandrillHtml(opts: {
   return r.ok;
 }
 
-/** Jen pokud je v KV explicitně `true` — výchozí je dotazník bez registrace na webinář. */
-function webinarSurveyRequireFullRegistrationFromItem(
-  webinar: Record<string, unknown> | null | undefined,
-): boolean {
-  return webinar?.surveyRequireFullRegistration === true;
-}
-
 /**
- * Pro dotazník po webináři: plná registrace = `webinar_reg_*`.
- * Pokud není `surveyRequireFullRegistration === true`, stačí `webinar_survey_light_*` nebo samotný platný e-mail v požadavku (bez registrace na webinář v KV).
- *
- * Doplňky: zkusí i `webinar.slug` jako část klíče (historicky se mohlo lišit od `id`) a e-mailový index účastníka.
+ * Účastník pro zápis dotazníku: nejdřív `webinar_reg_*` / light / index (jméno z registrace),
+ * jinak syntetický záznam jen z e-mailu — **nikdy** kvůli chybějící registraci na webinář neblokovat odeslání.
+ * (`surveyRequireFullRegistration` v KV ovlivňuje jen UI v adminu / klientu, ne tuto kontrolu.)
  */
 async function kvGetWebinarSurveyParticipantForEmail(
   webinarId: string,
   email: string,
-  requireFullReg: boolean,
   webinarItem?: Record<string, unknown> | null,
-): Promise<unknown | null> {
+): Promise<unknown> {
   const tryReg = (wid: string) => kv.get(`webinar_reg_${wid}_${email}`);
   const tryLight = (wid: string) => kv.get(`webinar_survey_light_${wid}_${email}`);
 
@@ -5213,14 +5204,11 @@ async function kvGetWebinarSurveyParticipantForEmail(
     if (reg) return reg;
   }
 
-  if (!requireFullReg) {
-    let light: unknown = await tryLight(webinarId);
+  let light: unknown = await tryLight(webinarId);
+  if (light) return light;
+  if (slug && slug !== webinarId) {
+    light = await tryLight(slug);
     if (light) return light;
-    if (slug && slug !== webinarId) {
-      light = await tryLight(slug);
-      if (light) return light;
-    }
-    return { name: '', email, surveyNoPriorKvContact: true };
   }
 
   try {
@@ -5239,7 +5227,7 @@ async function kvGetWebinarSurveyParticipantForEmail(
     /* index není kritický */
   }
 
-  return null;
+  return { name: '', email, surveyNoPriorKvContact: true };
 }
 
 const webinarSurveyPartialHandler = async (c: Context) => {
@@ -5262,17 +5250,7 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
       | Record<string, unknown>
       | undefined;
-    const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
-    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg, webinar);
-    if (!reg) {
-      return c.json(
-        {
-          error:
-            'Nejprve se registrujte na tento webinář se stejným e-mailem. Pokud jste už registrovaní, zkuste obnovit stránku a odeslat znovu.',
-        },
-        403,
-      );
-    }
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, webinar);
     const existingFinal = await kv.get(webinarSurveyAnswerKey(webinarId, email));
     if (existingFinal) {
       return c.json({ error: 'Dotazník už máte odeslaný.' }, 409);
@@ -5351,18 +5329,7 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     const webinar = (items as any[]).find((x: any) => String(x.id) === String(webinarId)) as
       | Record<string, unknown>
       | undefined;
-    const requireFullReg = webinarSurveyRequireFullRegistrationFromItem(webinar);
-    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, requireFullReg, webinar);
-    /** 403 + JSON — neplést s textovým „404 Not Found“ z Hona při chybějící route. */
-    if (!reg) {
-      return c.json(
-        {
-          error:
-            'Nejprve se registrujte na tento webinář se stejným e-mailem. Pokud jste už registrovaní, zkuste obnovit stránku a odeslat znovu.',
-        },
-        403,
-      );
-    }
+    const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, webinar);
 
     const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
