@@ -50,6 +50,7 @@ import {
   rememberCheckoutAddress,
   type SavedCheckoutAddress,
 } from '../utils/checkoutSavedAddresses';
+import { loadSavedDvppContacts, type SavedDvppContact } from '../utils/dvppSavedContacts';
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/streetHouseNumberCZ';
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
@@ -484,6 +485,7 @@ export function OrderPage() {
     setContactInvalidFieldId(null);
   }, []);
   const [savedAddresses, setSavedAddresses] = useState<SavedCheckoutAddress[]>([]);
+  const [savedDvppIdentities, setSavedDvppIdentities] = useState<SavedDvppContact[]>([]);
   const [emailMxHint, setEmailMxHint] = useState('');
   const [emailMxChecking, setEmailMxChecking] = useState(false);
   const [continueEmailMx, setContinueEmailMx] = useState(false);
@@ -556,6 +558,7 @@ export function OrderPage() {
 
   useEffect(() => {
     setSavedAddresses(loadSavedCheckoutAddresses());
+    setSavedDvppIdentities(loadSavedDvppContacts());
   }, []);
 
   useEffect(() => {
@@ -636,6 +639,24 @@ export function OrderPage() {
       // best-effort
     }
   }, []);
+
+  const applySavedDvppIdentity = useCallback(
+    (c: SavedDvppContact) => {
+      const icoDigits = c.ico.replace(/\D/g, '').slice(0, 10);
+      setSchoolResults([]);
+      setSchoolOpen(false);
+      setForm((prev) => ({
+        ...prev,
+        name: c.name.trim(),
+        email: c.email.trim(),
+        schoolName: c.schoolName.trim(),
+        ico: icoDigits,
+      }));
+      clearContactFormError();
+      void applySchoolAddressFromIco(icoDigits);
+    },
+    [applySchoolAddressFromIco, clearContactFormError],
+  );
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -2244,6 +2265,27 @@ export function OrderPage() {
                         {'Po výběru školy se zkusí předvyplnit adresa. Údaje pak můžete ručně upravit.'}
                       </p>
                     </div>
+
+                    {savedDvppIdentities.length > 0 && (
+                      <div className="md:col-span-2 rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3">
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55 mb-2">
+                          {'Uložené identity (z dotazníku DVPP)'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {savedDvppIdentities.map((c, i) => (
+                            <button
+                              key={`dvpp-id-${c.savedAt}-${i}`}
+                              type="button"
+                              onClick={() => applySavedDvppIdentity(c)}
+                              title={`${c.email}\n${c.schoolName}${c.ico ? ` · IČO ${c.ico}` : ''}`}
+                              className="inline-flex max-w-full items-center rounded-full border border-[#001161]/12 bg-[#f8f9fc] px-3.5 py-1.5 font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161] transition-colors hover:border-[#5b4fd8]/45 hover:bg-[#fafaff]"
+                            >
+                              {c.name.trim() || c.email}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

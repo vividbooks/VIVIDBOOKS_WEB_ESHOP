@@ -15,9 +15,6 @@ const QUESTION_MUTED = '#4E5871';
 const PURPLE = '#7C3AED';
 const INTRO_FILL = '#C2DFFF';
 
-const WRONG_ANSWER_HINT =
-  'Tato odpov\u011b\u010f nebyla spr\u00e1vn\u00e1. M\u016f\u017eete pokra\u010dovat d\u00e1l.';
-
 type Props = {
   webinarTitle: string;
   questions: PostWebinarQuizQuestion[];
@@ -56,13 +53,19 @@ export function WebinarDvppQuizPlayer({
 }: Props) {
   const fs = variant === 'fullscreen';
   const total = questions.length;
-  const [partialSaving, setPartialSaving] = useState(false);
   const [partialErr, setPartialErr] = useState('');
   /** Pořadí vyhodnocení odpovědi — ignorovat zastaralý výsledek při rychlé změně volby. */
   const evalRequestIdRef = useRef(0);
   /** -1 = úvodní obrazovka, 0..total-1 = otázky */
   const [step, setStep] = useState(-1);
-  const [wrongAnswerHint, setWrongAnswerHint] = useState('');
+  /** Aktuální krok — aby se po odpovědi serveru neaplikoval výsledek na jinou otázku (uživatel už mohl přejít dál). */
+  const stepRef = useRef(step);
+  /** Po odpovědi serveru: zabarvení jen vybrané možnosti (zeleně / červeně). */
+  const [evalHighlight, setEvalHighlight] = useState<'correct' | 'wrong' | null>(null);
+
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
 
   useEffect(() => {
     onStepChange?.(step);
@@ -70,7 +73,7 @@ export function WebinarDvppQuizPlayer({
 
   useEffect(() => {
     setPartialErr('');
-    setWrongAnswerHint('');
+    setEvalHighlight(null);
   }, [step]);
 
   /** Pruh jen pro otázky (úvod = žádný segment nevyplněný). */
@@ -85,25 +88,26 @@ export function WebinarDvppQuizPlayer({
   const selectOption = useCallback(
     (questionId: string, opt: string) => {
       setPartialErr('');
+      setEvalHighlight(null);
+      const stepAtSelect = stepRef.current;
       onAnswerChange(questionId, opt);
       if (!onSavePartialAnswer) return;
       const reqId = ++evalRequestIdRef.current;
       void (async () => {
-        setPartialSaving(true);
         try {
           const res = await onSavePartialAnswer(questionId, opt);
           if (evalRequestIdRef.current !== reqId) return;
+          if (stepRef.current !== stepAtSelect) return;
           if (res && typeof res === 'object' && res.wrongAnswer) {
-            setWrongAnswerHint(WRONG_ANSWER_HINT);
+            setEvalHighlight('wrong');
           } else {
-            setWrongAnswerHint('');
+            setEvalHighlight('correct');
           }
         } catch (e) {
           if (evalRequestIdRef.current !== reqId) return;
+          if (stepRef.current !== stepAtSelect) return;
           setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-          setWrongAnswerHint('');
-        } finally {
-          if (evalRequestIdRef.current === reqId) setPartialSaving(false);
+          setEvalHighlight(null);
         }
       })();
     },
@@ -115,7 +119,6 @@ export function WebinarDvppQuizPlayer({
   }, []);
 
   const goNext = useCallback(() => {
-    if (partialSaving) return;
     if (step === -1) {
       setStep(0);
       return;
@@ -129,7 +132,7 @@ export function WebinarDvppQuizPlayer({
       }
       setStep((s) => s + 1);
     }
-  }, [partialSaving, step, total, selectedForCurrent, partialErr, onComplete]);
+  }, [step, total, selectedForCurrent, partialErr, onComplete]);
 
   if (total === 0) return null;
 
@@ -155,12 +158,11 @@ export function WebinarDvppQuizPlayer({
             type="button"
             onClick={goNext}
             disabled={
-              partialSaving ||
-              (step === -1
+              step === -1
                 ? false
                 : step >= 0 && step < total
                   ? !selectedForCurrent || !!partialErr
-                  : true)
+                  : true
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
             style={{ backgroundColor: PURPLE }}
@@ -188,16 +190,6 @@ export function WebinarDvppQuizPlayer({
               </div>
             )}
           </div>
-
-          {step >= 0 && wrongAnswerHint ? (
-            <div
-              role="status"
-              className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-[13px] leading-snug text-amber-950"
-              style={FF}
-            >
-              {wrongAnswerHint}
-            </div>
-          ) : null}
 
           <AnimatePresence mode="wait">
             {step === -1 && (
@@ -246,29 +238,42 @@ export function WebinarDvppQuizPlayer({
                   {currentQ.options.slice(0, 4).map((opt, oi) => {
                     const letter = letters[oi];
                     const sel = answers[currentQ.id] === opt;
+                    const showEval = sel && evalHighlight !== null;
+                    const ok = showEval && evalHighlight === 'correct';
+                    const bad = showEval && evalHighlight === 'wrong';
                     return (
                       <button
                         key={`${currentQ.id}-${oi}`}
                         type="button"
                         onClick={() => selectOption(currentQ.id, opt)}
                         className={`flex w-full items-stretch gap-3 rounded-2xl border-2 px-3 py-3 text-left transition-all ${
-                          sel
-                            ? 'border-[#7C3AED] bg-[#7C3AED]/[0.06] shadow-sm'
-                            : 'border-[#E2E8F0] bg-white hover:border-[#001161]/20 hover:bg-slate-50/80'
+                          ok
+                            ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                            : bad
+                              ? 'border-red-500 bg-red-50 shadow-sm'
+                              : sel
+                                ? 'border-[#7C3AED] bg-[#7C3AED]/[0.06] shadow-sm'
+                                : 'border-[#E2E8F0] bg-white hover:border-[#001161]/20 hover:bg-slate-50/80'
                         }`}
                       >
                         <span
                           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[14px] font-bold"
                           style={{
                             ...FF,
-                            color: sel ? PURPLE : '#64748B',
-                            backgroundColor: sel ? 'rgba(124,58,237,0.12)' : '#F1F5F9',
+                            color: ok ? '#047857' : bad ? '#b91c1c' : sel ? PURPLE : '#64748B',
+                            backgroundColor: ok
+                              ? 'rgba(16,185,129,0.2)'
+                              : bad
+                                ? 'rgba(239,68,68,0.18)'
+                                : sel
+                                  ? 'rgba(124,58,237,0.12)'
+                                  : '#F1F5F9',
                           }}
                         >
                           {letter}
                         </span>
                         <span
-                          style={{ ...FF, color: '#334155' }}
+                          style={{ ...FF, color: ok ? '#065f46' : bad ? '#991b1b' : '#334155' }}
                           className="flex min-h-[44px] items-center text-[16px] font-normal leading-snug sm:text-[17px]"
                         >
                           {opt}
@@ -322,12 +327,11 @@ export function WebinarDvppQuizPlayer({
           type="button"
           onClick={goNext}
           disabled={
-            partialSaving ||
-            (step === -1
+            step === -1
               ? false
               : step >= 0 && step < total
                 ? !selectedForCurrent || !!partialErr
-                : true)
+                : true
           }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
           aria-label={step === total - 1 ? 'Dokončit' : 'Další'}
@@ -355,16 +359,6 @@ export function WebinarDvppQuizPlayer({
             </div>
           )}
         </div>
-
-        {step >= 0 && wrongAnswerHint ? (
-          <div
-            role="status"
-            className="mb-2 shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-[13px] leading-snug text-amber-950 sm:mb-3"
-            style={FF}
-          >
-            {wrongAnswerHint}
-          </div>
-        ) : null}
 
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[1.65rem] bg-white shadow-[0_24px_64px_-18px_rgba(15,23,42,0.14)] ring-1 ring-slate-200/80 sm:rounded-[2rem]">
           <div className="flex min-h-0 flex-1 flex-col">
@@ -423,29 +417,42 @@ export function WebinarDvppQuizPlayer({
                       {currentQ.options.slice(0, 4).map((opt, oi) => {
                         const letter = letters[oi];
                         const sel = answers[currentQ.id] === opt;
+                        const showEval = sel && evalHighlight !== null;
+                        const ok = showEval && evalHighlight === 'correct';
+                        const bad = showEval && evalHighlight === 'wrong';
                         return (
                           <button
                             key={`${currentQ.id}-${oi}`}
                             type="button"
                             onClick={() => selectOption(currentQ.id, opt)}
                             className={`relative flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all md:gap-4 md:p-4 ${
-                              sel
-                                ? 'border-indigo-500 bg-indigo-50 shadow-sm'
-                                : 'border-slate-100 bg-white hover:border-indigo-200 hover:shadow-md'
+                              ok
+                                ? 'border-emerald-500 bg-emerald-50 shadow-sm'
+                                : bad
+                                  ? 'border-red-500 bg-red-50 shadow-sm'
+                                  : sel
+                                    ? 'border-indigo-500 bg-indigo-50 shadow-sm'
+                                    : 'border-slate-100 bg-white hover:border-indigo-200 hover:shadow-md'
                             }`}
                           >
                             <span
                               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[13px] font-bold md:h-10 md:w-10 md:text-[14px]"
                               style={{
                                 ...FF,
-                                backgroundColor: sel ? '#c7d2fe' : '#cbd5e1',
-                                color: sel ? '#3730a3' : '#475569',
+                                backgroundColor: ok
+                                  ? 'rgba(16,185,129,0.25)'
+                                  : bad
+                                    ? 'rgba(239,68,68,0.22)'
+                                    : sel
+                                      ? '#c7d2fe'
+                                      : '#cbd5e1',
+                                color: ok ? '#047857' : bad ? '#b91c1c' : sel ? '#3730a3' : '#475569',
                               }}
                             >
                               {letter}
                             </span>
                             <span
-                              style={{ ...FF, color: QUESTION_MUTED }}
+                              style={{ ...FF, color: ok ? '#065f46' : bad ? '#991b1b' : QUESTION_MUTED }}
                               className="flex min-h-[48px] flex-1 items-center text-[16px] font-medium leading-snug md:text-[18px] md:leading-relaxed"
                             >
                               {opt}
