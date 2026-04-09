@@ -215,6 +215,11 @@ export function WebinarDvppQuizPlayer({
                   {'Po webináři '}
                   <span className="font-semibold">{`„${webinarTitle}“`}</span>
                 </p>
+                <p style={{ ...FF, color: NAVY }} className="mt-4 max-w-md mx-auto text-[13px] leading-relaxed opacity-85 sm:text-[14px]">
+                  {
+                    'Certifik\u00e1t se v\u00e1m po \u00fasp\u011b\u0161n\u00e9m absolvov\u00e1n\u00ed v\u011bdomostn\u00edho testu zobraz\u00ed s\u00e1m.'
+                  }
+                </p>
               </motion.div>
             )}
 
@@ -388,6 +393,11 @@ export function WebinarDvppQuizPlayer({
                     <p style={{ ...FF, color: NAVY }} className="mt-6 text-[15px] leading-relaxed opacity-90 sm:text-[16px]">
                       {'Po webináři '}
                       <span className="font-semibold">{`„${webinarTitle}“`}</span>
+                    </p>
+                    <p style={{ ...FF, color: NAVY }} className="mt-5 max-w-xl mx-auto text-[14px] leading-relaxed opacity-85 sm:text-[15px]">
+                      {
+                        'Certifik\u00e1t se v\u00e1m po \u00fasp\u011b\u0161n\u00e9m absolvov\u00e1n\u00ed v\u011bdomostn\u00edho testu zobraz\u00ed s\u00e1m.'
+                      }
                     </p>
                   </div>
                 </motion.div>
