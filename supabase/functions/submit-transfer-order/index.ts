@@ -3,6 +3,15 @@
  */
 import postgres from 'npm:postgres';
 import { sendOrderEmail } from '../_shared/order-email.ts';
+import {
+  isValidEmailFormat,
+  normalizeEmail,
+  EMAIL_FORMAT_HINT_CS,
+  EMAIL_MX_REJECT_CS,
+} from '../_shared/email-validation.ts';
+import { domainAcceptsMailForForms } from '../_shared/email-mx.ts';
+import { isValidCZSKPostalCode } from '../_shared/postal-code-czsk.ts';
+import { hasStreetWithHouseNumber } from '../_shared/street-house-number.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -103,44 +112,27 @@ function validateCustomer(customer: unknown): customer is CheckoutCustomer {
     candidate.name.trim().length > 0 &&
     candidate.phone.trim().length > 0 &&
     candidate.street.trim().length > 0 &&
+    hasStreetWithHouseNumber(String(candidate.street)) &&
     candidate.city.trim().length > 0 &&
-    candidate.zip.trim().length > 0
+    isValidCZSKPostalCode(String(candidate.zip))
   );
 }
 
-function getFunctionBaseUrl() {
-  return (Deno.env.get('SUPABASE_URL') || '').trim().replace(/\/$/, '');
-}
-
-function getFunctionAuthHeaders() {
-  const functionKey = (
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    || Deno.env.get('PROJECT_PUBLIC_ANON_KEY')
-    || Deno.env.get('PUBLIC_ANON_KEY')
-    || Deno.env.get('SUPABASE_ANON_KEY')
-    || ''
-  ).trim();
-  return functionKey
-    ? { Authorization: `Bearer ${functionKey}`, apikey: functionKey }
-    : {};
-}
-
-async function invokePipedriveSync(orderId: string) {
-  const base = getFunctionBaseUrl();
-  if (!base) {
-    console.error('[submit-transfer-order] Missing SUPABASE_URL for pipedrive sync.');
-    return;
-  }
-  const url = `${base}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getFunctionAuthHeaders() },
-    body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    console.error('[submit-transfer-order] pipedrive-sync failed:', res.status, t.slice(0, 300));
-  }
+function validateSeparateDeliveryIfNeeded(shipping: unknown): boolean {
+  if (!shipping || typeof shipping !== 'object') return true;
+  const s = shipping as Record<string, unknown>;
+  if (!s.differentAddress) return true;
+  const da = s.deliveryAddress;
+  if (!da || typeof da !== 'object') return false;
+  const rec = da as Record<string, unknown>;
+  const street = rec.street;
+  const zip = rec.zip;
+  return (
+    typeof street === 'string' &&
+    hasStreetWithHouseNumber(street) &&
+    typeof zip === 'string' &&
+    isValidCZSKPostalCode(zip)
+  );
 }
 
 Deno.serve(async (req) => {
@@ -177,7 +169,24 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Neplatná doprava.' }, 400);
   }
   if (!validateCustomer(customer)) {
-    return jsonResponse({ error: 'Neplatné zákaznické údaje.' }, 400);
+    return jsonResponse({
+      error: 'Neplatné zákaznické údaje (ulice včetně čísla domu, PSČ 5 číslic).',
+    }, 400);
+  }
+
+  if (!validateSeparateDeliveryIfNeeded(shipping)) {
+    return jsonResponse({
+      error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
+    }, 400);
+  }
+
+  const custEmail = normalizeEmail((customer as CheckoutCustomer).email);
+  if (!isValidEmailFormat(custEmail)) {
+    return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
+  }
+  const custDomain = custEmail.split('@')[1];
+    if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
+    return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
   }
 
   const ico = String(customer.ico || '').trim().replace(/\s/g, '');
@@ -311,8 +320,6 @@ Deno.serve(async (req) => {
         'customer'
       )
     `;
-
-    await invokePipedriveSync(orderRow.id);
 
     try {
       await sendOrderEmail(sql, { orderId: orderRow.id, emailType: 'order_transfer_received' });

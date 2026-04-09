@@ -12,6 +12,7 @@ import {
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
+import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
@@ -572,7 +573,15 @@ export function TrialPage() {
   const [formError, setFormError] = useState('');
 
   // Email dedup
-  const [emailCheck, setEmailCheck] = useState<{ canRequest: boolean; alreadyRequested?: boolean; cooldownDateStr?: string; daysLeft?: number; cooldownExpired?: boolean } | null>(null);
+  const [emailCheck, setEmailCheck] = useState<{
+    canRequest: boolean;
+    alreadyRequested?: boolean;
+    cooldownDateStr?: string;
+    daysLeft?: number;
+    cooldownExpired?: boolean;
+    emailInvalid?: boolean;
+    message?: string;
+  } | null>(null);
   const [emailChecking, setEmailChecking] = useState(false);
 
   const isTeacher = form.position === 'U\u010ditel/ka';
@@ -714,11 +723,15 @@ export function TrialPage() {
   const emailTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const checkEmail = (email: string) => {
     if (emailTimer.current) clearTimeout(emailTimer.current);
-    if (!email || !email.includes('@') || !email.includes('.')) { setEmailCheck(null); return; }
+    const t = email.trim();
+    if (!t || !isValidEmailFormat(t)) {
+      setEmailCheck(null);
+      return;
+    }
     emailTimer.current = setTimeout(async () => {
       setEmailChecking(true);
       try {
-        const res = await fetch(`${SERVER}/check-trial-email?email=${encodeURIComponent(email)}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+        const res = await fetch(`${SERVER}/check-trial-email?email=${encodeURIComponent(t)}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
         setEmailCheck(await res.json());
       } catch { setEmailCheck(null); }
       finally { setEmailChecking(false); }
@@ -757,9 +770,19 @@ export function TrialPage() {
     }
     if (!form.name.trim()) { setFormError('Vypl\u0148te pros\u00edm jm\u00e9no.'); flash('trial-field-name'); return; }
     if (!form.email.trim()) { setFormError('Vypl\u0148te pros\u00edm e-mail.'); flash('trial-field-email'); return; }
+    if (!isValidEmailFormat(form.email.trim())) {
+      setFormError(EMAIL_FORMAT_HINT_CS);
+      flash('trial-field-email');
+      return;
+    }
     if (!form.phone.trim()) { setFormError('Vypl\u0148te pros\u00edm telefon.'); flash('trial-field-phone'); return; }
     if (!form.position) { setFormError('Vyberte pros\u00edm pozici.'); flash('trial-field-position'); return; }
-    if (emailCheck && !emailCheck.canRequest) {
+    if (emailCheck?.emailInvalid && emailCheck.message) {
+      setFormError(emailCheck.message);
+      flash('trial-field-email');
+      return;
+    }
+    if (emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid) {
       setFormError(`S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od ${emailCheck.cooldownDateStr}.`);
       flash('trial-field-email');
       return;
@@ -776,6 +799,25 @@ export function TrialPage() {
     }
     setSubmitting(true);
     setFormError('');
+    try {
+      const vr = await fetch(
+        `${SERVER}/validate-email?email=${encodeURIComponent(form.email.trim())}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const vd = (await vr.json()) as { ok?: boolean; message?: string };
+      if (!vd.ok) {
+        setFormError(typeof vd.message === 'string' ? vd.message : EMAIL_FORMAT_HINT_CS);
+        flash('trial-field-email');
+        setSubmitting(false);
+        return;
+      }
+    } catch {
+      setFormError('Nepoda\u0159ilo se ov\u011b\u0159it e-mail. Zkuste to pros\u00edm znovu.');
+      flash('trial-field-email');
+      setSubmitting(false);
+      return;
+    }
+
     const payload: FreeTrialFields = {
       name: form.name.trim(),
       email: form.email.trim(),
@@ -1093,12 +1135,23 @@ export function TrialPage() {
                   {emailChecking
                     ? <Loader2 className="w-4 h-4 animate-spin text-[#001161]/30" />
                     : emailCheck
-                      ? emailCheck.canRequest ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <AlertCircle className="w-4 h-4 text-amber-500" />
+                      ? emailCheck.emailInvalid
+                        ? <AlertCircle className="w-4 h-4 text-red-500" />
+                        : emailCheck.canRequest
+                          ? <CheckCircle2 className="w-4 h-4 text-green-500" />
+                          : <AlertCircle className="w-4 h-4 text-amber-500" />
                       : null}
                 </div>
               </div>
               <AnimatePresence>
-                {emailCheck && !emailCheck.canRequest && (
+                {emailCheck?.emailInvalid && emailCheck.message && (
+                  <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+                    className="mt-2 flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <p style={FF} className="text-[13px] text-red-800">{emailCheck.message}</p>
+                  </motion.div>
+                )}
+                {emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid && (
                   <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
                     className="mt-2 flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
                     <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -1222,7 +1275,11 @@ export function TrialPage() {
             )}
 
             <button type="submit"
-              disabled={!gdprConsent || submitting || (!!emailCheck && !emailCheck.canRequest)}
+              disabled={
+                !gdprConsent
+                || submitting
+                || (!!emailCheck && !emailCheck.canRequest)
+              }
               className="w-full flex items-center justify-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[16px] px-6 py-4 rounded-xl transition-all hover:scale-[1.02] cursor-pointer shadow-lg shadow-[#7C3AED]/25"
               style={FF}>
               {submitting

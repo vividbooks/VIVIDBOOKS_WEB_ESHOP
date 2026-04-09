@@ -33,12 +33,26 @@ import { Elements } from '@stripe/react-stripe-js';
 import { loadStripeForApp } from '../utils/stripe/loadStripeApp';
 import { PaymentMethodSection } from './checkout/PaymentMethodCards';
 import { StripePaymentSubmitForm } from './checkout/StripePaymentSubmitForm';
+import { CheckoutPaymentPartnersInfo } from './checkout/CheckoutPaymentPartnersInfo';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import type { ProductBundleRecord } from '../utils/bundlePricing';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 import { clearSchoolOrderDraft, hasSchoolOrderDraft, readSchoolOrderDraft, writeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { AddressStreetAutocomplete } from './AddressStreetAutocomplete';
+import {
+  isValidEmailFormat,
+  EMAIL_FORMAT_HINT_CS,
+  EMAIL_MX_REJECT_CS,
+} from '../utils/emailValidation';
+import {
+  loadSavedCheckoutAddresses,
+  rememberCheckoutAddress,
+  type SavedCheckoutAddress,
+} from '../utils/checkoutSavedAddresses';
+import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../utils/postalCodeCZSK';
+import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/streetHouseNumberCZ';
+import { checkoutTextInputClass } from '../utils/formFieldClasses';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -46,7 +60,6 @@ const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? '';
 const stripePromise = stripePublishableKey ? loadStripeForApp(stripePublishableKey) : null;
 const CREATE_PAYMENT_INTENT_URL = `https://${projectId}.supabase.co/functions/v1/create-payment-intent`;
 const MAKE_SERVER_FN = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
-const EMAIL_RE_SCHOOL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const SCHOOL_ORDER_STEPS = [
   { id: 1 as const, label: 'Co objedn\u00e1v\u00e1te' },
@@ -464,6 +477,37 @@ export function OrderPage() {
   });
   const [submitted,  setSubmitted]  = useState(false);
   const [formError,  setFormError]  = useState('');
+  /** Které pole kontaktu označit červeně po validateContactStep / MX (id jako `order-field-street`). */
+  const [contactInvalidFieldId, setContactInvalidFieldId] = useState<string | null>(null);
+  const clearContactFormError = useCallback(() => {
+    setFormError('');
+    setContactInvalidFieldId(null);
+  }, []);
+  const [savedAddresses, setSavedAddresses] = useState<SavedCheckoutAddress[]>([]);
+  const [emailMxHint, setEmailMxHint] = useState('');
+  const [emailMxChecking, setEmailMxChecking] = useState(false);
+  const [continueEmailMx, setContinueEmailMx] = useState(false);
+  const emailMxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applySavedCheckoutAddress = useCallback((a: SavedCheckoutAddress) => {
+    setForm((prev) => ({
+      ...prev,
+      street: a.street,
+      city: a.city,
+      zip: a.zip,
+    }));
+    clearContactFormError();
+  }, [clearContactFormError]);
+
+  const applySavedToDelivery = useCallback((a: SavedCheckoutAddress) => {
+    setDeliveryAddress((prev) => ({
+      ...prev,
+      deliveryStreet: a.street,
+      deliveryCity: a.city,
+      deliveryZip: a.zip,
+    }));
+    clearContactFormError();
+  }, [clearContactFormError]);
 
   /* ── school autocomplete ── */
   const [schoolResults, setSchoolResults] = useState<{ ico: string; name: string; address?: string }[]>([]);
@@ -509,6 +553,48 @@ export function OrderPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setSavedAddresses(loadSavedCheckoutAddresses());
+  }, []);
+
+  useEffect(() => {
+    const email = form.email.trim();
+    if (!email) {
+      setEmailMxHint('');
+      setEmailMxChecking(false);
+      return;
+    }
+    if (!isValidEmailFormat(email)) {
+      setEmailMxHint('');
+      setEmailMxChecking(false);
+      return;
+    }
+    if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
+    setEmailMxChecking(true);
+    setEmailMxHint('');
+    emailMxDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${MAKE_SERVER_FN}/validate-email?email=${encodeURIComponent(email)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = (await res.json()) as { ok?: boolean; message?: string };
+        if (data.ok) {
+          setEmailMxHint('');
+        } else {
+          setEmailMxHint(typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS);
+        }
+      } catch {
+        setEmailMxHint('');
+      } finally {
+        setEmailMxChecking(false);
+      }
+    }, 480);
+    return () => {
+      if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
+    };
+  }, [form.email]);
 
   useEffect(() => {
     const add = (location.state as { addSchoolBundle?: { id: string } } | null)?.addSchoolBundle;
@@ -578,7 +664,7 @@ export function OrderPage() {
     setForm(p => ({ ...p, schoolName: v }));
     if (schoolTimer.current) clearTimeout(schoolTimer.current);
     schoolTimer.current = setTimeout(() => fetchSchools(v), 350);
-    setFormError('');
+    clearContactFormError();
   };
 
   useEffect(() => {
@@ -808,13 +894,19 @@ export function OrderPage() {
     if (isDigitalServicesOnly || !hasSchoolWorkbookSelection) return false;
     if (!form.schoolName.trim() || !form.ico.trim()) return false;
     if (!form.name.trim() || !form.phone.trim()) return false;
-    if (!form.email.trim() || !EMAIL_RE_SCHOOL.test(form.email.trim())) return false;
-    if (!form.street.trim() || !form.city.trim() || !form.zip.trim()) return false;
+    if (!form.email.trim() || !isValidEmailFormat(form.email.trim())) return false;
+    if (
+      !hasStreetWithHouseNumber(form.street)
+      || !form.city.trim()
+      || !isValidCZSKPostalCode(form.zip)
+    ) {
+      return false;
+    }
     if (hasSeparateDeliveryAddress) {
       if (
-        !deliveryAddress.deliveryStreet.trim()
+        !hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)
         || !deliveryAddress.deliveryCity.trim()
-        || !deliveryAddress.deliveryZip.trim()
+        || !isValidCZSKPostalCode(deliveryAddress.deliveryZip)
       ) {
         return false;
       }
@@ -858,6 +950,7 @@ export function OrderPage() {
   const validateContactStep = useCallback(() => {
     const fail = (msg: string, fieldId: string) => {
       setFormError(msg);
+      setContactInvalidFieldId(fieldId);
       setTimeout(() => flashInvalidField(document.getElementById(fieldId)), 0);
       return false;
     };
@@ -865,24 +958,29 @@ export function OrderPage() {
     if (!form.ico.trim()) return fail('Vypl\u0148te I\u010cO \u0161koly.', 'order-field-ico');
     if (!form.name.trim()) return fail('Vypl\u0148te jm\u00e9no.', 'order-field-name');
     if (!form.email.trim()) return fail('Vypl\u0148te e-mail.', 'order-field-email');
-    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
-    if (!emailOk) return fail('Zadejte platn\u00fd e-mail (nap\u0159. jmeno@skola.cz).', 'order-field-email');
+    if (!isValidEmailFormat(form.email.trim())) return fail(EMAIL_FORMAT_HINT_CS, 'order-field-email');
     if (!form.phone.trim()) return fail('Vypl\u0148te telefon.', 'order-field-phone');
     if (!form.position.trim()) return fail('Vyberte funkci / pozici u \u0161koly.', 'order-field-position');
     if (!form.street.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-street');
+    if (!hasStreetWithHouseNumber(form.street)) return fail(STREET_NUMBER_HINT_CS, 'order-field-street');
     if (!form.city.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-city');
-    if (!form.zip.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-zip');
+    if (!form.zip.trim()) return fail('Vypl\u0148te PS\u010c.', 'order-field-zip');
+    if (!isValidCZSKPostalCode(form.zip)) return fail(POSTAL_CODE_HINT_CS, 'order-field-zip');
     if (hasSeparateDeliveryAddress) {
       if (!deliveryAddress.deliveryStreet.trim()) return fail('Vypl\u0148te doru\u010dovac\u00ed adresu.', 'order-field-deliveryStreet');
+      if (!hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)) {
+        return fail(STREET_NUMBER_HINT_CS, 'order-field-deliveryStreet');
+      }
       if (!deliveryAddress.deliveryCity.trim()) return fail('Vypl\u0148te doru\u010dovac\u00ed adresu.', 'order-field-deliveryCity');
-      if (!deliveryAddress.deliveryZip.trim()) return fail('Vypl\u0148te doru\u010dovac\u00ed adresu.', 'order-field-deliveryZip');
+      if (!deliveryAddress.deliveryZip.trim()) return fail('Vypl\u0148te doru\u010dovac\u00ed PS\u010c.', 'order-field-deliveryZip');
+      if (!isValidCZSKPostalCode(deliveryAddress.deliveryZip)) return fail(POSTAL_CODE_HINT_CS, 'order-field-deliveryZip');
     }
     if (!form.gdpr) {
       return fail('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.', 'order-field-gdpr');
     }
-    setFormError('');
+    clearContactFormError();
     return true;
-  }, [form, hasSeparateDeliveryAddress, deliveryAddress]);
+  }, [form, hasSeparateDeliveryAddress, deliveryAddress, clearContactFormError]);
 
   /** Stejné tělo jako POST /orders (make-server) — pro převod i po zaplacení kartou (stripe-webhook). */
   const buildSchoolOrdersPayload = useCallback((paymentPreference: SchoolPaymentPref) => ({
@@ -1136,11 +1234,50 @@ export function OrderPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const goForward = () => {
+  const goForward = async () => {
     if (!canGoForward) return;
     if (step === 1 && !tryAdvanceFromStep1()) return;
     if (step === 2 && !validateStep2Fields()) return;
-    if (step === 3 && !validateContactStep()) return;
+    if (step === 3) {
+      if (!validateContactStep()) return;
+      setContinueEmailMx(true);
+      try {
+        const res = await fetch(
+          `${MAKE_SERVER_FN}/validate-email?email=${encodeURIComponent(form.email.trim())}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = (await res.json()) as { ok?: boolean; message?: string };
+        if (!data.ok) {
+          const msg = typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS;
+          setFormError(msg);
+          setEmailMxHint(msg);
+          setContactInvalidFieldId('order-field-email');
+          setTimeout(() => flashInvalidField(document.getElementById('order-field-email')), 0);
+          return;
+        }
+        clearContactFormError();
+        setEmailMxHint('');
+        rememberCheckoutAddress({
+          street: form.street,
+          city: form.city,
+          zip: form.zip,
+        });
+        if (hasSeparateDeliveryAddress) {
+          rememberCheckoutAddress({
+            street: deliveryAddress.deliveryStreet,
+            city: deliveryAddress.deliveryCity,
+            zip: deliveryAddress.deliveryZip,
+          });
+        }
+        setSavedAddresses(loadSavedCheckoutAddresses());
+      } catch {
+        setFormError('E-mail se nepodařilo ověřit. Zkuste to znovu za chvíli.');
+        setContactInvalidFieldId('order-field-email');
+        return;
+      } finally {
+        setContinueEmailMx(false);
+      }
+    }
     if (step === 4) {
       if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {
         setSchoolShippingError('Vyberte výdejní místo Zásilkovny.');
@@ -1176,7 +1313,46 @@ export function OrderPage() {
     }
     if (!validateContactStep()) return;
 
-    setSubmitting(true); setFormError('');
+    setContinueEmailMx(true);
+    try {
+      const res = await fetch(
+        `${MAKE_SERVER_FN}/validate-email?email=${encodeURIComponent(form.email.trim())}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const data = (await res.json()) as { ok?: boolean; message?: string };
+      if (!data.ok) {
+        const msg = typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS;
+        setFormError(msg);
+        setEmailMxHint(msg);
+        setContactInvalidFieldId('order-field-email');
+        setTimeout(() => flashInvalidField(document.getElementById('order-field-email')), 0);
+        return;
+      }
+      clearContactFormError();
+      setEmailMxHint('');
+      rememberCheckoutAddress({
+        street: form.street,
+        city: form.city,
+        zip: form.zip,
+      });
+      if (hasSeparateDeliveryAddress) {
+        rememberCheckoutAddress({
+          street: deliveryAddress.deliveryStreet,
+          city: deliveryAddress.deliveryCity,
+          zip: deliveryAddress.deliveryZip,
+        });
+      }
+      setSavedAddresses(loadSavedCheckoutAddresses());
+    } catch {
+      setFormError('E-mail se nepodařilo ověřit. Zkuste to znovu za chvíli.');
+      setContactInvalidFieldId('order-field-email');
+      return;
+    } finally {
+      setContinueEmailMx(false);
+    }
+
+    setSubmitting(true);
+    clearContactFormError();
     try {
       const payload = buildSchoolOrdersPayload(paymentMethod);
       const res = await fetch(
@@ -1190,6 +1366,7 @@ export function OrderPage() {
     } catch (err: any) {
       console.error('Order submit error:', err);
       setFormError(err.message || 'Nastala chyba p\u0159i odes\u00edl\u00e1n\u00ed. Zkuste to znovu.');
+      setContactInvalidFieldId(null);
     } finally { setSubmitting(false); }
   };
 
@@ -1940,8 +2117,9 @@ export function OrderPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={goForward}
-                  className="inline-flex w-full items-center justify-center gap-2 px-5 py-3.5 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer touch-manipulation sm:w-auto"
+                  onClick={() => void goForward()}
+                  disabled={continueEmailMx}
+                  className="inline-flex w-full items-center justify-center gap-2 px-5 py-3.5 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer touch-manipulation sm:w-auto disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {'Pokračovat'}
                   <ChevronRight className="w-4 h-4" />
@@ -2010,7 +2188,7 @@ export function OrderPage() {
                           onChange={(event) => handleSchoolInput(event.target.value)}
                           onFocus={() => { if (schoolResults.length > 0) setSchoolOpen(true); }}
                           placeholder="Začněte psát název školy"
-                          className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pr-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                          className={`${checkoutTextInputClass(contactInvalidFieldId === 'order-field-schoolName')} pr-11`}
                           autoComplete="off"
                         />
                         <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30 pointer-events-none">
@@ -2053,8 +2231,11 @@ export function OrderPage() {
                         inputMode="numeric"
                         maxLength={10}
                         value={form.ico}
-                        onChange={(event) => setForm((prev) => ({ ...prev, ico: event.target.value.replace(/\D/g, '').slice(0, 10) }))}
-                        className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                        onChange={(event) => {
+                          setForm((prev) => ({ ...prev, ico: event.target.value.replace(/\D/g, '').slice(0, 10) }));
+                          clearContactFormError();
+                        }}
+                        className={checkoutTextInputClass(contactInvalidFieldId === 'order-field-ico')}
                       />
                     </label>
 
@@ -2071,7 +2252,101 @@ export function OrderPage() {
                     { key: 'name', label: 'Jméno *' },
                     { key: 'email', label: 'E-mail *', type: 'email' },
                     { key: 'phone', label: 'Telefon *' },
-                    { key: 'street', label: 'Ulice a číslo *' },
+                  ].map((field) => (
+                    <label key={field.key} id={`order-field-${field.key}`} className="block">
+                      <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                        {field.label}
+                      </span>
+                      {field.key === 'email' ? (
+                        <div className="relative">
+                          <input
+                            type="email"
+                            value={form.email}
+                            onChange={(event) => {
+                              setForm((prev) => ({ ...prev, email: event.target.value }));
+                              clearContactFormError();
+                            }}
+                            className={`${checkoutTextInputClass(
+                              !!(contactInvalidFieldId === 'order-field-email' || emailMxHint),
+                            )} pr-10`}
+                          />
+                          {(emailMxChecking || continueEmailMx) && (
+                            <Loader2
+                              className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#001161]/35"
+                              aria-hidden
+                            />
+                          )}
+                        </div>
+                      ) : (
+                        <input
+                          type={field.type ?? 'text'}
+                          value={form[field.key as keyof typeof form] as string}
+                          onChange={(event) => {
+                            setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
+                            clearContactFormError();
+                          }}
+                          className={checkoutTextInputClass(
+                            contactInvalidFieldId === `order-field-${field.key}`,
+                          )}
+                        />
+                      )}
+                      {field.key === 'email' && emailMxHint ? (
+                        <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
+                          {emailMxHint}
+                        </span>
+                      ) : null}
+                    </label>
+                  ))}
+
+                  {savedAddresses.length > 0 && (
+                    <div className="md:col-span-2 rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
+                      <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55 mb-2">
+                        {'Uložené adresy v tomto prohlížeči'}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {savedAddresses.map((a, i) => (
+                          <button
+                            key={`${a.savedAt}-${i}`}
+                            type="button"
+                            onClick={() => applySavedCheckoutAddress(a)}
+                            className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161] leading-snug hover:border-[#5b4fd8]/50 hover:bg-[#fafaff] transition-colors"
+                          >
+                            <span className="line-clamp-2">
+                              {a.street}
+                              {', '}
+                              {a.city} {a.zip}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <label id="order-field-street" className="block">
+                    <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                      {'Ulice a číslo *'}
+                    </span>
+                    <AddressStreetAutocomplete
+                      id="order-field-street-input"
+                      value={form.street}
+                      invalid={contactInvalidFieldId === 'order-field-street'}
+                      onChange={(v) => {
+                        setForm((prev) => ({ ...prev, street: v }));
+                        clearContactFormError();
+                      }}
+                      onResolved={(parts) => {
+                        setForm((prev) => ({
+                          ...prev,
+                          street: parts.street,
+                          city: parts.city,
+                          zip: parts.zip,
+                        }));
+                        clearContactFormError();
+                      }}
+                    />
+                  </label>
+
+                  {[
                     { key: 'city', label: 'Město *' },
                     { key: 'zip', label: 'PSČ *' },
                   ].map((field) => (
@@ -2079,35 +2354,17 @@ export function OrderPage() {
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                         {field.label}
                       </span>
-                      {field.key === 'street' ? (
-                        <AddressStreetAutocomplete
-                          id="order-field-street-input"
-                          value={form.street}
-                          onChange={(v) => {
-                            setForm((prev) => ({ ...prev, street: v }));
-                            setFormError('');
-                          }}
-                          onResolved={(parts) => {
-                            setForm((prev) => ({
-                              ...prev,
-                              street: parts.street,
-                              city: parts.city,
-                              zip: parts.zip,
-                            }));
-                            setFormError('');
-                          }}
-                        />
-                      ) : (
-                        <input
-                          type={field.type ?? 'text'}
-                          value={form[field.key as keyof typeof form] as string}
-                          onChange={(event) => {
-                            setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
-                            setFormError('');
-                          }}
-                          className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
-                        />
-                      )}
+                      <input
+                        type="text"
+                        value={form[field.key as keyof typeof form] as string}
+                        onChange={(event) => {
+                          setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
+                          clearContactFormError();
+                        }}
+                        className={checkoutTextInputClass(
+                          contactInvalidFieldId === `order-field-${field.key}`,
+                        )}
+                      />
                     </label>
                   ))}
                 </div>
@@ -2120,9 +2377,9 @@ export function OrderPage() {
                     value={form.position}
                     onChange={(event) => {
                       setForm((prev) => ({ ...prev, position: event.target.value }));
-                      setFormError('');
+                      clearContactFormError();
                     }}
-                    className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15 cursor-pointer"
+                    className={`${checkoutTextInputClass(contactInvalidFieldId === 'order-field-position')} cursor-pointer`}
                   >
                     <option value="">{'Vyberte\u2026'}</option>
                     {POSITIONS.map((p) => (
@@ -2134,7 +2391,10 @@ export function OrderPage() {
                 <div className="mt-6 rounded-[20px] border border-[#001161]/10 bg-[#f8f9fc] p-5">
                   <button
                     type="button"
-                    onClick={() => setHasSeparateDeliveryAddress((prev) => !prev)}
+                    onClick={() => {
+                      setHasSeparateDeliveryAddress((prev) => !prev);
+                      clearContactFormError();
+                    }}
                     className="w-full flex items-center justify-between gap-4 text-left cursor-pointer"
                   >
                     <div className="flex items-start gap-3">
@@ -2156,7 +2416,31 @@ export function OrderPage() {
                   </button>
 
                   {hasSeparateDeliveryAddress && (
-                    <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="mt-5 space-y-4">
+                      {savedAddresses.length > 0 && (
+                        <div className="rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
+                          <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55 mb-2">
+                            {'Uložené adresy — doručení'}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {savedAddresses.map((a, i) => (
+                              <button
+                                key={`d-${a.savedAt}-${i}`}
+                                type="button"
+                                onClick={() => applySavedToDelivery(a)}
+                                className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161] leading-snug hover:border-[#5b4fd8]/50 hover:bg-[#fafaff] transition-colors"
+                              >
+                                <span className="line-clamp-2">
+                                  {a.street}
+                                  {', '}
+                                  {a.city} {a.zip}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {[
                         { key: 'recipientName', label: 'Jméno příjemce', icon: User, placeholder: 'Např. kabinet fyziky' },
                         { key: 'deliveryStreet', label: 'Doručovací ulice a číslo *', icon: Home },
@@ -2174,7 +2458,11 @@ export function OrderPage() {
                               <AddressStreetAutocomplete
                                 id="order-field-deliveryStreet-input"
                                 value={deliveryAddress.deliveryStreet}
-                                onChange={(v) => setDeliveryAddress((prev) => ({ ...prev, deliveryStreet: v }))}
+                                invalid={contactInvalidFieldId === 'order-field-deliveryStreet'}
+                                onChange={(v) => {
+                                  setDeliveryAddress((prev) => ({ ...prev, deliveryStreet: v }));
+                                  clearContactFormError();
+                                }}
                                 onResolved={(parts) => {
                                   setDeliveryAddress((prev) => ({
                                     ...prev,
@@ -2182,6 +2470,7 @@ export function OrderPage() {
                                     deliveryCity: parts.city,
                                     deliveryZip: parts.zip,
                                   }));
+                                  clearContactFormError();
                                 }}
                                 leftIcon={<Icon className="h-4 w-4" />}
                               />
@@ -2190,11 +2479,14 @@ export function OrderPage() {
                                 <input
                                   type="text"
                                   value={deliveryAddress[field.key as keyof DeliveryAddressState]}
-                                  onChange={(event) =>
-                                    setDeliveryAddress((prev) => ({ ...prev, [field.key]: event.target.value }))
-                                  }
+                                  onChange={(event) => {
+                                    setDeliveryAddress((prev) => ({ ...prev, [field.key]: event.target.value }));
+                                    clearContactFormError();
+                                  }}
                                   placeholder={field.placeholder}
-                                  className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pl-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                                  className={`${checkoutTextInputClass(
+                                    contactInvalidFieldId === `order-field-${field.key}`,
+                                  )} pl-11`}
                                 />
                                 <Icon className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#001161]/30" />
                               </div>
@@ -2202,17 +2494,29 @@ export function OrderPage() {
                           </label>
                         );
                       })}
+                      </div>
                     </div>
                   )}
                 </div>
 
                 <div className="mt-6 space-y-3">
-                  <label id="order-field-gdpr" className="flex items-start gap-3 cursor-pointer rounded-[14px] p-1 -m-1">
-                    <div onClick={() => setForm(p => ({ ...p, gdpr: !p.gdpr }))}
+                  <label
+                    id="order-field-gdpr"
+                    className={`flex items-start gap-3 cursor-pointer rounded-[14px] p-1 -m-1 ${
+                      contactInvalidFieldId === 'order-field-gdpr' ? 'ring-2 ring-red-500/35 ring-offset-2' : ''
+                    }`}
+                  >
+                    <div onClick={() => {
+                      setForm(p => ({ ...p, gdpr: !p.gdpr }));
+                      clearContactFormError();
+                    }}
                       className={`mt-0.5 w-5 h-5 rounded flex items-center justify-center border-2 shrink-0 transition-all ${form.gdpr ? 'bg-[#5B4FD8] border-[#5B4FD8]' : 'bg-white border-[#001161]/20'}`}>
                       {form.gdpr && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
                     </div>
-                    <span style={FF} className="text-[13px] text-[#001161]/70 leading-snug" onClick={() => setForm(p => ({ ...p, gdpr: !p.gdpr }))}>
+                    <span style={FF} className="text-[13px] text-[#001161]/70 leading-snug" onClick={() => {
+                      setForm(p => ({ ...p, gdpr: !p.gdpr }));
+                      clearContactFormError();
+                    }}>
                       {'Souhlasím se zpracováním osobních údajů podle '}
                       <a href="https://www.vividbooks.cz/gdpr" target="_blank" rel="noopener noreferrer" className="underline text-[#5B4FD8] hover:opacity-75" onClick={e => e.stopPropagation()}>{'Zásad ochrany osobních údajů'}</a>{'. *'}
                     </span>
@@ -2245,7 +2549,7 @@ export function OrderPage() {
                 {isDigitalServicesOnly ? (
                   <button
                     type="button"
-                    disabled={submitting}
+                    disabled={submitting || continueEmailMx}
                     onClick={() => void doSubmit()}
                     className="inline-flex items-center justify-center gap-2 px-5 py-3 rounded-[14px] bg-[#FF8C00] hover:bg-[#e67d00] disabled:opacity-60 text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer"
                   >
@@ -2259,7 +2563,12 @@ export function OrderPage() {
                     )}
                   </button>
                 ) : (
-                  <button type="button" onClick={goForward} className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={() => void goForward()}
+                    disabled={continueEmailMx}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
                     {'Pokračovat'}
                     <ChevronRight className="w-4 h-4" />
                   </button>
@@ -2354,7 +2663,12 @@ export function OrderPage() {
                   <ChevronLeft className="w-4 h-4" />
                   {'Zpět'}
                 </button>
-                <button type="button" onClick={goForward} className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => void goForward()}
+                  disabled={continueEmailMx}
+                  className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
                   {'Pokračovat'}
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -2367,7 +2681,7 @@ export function OrderPage() {
               <PaymentMethodSection
                 description={
                   paymentMethod === 'card' && hasSchoolWorkbookSelection && !isDigitalServicesOnly
-                    ? 'Platba probíhá přes Stripe Payment Element — stejně jako v pokladně. U ostatních metod platbu domluvíme po odeslání poptávky.'
+                    ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení (stejně jako v pokladně). U ostatních metod platbu domluvíme po odeslání poptávky.'
                     : 'Platbu u školní poptávky domluvíme po odeslání. Níže zvolte preferovanou metodu.'
                 }
                 options={schoolPaymentOptionsVisible}
@@ -2409,6 +2723,7 @@ export function OrderPage() {
                         stripe={stripePromise}
                         options={{
                           clientSecret,
+                          loader: 'auto',
                           appearance: {
                             theme: 'stripe',
                             variables: {
@@ -2423,6 +2738,9 @@ export function OrderPage() {
                           onError={setSchoolPaymentIntentError}
                         />
                       </Elements>
+                    )}
+                    {paymentMethod === 'card' && hasSchoolWorkbookSelection && !isDigitalServicesOnly && stripePublishableKey && (
+                      <CheckoutPaymentPartnersInfo className="mt-5" />
                     )}
                     {paymentIntentId && (
                       <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45">
@@ -2440,12 +2758,13 @@ export function OrderPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={goForward}
+                  onClick={() => void goForward()}
                   disabled={
-                    paymentMethod === 'card'
+                    continueEmailMx
+                    || (paymentMethod === 'card'
                     && !isDigitalServicesOnly
                     && hasSchoolWorkbookSelection
-                    && Boolean(stripePublishableKey)
+                    && Boolean(stripePublishableKey))
                   }
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >

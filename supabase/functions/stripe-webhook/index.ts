@@ -130,41 +130,6 @@ function getMakeServerOrdersUrl(fallbackRequestUrl?: string) {
   return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/orders` : '';
 }
 
-function getEshopPipedriveSyncUrl(fallbackRequestUrl?: string) {
-  const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
-  return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
-}
-
-async function invokeEshopPipedriveSync(
-  orderId: string,
-  mode: 'b2c_card_won' | 'b2b_card_won',
-  fallbackRequestUrl?: string,
-) {
-  const url = getEshopPipedriveSyncUrl(fallbackRequestUrl);
-  if (!url) {
-    console.error('[stripe-webhook] Missing base URL for eshop pipedrive-sync.');
-    return;
-  }
-  const headers = getFunctionAuthHeaders();
-  if (!headers.Authorization) {
-    console.error('[stripe-webhook] Missing key for eshop pipedrive-sync.');
-    return;
-  }
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ orderId, mode }),
-    });
-    if (!res.ok) {
-      const t = await res.text();
-      console.error('[stripe-webhook] eshop pipedrive-sync failed:', res.status, t.slice(0, 400));
-    }
-  } catch (e) {
-    console.error('[stripe-webhook] eshop pipedrive-sync error:', e);
-  }
-}
-
 function extractStripeReceiptUrl(paymentIntent: Stripe.PaymentIntent): string | null {
   const lc = paymentIntent.latest_charge;
   if (lc && typeof lc === 'object' && 'receipt_url' in lc) {
@@ -462,7 +427,6 @@ Deno.serve(async (req) => {
       const items = normalizeItems(checkoutSession.cart_data);
       const customer = normalizeCustomer(checkoutSession.customer_data);
       const shipping = normalizeShipping(checkoutSession.shipping_data);
-      const hasIco = String(customer.ico ?? '').trim().replace(/\s/g, '').length > 0;
 
       const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
       const total = subtotal + (Number.isInteger(shipping.price) ? shipping.price : 0);
@@ -529,21 +493,19 @@ Deno.serve(async (req) => {
                     ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
                   )
                 `;
-                if (hasIco) {
-                  await tx`
-                    insert into public.export_queue (
-                      order_id,
-                      service,
-                      status,
-                      payload
-                    ) values (
-                      ${order.id},
-                      'idoklad',
-                      'pending',
-                      ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
-                    )
-                  `;
-                }
+                await tx`
+                  insert into public.export_queue (
+                    order_id,
+                    service,
+                    status,
+                    payload
+                  ) values (
+                    ${order.id},
+                    'idoklad',
+                    'pending',
+                    ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
+                  )
+                `;
               }
 
               await tx`
@@ -702,21 +664,19 @@ Deno.serve(async (req) => {
               ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
             )
           `;
-          if (hasIco) {
-            await tx`
-              insert into public.export_queue (
-                order_id,
-                service,
-                status,
-                payload
-              ) values (
-                ${order.id},
-                'idoklad',
-                'pending',
-                ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
-              )
-            `;
-          }
+          await tx`
+            insert into public.export_queue (
+              order_id,
+              service,
+              status,
+              payload
+            ) values (
+              ${order.id},
+              'idoklad',
+              'pending',
+              ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id })}::jsonb
+            )
+          `;
 
           await tx`
             insert into public.order_events (
@@ -830,10 +790,7 @@ Deno.serve(async (req) => {
           console.error('[stripe-webhook] make-server /orders forward invocation failed:', message);
         }
 
-        if (!isSchoolObjednat) {
-          const mode = hasIco ? 'b2b_card_won' : 'b2c_card_won';
-          await invokeEshopPipedriveSync(createdOrderId, mode, req.url);
-        }
+        // Pipedrive deal pro e‑shop (B2C/B2B) se netvoří automaticky — pouze ručně z adminu (objednávka → Pipedrive).
       }
 
       return okResponse();

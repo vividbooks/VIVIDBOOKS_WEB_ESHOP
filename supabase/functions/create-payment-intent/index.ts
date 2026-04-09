@@ -1,5 +1,14 @@
 import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
+import {
+  isValidEmailFormat,
+  normalizeEmail,
+  EMAIL_FORMAT_HINT_CS,
+  EMAIL_MX_REJECT_CS,
+} from '../_shared/email-validation.ts';
+import { domainAcceptsMailForForms } from '../_shared/email-mx.ts';
+import { isValidCZSKPostalCode } from '../_shared/postal-code-czsk.ts';
+import { hasStreetWithHouseNumber } from '../_shared/street-house-number.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -94,8 +103,26 @@ function validateCustomer(customer: unknown): customer is CheckoutCustomer {
     candidate.name.trim().length > 0 &&
     candidate.phone.trim().length > 0 &&
     candidate.street.trim().length > 0 &&
+    hasStreetWithHouseNumber(String(candidate.street)) &&
     candidate.city.trim().length > 0 &&
-    candidate.zip.trim().length > 0
+    isValidCZSKPostalCode(String(candidate.zip))
+  );
+}
+
+function validateSeparateDeliveryIfNeeded(shipping: unknown): boolean {
+  if (!shipping || typeof shipping !== 'object') return true;
+  const s = shipping as Record<string, unknown>;
+  if (!s.differentAddress) return true;
+  const da = s.deliveryAddress;
+  if (!da || typeof da !== 'object') return false;
+  const rec = da as Record<string, unknown>;
+  const street = rec.street;
+  const zip = rec.zip;
+  return (
+    typeof street === 'string' &&
+    hasStreetWithHouseNumber(street) &&
+    typeof zip === 'string' &&
+    isValidCZSKPostalCode(zip)
   );
 }
 
@@ -162,7 +189,24 @@ Deno.serve(async (req) => {
   }
 
   if (!validateCustomer(customer)) {
-    return jsonResponse({ error: 'Neplatné zákaznické údaje.' }, 400);
+    return jsonResponse({
+      error: 'Neplatné zákaznické údaje (ulice včetně čísla domu, PSČ 5 číslic).',
+    }, 400);
+  }
+
+  if (!validateSeparateDeliveryIfNeeded(shipping)) {
+    return jsonResponse({
+      error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
+    }, 400);
+  }
+
+  const custEmail = normalizeEmail((customer as CheckoutCustomer).email);
+  if (!isValidEmailFormat(custEmail)) {
+    return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
+  }
+  const custDomain = custEmail.split('@')[1];
+    if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
+    return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
   }
 
   if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {

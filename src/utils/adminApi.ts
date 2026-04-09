@@ -7,6 +7,12 @@ const HEADERS = {
   'Content-Type': 'application/json',
 };
 
+/** GET na binární odpovědi — bez `Content-Type: application/json` (některé servery podle něj vrací JSON místo raw PDF). */
+const HEADERS_AUTH_ONLY: Record<string, string> = {
+  Authorization: `Bearer ${publicAnonKey}`,
+  Accept: 'application/pdf',
+};
+
 export type CollectionName = 'blog' | 'novinky' | 'webinare' | 'fixed-pages' | 'hero-slidy' | 'predmety' | 'notifikace' | 'tabs';
 
 export async function fetchCollection(name: CollectionName): Promise<any[]> {
@@ -147,6 +153,7 @@ export async function deleteProduct(id: string): Promise<void> {
 
 const ADMIN_ORDERS_BASE = `https://${projectId}.supabase.co/functions/v1/admin-orders`;
 const ADMIN_ORDER_ACTION_BASE = `https://${projectId}.supabase.co/functions/v1/admin-order-action`;
+const IDOKLAD_INVOICE_PDF_BASE = `https://${projectId}.supabase.co/functions/v1/idoklad-invoice-pdf`;
 const ADMIN_ORDER_ALERTS_BASE = `https://${projectId}.supabase.co/functions/v1/admin-order-alerts`;
 const ADMIN_PRODUCT_COMMERCE_BASE = `https://${projectId}.supabase.co/functions/v1/admin-product-commerce`;
 const ADMIN_PRODUCT_BASE_SYNC_BASE = `https://${projectId}.supabase.co/functions/v1/admin-product-base-sync`;
@@ -461,13 +468,18 @@ export interface AdminOrderDetail {
   payment_status?: string | null;
   stripe_payment_intent_id?: string | null;
   stripe_receipt_url?: string | null;
-  pipedrive_deal_id?: string | null;
+  pipedrive_deal_id?: string | number | null;
+  pipedrive_sync_status?: string | null;
+  pipedrive_sync_error?: string | null;
+  pipedrive_synced_at?: string | null;
   subtotal: number;
   total: number;
   basecom_status?: string | null;
   basecom_order_id?: string | null;
   invoice_status?: string | null;
   invoice_number?: string | null;
+  /** iDoklad IssuedInvoice Id — stažení PDF přes Edge funkci */
+  idoklad_invoice_id?: string | null;
   zasilkovna_status?: string | null;
   zasilkovna_packet_id?: string | null;
   note?: string | null;
@@ -479,6 +491,33 @@ export interface AdminOrderDetail {
   delivered_at?: string | null;
   cancelled_at?: string | null;
 }
+
+/** Stav plnění z Base.com (Baselinker) — admin-orders GET detail. */
+export type AdminBasecomFulfillmentStep = {
+  key: 'received_base' | 'received_fulfillment' | 'packed' | 'shipped';
+  label: string;
+  done: boolean;
+  source: 'tag' | 'api_field' | 'history' | 'inferred';
+};
+
+export type AdminBasecomFulfillment =
+  | {
+    ok: true;
+    orderFound: boolean;
+    steps: AdminBasecomFulfillmentStep[];
+    tagNames: string[];
+    signals: {
+      pickState: number | null;
+      packState: number | null;
+      deliveryPackageNr: string;
+      pickPackHistoryEvents: number;
+    };
+  }
+  | {
+    ok: false;
+    reason: string;
+    error?: string;
+  };
 
 export async function fetchAdminOrders(params: {
   filter?: 'all' | 'new' | 'shipped' | 'problem';
@@ -520,14 +559,51 @@ export async function fetchAdminOrderDetail(id: string) {
     workflowSteps: AdminOrderWorkflowStep[];
     alerts: AdminOrderAlert[];
     stockMeta?: AdminOrderStockMeta;
+    basecomFulfillment?: AdminBasecomFulfillment;
   }>;
 }
 
+/** Stažení PDF faktury z iDokladu (přes Edge funkci, stejná hlavička jako admin API). */
+export async function downloadIdokladInvoicePdf(orderId: string, filenameBase: string): Promise<void> {
+  const res = await fetch(
+    `${IDOKLAD_INVOICE_PDF_BASE}?orderId=${encodeURIComponent(orderId)}`,
+    { headers: HEADERS_AUTH_ONLY },
+  );
+  if (!res.ok) {
+    const raw = await res.text();
+    let msg = raw;
+    try {
+      const j = JSON.parse(raw) as { error?: string; detail?: string; hint?: string };
+      if (j.error) {
+        msg = j.error;
+        if (j.detail) msg += `: ${j.detail}`;
+        if (j.hint) msg += ` (${j.hint})`;
+      }
+    } catch {
+      /* use raw */
+    }
+    throw new Error(msg || `HTTP ${res.status}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const safe = filenameBase.replace(/[^\w.\-\sáčďéěíňóřšťúůýž]+/gi, '_').trim().slice(0, 80) || 'faktura';
+  a.download = `${safe}.pdf`;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function runAdminOrderAction(payload: {
-  action: 'retry_export' | 'cancel_order' | 'mark_shipped';
+  action: 'retry_export' | 'retry_idoklad_export' | 'cancel_order' | 'mark_shipped' | 'sync_pipedrive';
   orderId: string;
   cancelledReason?: string;
   trackingNumber?: string;
+  /** true = jen aktualizace štítků/PRINT u existujícího dealu */
+  refreshPipedrive?: boolean;
 }) {
   const res = await fetch(ADMIN_ORDER_ACTION_BASE, {
     method: 'POST',

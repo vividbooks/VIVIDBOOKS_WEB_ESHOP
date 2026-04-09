@@ -1,4 +1,5 @@
 import postgres from 'npm:postgres';
+import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 
@@ -17,6 +18,7 @@ type OrderRow = {
   id: string;
   order_number: string;
   status: string;
+  payment_status: string | null;
   customer_name: string;
   customer_email: string;
   customer_phone: string | null;
@@ -102,15 +104,152 @@ function idokladEnvInt(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function idokladEnvBool(name: string, fallback: boolean): boolean {
+  const raw = (Deno.env.get(name) || '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (raw === '0' || raw === 'false' || raw === 'no') return false;
+  if (raw === '1' || raw === 'true' || raw === 'yes') return true;
+  return fallback;
+}
+
+/** `DocumentType.IssuedInvoice` v iDoklad API — jen tyto řady jdou na `POST IssuedInvoices`. */
+const IDOKLAD_DOC_TYPE_ISSUED_INVOICE = 0;
+
+function normalizeIdokladSequenceName(s: string): string {
+  return s.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/** Formát čísla dokladu v iDokladu (pole `NumberFormat` u řady) — výchozí výběr řady bez křehkého párování podle názvu. */
+const IDOKLAD_ISSUED_INVOICE_NUMBER_FORMAT = '07{RR}{NNNN}';
+
+/** Cache na běh instance (jméno → ID), ať se seznam nečte u každé faktury. */
+let idokladNumericSequenceNameCache: { name: string; id: number } | null = null;
+/** Cache pro výchozí řadu podle `NumberFormat`. */
+let idokladNumericSequenceFormatCache: { format: string; id: number } | null = null;
+
+function parseNumericSequencesItems(body: Record<string, unknown>): unknown[] {
+  const dataBlock = (body.Data ?? body.data) as Record<string, unknown> | undefined;
+  const items = dataBlock?.Items ?? dataBlock?.items ?? body.Items ?? body.items;
+  return Array.isArray(items) ? items : [];
+}
+
+/** Primárně `IDOKLAD_NUMERIC_SEQUENCE_ID`, jinak `IDOKLAD_NUMERIC_SEQUENCE_NAME`, jinak řada s `NumberFormat` = `07{RR}{NNNN}`. Vrací i token po případném refreshi (401). */
+async function resolveIdokladNumericSequenceId(
+  tokenIn: string,
+): Promise<{ numericSequenceId: number | undefined; token: string }> {
+  let token = tokenIn;
+  const idRaw = (Deno.env.get('IDOKLAD_NUMERIC_SEQUENCE_ID') || '').trim();
+  if (idRaw) {
+    const n = Number.parseInt(idRaw, 10);
+    return {
+      numericSequenceId: Number.isFinite(n) ? n : undefined,
+      token,
+    };
+  }
+  const nameRaw = (Deno.env.get('IDOKLAD_NUMERIC_SEQUENCE_NAME') || '').trim();
+  const targetFormat = IDOKLAD_ISSUED_INVOICE_NUMBER_FORMAT.trim();
+
+  if (nameRaw) {
+    const cachedSeq = idokladNumericSequenceNameCache;
+    if (cachedSeq && cachedSeq.name === nameRaw) {
+      return { numericSequenceId: cachedSeq.id, token };
+    }
+  } else {
+    const cachedFmt = idokladNumericSequenceFormatCache;
+    if (cachedFmt && cachedFmt.format === targetFormat) {
+      return { numericSequenceId: cachedFmt.id, token };
+    }
+  }
+
+  const targetNorm = nameRaw ? normalizeIdokladSequenceName(nameRaw) : '';
+  const matches: Array<{ id: number; year: number }> = [];
+  let page = 1;
+  const pageSize = 100;
+
+  while (page <= 100) {
+    const url = new URL('https://api.idoklad.cz/v3/NumericSequences');
+    url.searchParams.set('page', String(page));
+    url.searchParams.set('pageSize', String(pageSize));
+
+    let res = await fetch(url.toString(), {
+      headers: idokladSdkHeaders(token),
+    });
+    if (res.status === 401) {
+      token = await getIdokladAccessToken(true);
+      res = await fetch(url.toString(), {
+        headers: idokladSdkHeaders(token),
+      });
+    }
+
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      throw new Error(
+        `iDoklad NumericSequences HTTP ${res.status}: ${JSON.stringify(body).slice(0, 400)}`,
+      );
+    }
+
+    const items = parseNumericSequencesItems(body);
+    for (const raw of items) {
+      const row = raw as Record<string, unknown>;
+      const docType = Number(row.DocumentType ?? row.documentType ?? -1);
+      if (docType !== IDOKLAD_DOC_TYPE_ISSUED_INVOICE) continue;
+      const id = Number(row.Id ?? row.id);
+      const year = Number(row.Year ?? row.year ?? 0);
+      if (!Number.isFinite(id)) continue;
+
+      if (nameRaw) {
+        const name = String(row.Name ?? row.name ?? '');
+        if (normalizeIdokladSequenceName(name) !== targetNorm) continue;
+      } else {
+        const numberFormat = String(row.NumberFormat ?? row.numberFormat ?? '').trim();
+        if (numberFormat !== targetFormat) continue;
+      }
+
+      matches.push({ id, year: Number.isFinite(year) ? year : 0 });
+    }
+
+    const dataBlock = (body.Data ?? body.data) as Record<string, unknown> | undefined;
+    const totalPages = Number(dataBlock?.TotalPages ?? dataBlock?.totalPages ?? 1);
+    if (items.length < pageSize || page >= totalPages) break;
+    page += 1;
+  }
+
+  if (matches.length === 0) {
+    const hint = nameRaw
+      ? `název „${nameRaw}“`
+      : `NumberFormat „${targetFormat}“`;
+    throw new Error(
+      `iDoklad: číselná řada pro vydané faktury nenalezena (${hint}). Ověřte Nastavení → Číselné řady.`,
+    );
+  }
+
+  const y = new Date().getFullYear();
+  const chosen = matches.find((m) => m.year === y)
+    ?? [...matches].sort((a, b) => b.year - a.year)[0];
+
+  if (nameRaw) {
+    idokladNumericSequenceNameCache = { name: nameRaw, id: chosen.id };
+  } else {
+    idokladNumericSequenceFormatCache = { format: targetFormat, id: chosen.id };
+  }
+  return { numericSequenceId: chosen.id, token };
+}
+
 /** Hodnoty dle [iDoklad API v3](https://api.idoklad.cz/Help/v3/cs/index.html) / nastavení účtu — lze přepsat secrety. */
 function getIdokladNumericSettings() {
   return {
     countryIdCz: idokladEnvInt('IDOKLAD_COUNTRY_ID', 2),
-    paymentTypeCardId: idokladEnvInt('IDOKLAD_PAYMENT_TYPE_ID', 3),
+    /** Na faktuře je `PaymentOptionId` (Způsob úhrady), ne starší `PaymentTypeId`. Fallback na `IDOKLAD_PAYMENT_TYPE_ID` kvůli existujícím secretům. */
+    paymentOptionId: idokladEnvInt(
+      'IDOKLAD_PAYMENT_OPTION_ID',
+      idokladEnvInt('IDOKLAD_PAYMENT_TYPE_ID', 3),
+    ),
     currencyIdCzk: idokladEnvInt('IDOKLAD_CURRENCY_ID', 1),
     priceTypeWithVat: idokladEnvInt('IDOKLAD_PRICE_TYPE_WITH_VAT', 1),
     vatRateReduced: idokladEnvInt('IDOKLAD_VAT_RATE_REDUCED', 2),
     vatRateStandard: idokladEnvInt('IDOKLAD_VAT_RATE_STANDARD', 1),
+    /** „Zahrnout do DP“ — u faktury je povinné `IsIncomeTax`. */
+    isIncomeTax: idokladEnvBool('IDOKLAD_IS_INCOME_TAX', true),
   };
 }
 
@@ -374,6 +513,7 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
       o.id,
       o.order_number,
       o.status,
+      o.payment_status,
       o.customer_name,
       o.customer_email,
       o.customer_phone,
@@ -571,11 +711,11 @@ async function getIdokladAccessToken(forceRefresh = false) {
 }
 
 function parseIdokladInvoiceResponse(data: IdokladInvoiceResponse) {
-  const payload = data.Data ?? data.data ?? data;
-  const invoiceId = payload?.Id;
-  const documentNumber = payload?.DocumentNumber;
+  const payload = (data.Data ?? data.data ?? data) as Record<string, unknown> | undefined;
+  const invoiceId = payload?.Id ?? payload?.id;
+  const documentNumber = payload?.DocumentNumber ?? payload?.documentNumber;
 
-  if (!invoiceId || !documentNumber) {
+  if (invoiceId === undefined || invoiceId === null || !documentNumber) {
     throw new Error(`iDoklad response missing invoice identifiers: ${JSON.stringify(data).slice(0, 400)}`);
   }
 
@@ -585,12 +725,106 @@ function parseIdokladInvoiceResponse(data: IdokladInvoiceResponse) {
   };
 }
 
+/** Další pořadové číslo v řadě — `GET /v3/NumericSequences/DocumentNumbers/0` (IssuedInvoice = 0). */
+async function fetchIdokladNextDocumentSerial(
+  tokenIn: string,
+  numericSequenceId: number,
+  issueIso: string,
+): Promise<{ documentSerialNumber: number; token: string }> {
+  let token = tokenIn;
+  const url = new URL('https://api.idoklad.cz/v3/NumericSequences/DocumentNumbers/0');
+  url.searchParams.set('date', issueIso);
+  url.searchParams.set('numericSequenceId', String(numericSequenceId));
+
+  let res = await fetch(url.toString(), {
+    headers: idokladSdkHeaders(token),
+  });
+  if (res.status === 401) {
+    token = await getIdokladAccessToken(true);
+    res = await fetch(url.toString(), {
+      headers: idokladSdkHeaders(token),
+    });
+  }
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(
+      `iDoklad DocumentNumbers HTTP ${res.status}: ${JSON.stringify(body).slice(0, 400)}`,
+    );
+  }
+  const data = (body.Data ?? body.data) as Record<string, unknown> | undefined;
+  const unique = (data?.Unique ?? data?.unique) as Record<string, unknown> | undefined;
+  const custom = (data?.Custom ?? data?.custom) as Record<string, unknown> | undefined;
+  const serial = unique?.DocumentSerialNumber ?? unique?.documentSerialNumber
+    ?? custom?.DocumentSerialNumber ?? custom?.documentSerialNumber;
+  const n = Number(serial);
+  if (!Number.isFinite(n)) {
+    throw new Error(
+      `iDoklad DocumentNumbers: chybí DocumentSerialNumber v odpovědi: ${JSON.stringify(body).slice(0, 400)}`,
+    );
+  }
+  return { documentSerialNumber: n, token };
+}
+
+/** Vytvoření kontaktu v iDokladu — API vyžaduje `PartnerId` (Id kontaktu), ne vnořené `PartnerAddress`. */
+async function createIdokladPartnerContact(
+  order: OrderRow,
+  idok: ReturnType<typeof getIdokladNumericSettings>,
+  tokenIn: string,
+): Promise<{ partnerId: number; token: string }> {
+  let token = tokenIn;
+  const companyName = (order.school_name?.trim() || order.customer_name || 'Zákazník').slice(0, 200);
+  /** Oficiální iDoklad SDK posílá Newtonsoft výchozí = PascalCase; camelCase se na model nepropáruje. */
+  const contactBody: Record<string, unknown> = {
+    CompanyName: companyName,
+    CountryId: idok.countryIdCz,
+    Street: String(order.street || '').slice(0, 100),
+    City: String(order.city || '').slice(0, 50),
+    PostalCode: String(order.zip || '').slice(0, 11),
+    Email: order.customer_email,
+  };
+  if (order.customer_phone?.trim()) {
+    contactBody.Phone = String(order.customer_phone).slice(0, 20);
+  }
+  if (order.ico?.trim()) {
+    contactBody.IdentificationNumber = String(order.ico).slice(0, 20);
+  }
+
+  let res = await fetch('https://api.idoklad.cz/v3/Contacts', {
+    method: 'POST',
+    headers: idokladSdkPostJsonHeaders(token),
+    body: JSON.stringify(contactBody),
+  });
+  if (res.status === 401) {
+    token = await getIdokladAccessToken(true);
+    res = await fetch('https://api.idoklad.cz/v3/Contacts', {
+      method: 'POST',
+      headers: idokladSdkPostJsonHeaders(token),
+      body: JSON.stringify(contactBody),
+    });
+  }
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(
+      `iDoklad Contacts HTTP ${res.status}: ${JSON.stringify(body).slice(0, 500)}`,
+    );
+  }
+  const data = (body.Data ?? body.data) as Record<string, unknown> | undefined;
+  const partnerId = Number(data?.Id ?? data?.id);
+  if (!Number.isFinite(partnerId)) {
+    throw new Error(
+      `iDoklad Contacts: chybí Id v odpovědi: ${JSON.stringify(body).slice(0, 400)}`,
+    );
+  }
+  return { partnerId, token };
+}
+
 async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
   const orderRows = await sql<OrderRow[]>`
     select
       id,
       order_number,
       status,
+      payment_status,
       customer_name,
       customer_email,
       customer_phone,
@@ -634,25 +868,48 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
 
   const idok = getIdokladNumericSettings();
   const issueDate = new Date();
-  const payload = {
+  const issueIso = toIsoDate(issueDate);
+  const isPaid =
+    order.status === 'paid'
+    || String(order.payment_status || '').toLowerCase() === 'paid';
+  /** Uhrazené online objednávky: datum úhrady + splatnost = den vystavení (Stripe i dokončené Pipedrive). */
+  const maturityIso = isPaid ? issueIso : toIsoDate(addDays(issueDate, 14));
+
+  let token = await getIdokladAccessToken();
+  const { numericSequenceId, token: tokenAfterResolve } = await resolveIdokladNumericSequenceId(token);
+  token = tokenAfterResolve;
+  if (numericSequenceId === undefined) {
+    throw new Error(
+      'iDoklad: NumericSequenceId je povinné (nastavte IDOKLAD_NUMERIC_SEQUENCE_ID nebo řadu s NumberFormat 07{RR}{NNNN}).',
+    );
+  }
+
+  const { documentSerialNumber, token: tokenAfterSerial } = await fetchIdokladNextDocumentSerial(
+    token,
+    numericSequenceId,
+    issueIso,
+  );
+  token = tokenAfterSerial;
+
+  const { partnerId, token: tokenAfterContact } = await createIdokladPartnerContact(order, idok, token);
+  token = tokenAfterContact;
+
+  /** PascalCase jako oficiální IdokladSdk (Newtonsoft default) — viz IssuedInvoicePostModel. */
+  const payload: Record<string, unknown> = {
     Description: `Objednávka ${order.order_number}`,
-    PartnerAddress: {
-      Name: order.customer_name,
-      Street: order.street || '',
-      City: order.city || '',
-      PostalCode: order.zip || '',
-      CountryId: idok.countryIdCz,
-      IdentificationNumber: order.ico || '',
-      Email: order.customer_email,
-      Phone: order.customer_phone || '',
-      CompanyName: order.school_name || '',
-    },
-    DateOfIssue: toIsoDate(issueDate),
-    DateOfMaturity: toIsoDate(addDays(issueDate, 14)),
-    DateOfTaxing: toIsoDate(issueDate),
+    PartnerId: partnerId,
+    DocumentSerialNumber: documentSerialNumber,
+    IsIncomeTax: idok.isIncomeTax,
+    PaymentOptionId: idok.paymentOptionId,
+    NumericSequenceId: numericSequenceId,
+    DateOfIssue: issueIso,
+    DateOfMaturity: maturityIso,
+    DateOfTaxing: issueIso,
     IsEet: false,
-    PaymentTypeId: idok.paymentTypeCardId,
+    DiscountPercentage: 0,
     CurrencyId: idok.currencyIdCzk,
+    ExchangeRate: 1,
+    ExchangeRateAmount: 1,
     OrderNumber: order.order_number,
     Items: [
       ...orderItems.map((item) => ({
@@ -661,6 +918,8 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
         UnitPrice: amountInCzk(item.unit_price),
         PriceType: idok.priceTypeWithVat,
         VatRateType: idok.vatRateReduced,
+        DiscountPercentage: 0,
+        IsTaxMovement: true,
       })),
       ...(order.shipping_price > 0
         ? [{
@@ -669,18 +928,22 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
             UnitPrice: amountInCzk(order.shipping_price),
             PriceType: idok.priceTypeWithVat,
             VatRateType: idok.vatRateStandard,
+            DiscountPercentage: 0,
+            IsTaxMovement: true,
           }]
         : []),
     ],
   };
+  if (isPaid) {
+    payload.DateOfPayment = issueIso;
+  }
+  if (order.note?.trim()) {
+    payload.Note = order.note.trim().slice(0, 2000);
+  }
 
-  let token = await getIdokladAccessToken();
   let response = await fetch('https://api.idoklad.cz/v3/IssuedInvoices', {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers: idokladSdkPostJsonHeaders(token),
     body: JSON.stringify(payload),
   });
 
@@ -688,10 +951,7 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
     token = await getIdokladAccessToken(true);
     response = await fetch('https://api.idoklad.cz/v3/IssuedInvoices', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: idokladSdkPostJsonHeaders(token),
       body: JSON.stringify(payload),
     });
   }
@@ -731,6 +991,24 @@ Deno.serve(async (req) => {
   });
 
   try {
+    /** Uvolnění řádků ve `processing` po timeoutu Edge workeru (catch se nespustí). Vyžaduje sloupec `updated_at` (migrace 20260409180000). */
+    try {
+      await sql`
+        update public.export_queue
+        set
+          status = 'pending',
+          last_error = case
+            when coalesce(trim(last_error), '') = '' then 'processing timeout (worker obnoven)'
+            else trim(last_error) || ' | processing timeout (worker obnoven)'
+          end,
+          next_retry_at = now()
+        where status = 'processing'
+          and updated_at < now() - interval '15 minutes'
+      `;
+    } catch (recoveryErr) {
+      console.warn('[process-export-queue] stuck-processing recovery:', recoveryErr);
+    }
+
     const queueItems = await sql<ExportQueueRow[]>`
       select
         id,
@@ -981,7 +1259,8 @@ Deno.serve(async (req) => {
               update public.orders
               set
                 invoice_status = 'done',
-                invoice_number = ${result.documentNumber}
+                invoice_number = ${result.documentNumber},
+                idoklad_invoice_id = ${result.invoiceId}
               where id = ${queueItem.order_id}::uuid
             `;
 

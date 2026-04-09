@@ -595,17 +595,15 @@ Deno.serve(async (req) => {
         )
       `;
 
-      if (hasIco) {
-        await sql`
-          insert into public.export_queue (order_id, service, status, payload)
-          values (
-            ${row.id}::uuid,
-            'idoklad',
-            'pending',
-            ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
-          )
-        `;
-      }
+      await sql`
+        insert into public.export_queue (order_id, service, status, payload)
+        values (
+          ${row.id}::uuid,
+          'idoklad',
+          'pending',
+          ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
+        )
+      `;
 
       try {
         await invokeProcessExportQueue(req.url);

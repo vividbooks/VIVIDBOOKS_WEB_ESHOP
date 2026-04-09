@@ -12,6 +12,8 @@ FUNCS=(
   process-export-queue
   cancel-stale-orders
   pipedrive-inbound-deal
+  admin-orders
+  admin-order-action
   make-server-93a20b6f
 )
 for f in "${FUNCS[@]}"; do

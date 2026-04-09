@@ -39,12 +39,16 @@ type OrderDetailRow = {
   stripe_payment_intent_id: string | null;
   stripe_receipt_url: string | null;
   pipedrive_deal_id: string | null;
+  pipedrive_sync_status: string | null;
+  pipedrive_sync_error: string | null;
+  pipedrive_synced_at: string | null;
   subtotal: number;
   total: number;
   basecom_status: string | null;
   basecom_order_id: string | null;
   invoice_status: string | null;
   invoice_number: string | null;
+  idoklad_invoice_id: string | null;
   zasilkovna_status: string | null;
   zasilkovna_packet_id: string | null;
   note: string | null;
@@ -154,6 +158,264 @@ function normalizeKey(value: string | null | undefined) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim();
+}
+
+/** Krok plnění v Base.com (štítky a/nebo heuristiky z API). */
+type BasecomFulfillmentStep = {
+  key: 'received_base' | 'received_fulfillment' | 'packed' | 'shipped';
+  label: string;
+  done: boolean;
+  source: 'tag' | 'api_field' | 'history' | 'inferred';
+};
+
+type BasecomFulfillmentPayload =
+  | {
+    ok: true;
+    orderFound: boolean;
+    steps: BasecomFulfillmentStep[];
+    tagNames: string[];
+    signals: {
+      pickState: number | null;
+      packState: number | null;
+      deliveryPackageNr: string;
+      pickPackHistoryEvents: number;
+    };
+  }
+  | {
+    ok: false;
+    reason: string;
+    error?: string;
+  };
+
+function parseCsvEnv(name: string): string[] {
+  const raw = (Deno.env.get(name) || '').trim();
+  if (!raw) return [];
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function readIntish(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const n = Number.parseInt(value, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function tagMatchesAny(tagNames: string[], patterns: string[]): boolean {
+  if (patterns.length === 0) return false;
+  const normalizedTags = tagNames.map((t) => normalizeKey(t));
+  for (const p of patterns) {
+    const np = normalizeKey(p);
+    if (!np) continue;
+    for (const nt of normalizedTags) {
+      if (nt === np || nt.includes(np) || np.includes(nt)) return true;
+    }
+  }
+  return false;
+}
+
+function collectRawTagIdsFromOrder(o: Record<string, unknown>): unknown[] {
+  const candidates = [o.tags, o.order_tags];
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c;
+  }
+  for (const [key, val] of Object.entries(o)) {
+    if (!key.toLowerCase().includes('tag')) continue;
+    if (Array.isArray(val)) return val;
+  }
+  return [];
+}
+
+function buildOrderTagIdToNameMap(tagData: Record<string, unknown>): Map<string, string> {
+  const map = new Map<string, string>();
+  const tags = tagData.tags;
+  if (tags && typeof tags === 'object' && !Array.isArray(tags)) {
+    for (const [k, v] of Object.entries(tags as Record<string, unknown>)) {
+      if (typeof v === 'string') {
+        map.set(k, v);
+        continue;
+      }
+      if (v && typeof v === 'object') {
+        const name = (v as Record<string, unknown>).name;
+        if (typeof name === 'string') map.set(k, name);
+      }
+    }
+  }
+  if (Array.isArray(tags)) {
+    for (const item of tags) {
+      if (!item || typeof item !== 'object') continue;
+      const row = item as Record<string, unknown>;
+      const id = row.tag_id ?? row.id;
+      const name = row.name;
+      if (id != null && typeof name === 'string') map.set(String(id), name);
+    }
+  }
+  return map;
+}
+
+async function resolveOrderTagNames(o: Record<string, unknown>, apiToken: string): Promise<string[]> {
+  const raw = collectRawTagIdsFromOrder(o);
+  const out: string[] = [];
+
+  const hasNumericIds = raw.some((t) => typeof t === 'number' || (typeof t === 'string' && /^\d+$/.test(t)));
+
+  if (hasNumericIds) {
+    try {
+      const tagData = await callBasecomApi(apiToken, 'getOrderTags', {});
+      const idMap = buildOrderTagIdToNameMap(tagData);
+      for (const t of raw) {
+        const id = String(t);
+        const name = idMap.get(id);
+        if (name) out.push(name);
+        else if (typeof t === 'string' && !/^\d+$/.test(t)) out.push(t);
+        else if (typeof t === 'number') out.push(idMap.get(String(t)) ?? id);
+      }
+      return out.filter(Boolean);
+    } catch {
+      // fall through to raw strings
+    }
+  }
+
+  for (const t of raw) {
+    if (typeof t === 'string') out.push(t);
+    else if (typeof t === 'number') out.push(String(t));
+  }
+  return out;
+}
+
+async function loadBasecomFulfillment(basecomOrderId: string | null): Promise<BasecomFulfillmentPayload> {
+  const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+  if (!apiToken) {
+    return { ok: false, reason: 'missing_token' };
+  }
+  const trimmed = (basecomOrderId || '').trim();
+  if (!trimmed) {
+    return { ok: false, reason: 'no_basecom_order' };
+  }
+  const oid = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(oid)) {
+    return { ok: false, reason: 'invalid_basecom_order_id' };
+  }
+
+  let ordersData: Record<string, unknown>;
+  try {
+    ordersData = await callBasecomApi(apiToken, 'getOrders', {
+      order_id: oid,
+      get_unconfirmed_orders: true,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, reason: 'get_orders_failed', error: message };
+  }
+
+  const orders = ordersData.orders as unknown[] | undefined;
+  const o = orders?.[0] as Record<string, unknown> | undefined;
+  if (!o) {
+    return {
+      ok: true,
+      orderFound: false,
+      steps: [
+        { key: 'received_base', label: 'Přijato base', done: false, source: 'inferred' },
+        { key: 'received_fulfillment', label: 'Přijato fulfillment', done: false, source: 'inferred' },
+        { key: 'packed', label: 'Zabaleno', done: false, source: 'inferred' },
+        { key: 'shipped', label: 'Expedováno', done: false, source: 'inferred' },
+      ],
+      tagNames: [],
+      signals: {
+        pickState: null,
+        packState: null,
+        deliveryPackageNr: '',
+        pickPackHistoryEvents: 0,
+      },
+    };
+  }
+
+  let history: unknown[] = [];
+  try {
+    const hData = await callBasecomApi(apiToken, 'getOrderPickPackHistory', { order_id: oid });
+    const h = hData.history;
+    if (Array.isArray(h)) history = h;
+  } catch {
+    history = [];
+  }
+
+  const tagNames = await resolveOrderTagNames(o, apiToken);
+
+  const pickState = readIntish(o.pick_state ?? o.pick_status);
+  const packState = readIntish(o.pack_state ?? o.pack_status);
+  const deliveryNr = typeof o.delivery_package_nr === 'string' ? o.delivery_package_nr.trim() : '';
+
+  let hasPickFinished = false;
+  let hasPackFinished = false;
+  for (const h of history) {
+    if (!h || typeof h !== 'object') continue;
+    const at = readIntish((h as Record<string, unknown>).action_type);
+    if (at === 5) hasPickFinished = true;
+    if (at === 11) hasPackFinished = true;
+  }
+
+  const envBase = parseCsvEnv('BASECOM_FULFILLMENT_TAG_BASE');
+  const envFulfillment = parseCsvEnv('BASECOM_FULFILLMENT_TAG_FULFILLMENT');
+  const envPacked = parseCsvEnv('BASECOM_FULFILLMENT_TAG_PACKED');
+  const envShipped = parseCsvEnv('BASECOM_FULFILLMENT_TAG_SHIPPED');
+
+  const step1Done = envBase.length > 0
+    ? tagMatchesAny(tagNames, envBase)
+    : true;
+  const step1Source: BasecomFulfillmentStep['source'] = envBase.length > 0 ? 'tag' : 'inferred';
+
+  const step2Done = envFulfillment.length > 0
+    ? tagMatchesAny(tagNames, envFulfillment)
+    : hasPickFinished || pickState === 1;
+  const step2Source: BasecomFulfillmentStep['source'] = envFulfillment.length > 0
+    ? 'tag'
+    : hasPickFinished
+    ? 'history'
+    : pickState === 1
+    ? 'api_field'
+    : 'inferred';
+
+  const step3Done = envPacked.length > 0
+    ? tagMatchesAny(tagNames, envPacked)
+    : hasPackFinished || packState === 1;
+  const step3Source: BasecomFulfillmentStep['source'] = envPacked.length > 0
+    ? 'tag'
+    : hasPackFinished
+    ? 'history'
+    : packState === 1
+    ? 'api_field'
+    : 'inferred';
+
+  const step4Done = envShipped.length > 0
+    ? tagMatchesAny(tagNames, envShipped)
+    : deliveryNr.length > 0;
+  const step4Source: BasecomFulfillmentStep['source'] = envShipped.length > 0
+    ? 'tag'
+    : deliveryNr.length > 0
+    ? 'api_field'
+    : 'inferred';
+
+  const steps: BasecomFulfillmentStep[] = [
+    { key: 'received_base', label: 'Přijato base', done: step1Done, source: step1Source },
+    { key: 'received_fulfillment', label: 'Přijato fulfillment', done: step2Done, source: step2Source },
+    { key: 'packed', label: 'Zabaleno', done: step3Done, source: step3Source },
+    { key: 'shipped', label: 'Expedováno', done: step4Done, source: step4Source },
+  ];
+
+  return {
+    ok: true,
+    orderFound: true,
+    steps,
+    tagNames,
+    signals: {
+      pickState,
+      packState,
+      deliveryPackageNr: deliveryNr,
+      pickPackHistoryEvents: history.length,
+    },
+  };
 }
 
 function extractXmlValue(block: string, tag: string) {
@@ -459,12 +721,16 @@ Deno.serve(async (req) => {
           stripe_payment_intent_id,
           stripe_receipt_url,
           pipedrive_deal_id,
+          pipedrive_sync_status,
+          pipedrive_sync_error,
+          pipedrive_synced_at,
           subtotal,
           total,
           basecom_status,
           basecom_order_id,
           invoice_status,
           invoice_number,
+          idoklad_invoice_id,
           zasilkovna_status,
           zasilkovna_packet_id,
           note,
@@ -553,6 +819,7 @@ Deno.serve(async (req) => {
       ]);
 
       const stockData = await enrichOrderItemsWithStock(items);
+      const basecomFulfillment = await loadBasecomFulfillment(order.basecom_order_id);
 
       return jsonResponse({
         order,
@@ -561,6 +828,7 @@ Deno.serve(async (req) => {
         workflowSteps,
         alerts,
         stockMeta: stockData.stockMeta,
+        basecomFulfillment,
       });
     }
 

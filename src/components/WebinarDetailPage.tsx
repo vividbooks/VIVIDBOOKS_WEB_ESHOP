@@ -13,6 +13,11 @@ import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { getMergedWebinarSurveyQuestions, getPreWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
+import {
+  loadSavedDvppContacts,
+  rememberDvppContact,
+  type SavedDvppContact,
+} from '../utils/dvppSavedContacts';
 
 /**
  * Dočasně: před celostránkovým dotazníkem (`?dvppDotaznik=1`) se nezobrazuje krok registrace / light lead.
@@ -160,9 +165,16 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
    * (jinak např. `jmeno@domena.c` už „projde“ a uživatel nemůže doplnit `.cz`).
    */
   const [dvppEmailGateDone, setDvppEmailGateDone] = useState(false);
+  const [savedDvppContacts, setSavedDvppContacts] = useState<SavedDvppContact[]>(() =>
+    typeof window !== 'undefined' ? loadSavedDvppContacts() : [],
+  );
   useEffect(() => {
     setDvppEmailGateDone(false);
   }, [webinar.id]);
+  useEffect(() => {
+    if (!isSurveyFullPage || !SKIP_DVPP_SURVEY_REGISTRATION_STEP || dvppEmailGateDone) return;
+    setSavedDvppContacts(loadSavedDvppContacts());
+  }, [isSurveyFullPage, dvppEmailGateDone, webinar.id]);
   /** Při `SKIP_DVPP_SURVEY_REGISTRATION_STEP` je vždy jako po „Pokračovat“ bez kroku registrace. */
   const surveyRegOkEffective = SKIP_DVPP_SURVEY_REGISTRATION_STEP || surveyRegOk;
   /** Odkaz z připomínkového e-mailu (?dotaznik=1&email=…) — zobrazí poděkování + dotazník bez trial bloku. */
@@ -287,6 +299,20 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setForm(prev => ({ ...prev, ico: v.replace(/\D/g, '').slice(0, 10) }));
     setError('');
   };
+
+  const applySavedDvppContact = useCallback((c: SavedDvppContact) => {
+    setForm((prev) => ({
+      ...prev,
+      name: c.name,
+      email: c.email,
+      birthDateIso: c.birthDateIso,
+      schoolName: c.schoolName,
+      ico: c.ico,
+    }));
+    setSchoolOpen(false);
+    setSchoolResults([]);
+    setError('');
+  }, []);
 
   const others = webinars.filter(w => w.id !== webinar.id && !w.isPast).slice(0, 2);
 
@@ -680,10 +706,51 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 maxLength={10}
                 className="mb-5 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
               />
+              {savedDvppContacts.length > 0 && (
+                <div className="mb-5 rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
+                  <p className="mb-2 font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55">
+                    {'Ulo\u017een\u00fd kontakt v tomto prohl\u00ed\u017ee\u010di'}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {savedDvppContacts.map((c, i) => (
+                      <button
+                        key={`${c.savedAt}-${i}`}
+                        type="button"
+                        onClick={() => applySavedDvppContact(c)}
+                        className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] leading-snug text-[#001161] transition-colors hover:border-[#5b4fd8]/50 hover:bg-[#fafaff]"
+                      >
+                        <span className="line-clamp-3">
+                          {c.name}
+                          {' · '}
+                          {c.email}
+                          <br />
+                          {c.schoolName}
+                          {c.ico ? (
+                            <>
+                              {' · I\u010cO '}
+                              {c.ico}
+                            </>
+                          ) : null}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <button
                 type="button"
                 disabled={!dvppGateValid}
-                onClick={() => setDvppEmailGateDone(true)}
+                onClick={() => {
+                  rememberDvppContact({
+                    name: form.name,
+                    email: form.email,
+                    birthDateIso: form.birthDateIso,
+                    schoolName: form.schoolName,
+                    ico: form.ico,
+                  });
+                  setSavedDvppContacts(loadSavedDvppContacts());
+                  setDvppEmailGateDone(true);
+                }}
                 className="w-full rounded-[14px] bg-[#001161] py-3.5 font-['Fenomen_Sans',sans-serif] text-[15px] font-bold text-white shadow-md transition hover:bg-[#001a8c] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {'Pokra\u010dovat k dotazn\u00edku'}

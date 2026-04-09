@@ -75,7 +75,7 @@ Další proměnné podle zapnutých integrací (Basecom, iDoklad, e‑mail SMTP,
 
 #### iDoklad ([API v3](https://api.idoklad.cz/Help/v3/cs/index.html))
 
-Po úspěšné platbě zařadí `stripe-webhook` úlohu `idoklad` do `export_queue`. Zpracuje ji funkce **`process-export-queue`** (OAuth **client credentials**, pak `POST https://api.idoklad.cz/v3/IssuedInvoices`).
+Po úspěšné platbě kartou zařadí `stripe-webhook` úlohu `idoklad` do `export_queue` **pro každou zaplacenou objednávku** (bez ohledu na IČO). Stejně se faktura zařadí u inbound objednávek z Pipedrive (pokud není chybějící kontakt). Zpracuje ji funkce **`process-export-queue`** (OAuth **client credentials**, pak `POST https://api.idoklad.cz/v3/IssuedInvoices`). U objednávek ve stavu zaplaceno se do iDokladu posílá i **`DateOfPayment`** (den vystavení), aby byl doklad veden jako uhrazený; odeslání PDF e-mailem řeší pravidla v samotném iDokladu.
 
 | Secret | K čemu |
 |--------|--------|
@@ -87,6 +87,8 @@ Volitelné číselné ID podle vašeho účtu iDoklad (když výchozí hodnoty n
 
 | Secret | Výchozí | Význam |
 |--------|---------|--------|
+| `IDOKLAD_NUMERIC_SEQUENCE_ID` | — | ID číselné řady vydaných faktur. Má přednost před názvem. |
+| `IDOKLAD_NUMERIC_SEQUENCE_NAME` | — | Přesný **název** řady v iDokladu (např. `CZ PRINT B2C`), typ dokumentu vydaná faktura. Funkce načte ID přes `GET /v3/NumericSequences`. Pokud jsou vyplněné ID i jméno, použije se ID. |
 | `IDOKLAD_COUNTRY_ID` | `2` | Země adresy partnera (ČR). |
 | `IDOKLAD_PAYMENT_TYPE_ID` | `3` | Typ platby (např. karta). |
 | `IDOKLAD_CURRENCY_ID` | `1` | Měna CZK. |

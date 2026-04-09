@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { PostWebinarQuizQuestion } from '../data/webinars';
 import { SurveyFlowProgressBar } from './SurveyFlowProgressBar';
 
@@ -14,9 +14,6 @@ const NAVY = '#001161';
 const QUESTION_MUTED = '#4E5871';
 const PURPLE = '#7C3AED';
 const INTRO_FILL = '#C2DFFF';
-/** Tlačítko „Odpovědět“ — plná výplň (bez gradientu), stejná námořní jako primární CTA na webu. */
-const ANSWER_BTN =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-6 py-2.5 text-[14px] font-bold text-white shadow-md shadow-[#001161]/20 transition hover:bg-[#001a8c] disabled:opacity-50';
 
 const WRONG_ANSWER_HINT =
   'Tato odpov\u011b\u010f nebyla spr\u00e1vn\u00e1. M\u016f\u017eete pokra\u010dovat d\u00e1l.';
@@ -61,10 +58,8 @@ export function WebinarDvppQuizPlayer({
   const total = questions.length;
   const [partialSaving, setPartialSaving] = useState(false);
   const [partialErr, setPartialErr] = useState('');
-  /** Zabrání dvojitému kliku na „Další“ před dokončením zápisu na server. */
-  const [navBusy, setNavBusy] = useState(false);
-  const navBusyRef = useRef(false);
-  const partialAnswerLockRef = useRef(false);
+  /** Pořadí vyhodnocení odpovědi — ignorovat zastaralý výsledek při rychlé změně volby. */
+  const evalRequestIdRef = useRef(0);
   /** -1 = úvodní obrazovka, 0..total-1 = otázky */
   const [step, setStep] = useState(-1);
   const [wrongAnswerHint, setWrongAnswerHint] = useState('');
@@ -75,6 +70,7 @@ export function WebinarDvppQuizPlayer({
 
   useEffect(() => {
     setPartialErr('');
+    setWrongAnswerHint('');
   }, [step]);
 
   /** Pruh jen pro otázky (úvod = žádný segment nevyplněný). */
@@ -88,69 +84,52 @@ export function WebinarDvppQuizPlayer({
 
   const selectOption = useCallback(
     (questionId: string, opt: string) => {
-      setWrongAnswerHint('');
+      setPartialErr('');
       onAnswerChange(questionId, opt);
+      if (!onSavePartialAnswer) return;
+      const reqId = ++evalRequestIdRef.current;
+      void (async () => {
+        setPartialSaving(true);
+        try {
+          const res = await onSavePartialAnswer(questionId, opt);
+          if (evalRequestIdRef.current !== reqId) return;
+          if (res && typeof res === 'object' && res.wrongAnswer) {
+            setWrongAnswerHint(WRONG_ANSWER_HINT);
+          } else {
+            setWrongAnswerHint('');
+          }
+        } catch (e) {
+          if (evalRequestIdRef.current !== reqId) return;
+          setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
+          setWrongAnswerHint('');
+        } finally {
+          if (evalRequestIdRef.current === reqId) setPartialSaving(false);
+        }
+      })();
     },
-    [onAnswerChange],
+    [onAnswerChange, onSavePartialAnswer],
   );
 
   const goPrev = useCallback(() => {
-    setWrongAnswerHint('');
     setStep((s) => Math.max(-1, s - 1));
   }, []);
 
   const goNext = useCallback(() => {
-    if (navBusyRef.current || partialSaving) return;
+    if (partialSaving) return;
     if (step === -1) {
       setStep(0);
       return;
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
-      setWrongAnswerHint('');
-      navBusyRef.current = true;
-      setNavBusy(true);
-      void (async () => {
-        try {
-          if (onSavePartialAnswer && currentQ && selectedForCurrent) {
-            try {
-              const res = await onSavePartialAnswer(currentQ.id, selectedForCurrent);
-              if (res && typeof res === 'object' && res.wrongAnswer) setWrongAnswerHint(WRONG_ANSWER_HINT);
-            } catch (e) {
-              setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-              return;
-            }
-          }
-          if (step === total - 1) {
-            onComplete();
-            return;
-          }
-          setStep((s) => s + 1);
-        } finally {
-          navBusyRef.current = false;
-          setNavBusy(false);
-        }
-      })();
+      if (partialErr) return;
+      if (step === total - 1) {
+        onComplete();
+        return;
+      }
+      setStep((s) => s + 1);
     }
-  }, [step, total, selectedForCurrent, onComplete, onSavePartialAnswer, currentQ, partialSaving]);
-
-  const handleSavePartial = useCallback(async () => {
-    if (!currentQ || !selectedForCurrent || !onSavePartialAnswer) return;
-    if (partialAnswerLockRef.current) return;
-    partialAnswerLockRef.current = true;
-    setPartialErr('');
-    setPartialSaving(true);
-    try {
-      const res = await onSavePartialAnswer(currentQ.id, selectedForCurrent);
-      if (res && typeof res === 'object' && res.wrongAnswer) setWrongAnswerHint(WRONG_ANSWER_HINT);
-      else setWrongAnswerHint('');
-    } catch (e) {
-      setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-    } finally {
-      partialAnswerLockRef.current = false;
-      setPartialSaving(false);
-    }
-  }, [currentQ, selectedForCurrent, onSavePartialAnswer]);
+  }, [partialSaving, step, total, selectedForCurrent, partialErr, onComplete]);
 
   if (total === 0) return null;
 
@@ -176,12 +155,11 @@ export function WebinarDvppQuizPlayer({
             type="button"
             onClick={goNext}
             disabled={
-              navBusy ||
               partialSaving ||
               (step === -1
                 ? false
                 : step >= 0 && step < total
-                  ? !selectedForCurrent
+                  ? !selectedForCurrent || !!partialErr
                   : true)
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
@@ -300,24 +278,10 @@ export function WebinarDvppQuizPlayer({
                   })}
                 </div>
 
-                {onSavePartialAnswer && currentQ && selectedForCurrent ? (
-                  <div className="mt-5 flex flex-col items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={partialSaving || navBusy}
-                      onClick={() => void handleSavePartial()}
-                      className={ANSWER_BTN}
-                      style={FF}
-                    >
-                      {partialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      {'Odpov\u011bd\u011bt'}
-                    </button>
-                    {partialErr ? (
-                      <p style={FF} className="text-center text-[12px] text-red-600">
-                        {partialErr}
-                      </p>
-                    ) : null}
-                  </div>
+                {partialErr ? (
+                  <p style={FF} className="mt-4 text-center text-[12px] text-red-600">
+                    {partialErr}
+                  </p>
                 ) : null}
 
                 <p style={{ ...FF }} className="mt-6 text-center text-[12px] text-slate-400">
@@ -358,12 +322,11 @@ export function WebinarDvppQuizPlayer({
           type="button"
           onClick={goNext}
           disabled={
-            navBusy ||
             partialSaving ||
             (step === -1
               ? false
               : step >= 0 && step < total
-                ? !selectedForCurrent
+                ? !selectedForCurrent || !!partialErr
                 : true)
           }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
@@ -492,24 +455,10 @@ export function WebinarDvppQuizPlayer({
                       })}
                     </div>
 
-                    {onSavePartialAnswer && currentQ && selectedForCurrent ? (
-                      <div className="mt-4 flex flex-col items-center gap-2 sm:mt-5">
-                        <button
-                          type="button"
-                          disabled={partialSaving || navBusy}
-                          onClick={() => void handleSavePartial()}
-                          className={`${ANSWER_BTN} py-3 text-[15px] shadow-lg`}
-                          style={FF}
-                        >
-                          {partialSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                          {'Odpov\u011bd\u011bt'}
-                        </button>
-                        {partialErr ? (
-                          <p style={FF} className="text-center text-[12px] text-red-600">
-                            {partialErr}
-                          </p>
-                        ) : null}
-                      </div>
+                    {partialErr ? (
+                      <p style={FF} className="mt-4 text-center text-[12px] text-red-600 sm:mt-5">
+                        {partialErr}
+                      </p>
                     ) : null}
 
                     <p style={{ ...FF }} className="mt-4 text-center text-[12px] text-slate-400 sm:mt-5">

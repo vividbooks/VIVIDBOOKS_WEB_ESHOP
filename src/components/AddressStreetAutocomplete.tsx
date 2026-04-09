@@ -8,8 +8,10 @@ export type ResolvedAddressParts = { street: string; city: string; zip: string }
 
 type Prediction = { description: string; placeId: string };
 
-const INPUT_CLASS =
-  'w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15';
+const INPUT_BASE =
+  'w-full rounded-[14px] border bg-white px-4 py-3 text-[14px] text-[#001161] outline-none';
+const INPUT_OK = `${INPUT_BASE} border-[#001161]/10 focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15`;
+const INPUT_ERR = `${INPUT_BASE} border-red-500 ring-2 ring-red-500/20 focus:border-red-600 focus:ring-red-500/25`;
 
 type Props = {
   id?: string;
@@ -21,6 +23,8 @@ type Props = {
   placeholder?: string;
   /** Ikona vlevo (např. Home) — stejně jako u doručovacích polí v OrderPage */
   leftIcon?: React.ReactNode;
+  /** Červený rámeček — chybí údaj / validace */
+  invalid?: boolean;
 };
 
 export function AddressStreetAutocomplete({
@@ -31,12 +35,15 @@ export function AddressStreetAutocomplete({
   disabled,
   placeholder,
   leftIcon,
+  invalid,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [predictions, setPredictions] = useState<Prediction[]>([]);
   const [hintEnabled, setHintEnabled] = useState(false);
+  /** Server vrátil enabled:false (typicky chybí Google Places klíč v Edge Secrets). */
+  const [serverSuggestionsOff, setServerSuggestionsOff] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -64,7 +71,12 @@ export function AddressStreetAutocomplete({
         enabled?: boolean;
         predictions?: Prediction[];
       };
-      if (data.enabled) setHintEnabled(true);
+      if (data.enabled) {
+        setHintEnabled(true);
+        setServerSuggestionsOff(false);
+      } else {
+        setServerSuggestionsOff(true);
+      }
       setPredictions(Array.isArray(data.predictions) ? data.predictions : []);
       setOpen((data.predictions?.length ?? 0) > 0);
     } catch {
@@ -124,9 +136,10 @@ export function AddressStreetAutocomplete({
           onFocus={() => {
             if (predictions.length > 0) setOpen(true);
           }}
-          className={leftIcon ? `${INPUT_CLASS} pl-11` : INPUT_CLASS}
+          className={leftIcon ? `${invalid ? INPUT_ERR : INPUT_OK} pl-11` : invalid ? INPUT_ERR : INPUT_OK}
           aria-autocomplete="list"
           aria-expanded={open}
+          aria-invalid={invalid ? true : undefined}
         />
         {leftIcon ? (
           <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#001161]/30" aria-hidden>
@@ -140,6 +153,13 @@ export function AddressStreetAutocomplete({
       {hintEnabled ? (
         <p className="mt-1.5 font-['Fenomen_Sans',sans-serif] text-[11px] text-[#001161]/45">
           {'Vyberte návrh z nabídky — doplníte město a PSČ. Adresu můžete i dál upravit ručně.'}
+        </p>
+      ) : null}
+      {serverSuggestionsOff && value.trim().length >= 2 && !loading && !detailLoading ? (
+        <p className="mt-1.5 font-['Fenomen_Sans',sans-serif] text-[11px] text-amber-800/90">
+          {
+            'Automatické návrhy adres nejsou zapnuté na serveru. Vyplňte ulici, město a PSČ ručně, případně použijte uložené adresy nad polem.'
+          }
         </p>
       ) : null}
       {open && predictions.length > 0 && (

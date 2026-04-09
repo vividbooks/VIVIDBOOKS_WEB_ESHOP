@@ -3,15 +3,17 @@ import { HelmetProvider } from 'react-helmet-async';
 import App from './App.tsx';
 import './index.css';
 import { installChunkLoadRecovery } from './utils/installChunkLoadRecovery';
+import { isVividbooksRemovableCacheKey } from './utils/vividbooksLocalStoragePreserve';
 
 installChunkLoadRecovery();
 
 // Stará verze ukládala celý katalog do localStorage a vyčerpala kvótu — OAuth pak nemohl zapsat session.
+// Pozor: nemazat vividbooks_cart_v1, cookie consent, checkout adresy (viz vividbooksLocalStoragePreserve).
 if (typeof window !== 'undefined') {
   try {
     for (let i = window.localStorage.length - 1; i >= 0; i--) {
       const k = window.localStorage.key(i);
-      if (k?.startsWith('vividbooks_')) window.localStorage.removeItem(k);
+      if (k && isVividbooksRemovableCacheKey(k)) window.localStorage.removeItem(k);
     }
   } catch {
     /* ignore */

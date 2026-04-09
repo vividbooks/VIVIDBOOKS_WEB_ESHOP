@@ -27,6 +27,7 @@ import { CheckoutSummaryCard } from './CheckoutSummaryCard';
 import { formatPrice } from './formatPrice';
 import { PaymentMethodSection } from './PaymentMethodCards';
 import { StripePaymentSubmitForm } from './StripePaymentSubmitForm';
+import { CheckoutPaymentPartnersInfo } from './CheckoutPaymentPartnersInfo';
 import { getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import { flashInvalidField } from '../../utils/formFieldHighlight';
 import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
@@ -34,6 +35,19 @@ import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
+import {
+  isValidEmailFormat,
+  EMAIL_FORMAT_HINT_CS,
+  EMAIL_MX_REJECT_CS,
+} from '../../utils/emailValidation';
+import { checkoutTextInputClass } from '../../utils/formFieldClasses';
+import {
+  loadSavedCheckoutAddresses,
+  rememberCheckoutAddress,
+  type SavedCheckoutAddress,
+} from '../../utils/checkoutSavedAddresses';
+import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../../utils/postalCodeCZSK';
+import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../../utils/streetHouseNumberCZ';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
@@ -85,7 +99,6 @@ const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resum
 const CONTACT_SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
 const PACKETA_API_KEY = import.meta.env.VITE_PACKETA_API_KEY ?? '';
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 1, label: 'Košík' },
@@ -207,6 +220,41 @@ export function CheckoutPage() {
   const schoolSearchRef = useRef<HTMLDivElement | null>(null);
   /** Aby starší odpověď ARES/CSV nepřepsala novější požadavek (dvojí fetch při výběru školy). */
   const schoolAddressFetchSeq = useRef(0);
+  const [savedAddresses, setSavedAddresses] = useState<SavedCheckoutAddress[]>([]);
+  const [emailMxHint, setEmailMxHint] = useState('');
+  const [emailMxChecking, setEmailMxChecking] = useState(false);
+  const [continueEmailMx, setContinueEmailMx] = useState(false);
+  const emailMxDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applySavedCheckoutAddress = useCallback((a: SavedCheckoutAddress) => {
+    setCustomer((prev) => ({
+      ...prev,
+      street: a.street,
+      city: a.city,
+      zip: a.zip,
+    }));
+    setFormErrors((prev) => ({
+      ...prev,
+      street: undefined,
+      city: undefined,
+      zip: undefined,
+    }));
+  }, []);
+
+  const applySavedToDelivery = useCallback((a: SavedCheckoutAddress) => {
+    setDeliveryAddress((prev) => ({
+      ...prev,
+      deliveryStreet: a.street,
+      deliveryCity: a.city,
+      deliveryZip: a.zip,
+    }));
+    setFormErrors((prev) => ({
+      ...prev,
+      deliveryStreet: undefined,
+      deliveryCity: undefined,
+      deliveryZip: undefined,
+    }));
+  }, []);
 
   const applySchoolAddressFromIco = useCallback(async (icoRaw: string) => {
     const icoDigits = String(icoRaw ?? '').replace(/\D/g, '');
@@ -317,6 +365,48 @@ export function CheckoutPage() {
   }, []);
 
   useEffect(() => {
+    setSavedAddresses(loadSavedCheckoutAddresses());
+  }, []);
+
+  useEffect(() => {
+    const email = customer.email.trim();
+    if (!email) {
+      setEmailMxHint('');
+      setEmailMxChecking(false);
+      return;
+    }
+    if (!isValidEmailFormat(email)) {
+      setEmailMxHint('');
+      setEmailMxChecking(false);
+      return;
+    }
+    if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
+    setEmailMxChecking(true);
+    setEmailMxHint('');
+    emailMxDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `${CONTACT_SERVER_URL}/validate-email?email=${encodeURIComponent(email)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = (await res.json()) as { ok?: boolean; message?: string };
+        if (data.ok) {
+          setEmailMxHint('');
+        } else {
+          setEmailMxHint(typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS);
+        }
+      } catch {
+        setEmailMxHint('');
+      } finally {
+        setEmailMxChecking(false);
+      }
+    }, 480);
+    return () => {
+      if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
+    };
+  }, [customer.email]);
+
+  useEffect(() => {
     if (products.length === 0) return;
     items.forEach((item) => {
       if (item.unitPrice > 0) return;
@@ -353,19 +443,19 @@ export function CheckoutPage() {
 
   const isCustomerStepValid = useMemo(() => (
     customer.name.trim().length > 0 &&
-    EMAIL_RE.test(customer.email.trim()) &&
+    isValidEmailFormat(customer.email.trim()) &&
     customer.phone.trim().length > 0 &&
     (customerType === 'individual' || (
       customer.schoolName.trim().length > 0 &&
       customer.ico.trim().length > 0
     )) &&
-    customer.street.trim().length > 0 &&
+    hasStreetWithHouseNumber(customer.street) &&
     customer.city.trim().length > 0 &&
-    customer.zip.trim().length > 0 &&
+    isValidCZSKPostalCode(customer.zip) &&
     (!hasSeparateDeliveryAddress || (
-      deliveryAddress.deliveryStreet.trim().length > 0 &&
+      hasStreetWithHouseNumber(deliveryAddress.deliveryStreet) &&
       deliveryAddress.deliveryCity.trim().length > 0 &&
-      deliveryAddress.deliveryZip.trim().length > 0
+      isValidCZSKPostalCode(deliveryAddress.deliveryZip)
     ))
   ), [customer, customerType, hasSeparateDeliveryAddress, deliveryAddress]);
 
@@ -394,9 +484,10 @@ export function CheckoutPage() {
     }
   }, [paymentMethod, hasTransferIco]);
 
+  /** Krok 2: vždy povolit klik — platnost řeší `validateCustomerStep()` (jinak by byl „Pokračovat“ disabled a uživatel neviděl chyby u polí). */
   const canGoForward = (
     (currentStep === 1 && items.length > 0) ||
-    (currentStep === 2 && isCustomerStepValid) ||
+    currentStep === 2 ||
     (currentStep === 3 && isShippingStepValid)
   );
 
@@ -499,7 +590,12 @@ export function CheckoutPage() {
       return;
     }
     if (resumeFlowActive) return;
-    if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) return;
+    if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) {
+      setClientSecret(null);
+      setPaymentIntentId(null);
+      lastPaymentKeyRef.current = null;
+      return;
+    }
 
     const payload = {
       items: items.map((item) => ({
@@ -581,6 +677,7 @@ export function CheckoutPage() {
 
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
+    if (!validateCustomerStep()) return;
     setTransferSubmitting(true);
     setPaymentIntentError('');
     try {
@@ -658,18 +755,39 @@ export function CheckoutPage() {
     const nextErrors: Partial<Record<keyof CustomerFormState | keyof DeliveryAddressState, string>> = {};
 
     if (!customer.name.trim()) nextErrors.name = 'Vyplňte jméno.';
-    if (!EMAIL_RE.test(customer.email.trim())) nextErrors.email = 'Zadejte platný e-mail.';
+    if (!isValidEmailFormat(customer.email.trim())) nextErrors.email = EMAIL_FORMAT_HINT_CS;
     if (!customer.phone.trim()) nextErrors.phone = 'Vyplňte telefon.';
     if (customerType === 'school' && !customer.schoolName.trim()) nextErrors.schoolName = 'Vyberte školu.';
     if (customerType === 'school' && !customer.ico.trim()) nextErrors.ico = 'Vyplňte IČO školy.';
     if (!customer.street.trim()) nextErrors.street = 'Vyplňte ulici a číslo.';
+    else if (!hasStreetWithHouseNumber(customer.street)) nextErrors.street = STREET_NUMBER_HINT_CS;
     if (!customer.city.trim()) nextErrors.city = 'Vyplňte město.';
     if (!customer.zip.trim()) nextErrors.zip = 'Vyplňte PSČ.';
-    if (hasSeparateDeliveryAddress && !deliveryAddress.deliveryStreet.trim()) nextErrors.deliveryStreet = 'Vyplňte doručovací ulici a číslo.';
+    else if (!isValidCZSKPostalCode(customer.zip)) nextErrors.zip = POSTAL_CODE_HINT_CS;
+    if (hasSeparateDeliveryAddress && !deliveryAddress.deliveryStreet.trim()) {
+      nextErrors.deliveryStreet = 'Vyplňte doručovací ulici a číslo.';
+    } else if (hasSeparateDeliveryAddress && !hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)) {
+      nextErrors.deliveryStreet = STREET_NUMBER_HINT_CS;
+    }
     if (hasSeparateDeliveryAddress && !deliveryAddress.deliveryCity.trim()) nextErrors.deliveryCity = 'Vyplňte doručovací město.';
     if (hasSeparateDeliveryAddress && !deliveryAddress.deliveryZip.trim()) nextErrors.deliveryZip = 'Vyplňte doručovací PSČ.';
+    else if (hasSeparateDeliveryAddress && deliveryAddress.deliveryZip.trim() && !isValidCZSKPostalCode(deliveryAddress.deliveryZip)) {
+      nextErrors.deliveryZip = POSTAL_CODE_HINT_CS;
+    }
 
-    setFormErrors((prev) => ({ ...prev, ...nextErrors }));
+    const validatedKeys: Array<keyof CustomerFormState | keyof DeliveryAddressState> = [
+      'name', 'email', 'phone', 'schoolName', 'ico', 'street', 'city', 'zip',
+      'deliveryStreet', 'deliveryCity', 'deliveryZip',
+    ];
+    setFormErrors((prev) => {
+      const merged = { ...prev };
+      for (const k of validatedKeys) {
+        const v = nextErrors[k];
+        if (v !== undefined) merged[k] = v;
+        else delete merged[k];
+      }
+      return merged;
+    });
 
     const ORDER: Array<keyof CustomerFormState | keyof DeliveryAddressState> = [
       'name', 'email', 'phone', 'schoolName', 'ico', 'street', 'city', 'zip',
@@ -698,11 +816,50 @@ export function CheckoutPage() {
     setCurrentStep((prev) => Math.max(1, prev - 1) as CheckoutStep);
   };
 
-  const goForward = () => {
+  const goForward = async () => {
     if (!canGoForward) return;
 
-    if (currentStep === 2 && !validateCustomerStep()) return;
-    if (currentStep === 3 && !validateShippingStep()) return;
+    if (currentStep === 2) {
+      if (!validateCustomerStep()) return;
+      setContinueEmailMx(true);
+      try {
+        const res = await fetch(
+          `${CONTACT_SERVER_URL}/validate-email?email=${encodeURIComponent(customer.email.trim())}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = (await res.json()) as { ok?: boolean; message?: string };
+        if (!data.ok) {
+          const msg = typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS;
+          setFormErrors((prev) => ({ ...prev, email: msg }));
+          setEmailMxHint(msg);
+          setTimeout(() => flashInvalidField(document.getElementById('checkout-field-email')), 0);
+          return;
+        }
+        rememberCheckoutAddress({
+          street: customer.street,
+          city: customer.city,
+          zip: customer.zip,
+        });
+        if (hasSeparateDeliveryAddress) {
+          rememberCheckoutAddress({
+            street: deliveryAddress.deliveryStreet,
+            city: deliveryAddress.deliveryCity,
+            zip: deliveryAddress.deliveryZip,
+          });
+        }
+        setSavedAddresses(loadSavedCheckoutAddresses());
+      } catch {
+        setFormErrors((prev) => ({
+          ...prev,
+          email: 'E-mail se nepodařilo ověřit. Zkuste to znovu za chvíli.',
+        }));
+        return;
+      } finally {
+        setContinueEmailMx(false);
+      }
+    } else if (currentStep === 3 && !validateShippingStep()) {
+      return;
+    }
 
     setCurrentStep((prev) => Math.min(4, prev + 1) as CheckoutStep);
   };
@@ -1018,8 +1175,8 @@ export function CheckoutPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={goForward}
-                    disabled={!canGoForward || currentStep >= 4}
+                    onClick={() => void goForward()}
+                    disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
                     className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     {'Pokračovat'}
@@ -1113,7 +1270,7 @@ export function CheckoutPage() {
                               if (schoolResults.length > 0) setIsSchoolResultsOpen(true);
                             }}
                             placeholder="Začněte psát název školy"
-                            className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pr-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                            className={`${checkoutTextInputClass(!!formErrors.schoolName)} pr-11`}
                             autoComplete="off"
                           />
                           <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30 pointer-events-none">
@@ -1163,7 +1320,7 @@ export function CheckoutPage() {
                             maxLength={10}
                             value={customer.ico}
                             onChange={(event) => handleCustomerChange('ico', event.target.value.replace(/\D/g, '').slice(0, 10))}
-                            className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 pr-11 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                            className={`${checkoutTextInputClass(!!formErrors.ico)} pr-11`}
                           />
                           <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[#001161]/30 pointer-events-none">
                             {schoolLookupLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
@@ -1190,25 +1347,26 @@ export function CheckoutPage() {
                     { key: 'name', label: 'Jméno *' },
                     { key: 'email', label: 'E-mail *', type: 'email' },
                     { key: 'phone', label: 'Telefon *' },
-                    { key: 'street', label: 'Ulice a číslo *' },
-                    { key: 'city', label: 'Město *' },
-                    { key: 'zip', label: 'PSČ *' },
                   ].map((field) => (
                     <label key={field.key} id={`checkout-field-${field.key}`} className="block">
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
                         {field.label}
                       </span>
-                      {field.key === 'street' ? (
-                        <AddressStreetAutocomplete
-                          id="checkout-field-street-input"
-                          value={customer.street}
-                          onChange={(v) => handleCustomerChange('street', v)}
-                          onResolved={(parts) => {
-                            handleCustomerChange('street', parts.street);
-                            handleCustomerChange('city', parts.city);
-                            handleCustomerChange('zip', parts.zip);
-                          }}
-                        />
+                      {field.key === 'email' ? (
+                        <div className="relative">
+                          <input
+                            type="email"
+                            value={customer.email}
+                            onChange={(event) => handleCustomerChange('email', event.target.value)}
+                            className={`${checkoutTextInputClass(!!(formErrors.email || emailMxHint))} pr-10`}
+                          />
+                          {(emailMxChecking || continueEmailMx) && (
+                            <Loader2
+                              className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-[#001161]/35"
+                              aria-hidden
+                            />
+                          )}
+                        </div>
                       ) : (
                         <input
                           type={field.type ?? 'text'}
@@ -1216,9 +1374,88 @@ export function CheckoutPage() {
                           onChange={(event) =>
                             handleCustomerChange(field.key as keyof CustomerFormState, event.target.value)
                           }
-                          className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                          className={checkoutTextInputClass(
+                            !!formErrors[field.key as keyof CustomerFormState],
+                          )}
                         />
                       )}
+                      {field.key === 'email' && (formErrors.email || emailMxHint) ? (
+                        <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
+                          {formErrors.email || emailMxHint}
+                        </span>
+                      ) : null}
+                      {field.key !== 'email' && formErrors[field.key as keyof CustomerFormState] ? (
+                        <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
+                          {formErrors[field.key as keyof CustomerFormState]}
+                        </span>
+                      ) : null}
+                    </label>
+                  ))}
+
+                  {savedAddresses.length > 0 && (
+                    <div className="md:col-span-2 rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
+                      <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55 mb-2">
+                        {'Uložené adresy v tomto prohlížeči'}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {savedAddresses.map((a, i) => (
+                          <button
+                            key={`${a.savedAt}-${i}`}
+                            type="button"
+                            onClick={() => applySavedCheckoutAddress(a)}
+                            className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161] leading-snug hover:border-[#5b4fd8]/50 hover:bg-[#fafaff] transition-colors"
+                          >
+                            <span className="line-clamp-2">
+                              {a.street}
+                              {', '}
+                              {a.city} {a.zip}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <label id="checkout-field-street" className="block">
+                    <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                      {'Ulice a číslo *'}
+                    </span>
+                    <AddressStreetAutocomplete
+                      id="checkout-field-street-input"
+                      value={customer.street}
+                      invalid={!!formErrors.street}
+                      onChange={(v) => handleCustomerChange('street', v)}
+                      onResolved={(parts) => {
+                        handleCustomerChange('street', parts.street);
+                        handleCustomerChange('city', parts.city);
+                        handleCustomerChange('zip', parts.zip);
+                      }}
+                    />
+                    {formErrors.street && (
+                      <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
+                        {formErrors.street}
+                      </span>
+                    )}
+                  </label>
+
+                  {[
+                    { key: 'city', label: 'Město *' },
+                    { key: 'zip', label: 'PSČ *' },
+                  ].map((field) => (
+                    <label key={field.key} id={`checkout-field-${field.key}`} className="block">
+                      <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                        {field.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={customer[field.key as keyof CustomerFormState]}
+                        onChange={(event) =>
+                          handleCustomerChange(field.key as keyof CustomerFormState, event.target.value)
+                        }
+                        className={checkoutTextInputClass(
+                          !!formErrors[field.key as keyof CustomerFormState],
+                        )}
+                      />
                       {formErrors[field.key as keyof CustomerFormState] && (
                         <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
                           {formErrors[field.key as keyof CustomerFormState]}
@@ -1260,7 +1497,31 @@ export function CheckoutPage() {
                   </button>
 
                   {hasSeparateDeliveryAddress && (
-                    <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="mt-5 space-y-4">
+                      {savedAddresses.length > 0 && (
+                        <div className="rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
+                          <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55 mb-2">
+                            {'Uložené adresy — doručení'}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
+                            {savedAddresses.map((a, i) => (
+                              <button
+                                key={`d-${a.savedAt}-${i}`}
+                                type="button"
+                                onClick={() => applySavedToDelivery(a)}
+                                className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161] leading-snug hover:border-[#5b4fd8]/50 hover:bg-[#fafaff] transition-colors"
+                              >
+                                <span className="line-clamp-2">
+                                  {a.street}
+                                  {', '}
+                                  {a.city} {a.zip}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {[
                         { key: 'recipientName', label: 'Jméno a příjmení příjemce', placeholder: 'Např. Jan Novák' },
                         { key: 'deliveryStreet', label: 'Doručovací ulice a číslo *' },
@@ -1277,6 +1538,7 @@ export function CheckoutPage() {
                               <AddressStreetAutocomplete
                                 id="checkout-field-deliveryStreet-input"
                                 value={deliveryAddress.deliveryStreet}
+                                invalid={!!formErrors.deliveryStreet}
                                 onChange={(v) => handleDeliveryAddressChange('deliveryStreet', v)}
                                 onResolved={(parts) => {
                                   handleDeliveryAddressChange('deliveryStreet', parts.street);
@@ -1292,7 +1554,9 @@ export function CheckoutPage() {
                                   handleDeliveryAddressChange(field.key as keyof DeliveryAddressState, event.target.value)
                                 }
                                 placeholder={field.placeholder}
-                                className="w-full rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+                                className={checkoutTextInputClass(
+                                  !!formErrors[field.key as keyof DeliveryAddressState],
+                                )}
                               />
                             )}
                             {formErrors[field.key as keyof DeliveryAddressState] && (
@@ -1303,6 +1567,7 @@ export function CheckoutPage() {
                           </label>
                         );
                       })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1396,7 +1661,7 @@ export function CheckoutPage() {
               <PaymentMethodSection
                 description={
                   paymentMethod === 'card'
-                    ? 'Platba probíhá přes Stripe Payment Element.'
+                    ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
                     : 'Objednávku uložíme a obchodník vás kontaktuje.'
                 }
                 options={paymentOptionsVisible}
@@ -1444,6 +1709,7 @@ export function CheckoutPage() {
                       stripe={stripePromise}
                       options={{
                         clientSecret,
+                        loader: 'auto',
                         appearance: {
                           theme: 'stripe',
                           variables: {
@@ -1458,6 +1724,10 @@ export function CheckoutPage() {
                         onError={setPaymentIntentError}
                       />
                     </Elements>
+                  )}
+
+                  {paymentMethod === 'card' && stripePublishableKey && (
+                    <CheckoutPaymentPartnersInfo className="mt-5" />
                   )}
 
                   {paymentIntentId && paymentMethod === 'card' && (
@@ -1513,8 +1783,8 @@ export function CheckoutPage() {
 
                 <button
                   type="button"
-                  onClick={goForward}
-                  disabled={!canGoForward || currentStep >= 4}
+                  onClick={() => void goForward()}
+                  disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   {'Pokračovat'}

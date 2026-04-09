@@ -6,6 +6,7 @@ import { SchoolSearch, type PdOwner, type PipedriveStatus } from './TrialPage';
 import { submitFreeTrialAjax, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
+import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -140,7 +141,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
   const emailTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const email = form.email.trim();
-    if (notTeacher || !email.includes('@')) {
+    if (notTeacher || !email || !isValidEmailFormat(email)) {
       setEmailCheck(null);
       return;
     }
@@ -166,13 +167,30 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
       setTrialError('Chyb\u00ed souhlas se zpracov\u00e1n\u00edm \u00fadaj\u016f z registrace.');
       return;
     }
-    if (emailCheck && !emailCheck.canRequest) {
+    if (emailCheck?.emailInvalid && emailCheck.message) {
+      setTrialError(emailCheck.message);
+      return;
+    }
+    if (emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid) {
       setTrialError(`S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od ${emailCheck.cooldownDateStr}.`);
+      return;
+    }
+    if (!isValidEmailFormat(form.email.trim())) {
+      setTrialError(EMAIL_FORMAT_HINT_CS);
       return;
     }
     setTrialSubmitting(true);
     setTrialError('');
     try {
+      const vr = await fetch(
+        `${SERVER}/validate-email?email=${encodeURIComponent(form.email.trim())}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const vd = (await vr.json()) as { ok?: boolean; message?: string };
+      if (!vd.ok) {
+        setTrialError(typeof vd.message === 'string' ? vd.message : EMAIL_FORMAT_HINT_CS);
+        return;
+      }
       const payload = buildTrialFieldsFromWebinar(form);
       const result = await submitFreeTrialAjax(payload);
       if (result.status === 'error') {
@@ -348,7 +366,11 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           <button
             type="button"
             onClick={handleOneClickTrial}
-            disabled={trialSubmitting || !form.gdpr || (!!emailCheck && !emailCheck.canRequest)}
+            disabled={
+              trialSubmitting
+              || !form.gdpr
+              || (!!emailCheck && !emailCheck.canRequest)
+            }
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-5 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9] disabled:cursor-not-allowed disabled:opacity-50"
             style={FF}
           >
@@ -363,7 +385,12 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           </button>
           <div className="flex items-center justify-center gap-2 min-h-[20px]">
             {emailChecking && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#001161]/35" />}
-            {emailCheck && !emailCheck.canRequest && (
+            {emailCheck?.emailInvalid && emailCheck.message && (
+              <p style={FF} className="text-[12px] text-red-700 text-center">
+                {emailCheck.message}
+              </p>
+            )}
+            {emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid && (
               <p style={FF} className="text-[12px] text-amber-800 text-center">
                 {'S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed od '}
                 {emailCheck.cooldownDateStr}.

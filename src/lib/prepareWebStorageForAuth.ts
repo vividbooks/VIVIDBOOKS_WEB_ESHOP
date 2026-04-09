@@ -1,3 +1,5 @@
+import { isVividbooksRemovableCacheKey } from '../utils/vividbooksLocalStoragePreserve';
+
 /**
  * Uvolní místo pro Supabase session / OAuth. Při plné kvótě Chrome hází QuotaExceededError
  * na jakýkoli setItem — pak v Local Storage „nic není“ (zápis selže).
@@ -99,8 +101,8 @@ export async function prepareWebStorageForAuth(
     }
   };
 
-  // 1) Cache katalogu — megabajty
-  removeIf(window.localStorage, (k) => k.startsWith('vividbooks_'));
+  // 1) Cache katalogu — megabajty (ne košík / cookies / adresy — viz isVividbooksRemovableCacheKey)
+  removeIf(window.localStorage, (k) => isVividbooksRemovableCacheKey(k));
 
   // 2) Asistent (obnoví se z cloudu)
   removeIf(window.localStorage, (k) => k.startsWith('dictation_app_'));
