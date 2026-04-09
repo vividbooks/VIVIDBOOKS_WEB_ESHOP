@@ -6,10 +6,15 @@ import {
   Database, FileText, Newspaper, Radio, Package, LayoutGrid,
   BookOpen, Layers, Bot, Brain, Trash2, Upload, Image, GraduationCap, Bell, Megaphone, Users, School,
   Monitor, BarChart3, Mail, Contact,
-  Calendar, Menu, X, ChevronDown, Palette,
+  Calendar, Menu, X, ChevronDown, Palette, Loader2,
 } from 'lucide-react';
+import { useApp } from '@/app/contexts/AppContext';
+import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
+import { isAdminEmailAllowed } from '@/config/adminAllowlist';
 import { fetchAdminAlertSummary, type AdminAlertSummary } from '../../utils/adminApi';
 import { AdminSidebarChatHistory } from './AdminSidebarChatHistory';
+
+const ADMIN_ACCESS_DENIED_MSG = 'Tento účet nemá přístup k administraci.';
 
 // Pipedrive → obchod: Edge funkce pipedrive-inbound-deal (webhook na won deal + token v query).
 // Admin přehled zatím v běžném /admin/objednávky — volitelně /admin/pipedrive-objednavky + ruční expedice.
@@ -149,9 +154,9 @@ const MODE_CONFIG: Record<AdminModeId, {
   },
 };
 
-const SETTINGS_ITEMS: Array<{
+const SETTINGS_ITEMS_BASE: Array<{
   label: string; icon: any; disabled?: boolean; highlight?: boolean;
-  future?: boolean; path?: string; danger?: boolean;
+  future?: boolean; path?: string; danger?: boolean; action?: 'signOut';
 }> = [
   { label: 'Správa licencí', icon: BookOpen, disabled: true },
   { label: 'Aktivita škol', icon: Layers, disabled: true },
@@ -161,7 +166,7 @@ const SETTINGS_ITEMS: Array<{
   { label: 'AI Agent', icon: Bot, disabled: true, highlight: true, future: true },
   { label: 'Zobrazit Vividbooks', icon: Eye, path: '/' },
   { label: 'Vyčistit kategorie', icon: Trash2, disabled: true },
-  { label: 'Odhlásit se', icon: LogOut, danger: true, disabled: true },
+  { label: 'Odhlásit se', icon: LogOut, danger: true, action: 'signOut' },
 ];
 
 /* ── Layout ────────────────────────────────────────────────────────────── */
@@ -169,12 +174,28 @@ const SETTINGS_ITEMS: Array<{
 export default function AdminLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, authReady, signOut } = useApp();
+  const [accessDeniedMessage, setAccessDeniedMessage] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [alertSummary, setAlertSummary] = useState<AdminAlertSummary | null>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (!user?.email) {
+      setAccessDeniedMessage(null);
+      return;
+    }
+    if (isAdminEmailAllowed(user.email)) {
+      setAccessDeniedMessage(null);
+      return;
+    }
+    setAccessDeniedMessage(ADMIN_ACCESS_DENIED_MSG);
+    void signOut();
+  }, [authReady, user, signOut]);
 
   const mode: AdminModeId = location.pathname.startsWith('/marketing')
     ? 'marketing'
@@ -257,6 +278,28 @@ export default function AdminLayout() {
     agent: 'Web operator assistant',
     'visual-editor': 'Vizuální editor',
   };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-dvh flex flex-col items-center justify-center bg-[#f7f8fc] gap-3">
+        <Loader2 className="w-10 h-10 text-[#001161]/35 animate-spin" aria-label="Načítání" />
+        <p className="text-[13px] text-[#001161]/50 font-medium">Ověřuji přihlášení…</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AssistantLoginScreen accessDeniedMessage={accessDeniedMessage} subtitle="Administrace" />;
+  }
+
+  if (!isAdminEmailAllowed(user.email)) {
+    return (
+      <AssistantLoginScreen
+        accessDeniedMessage={accessDeniedMessage ?? ADMIN_ACCESS_DENIED_MSG}
+        subtitle="Administrace"
+      />
+    );
+  }
 
   if (isVisualEditor) {
     return (
@@ -441,11 +484,15 @@ export default function AdminLayout() {
 
           {settingsOpen && (
             <div className="absolute top-full right-0 mt-2 bg-white rounded-2xl shadow-xl border border-gray-100 py-2 z-[100] w-[240px]">
-              {SETTINGS_ITEMS.map((item) => (
+              {SETTINGS_ITEMS_BASE.map((item) => (
                 <button
                   key={item.label}
                   onClick={() => {
                     setSettingsOpen(false);
+                    if (item.action === 'signOut') {
+                      void signOut();
+                      return;
+                    }
                     if (item.path) navigate(item.path);
                   }}
                   disabled={item.disabled}

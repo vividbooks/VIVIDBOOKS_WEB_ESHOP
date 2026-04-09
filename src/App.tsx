@@ -1,6 +1,7 @@
 import React, { Suspense } from 'react';
 import { RouterProvider } from 'react-router';
 import { router } from './routes';
+import { AppProvider } from '@/app/contexts/AppContext';
 import { ProductsProvider } from './contexts/ProductsContext';
 import { WebOperatorChatsBridgeProvider } from './contexts/WebOperatorChatsBridgeContext';
 
@@ -20,12 +21,14 @@ function RouteLoadingFallback() {
 
 export default function App() {
   return (
-    <ProductsProvider>
-      <WebOperatorChatsBridgeProvider>
-        <Suspense fallback={<RouteLoadingFallback />}>
-          <RouterProvider router={router} />
-        </Suspense>
-      </WebOperatorChatsBridgeProvider>
-    </ProductsProvider>
+    <AppProvider>
+      <ProductsProvider>
+        <WebOperatorChatsBridgeProvider>
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <RouterProvider router={router} />
+          </Suspense>
+        </WebOperatorChatsBridgeProvider>
+      </ProductsProvider>
+    </AppProvider>
   );
 }

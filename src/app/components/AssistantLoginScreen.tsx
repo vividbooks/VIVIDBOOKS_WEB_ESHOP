@@ -4,9 +4,14 @@ import { useApp } from '@/app/contexts/AppContext';
 
 type AssistantLoginScreenProps = {
   accessDeniedMessage?: string | null;
+  /** Výchozí: „Asistent“ — pro admin např. „Administrace“ */
+  subtitle?: string;
 };
 
-export const AssistantLoginScreen: React.FC<AssistantLoginScreenProps> = ({ accessDeniedMessage }) => {
+export const AssistantLoginScreen: React.FC<AssistantLoginScreenProps> = ({
+  accessDeniedMessage,
+  subtitle = 'Asistent',
+}) => {
   const { signInWithGoogle, authReady } = useApp();
 
   return (
@@ -19,7 +24,7 @@ export const AssistantLoginScreen: React.FC<AssistantLoginScreenProps> = ({ acce
           >
             Vividbooks
           </h1>
-          <p className="text-[#8E8E93] text-lg font-medium">Asistent</p>
+          <p className="text-[#8E8E93] text-lg font-medium">{subtitle}</p>
         </div>
 
         {accessDeniedMessage ? (
