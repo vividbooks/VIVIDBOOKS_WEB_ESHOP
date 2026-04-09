@@ -8,7 +8,7 @@ import { isVividbooksRemovableCacheKey } from './utils/vividbooksLocalStoragePre
 installChunkLoadRecovery();
 
 // Stará verze ukládala celý katalog do localStorage a vyčerpala kvótu — OAuth pak nemohl zapsat session.
-// Pozor: nemazat vividbooks_cart_v1, cookie consent, checkout adresy (viz vividbooksLocalStoragePreserve).
+// Pozor: nemazat košík, cookie consent, checkout adresy, DVPP identity (viz vividbooksLocalStoragePreserve).
 if (typeof window !== 'undefined') {
   try {
     for (let i = window.localStorage.length - 1; i >= 0; i--) {

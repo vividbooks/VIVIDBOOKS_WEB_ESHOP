@@ -5,6 +5,8 @@
 export const VIVIDBOOKS_LS_PRESERVE = new Set([
   'vividbooks_cart_v1',
   'vividbooks_checkout_addresses_v1',
+  /** Brána DVPP dotazníku — uložené identity (jméno, e-mail, škola…) */
+  'vividbooks_dvpp_survey_contacts_v1',
   'vividbooks_cookie_consent_v1',
   'vividbooks_cookie_consent_v2',
   /** Admin Agent — snapshot konverzace */

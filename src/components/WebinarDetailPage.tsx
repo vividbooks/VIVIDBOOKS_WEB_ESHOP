@@ -706,37 +706,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 maxLength={10}
                 className="mb-5 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
               />
-              {savedDvppContacts.length > 0 && (
-                <div className="mb-5 rounded-[14px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-3">
-                  <p className="mb-2 font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/55">
-                    {'Ulo\u017een\u00fd kontakt v tomto prohl\u00ed\u017ee\u010di'}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {savedDvppContacts.map((c, i) => (
-                      <button
-                        key={`${c.savedAt}-${i}`}
-                        type="button"
-                        onClick={() => applySavedDvppContact(c)}
-                        className="max-w-full rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2 text-left font-['Fenomen_Sans',sans-serif] text-[12px] leading-snug text-[#001161] transition-colors hover:border-[#5b4fd8]/50 hover:bg-[#fafaff]"
-                      >
-                        <span className="line-clamp-3">
-                          {c.name}
-                          {' · '}
-                          {c.email}
-                          <br />
-                          {c.schoolName}
-                          {c.ico ? (
-                            <>
-                              {' · I\u010cO '}
-                              {c.ico}
-                            </>
-                          ) : null}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
               <button
                 type="button"
                 disabled={!dvppGateValid}
@@ -756,6 +725,26 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 {'Pokra\u010dovat k dotazn\u00edku'}
               </button>
             </div>
+            {savedDvppContacts.length > 0 && (
+              <div className="mt-1 w-full rounded-[20px] border border-[#001161]/10 bg-white/90 px-4 py-3 shadow-sm">
+                <p className="mb-2 font-['Fenomen_Sans',sans-serif] text-[12px] font-bold text-[#001161]/70">
+                  {'Ulo\u017een\u00e9 identity:'}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {savedDvppContacts.map((c, i) => (
+                    <button
+                      key={`${c.savedAt}-${i}`}
+                      type="button"
+                      onClick={() => applySavedDvppContact(c)}
+                      title={`${c.email}\n${c.schoolName}${c.ico ? ` · IČO ${c.ico}` : ''}`}
+                      className="inline-flex max-w-full items-center rounded-full border border-[#001161]/15 bg-[#f8f9fc] px-3.5 py-1.5 font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161] transition-colors hover:border-[#5b4fd8]/45 hover:bg-[#fafaff]"
+                    >
+                      {c.name.trim() || c.email}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
       );
