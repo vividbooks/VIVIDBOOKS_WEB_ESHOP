@@ -22,7 +22,10 @@ type Props = {
   flowProgressFilled?: number;
   onStepChange?: (step: number) => void;
   /** Částečné uložení jedné odpovědi (KV). */
-  onSavePartialAnswer?: (questionId: string, value: string) => Promise<void>;
+  onSavePartialAnswer?: (
+    questionId: string,
+    value: string,
+  ) => Promise<void | { wrongAnswer?: boolean }>;
 };
 
 function canAdvance(

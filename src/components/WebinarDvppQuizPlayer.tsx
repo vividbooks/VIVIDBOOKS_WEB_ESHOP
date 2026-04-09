@@ -18,6 +18,9 @@ const INTRO_FILL = '#C2DFFF';
 const ANSWER_BTN =
   'inline-flex items-center justify-center gap-2 rounded-xl bg-[#001161] px-6 py-2.5 text-[14px] font-bold text-white shadow-md shadow-[#001161]/20 transition hover:bg-[#001a8c] disabled:opacity-50';
 
+const WRONG_ANSWER_HINT =
+  'Tato odpov\u011b\u010f nebyla spr\u00e1vn\u00e1. M\u016f\u017eete pokra\u010dovat d\u00e1l.';
+
 type Props = {
   webinarTitle: string;
   questions: PostWebinarQuizQuestion[];
@@ -32,7 +35,10 @@ type Props = {
   /** Sledování kroku pro rodiče (globální progress). */
   onStepChange?: (step: number) => void;
   /** Uložení jedné odpovědi na server (částečný zápis) — po webináři. */
-  onSavePartialAnswer?: (questionId: string, value: string) => Promise<void>;
+  onSavePartialAnswer?: (
+    questionId: string,
+    value: string,
+  ) => Promise<void | { wrongAnswer?: boolean }>;
 };
 
 /**
@@ -79,7 +85,16 @@ export function WebinarDvppQuizPlayer({
   const currentQ = step >= 0 && step < total ? questions[step] : null;
   const selectedForCurrent = currentQ ? answers[currentQ.id] : undefined;
 
+  const selectOption = useCallback(
+    (questionId: string, opt: string) => {
+      setWrongAnswerHint('');
+      onAnswerChange(questionId, opt);
+    },
+    [onAnswerChange],
+  );
+
   const goPrev = useCallback(() => {
+    setWrongAnswerHint('');
     setStep((s) => Math.max(-1, s - 1));
   }, []);
 
@@ -91,13 +106,15 @@ export function WebinarDvppQuizPlayer({
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
+      setWrongAnswerHint('');
       navBusyRef.current = true;
       setNavBusy(true);
       void (async () => {
         try {
           if (onSavePartialAnswer && currentQ && selectedForCurrent) {
             try {
-              await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+              const res = await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+              if (res && typeof res === 'object' && res.wrongAnswer) setWrongAnswerHint(WRONG_ANSWER_HINT);
             } catch (e) {
               setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
               return;
@@ -123,7 +140,9 @@ export function WebinarDvppQuizPlayer({
     setPartialErr('');
     setPartialSaving(true);
     try {
-      await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+      const res = await onSavePartialAnswer(currentQ.id, selectedForCurrent);
+      if (res && typeof res === 'object' && res.wrongAnswer) setWrongAnswerHint(WRONG_ANSWER_HINT);
+      else setWrongAnswerHint('');
     } catch (e) {
       setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
     } finally {
@@ -191,6 +210,16 @@ export function WebinarDvppQuizPlayer({
             )}
           </div>
 
+          {step >= 0 && wrongAnswerHint ? (
+            <div
+              role="status"
+              className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-center text-[13px] leading-snug text-amber-950"
+              style={FF}
+            >
+              {wrongAnswerHint}
+            </div>
+          ) : null}
+
           <AnimatePresence mode="wait">
             {step === -1 && (
               <motion.div
@@ -242,7 +271,7 @@ export function WebinarDvppQuizPlayer({
                       <button
                         key={`${currentQ.id}-${oi}`}
                         type="button"
-                        onClick={() => onAnswerChange(currentQ.id, opt)}
+                        onClick={() => selectOption(currentQ.id, opt)}
                         className={`flex w-full items-stretch gap-3 rounded-2xl border-2 px-3 py-3 text-left transition-all ${
                           sel
                             ? 'border-[#7C3AED] bg-[#7C3AED]/[0.06] shadow-sm'
@@ -363,6 +392,16 @@ export function WebinarDvppQuizPlayer({
           )}
         </div>
 
+        {step >= 0 && wrongAnswerHint ? (
+          <div
+            role="status"
+            className="mb-2 shrink-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-[13px] leading-snug text-amber-950 sm:mb-3"
+            style={FF}
+          >
+            {wrongAnswerHint}
+          </div>
+        ) : null}
+
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overflow-x-hidden rounded-[1.65rem] bg-white shadow-[0_24px_64px_-18px_rgba(15,23,42,0.14)] ring-1 ring-slate-200/80 sm:rounded-[2rem]">
           <div className="flex min-h-0 flex-1 flex-col">
             <AnimatePresence mode="wait">
@@ -424,7 +463,7 @@ export function WebinarDvppQuizPlayer({
                           <button
                             key={`${currentQ.id}-${oi}`}
                             type="button"
-                            onClick={() => onAnswerChange(currentQ.id, opt)}
+                            onClick={() => selectOption(currentQ.id, opt)}
                             className={`relative flex items-center gap-3 rounded-2xl border-2 p-3 text-left transition-all md:gap-4 md:p-4 ${
                               sel
                                 ? 'border-indigo-500 bg-indigo-50 shadow-sm'

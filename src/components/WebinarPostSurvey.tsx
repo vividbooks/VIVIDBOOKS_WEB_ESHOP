@@ -269,7 +269,7 @@ export function WebinarPostSurvey({
   }, [answers, email, webinar.id, restQuestions.length, restQuestionsComplete]);
 
   const savePartialAnswer = useCallback(
-    async (questionId: string, value: string) => {
+    async (questionId: string, value: string): Promise<void | { wrongAnswer?: boolean }> => {
       if (scope !== 'post') return;
       const r = await saveWebinarSurveyPartialAnswer({
         webinarId: String(webinar.id ?? '').trim(),
@@ -278,6 +278,7 @@ export function WebinarPostSurvey({
         value,
       });
       if (!r.ok) throw new Error(r.error || 'Chyba');
+      return 'wrongAnswer' in r && r.wrongAnswer ? { wrongAnswer: true } : undefined;
     },
     [scope, webinar.id, email],
   );

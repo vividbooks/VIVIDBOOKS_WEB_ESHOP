@@ -38,7 +38,7 @@ export async function saveWebinarSurveyPartialAnswer(args: {
     }),
   });
   const rawText = await res.text();
-  let data: { error?: string; success?: boolean } = {};
+  let data: { error?: string; success?: boolean; wrongAnswer?: boolean } = {};
   try {
     data = (parseJsonResponseBody(rawText) || {}) as typeof data;
   } catch {
@@ -57,5 +57,6 @@ export async function saveWebinarSurveyPartialAnswer(args: {
   if (!data.success) {
     return { ok: false, error: data.error || 'Uložení se nezdařilo' };
   }
+  if (data.wrongAnswer) return { ok: true, wrongAnswer: true as const };
   return { ok: true };
 }

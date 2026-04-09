@@ -5295,15 +5295,8 @@ const webinarSurveyPartialHandler = async (c: Context) => {
     }
 
     const dvppCorrect = getDvppQuizCorrectAnswerText(webinar, questionId);
-    if (dvppCorrect != null && value.trim() !== dvppCorrect.trim()) {
-      return c.json(
-        {
-          error: 'Odpověď není správná. Vyberte jinou možnost.',
-          wrongAnswer: true,
-        },
-        400,
-      );
-    }
+    const wrongDvpp =
+      dvppCorrect != null && value.trim() !== dvppCorrect.trim();
 
     const partialKey = webinarSurveyPartialKey(webinarId, email);
     const nameForPartial = (reg as any).name || '';
@@ -5343,7 +5336,7 @@ const webinarSurveyPartialHandler = async (c: Context) => {
         409,
       );
     }
-    return c.json({ success: true });
+    return c.json(wrongDvpp ? { success: true, wrongAnswer: true } : { success: true });
   } catch (err: any) {
     console.log(`[Survey partial] Chyba: ${err.message}`);
     return c.json({ error: err.message || String(err) }, 500);
@@ -5388,16 +5381,6 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       if (q.type === 'abc' && q.options && q.options.length > 0) {
         const ok = q.options.some((o) => o === s);
         if (!ok) return c.json({ error: `Neplatná volba u: ${q.label}` }, 400);
-      }
-      const dvppCorrect = getDvppQuizCorrectAnswerText(webinar, q.id);
-      if (dvppCorrect != null && s !== dvppCorrect.trim()) {
-        return c.json(
-          {
-            error: 'DVPP kvíz obsahuje nesprávnou odpověď. Vraťte se k otázkám a opravte výběr.',
-            wrongAnswer: true,
-          },
-          400,
-        );
       }
       out[q.id] = s;
     }
