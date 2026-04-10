@@ -10315,6 +10315,15 @@ function parsePipedriveNumericId(value: unknown) {
   return Number.isFinite(num) && num > 0 ? num : null;
 }
 
+/** Vlastník organizace v Pipedrive (GET /organizations/:id → owner_id). */
+function parsePipedriveOrgOwnerId(org: any): number | null {
+  if (!org) return null;
+  const raw = org.owner_id;
+  if (raw == null) return null;
+  if (typeof raw === 'object') return parsePipedriveNumericId((raw as any).id ?? (raw as any).value);
+  return parsePipedriveNumericId(raw);
+}
+
 /** Minimální odstup mezi zkušebními žádostmi pro stejné IČO (6×30 dní, shodně s KV newsletter — přibližné měsíce). */
 const PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 
@@ -10637,10 +10646,16 @@ async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   return pipedriveOrgIcoFieldKeyCache;
 }
 
-async function searchPipedriveOrganizations(apiToken: string, term: string) {
+async function searchPipedriveOrganizations(
+  apiToken: string,
+  term: string,
+  opts?: { fields?: string },
+) {
   const cleanTerm = String(term || '').trim();
   if (!cleanTerm) return [];
-  const data = await pipedriveRequest<any>(apiToken, '/organizations/search', {}, { term: cleanTerm, limit: 10 });
+  const query: Record<string, string | number> = { term: cleanTerm, limit: 10 };
+  if (opts?.fields) query.fields = opts.fields;
+  const data = await pipedriveRequest<any>(apiToken, '/organizations/search', {}, query);
   return Array.isArray(data?.data?.items) ? data.data.items : [];
 }
 
@@ -10733,7 +10748,7 @@ async function lookupSchoolInPipedrive(
   let matchedBy: 'ico' | 'name' | null = null;
 
   if (ico) {
-    items = await searchPipedriveOrganizations(apiToken, ico);
+    items = await searchPipedriveOrganizations(apiToken, ico, { fields: 'custom_fields' });
     if (items.length > 0) matchedBy = 'ico';
   }
   if (!items.length && name) {
@@ -13250,6 +13265,17 @@ const PIPEDRIVE_ESHOP_PIPELINE_ID_DEFAULT = 20;
 const PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT = 419;
 const PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT = 488;
 
+/** Vlastní pole „product category“ / e-shop tiskoviny — hodnota `print` (obchodní spec). */
+const PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT = '3f0c870ac132eec72589da1313e2388977c4a74f';
+
+function getEshopProductCategoryPayload(): Record<string, unknown> {
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY') || '').trim()
+    || PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT;
+  const value = (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_VALUE') || '').trim() || 'print';
+  return { [key]: value };
+}
+
 function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
   const L = (s: unknown) => String(s || '').trim().toLowerCase();
   if (wanted === 'won') {
@@ -13730,9 +13756,10 @@ async function refreshEshopPipedriveDealFromDb(
     if (v !== undefined) patchBody[labelFieldKey] = v;
   }
   Object.assign(patchBody, printPayload);
+  Object.assign(patchBody, getEshopProductCategoryPayload());
 
   if (!Object.keys(patchBody).length) {
-    console.log('[Pipedrive eshop] refresh: žádné štítky ani PRINT v konfiguraci');
+    console.log('[Pipedrive eshop] refresh: žádná pole k aktualizaci');
     return { skipped: true, reason: 'nothing_to_update', detail: 'Nastavte štítky nebo PRINT (env / dealFields).' };
   }
 
@@ -13852,6 +13879,8 @@ async function syncEshopOrderToPipedriveFromDb(
   if (!email) return await fail('missing_email');
 
   let orgId: number | null = null;
+  /** Vlastník organizace (GET /organizations/:id) — pro B2B deal owner. */
+  let orgOwnerIdFromApi: number | null = null;
   if (isB2b) {
     const schoolName = String((order as any).school_name || personName).trim();
     const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
@@ -13861,6 +13890,12 @@ async function syncEshopOrderToPipedriveFromDb(
     });
     orgId = orgLookup.orgId;
     if (!orgId) return await fail('missing_org');
+    try {
+      const orgDetail = await getPipedriveOrganization(apiToken, orgId);
+      orgOwnerIdFromApi = parsePipedriveOrgOwnerId(orgDetail);
+    } catch (e: any) {
+      console.log(`[Pipedrive eshop] GET /organizations/${orgId} owner: ${e.message}`);
+    }
   }
 
   let person: any = null;
@@ -13884,22 +13919,26 @@ async function syncEshopOrderToPipedriveFromDb(
   const personId = parsePipedriveNumericId(person?.id);
   if (!personId) return await fail('missing_person');
 
+  const defaultOwnerFallback = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_DEFAULT_OWNER_ID'));
+
   let status: 'open' | 'won' = 'open';
   let stageId = stageOpenId;
-  let ownerId = parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_DEFAULT_OWNER_ID'));
+  let ownerId: number | null = null;
 
   if (mode === 'b2c_card_won') {
     status = 'won';
     stageId = stageWonId;
     ownerId =
       parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_B2C_OWNER_ID'))
-      || ownerId;
+      || defaultOwnerFallback;
   } else if (mode === 'b2b_card_won') {
     status = 'won';
     stageId = stageWonId;
+    ownerId = orgOwnerIdFromApi || defaultOwnerFallback;
   } else if (mode === 'b2b_transfer_open') {
     status = 'open';
     stageId = stageOpenId;
+    ownerId = orgOwnerIdFromApi || defaultOwnerFallback;
   }
 
   const orderNumber = String((order as any).order_number || '');
@@ -13911,6 +13950,8 @@ async function syncEshopOrderToPipedriveFromDb(
   const statusPayload = await resolveDealStatusPayloadFromFields(apiToken, status);
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  const productCategoryPayload = getEshopProductCategoryPayload();
+  const extraPayload: Record<string, unknown> = { ...printPayload, ...productCategoryPayload };
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
@@ -13926,7 +13967,7 @@ async function syncEshopOrderToPipedriveFromDb(
     statusPayload,
     labelFieldKey,
     labelIds: labelIds.length ? labelIds : undefined,
-    extraPayload: Object.keys(printPayload).length ? printPayload : undefined,
+    extraPayload: Object.keys(extraPayload).length ? extraPayload : undefined,
   });
 
   const dealId = parsePipedriveNumericId(deal?.id);
