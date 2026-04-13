@@ -6,6 +6,11 @@ import { getProductImage, isPrintProduct } from './cartUpsellUtils';
 import {
   buildBundleCartLines,
   bundleCatalogListSumHaler,
+  bundleSlotTotalCount,
+  getNxPlusSubjectSlotCounts,
+  productMatchesBundleSubjectLabels,
+  productsEligibleForSubjectBundle,
+  bundleIsNxPlusOneSubject,
   type ProductBundleRecord,
 } from '../utils/bundlePricing';
 
@@ -98,6 +103,18 @@ function computeBundleFanCovers(
   products: any[],
   anchorProduct: any | undefined,
 ): any[] {
+  if (bundleIsNxPlusOneSubject(bundle)) {
+    const eligible = productsEligibleForSubjectBundle(bundle, products);
+    if (anchorProduct && productMatchesBundleSubjectLabels(anchorProduct, bundle.bundleSubjectLabels)) {
+      const others = eligible.filter((p) => String(p.id) !== String(anchorProduct.id));
+      const withImg = others.filter((p) => isPrintProduct(p) && getProductImage(p));
+      const pick = withImg.length > 0 ? withImg : (getProductImage(anchorProduct) ? [anchorProduct] : []);
+      return pickUpToFourSeeded(pick, `${bundle.id}:${anchorProduct.id}`);
+    }
+    const coverCandidates = eligible.filter((p) => isPrintProduct(p) && getProductImage(p));
+    return pickUpToFourSeeded(coverCandidates, `${bundle.id}:subject-listing`);
+  }
+
   const ids = bundle.productIds || [];
   if (ids.length === 0) return [];
 
@@ -141,12 +158,16 @@ export function ProductBundlePromoTile({
   addingBundleId,
 }: ProductBundlePromoTileProps) {
   const navigate = useNavigate();
-  const ids = bundle.productIds || [];
-  const nTit = ids.length;
+  const nTit = bundleSlotTotalCount(bundle);
   const listHaler = bundleCatalogListSumHaler(bundle, products);
   const packHaler = Math.max(0, Math.round(bundle.bundlePriceHaler || 0));
+  const isSubjectBundle = bundleIsNxPlusOneSubject(bundle);
+  const subjectSlots = getNxPlusSubjectSlotCounts(bundle);
+  const showListStrike = !isSubjectBundle && listHaler > 0 && listHaler > packHaler;
   const instanceProbe = anchorProduct ? 'pdp-bundle-probe' : 'akce-bundle-probe';
-  const linesOk = buildBundleCartLines(products, bundle, instanceProbe).length === nTit && nTit > 0;
+  const linesOk = !isSubjectBundle
+    && buildBundleCartLines(products, bundle, instanceProbe).length === nTit
+    && nTit > 0;
   const coverPick = computeBundleFanCovers(bundle, products, anchorProduct);
 
   const fmtKc = (h: number) =>
@@ -157,21 +178,38 @@ export function ProductBundlePromoTile({
 
   const bundlePath = `/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`;
 
+  const introMainLine = isSubjectBundle && subjectSlots
+    ? `Akce ${subjectSlots.paid}+${subjectSlots.free} — nastav\u00edte na str\u00e1nce bal\u00ed\u010dku.`
+    : `Zahrnuje ${nTit}\u00a0${titulSkloneni(nTit)}.`;
+
   const intro = heading ? (
-    <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0">
-      {`Zahrnuje ${nTit}\u00a0${titulSkloneni(nTit)}.`}
-    </p>
+    <div className="min-w-0">
+      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0">
+        {introMainLine}
+      </p>
+    </div>
   ) : (
-    <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0">
-      {'Tento titul si m\u016f\u017eete po\u0159\u00eddit ve zv\u00fdhodn\u011bn\u00e9m bal\u00ed\u010dku:\u00a0'}
-      <strong className="font-semibold">{bundle.title}</strong>
-      {`\u00a0: ${nTit}\u00a0${titulSkloneni(nTit)}`}
-    </p>
+    <div className="min-w-0">
+      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0">
+        {isSubjectBundle && subjectSlots ? (
+          <>
+            <strong className="font-semibold">{bundle.title}</strong>
+            {`: ${introMainLine}`}
+          </>
+        ) : (
+          <>
+            {'Tento titul si m\u016f\u017eete po\u0159\u00eddit ve zv\u00fdhodn\u011bn\u00e9m bal\u00ed\u010dku:\u00a0'}
+            <strong className="font-semibold">{bundle.title}</strong>
+            {`\u00a0: ${nTit}\u00a0${titulSkloneni(nTit)}`}
+          </>
+        )}
+      </p>
+    </div>
   );
 
-  const priceLine = (
+  const standardPriceBlock = (
     <>
-      {listHaler > 0 && listHaler > packHaler && (
+      {showListStrike && (
         <span className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#78350f]/55 line-through">
           {fmtKc(listHaler)}
         </span>
@@ -185,7 +223,15 @@ export function ProductBundlePromoTile({
     </>
   );
 
-  const actionsBlockPdp = (
+  const actionsBlockPdp = isSubjectBundle ? (
+    <Link
+      to={bundlePath}
+      className="inline-flex items-center justify-center gap-1.5 sm:gap-2 py-1.5 sm:py-2 px-3 sm:px-3.5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] transition-colors cursor-pointer border-0 min-w-0 text-center"
+    >
+      <ShoppingCart className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
+      {'Vybrat tituly'}
+    </Link>
+  ) : (
     <>
       <button
         type="button"
@@ -257,51 +303,66 @@ export function ProductBundlePromoTile({
           <div
             className={
               narrowGrid
-                ? 'flex-1 min-w-0 flex flex-col gap-3 text-center'
+                ? 'flex-1 min-h-0 min-w-0 flex flex-col gap-3 text-center'
                 : 'flex-1 min-w-0 flex flex-col gap-1.5 sm:gap-2 text-center sm:text-left'
             }
           >
-            {intro}
             {narrowGrid ? (
               <>
-                <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 w-full min-w-0">
-                  {priceLine}
+                <div className="flex-1 flex flex-col gap-3 min-h-0 text-center">
+                  {intro}
+                  {!isSubjectBundle ? (
+                    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 w-full min-w-0">
+                      {standardPriceBlock}
+                    </div>
+                  ) : null}
                 </div>
-                <div className="flex flex-row gap-2 w-full min-w-0 mt-0.5">
-                  <button
-                    type="button"
-                    disabled={!linesOk || addingBundleId === bundle.id}
-                    onClick={() => onAddToSchoolOrder(bundle)}
-                    className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer border-0 text-center leading-tight"
-                  >
-                    <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
-                    {'P\u0159idat do objedn\u00e1vky'}
-                  </button>
-                  <Link
-                    to={bundlePath}
-                    className="flex-1 min-w-0 inline-flex items-center justify-center py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-normal text-[#92400e] underline underline-offset-2 hover:opacity-90 border border-[#d97706]/35 bg-white/90 text-center leading-tight"
-                  >
-                    {'V\u00edce o akci'}
-                  </Link>
+                <div
+                  className={
+                    isSubjectBundle
+                      ? 'flex shrink-0 justify-center pt-2 w-full min-w-0'
+                      : 'flex flex-row gap-2 w-full min-w-0 mt-0.5'
+                  }
+                >
+                  {isSubjectBundle ? (
+                    <Link
+                      to={bundlePath}
+                      className="inline-flex items-center justify-center gap-1.5 py-2 px-4 sm:px-5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] transition-colors cursor-pointer border-0 text-center leading-tight w-auto max-w-[min(100%,240px)]"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                      {'Vybrat tituly'}
+                    </Link>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!linesOk || addingBundleId === bundle.id}
+                        onClick={() => onAddToSchoolOrder(bundle)}
+                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer border-0 text-center leading-tight"
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                        {'P\u0159idat do objedn\u00e1vky'}
+                      </button>
+                      <Link
+                        to={bundlePath}
+                        className="flex-1 min-w-0 inline-flex items-center justify-center py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-normal text-[#92400e] underline underline-offset-2 hover:opacity-90 border border-[#d97706]/35 bg-white/90 text-center leading-tight"
+                      >
+                        {'V\u00edce o akci'}
+                      </Link>
+                    </>
+                  )}
                 </div>
               </>
             ) : (
-              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 sm:gap-x-2.5 gap-y-1.5 w-full min-w-0">
-                {listHaler > 0 && listHaler > packHaler && (
-                  <span className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#78350f]/55 line-through">
-                    {fmtKc(listHaler)}
-                  </span>
-                )}
-                <span className="font-['Fenomen_Sans',sans-serif] text-[17px] sm:text-[19px] font-bold text-[#001161]">
-                  {fmtKc(packHaler)}
-                </span>
-                <span className="font-['Fenomen_Sans',sans-serif] text-[10px] sm:text-[11px] uppercase tracking-wide text-[#92400e] font-normal">
-                  {'cena bal\u00ed\u010dku'}
-                </span>
-                {actionsBlockPdp}
-              </div>
+              <>
+                {intro}
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 sm:gap-x-2.5 gap-y-1.5 w-full min-w-0">
+                  {!isSubjectBundle ? standardPriceBlock : null}
+                  {actionsBlockPdp}
+                </div>
+              </>
             )}
-            {!linesOk && (
+            {!isSubjectBundle && !linesOk && (
               <p className="text-[11px] text-[#9a3412] m-0">
                 {'Bal\u00ed\u010dek te\u010d nejde p\u0159idat do ko\u0161\u00edku \u2014 chyb\u00ed produkt v katalogu nebo varianta.'}
               </p>

@@ -40,9 +40,11 @@ export interface ProductStockInventoryMeta {
   warehouseId?: string | null;
 }
 
-export async function fetchProductStockItem(productId: string) {
+export async function fetchProductStockItem(productId: string, shoptetSku?: string | null) {
   const url = new URL(PRODUCT_STOCK_STATUS_BASE);
   url.searchParams.set('productId', productId);
+  const sku = typeof shoptetSku === 'string' ? shoptetSku.trim() : '';
+  if (sku) url.searchParams.set('shoptetSku', sku);
 
   const res = await fetch(url.toString(), { headers: HEADERS });
   if (!res.ok) {

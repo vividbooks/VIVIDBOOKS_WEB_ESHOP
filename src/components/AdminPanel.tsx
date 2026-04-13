@@ -345,6 +345,7 @@ export function AdminPanel({ onClose, onProductsChange, onOpenCatalog }: AdminPa
                             <SelectItem value="online">Digitální licence</SelectItem>
                             <SelectItem value="workbook">Pracovní sešit</SelectItem>
                             <SelectItem value="vividboard">Vividboard</SelectItem>
+                            <SelectItem value="merch">Další produkt (merch)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -389,6 +390,17 @@ export function AdminPanel({ onClose, onProductsChange, onOpenCatalog }: AdminPa
                           placeholder="https://flipbook.vividbooks.com/..."
                         />
                         <p className="text-[10px] text-gray-400 mt-1 italic">Tento odkaz se načítá z pole "ukázka link" ve Webflow.</p>
+                      </div>
+
+                      <div className="col-span-2">
+                        <Label>Ukázka videa (URL)</Label>
+                        <Input
+                          value={editingProduct.previewVideoLink || ''}
+                          onChange={e => setEditingProduct({ ...editingProduct, previewVideoLink: e.target.value })}
+                          className="mt-1"
+                          placeholder="https://www.youtube.com/watch?v=… nebo přímý .mp4"
+                        />
+                        <p className="text-[10px] text-gray-400 mt-1 italic">Zobrazí se třetí tlačítko v detailu produktu (modal s přehrávačem).</p>
                       </div>
 
                       <div className="col-span-2">

@@ -11,7 +11,7 @@ import {
 import { useApp } from '@/app/contexts/AppContext';
 import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
 import { isAdminEmailAllowed } from '@/config/adminAllowlist';
-import { fetchAdminAlertSummary, type AdminAlertSummary } from '../../utils/adminApi';
+import { fetchAdminAlertSummary, fetchAdminOrders, type AdminAlertSummary } from '../../utils/adminApi';
 import { AdminSidebarChatHistory } from './AdminSidebarChatHistory';
 
 const ADMIN_ACCESS_DENIED_MSG = 'Tento účet nemá přístup k administraci.';
@@ -58,6 +58,7 @@ const ESHOP_SIDEBAR = [
       { label: 'Skladové zásoby', icon: Package, path: '/admin/sklad' },
       { label: 'Alerty', icon: Bell, path: '/admin/alerty' },
       { label: 'Balíčky', icon: Layers, path: '/admin/balicky' },
+      { label: 'Objednávky plakátů', icon: Image, path: '/admin/plakaty' },
     ],
   },
 ];
@@ -73,7 +74,15 @@ const ASSISTANT_SIDEBAR = [
 
 type AdminModeId = 'web' | 'marketing' | 'eshop' | 'assistant';
 
-const ESHOP_PATHS = ['/admin/objednavky', '/admin/analytika', '/admin/skoly', '/admin/sklad', '/admin/alerty', '/admin/balicky'];
+const ESHOP_PATHS = [
+  '/admin/objednavky',
+  '/admin/analytika',
+  '/admin/skoly',
+  '/admin/sklad',
+  '/admin/alerty',
+  '/admin/balicky',
+  '/admin/plakaty',
+];
 const ASSISTANT_PATHS = ['/admin/agent'];
 
 const MARKETING_SIDEBAR = [
@@ -180,6 +189,8 @@ export default function AdminLayout() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [alertSummary, setAlertSummary] = useState<AdminAlertSummary | null>(null);
+  /** Počet plakátových objednávek se stavem nehotovo (pro výrazný odkaz v menu). */
+  const [posterPendingCount, setPosterPendingCount] = useState(0);
   const settingsRef = useRef<HTMLDivElement>(null);
   const modeMenuRef = useRef<HTMLDivElement>(null);
 
@@ -258,6 +269,46 @@ export default function AdminLayout() {
     };
   }, [mode]);
 
+  useEffect(() => {
+    if (mode !== 'eshop') {
+      setPosterPendingCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: number | undefined;
+
+    const loadPosterPending = async () => {
+      try {
+        const data = await fetchAdminOrders({
+          filter: 'all',
+          posterOnly: true,
+          page: 1,
+          pageSize: 500,
+          search: '',
+        });
+        if (cancelled) return;
+        const n = (data.items || []).filter((row) => (row.poster_fulfillment_status || 'pending') !== 'done').length;
+        setPosterPendingCount(n);
+      } catch {
+        if (!cancelled) setPosterPendingCount(0);
+      }
+    };
+
+    void loadPosterPending();
+    intervalId = window.setInterval(loadPosterPending, 60000);
+    const onFocus = () => {
+      void loadPosterPending();
+    };
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('focus', onFocus);
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [mode, location.pathname]);
+
   const pathParts = location.pathname.replace(basePath, '').split('/').filter(Boolean);
   const breadcrumbLabels: Record<string, string> = {
     kolekce: 'Kolekce', produkty: 'Produkty', blog: 'Blog editor',
@@ -271,6 +322,8 @@ export default function AdminLayout() {
     analytika: 'Analytika',
     sklad: 'Skladové zásoby',
     alerty: 'Alerty',
+    balicky: 'Balíčky',
+    plakaty: 'Objednávky plakátů',
     emaily: 'E-maily',
     galerie: 'Galerie obrázků',
     kalendar: 'Kalendář',
@@ -341,6 +394,8 @@ export default function AdminLayout() {
               {section.items.map((item: any) => {
                 const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + '/');
                 const isAlertsItem = item.path === '/admin/alerty';
+                const isPosterOrdersItem = item.path === '/admin/plakaty';
+                const showPosterAttention = isPosterOrdersItem && posterPendingCount > 0;
                 const dynamicBadge = isAlertsItem && alertSummary && alertSummary.critical_open > 0
                   ? String(alertSummary.critical_open)
                   : item.badge;
@@ -355,13 +410,42 @@ export default function AdminLayout() {
                     className={`w-full text-left px-4 py-2 text-[13px] flex items-center gap-2.5 transition-all ${
                       isActive
                         ? 'bg-[#001161] text-white font-bold'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-[#001161]'
+                        : showPosterAttention
+                          ? 'text-red-700 font-semibold bg-red-50/90 hover:bg-red-100/90 hover:text-red-800 animate-[poster-sidebar-wink_1.1s_ease-in-out_infinite]'
+                          : 'text-gray-600 hover:bg-gray-50 hover:text-[#001161]'
                     }`}
                   >
-                    <item.icon className="w-4 h-4 shrink-0" />
-                    <span>{item.label}</span>
+                    <item.icon className={`w-4 h-4 shrink-0 ${showPosterAttention && !isActive ? 'text-red-600' : ''}`} />
+                    <span className="flex-1 min-w-0 truncate">{item.label}</span>
+                    {showPosterAttention && (
+                      <span
+                        className="shrink-0 flex items-center gap-1"
+                        title={`Nevyřízené plakáty: ${posterPendingCount}`}
+                        aria-label={`${posterPendingCount} nevyřízených objednávek plakátů`}
+                      >
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span
+                            className={`absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping ${
+                              isActive ? 'bg-red-200' : 'bg-red-500'
+                            }`}
+                          />
+                          <span
+                            className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
+                              isActive ? 'bg-red-100 ring-2 ring-white/90' : 'bg-red-600'
+                            }`}
+                          />
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold tabular-nums leading-none ${
+                            isActive ? 'text-red-100' : 'text-red-600'
+                          }`}
+                        >
+                          {posterPendingCount}
+                        </span>
+                      </span>
+                    )}
                     {dynamicBadge && (
-                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      <span className={`${showPosterAttention ? '' : 'ml-auto'} text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
                         dynamicBadgeColor === 'purple'
                           ? 'bg-purple-100 text-purple-700'
                           : 'bg-amber-100 text-amber-700'

@@ -333,6 +333,7 @@ Deno.serve(async (req) => {
   try {
     const url = new URL(req.url);
     const productId = (url.searchParams.get('productId') || '').trim();
+    const shoptetSkuOverride = (url.searchParams.get('shoptetSku') || '').trim();
     const onlyPhysical = url.searchParams.get('physicalOnly') !== 'false';
 
     const [catalogProducts, inventory] = await Promise.all([
@@ -344,8 +345,11 @@ Deno.serve(async (req) => {
       !onlyPhysical || (product.type !== 'online' && product.type !== 'license')
     ));
 
-    const items = filteredCatalog.map((product) => {
-      const { matched, matchType } = matchInventoryProduct(product, inventory.products);
+    function buildItem(product: CatalogProduct, overrideShoptetSku?: string) {
+      const forMatch = overrideShoptetSku
+        ? { ...product, shoptetId: overrideShoptetSku }
+        : product;
+      const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
       const quantity = matched?.quantity ?? null;
       const stockStatus = getStockStatus(quantity);
 
@@ -371,18 +375,21 @@ Deno.serve(async (req) => {
         inventoryName: inventory.inventoryName,
         warehouseId: inventory.warehouseId,
       };
-    });
+    }
 
     if (productId) {
-      const item = items.find((entry) => entry.id === productId);
-      if (!item) {
+      const catalogProduct = filteredCatalog.find((p) => p.id === productId);
+      if (!catalogProduct) {
         return jsonResponse({ error: 'Product not found.' }, 404);
       }
 
+      const item = buildItem(catalogProduct, shoptetSkuOverride || undefined);
       return jsonResponse({
         item,
       });
     }
+
+    const items = filteredCatalog.map((product) => buildItem(product));
 
     return jsonResponse({
       inventory: {

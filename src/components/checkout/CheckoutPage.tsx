@@ -635,6 +635,7 @@ export function CheckoutPage() {
         ...(item.variantName?.trim() ? { variant: item.variantName.trim() } : {}),
         ...(item.bundleId?.trim() ? { bundleId: item.bundleId.trim() } : {}),
         ...(item.bundleTitle?.trim() ? { bundleTitle: item.bundleTitle.trim() } : {}),
+        ...(item.posterMerch ? { posterMerch: true } : {}),
       })),
       shipping: {
         method: shipping.method,
@@ -719,6 +720,7 @@ export function CheckoutPage() {
           ...(item.variantName?.trim() ? { variant: item.variantName.trim() } : {}),
           ...(item.bundleId?.trim() ? { bundleId: item.bundleId.trim() } : {}),
           ...(item.bundleTitle?.trim() ? { bundleTitle: item.bundleTitle.trim() } : {}),
+          ...(item.posterMerch ? { posterMerch: true } : {}),
         })),
         shipping: {
           method: shipping.method,

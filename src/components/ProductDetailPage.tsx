@@ -17,8 +17,14 @@ import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
-import { type ProductBundleRecord } from '../utils/bundlePricing';
+import {
+  bundleIsNxPlusOneSubject,
+  productMatchesBundleSubjectLabels,
+  type ProductBundleRecord,
+} from '../utils/bundlePricing';
 import { ProductBundlePromoTile } from './ProductBundlePromoTile';
+import type { MerchVariantOption } from '../types/merchVariants';
+import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
@@ -35,6 +41,17 @@ const getTabSubjectName = (category: string): string => {
   return (category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim();
 };
 
+/** Digitální licence u vybraných předmětů — náhledy argumentů ze stejných tabů jako „Co vše obsahuje“ na stránce předmětu. */
+function isDigitalAccessSubjectCategory(category: string | undefined): boolean {
+  const raw = (category || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  if (!raw) return false;
+  if (raw.includes('matematika')) return true;
+  if (raw.includes('fyzika')) return true;
+  if (raw.includes('chemie')) return true;
+  if (raw.includes('prirodopis')) return true;
+  return false;
+}
+
 /** Shodná logika jako u přepínačů řad na SubjectPage — jen Matematika 2. stupeň. */
 function isMatematika2StupenCategory(category: string | undefined): boolean {
   const c = (category || '').toLowerCase();
@@ -44,6 +61,26 @@ function isMatematika2StupenCategory(category: string | undefined): boolean {
 
 /** Stejné ID jako SubjectPage — video „Rozdíl: Pro všechny vs. Krok za krokem“. */
 const MATH_SERIES_DIFF_YOUTUBE_ID = '3QfBy-xJ4Os';
+
+type ProductVideoPreviewParsed =
+  | { mode: 'youtube'; embedUrl: string }
+  | { mode: 'vimeo'; embedUrl: string }
+  | { mode: 'file'; src: string }
+  | { mode: 'iframe'; src: string };
+
+/** YouTube / Vimeo / přímý soubor / obecný URL pro iframe v modalu „Ukázka videa“. */
+function parseProductVideoPreviewUrl(raw: string): ProductVideoPreviewParsed | null {
+  const u = String(raw || '').trim();
+  if (!u) return null;
+  let m = u.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  if (m) return { mode: 'youtube', embedUrl: `https://www.youtube.com/embed/${m[1]}?rel=0&modestbranding=1&autoplay=1` };
+  m = u.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]+)/i);
+  if (m) return { mode: 'youtube', embedUrl: `https://www.youtube.com/embed/${m[1]}?rel=0&modestbranding=1&autoplay=1` };
+  m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/i);
+  if (m) return { mode: 'vimeo', embedUrl: `https://player.vimeo.com/video/${m[1]}?autoplay=1` };
+  if (/\.(mp4|webm|ogg)(\?|#|$)/i.test(u)) return { mode: 'file', src: u };
+  return { mode: 'iframe', src: u };
+}
 
 const MATH2_COVER_PREVIEW_H = 100;
 const MATH2_COVER_PREVIEW_W = 70;
@@ -313,6 +350,64 @@ function SubjectTabsGrid({ category }: { category: string }) {
   );
 }
 
+/** Náhledy prodejních argumentů (taby předmětu) — stejný vizuální jazyk jako galerie u plakátů, pod hlavním obrázkem digitální licence. */
+function DigitalAccessSellingArgumentStrip({
+  tabs,
+  selectedIndex,
+  onSelect,
+}: {
+  tabs: any[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  if (!tabs.length) return null;
+  return (
+    <div
+      className="relative z-20 w-full shrink-0 pt-2"
+      aria-label="Co obsahuje digitální přístup"
+    >
+      <div className="flex w-full max-w-full flex-wrap justify-center gap-x-3 gap-y-3 sm:gap-x-4 max-sm:justify-start max-sm:overflow-x-auto max-sm:flex-nowrap max-sm:pb-0.5">
+        {tabs.map((tab, i) => {
+          const selected = selectedIndex === i;
+          const img = typeof tab.contentImage === 'string' ? tab.contentImage.trim() : '';
+          const label = String(tab.tabText || tab.contentHeadline || '').trim() || 'Argument';
+          const thumbBg =
+            typeof tab.bgColor === 'string' && tab.bgColor.trim() ? tab.bgColor.trim() : '#ffffff';
+          return (
+            <button
+              key={tab.id || `tab-${i}`}
+              type="button"
+              onClick={() => onSelect(i)}
+              aria-label={label}
+              aria-current={selected ? 'true' : undefined}
+              style={{ backgroundColor: thumbBg }}
+              className={`shrink-0 overflow-hidden rounded-xl border-2 p-0 shadow-[0_2px_8px_rgba(0,17,97,0.12)] transition-all hover:brightness-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#001161] ${
+                selected
+                  ? 'border-[#001161] ring-2 ring-[#001161]/30'
+                  : 'border-[#001161]/30 hover:border-[#001161]/55'
+              }`}
+            >
+              <div className="relative flex h-16 w-16 items-center justify-center p-1.5 sm:h-[4.5rem] sm:w-[4.5rem] sm:p-2">
+                {img ? (
+                  <img
+                    src={img}
+                    alt=""
+                    className="max-h-full max-w-full object-contain"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <BookOpen className="h-6 w-6 text-[#001161]/30 sm:h-7 sm:w-7" />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ─── Czech locative helper ────────────────────────────── */
 const subjectLocative: Record<string, string> = {
   'Matematika':     'v\u00a0Matematice',
@@ -453,11 +548,22 @@ function parseObsah(text: string): { number: string; title: string; note?: strin
 }
 
 /* ── main component ──────────────────────────────────── */
+export type SchoolOrderMerchContext = {
+  shopifyVariantId?: string;
+  /** Shoptet SKU — když není Shopify variantId, stejná identita řádku jako v běžném košíku. */
+  shoptetSku?: string;
+  unitPriceHaler: number;
+  productDisplayName: string;
+  /** Popisek varianty (např. velikost) pro řádek košíku. */
+  variantLabel?: string;
+};
+
 interface ProductDetailPageProps {
   product: any;
   products: any[];
   onBack: () => void;
-  onOrder?: () => void;
+  /** Volitelný kontext při objednávce pro školu (merch s variantami). */
+  onOrder?: (ctx?: SchoolOrderMerchContext) => void;
   isDistributorMode?: boolean;
   onProductSelect?: (product: any) => void;
 }
@@ -471,6 +577,7 @@ export function ProductDetailPage({
   onProductSelect,
 }: ProductDetailPageProps) {
   const [flipbookOpen, setFlipbookOpen] = useState(false);
+  const [videoPreviewOpen, setVideoPreviewOpen] = useState(false);
   /** Jednovýběrové bobánky (jako přepínač); znovu kliknutí na aktivní = zrušit. */
   const [relatedRocnikFilter, setRelatedRocnikFilter] = useState<string | null>(null);
   const [relatedRadaFilter, setRelatedRadaFilter] = useState<RelatedRadaKey | null>(null);
@@ -486,13 +593,19 @@ export function ProductDetailPage({
   const navigate = useNavigate();
   const { addItem, openCart: openInternalCart } = useCart();
 
-  const note = getNote(product);
-  const desc = getDescription(product);
-  const price = formatPrice(product);
   const hasFlipbook = !!(product.flipbookLink || product.previewLink);
   const hasCustomAppLink = !!(product.appLink && String(product.appLink).trim());
+  const previewVideoRaw = String(product.previewVideoLink || '').trim();
+  const videoPreviewParsed = useMemo(
+    () => parseProductVideoPreviewUrl(previewVideoRaw),
+    [previewVideoRaw]
+  );
+  const hasVideoPreview = !!videoPreviewParsed;
   /** Ukázka v dlaždici + odkaz do aplikace; odkaz zobrazit i bez flipbooku (např. předobjednávky s poznámkou o dostupnosti). */
-  const showImagePanelActions = hasFlipbook || hasCustomAppLink;
+  const showImagePanelActions = hasFlipbook || hasCustomAppLink || hasVideoPreview;
+  const imagePanelActionCount = (hasFlipbook ? 1 : 0) + (hasVideoPreview ? 1 : 0) + 1;
+  const imagePanelActionLayout = imagePanelActionCount > 1 ? 'flex-1' : 'w-full';
+  const imagePanelActionBtnClass = `flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] ${imagePanelActionLayout}`;
   const flipbookUrl = product.flipbookLink || product.previewLink;
   const isHeyzine = flipbookUrl?.includes('heyzine');
   const catColors = CATEGORY_COLORS[product.category] || CATEGORY_COLORS['default'];
@@ -501,27 +614,189 @@ export function ProductDetailPage({
     !!product.dolozka && subjectShowsMsmtDolozkaBadge(categoryBaseForMsmt);
   /** Náhled v levé „dlaždici“: tiskoviny −30 %, digitální licence +10 % (vůči původním max-height) */
   const isDigitalHero = product.type === 'online' || product.type === 'license';
-  const isWorkbookHero = product.type === 'workbook';
+  /** Tisková dlaždice v hero (workbook + merch); jiné jméno než importovaná `isPrintProduct` z cartUpsellUtils. */
+  const isPhysicalProduct = product.type === 'workbook' || product.type === 'merch';
+  /**
+   * Merch plakáty / na objednávku: čtvercový výřez, fotka přes celou plochu (object-cover).
+   * `availabilityDisplay` zachytí i produkty bez přesného textu kategorie v datech.
+   */
+  const isPosterMerchHero = useMemo(
+    () =>
+      product.type === 'merch' &&
+      (isMerchWallArtBoardsProduct(product) || product.availabilityDisplay === 'on_order'),
+    [product.type, product.category, product.merchCategory, product.availabilityDisplay],
+  );
+  /** Vedle ceny: štítek „Na objednávku“, bez dotazu na sklad. */
+  const showsOnOrderByAvailability = isPosterMerchHero;
+  const isWorkbookHero = isPhysicalProduct && !isPosterMerchHero;
   const mdUp = useMatchMedia('(min-width: 768px)', false);
   /** Jen digitály — tiskoviny používají PRINT_BOOK_COVER_DROP_SHADOW na obálce. */
   const heroDigitalImageFilter = useMemo(() => {
-    if (product.type === 'workbook') return undefined as string | undefined;
+    if (isPhysicalProduct) return undefined as string | undefined;
     return mdUp
       ? 'drop-shadow(0 16px 28px rgba(0,17,97,0.14))'
       : 'drop-shadow(0 6px 12px rgba(0,17,97,0.1))';
-  }, [mdUp, product.type]);
+  }, [mdUp, isPhysicalProduct]);
+
+  const merchVariants: MerchVariantOption[] = Array.isArray(product.merchVariants)
+    ? product.merchVariants
+    : [];
+  const [merchPickId, setMerchPickId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (merchVariants.length) setMerchPickId(merchVariants[0].id);
+    else setMerchPickId(null);
+  }, [product.id]);
+
+  const selectedMerchVariant = useMemo(() => {
+    if (!merchVariants.length) return null;
+    return merchVariants.find((v) => v.id === merchPickId) || merchVariants[0];
+  }, [merchVariants, merchPickId]);
+
+  const productHeroImages = useMemo(() => {
+    const seen = new Set<string>();
+    const deduped: string[] = [];
+    const push = (u: string) => {
+      if (!u || seen.has(u)) return;
+      seen.add(u);
+      deduped.push(u);
+    };
+    if (typeof product.image === 'string' && product.image.trim()) push(product.image.trim());
+    if (Array.isArray(product.images)) {
+      for (const u of product.images) {
+        if (typeof u === 'string' && u.trim()) push(u.trim());
+      }
+    }
+    const meta = product.metadata;
+    if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+      const fromMeta = (meta as { images?: unknown }).images;
+      if (Array.isArray(fromMeta)) {
+        for (const u of fromMeta) {
+          if (typeof u === 'string' && u.trim()) push(u.trim());
+        }
+      }
+    }
+    return deduped;
+  }, [product.id, product.image, product.images, product.metadata]);
+
+  const showHeroImageGallery = productHeroImages.length > 1;
+  const [heroImageIndex, setHeroImageIndex] = useState(0);
+  const [subjectTabsForHero, setSubjectTabsForHero] = useState<any[]>([]);
+  const [digitalArgPickIdx, setDigitalArgPickIdx] = useState(-1);
+
+  const showDigitalSubjectArgumentStrip =
+    isDigitalHero && isDigitalAccessSubjectCategory(product.category);
+
+  useEffect(() => {
+    setHeroImageIndex(0);
+    setDigitalArgPickIdx(-1);
+  }, [product.id]);
+
+  useEffect(() => {
+    if (!showDigitalSubjectArgumentStrip) {
+      setSubjectTabsForHero([]);
+      return;
+    }
+    const subjectName = getTabSubjectName(product.category);
+    let cancelled = false;
+    fetch(`${SERVER}/public/tabs?subject=${encodeURIComponent(subjectName)}`, { headers: AUTH_H })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setSubjectTabsForHero(Array.isArray(d.items) ? d.items : []);
+      })
+      .catch(() => {
+        if (!cancelled) setSubjectTabsForHero([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showDigitalSubjectArgumentStrip, product.category]);
+
+  const safeHeroImageIndex = showHeroImageGallery
+    ? Math.max(0, Math.min(heroImageIndex, productHeroImages.length - 1))
+    : 0;
+  const baseHeroDisplaySrc = showHeroImageGallery
+    ? productHeroImages[safeHeroImageIndex]
+    : (product.image?.trim() || productHeroImages[0] || '');
+
+  const heroDisplaySrc = useMemo(() => {
+    if (
+      showDigitalSubjectArgumentStrip
+      && digitalArgPickIdx >= 0
+      && subjectTabsForHero[digitalArgPickIdx]
+    ) {
+      const u = String(subjectTabsForHero[digitalArgPickIdx].contentImage || '').trim();
+      if (u) return u;
+    }
+    return baseHeroDisplaySrc;
+  }, [
+    showDigitalSubjectArgumentStrip,
+    digitalArgPickIdx,
+    subjectTabsForHero,
+    baseHeroDisplaySrc,
+  ]);
+
+  /** Pozadí levé karty — u vybraného prodejního argumentu barva z tabu (jako ve slideru na předmětu). */
+  const heroPanelBackground = useMemo(() => {
+    if (
+      showDigitalSubjectArgumentStrip
+      && digitalArgPickIdx >= 0
+      && subjectTabsForHero[digitalArgPickIdx]
+    ) {
+      const raw = subjectTabsForHero[digitalArgPickIdx].bgColor;
+      if (typeof raw === 'string' && raw.trim()) return raw.trim();
+    }
+    return catColors.bg;
+  }, [showDigitalSubjectArgumentStrip, digitalArgPickIdx, subjectTabsForHero, catColors.bg]);
+
+  const activeDigitalArgTab =
+    showDigitalSubjectArgumentStrip
+    && digitalArgPickIdx >= 0
+    && subjectTabsForHero[digitalArgPickIdx]
+      ? subjectTabsForHero[digitalArgPickIdx]
+      : null;
+  const activeDigitalArgTitle = activeDigitalArgTab
+    ? String(activeDigitalArgTab.contentHeadline || activeDigitalArgTab.tabText || '').trim()
+    : '';
+
+  const note = getNote(product);
+  const desc = getDescription(product);
+  const price = formatPrice(product);
+  const priceLabel =
+    product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.price : price;
+
+  /** Identifikátor řádku košíku: Shopify variantId nebo u merchu Shoptet SKU. */
+  const effectiveCartVariantId = useMemo(() => {
+    if (product.type === 'merch' && selectedMerchVariant) {
+      const s = selectedMerchVariant.shopifyVariantId?.trim();
+      if (s) return s;
+      const sku = selectedMerchVariant.shoptetId?.trim();
+      if (sku) return sku;
+      return selectedMerchVariant.id?.trim() || '';
+    }
+    return String(product.shopifyVariantId ?? '').trim();
+  }, [product.type, product.shopifyVariantId, selectedMerchVariant]);
 
   useEffect(() => {
     let cancelled = false;
 
-    if (product.type === 'online' || product.type === 'license' || !product.id) {
+    if (
+      product.type === 'online' ||
+      product.type === 'license' ||
+      !product.id ||
+      isPosterMerchHero
+    ) {
       setStockItem(null);
       setStockLoading(false);
       return;
     }
 
     setStockLoading(true);
-    fetchProductStockItem(product.id)
+    const shoptetSku =
+      product.type === 'merch' && selectedMerchVariant?.shoptetId
+        ? selectedMerchVariant.shoptetId
+        : undefined;
+    fetchProductStockItem(product.id, shoptetSku)
       .then((data) => {
         if (!cancelled) {
           setStockItem(data.item);
@@ -541,7 +816,13 @@ export function ProductDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [product.id, product.type]);
+  }, [
+    product.id,
+    product.type,
+    product.availabilityDisplay,
+    isPosterMerchHero,
+    selectedMerchVariant?.shoptetId,
+  ]);
 
   useEffect(() => {
     if (!mathSeriesDiffVideoOpen) return;
@@ -569,11 +850,21 @@ export function ProductDetailPage({
 
   const bundlesContainingThisProduct = useMemo(() => {
     const pid = String(product.id);
-    return publicProductBundles.filter((b) => (b.productIds || []).some((id) => String(id) === pid));
-  }, [publicProductBundles, product.id]);
+    return publicProductBundles.filter((b) => {
+      if ((b.productIds || []).some((id) => String(id) === pid)) return true;
+      if (bundleIsNxPlusOneSubject(b) && productMatchesBundleSubjectLabels(product, b.bundleSubjectLabels)) {
+        return true;
+      }
+      return false;
+    });
+  }, [publicProductBundles, product]);
 
   const handleAddKvBundleToSchoolOrder = (bundle: ProductBundleRecord) => {
     if (kvBundleAddingId) return;
+    if (bundleIsNxPlusOneSubject(bundle)) {
+      navigate(`/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`);
+      return;
+    }
     setKvBundleAddingId(bundle.id);
     try {
       const subjects = new Set<string>();
@@ -620,13 +911,25 @@ export function ProductDetailPage({
     : [];
 
   const handleAddToNewCart = () => {
+    const vid = effectiveCartVariantId;
+    if (!vid) return;
+    const unitPrice =
+      product.type === 'merch' && selectedMerchVariant
+        ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
+        : getUnitPriceInHaler(product);
+    const lineName =
+      product.type === 'merch' && selectedMerchVariant
+        ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
+        : product.name || 'Produkt';
     addItem({
       productId: String(product.id),
-      productName: product.name || 'Produkt',
-      variantId: product.shopifyVariantId || undefined,
+      productName: lineName,
+      variantId: vid,
+      variantName: product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.label : undefined,
       quantity: 1,
-      unitPrice: getUnitPriceInHaler(product),
+      unitPrice,
       imageUrl: product.image || undefined,
+      ...(isPosterMerchHero ? { posterMerch: true as const } : {}),
     });
     openInternalCart();
   };
@@ -636,12 +939,22 @@ export function ProductDetailPage({
 
     setInternalBundleAdding(true);
     try {
+      const bundleVid = effectiveCartVariantId;
+      const bundleUnitPrice =
+        product.type === 'merch' && selectedMerchVariant
+          ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
+          : getUnitPriceInHaler(product);
+      const bundleLineName =
+        product.type === 'merch' && selectedMerchVariant
+          ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
+          : product.name || 'Produkt';
       addItem({
         productId: String(product.id),
-        productName: product.name || 'Produkt',
-        variantId: product.shopifyVariantId || undefined,
+        productName: bundleLineName,
+        variantId: bundleVid || undefined,
+        variantName: product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.label : undefined,
         quantity: 1,
-        unitPrice: getUnitPriceInHaler(product),
+        unitPrice: bundleUnitPrice,
         imageUrl: product.image || undefined,
       });
 
@@ -772,7 +1085,19 @@ export function ProductDetailPage({
           }),
           breadcrumbJsonLd([
             { name: 'Katalog', url: 'https://www.vividbooks.com/' },
-            { name: product.category, url: `https://www.vividbooks.com/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}` },
+            ...(product.type === 'merch'
+              ? [
+                  {
+                    name: 'Další produkty',
+                    url: 'https://www.vividbooks.com/dalsi-produkty',
+                  },
+                ]
+              : [
+                  {
+                    name: product.category,
+                    url: `https://www.vividbooks.com/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`,
+                  },
+                ]),
             { name: product.name, url: `https://www.vividbooks.com/produkt/${encodeURIComponent(product.id)}` },
           ]),
         ]}
@@ -781,24 +1106,40 @@ export function ProductDetailPage({
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 pt-6 sm:pt-10 pb-0">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.1fr] gap-6 lg:gap-16 items-start">
 
-          {/* LEFT — image panel */}
-          <div className="flex flex-col gap-4 lg:sticky lg:top-[80px] self-start">
-            <div className="relative isolate flex max-sm:min-h-0 flex-col overflow-hidden rounded-[32px] sm:min-h-[min(260px,52vw)] lg:min-h-[clamp(280px,52vw,540px)]">
+          {/* LEFT — image panel (galerie náhledů je pod zaobleným blokem) */}
+          <div className="flex flex-col gap-3 lg:sticky lg:top-[80px] self-start">
+            <div
+              className={`relative isolate flex max-sm:min-h-0 flex-col overflow-hidden rounded-[32px] ${
+                isPosterMerchHero
+                  ? 'min-h-0'
+                  : 'sm:min-h-[min(260px,52vw)] lg:min-h-[clamp(280px,52vw,540px)]'
+              }`}
+            >
               <div
-                className="absolute inset-0 rounded-[32px]"
-                style={{ background: catColors.bg }}
+                className="absolute inset-0 rounded-[32px] transition-[background-color] duration-300 ease-out"
+                style={{ background: heroPanelBackground }}
                 aria-hidden
               />
-              {/* RVP + doložka (nad výřezem produktu) */}
-              <div className="relative z-20 flex flex-wrap items-center justify-center gap-2 px-5 pt-5 pb-1 shrink-0">
-                <ProductComplianceBadge>{'Podle RVP'}</ProductComplianceBadge>
-                {showMsmtComplianceBadge ? (
-                  <ProductComplianceBadge>{'Dolo\u017eka M\u0160MT'}</ProductComplianceBadge>
-                ) : null}
-              </div>
+              {/* RVP + doložka; u plakátů jen MŠMT jako překryv přes fotku */}
+              {!isPosterMerchHero ? (
+                <div className="relative z-20 flex flex-wrap items-center justify-center gap-2 px-5 pt-5 pb-1 shrink-0">
+                  {product.type !== 'merch' ? (
+                    <ProductComplianceBadge>{'Podle RVP'}</ProductComplianceBadge>
+                  ) : null}
+                  {showMsmtComplianceBadge ? (
+                    <ProductComplianceBadge>{'Dolo\u017eka M\u0160MT'}</ProductComplianceBadge>
+                  ) : null}
+                </div>
+              ) : showMsmtComplianceBadge ? (
+                <div className="pointer-events-none absolute left-0 right-0 top-4 z-30 flex justify-center px-5">
+                  <div className="pointer-events-auto shrink-0">
+                    <ProductComplianceBadge>{'Dolo\u017eka M\u0160MT'}</ProductComplianceBadge>
+                  </div>
+                </div>
+              ) : null}
 
               {/* Bobánek */}
-              {note && (
+              {!isPosterMerchHero && note && (
                 <div className="absolute top-[4.5rem] sm:top-24 left-6 z-20 transform -rotate-12">
                   <div className="bg-[#FF9900] text-white px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider shadow-[0_6px_18px_rgba(255,153,0,0.45)] border-2 border-white/60">
                     {note}
@@ -806,93 +1147,158 @@ export function ProductDetailPage({
                 </div>
               )}
 
-              {/* Book image — tlačítka v toku pod obálkou (ne absolute), ať obálka nepřekrývá CTA */}
-              <div className="relative flex min-h-0 flex-1 flex-col">
-                <div
-                  className={`flex w-full items-center justify-center px-5 pt-2 sm:px-10 sm:pt-3 lg:px-12 lg:pt-4 ${
-                    showImagePanelActions
-                      ? 'max-sm:pb-0 pb-3 sm:pb-4'
-                      : 'pb-6 sm:pb-10 lg:pb-12'
-                  } ${
-                    isWorkbookHero
-                      ? 'max-sm:min-h-0 max-sm:max-h-[min(56vw,200px)] max-sm:flex-none flex-1 sm:min-h-[min(28vw,120px)]'
-                      : 'flex-1 max-sm:min-h-[min(48px,14vw)] sm:min-h-[min(28vw,120px)]'
-                  }`}
-                >
-                  <motion.div
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ duration: 0.5, delay: 0.1 }}
-                    className={`relative flex w-full items-center justify-center ${
-                      isWorkbookHero ? 'max-sm:max-h-full' : 'max-h-full'
-                    }`}
-                    style={product.type === 'workbook' ? undefined : { filter: heroDigitalImageFilter }}
-                  >
-                    {product.image ? (
-                      <ImageWithFallback
-                        src={product.image}
-                        alt={product.name}
-                        className={
-                          isWorkbookHero
-                            ? 'relative z-10 w-auto max-w-[min(88vw,200px)] origin-center object-contain max-h-[min(42vw,168px)] sm:max-w-[min(240px,48vw)] sm:max-h-[176px] md:max-h-[196px] lg:max-h-[220px]'
-                            : `relative z-10 w-auto max-h-full origin-center object-contain ${
-                                isLandscape
-                                  ? isDigitalHero
-                                    ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
-                                    : 'max-h-[20px] scale-[0.62] sm:max-h-[124px] sm:scale-100 lg:max-h-[156px]'
-                                  : isDigitalHero
-                                    ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
-                                    : 'max-h-[20px] scale-[0.64] sm:max-h-[168px] sm:scale-100 lg:max-h-[220px]'
-                              }`
-                        }
-                        style={
-                          product.type === 'workbook'
-                            ? { filter: PRINT_BOOK_COVER_DROP_SHADOW }
-                            : undefined
-                        }
-                        onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
-                          const img = e.currentTarget;
-                          setIsLandscape(img.naturalWidth >= img.naturalHeight);
-                        }}
-                      />
-                    ) : (
-                      <div
-                        className={
-                          isWorkbookHero
-                            ? 'flex h-[min(40vw,156px)] w-[min(30vw,118px)] items-center justify-center rounded-2xl sm:h-[220px] sm:w-[160px] md:h-[280px] md:w-[200px]'
-                            : 'flex h-[220px] w-[160px] items-center justify-center rounded-2xl sm:h-[280px] sm:w-[200px]'
-                        }
-                        style={{ background: catColors.bg }}
-                      >
-                        <BookOpen
-                          className={
-                            isWorkbookHero
-                              ? 'h-12 w-12 text-[#001161]/20 sm:h-16 sm:w-16 md:h-20 md:w-20'
-                              : 'h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20'
-                          }
-                        />
+              {/* Book image — plakáty: pevná výška + object-cover (bez pruhů); tlačítka pod fotkou */}
+              <div
+                className={`relative flex min-h-0 flex-col ${
+                  isPosterMerchHero ? '' : 'flex-1'
+                } ${isPosterMerchHero && showImagePanelActions ? 'gap-3 sm:gap-4' : ''}`}
+              >
+                {isPosterMerchHero ? (
+                  <div className="relative w-full shrink-0 overflow-hidden px-0 pt-0 pb-0">
+                    {note && (
+                      <div className="absolute top-20 left-4 z-30 transform -rotate-12 sm:left-6">
+                        <div className="bg-[#FF9900] text-white px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider shadow-[0_6px_18px_rgba(255,153,0,0.45)] border-2 border-white/60">
+                          {note}
+                        </div>
                       </div>
                     )}
-                  </motion.div>
-                </div>
+                    <motion.div
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.1 }}
+                      className="relative z-10 w-full overflow-hidden"
+                    >
+                      {heroDisplaySrc ? (
+                        <div className="relative aspect-square w-full min-h-0 overflow-hidden">
+                          <ImageWithFallback
+                            key={heroDisplaySrc}
+                            src={heroDisplaySrc}
+                            alt={product.name}
+                            className="absolute inset-0 z-10 block h-full w-full min-h-full min-w-full object-cover object-center"
+                            onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                              const img = e.currentTarget;
+                              setIsLandscape(img.naturalWidth >= img.naturalHeight);
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          className="relative flex aspect-square w-full min-h-0 items-center justify-center overflow-hidden"
+                          style={{ background: catColors.bg }}
+                        >
+                          <BookOpen className="h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20" />
+                        </div>
+                      )}
+                    </motion.div>
+                  </div>
+                ) : (
+                  <div
+                    className={`flex w-full items-center justify-center px-5 pt-2 sm:px-10 sm:pt-3 lg:px-12 lg:pt-4 ${
+                      showImagePanelActions
+                        ? 'max-sm:pb-0 pb-3 sm:pb-4'
+                        : 'pb-6 sm:pb-10 lg:pb-12'
+                    } ${
+                      isWorkbookHero
+                        ? 'max-sm:min-h-0 max-sm:max-h-[min(56vw,200px)] max-sm:flex-none flex-1 sm:min-h-[min(28vw,120px)]'
+                        : 'flex-1 max-sm:min-h-[min(48px,14vw)] sm:min-h-[min(28vw,120px)]'
+                    }`}
+                  >
+                    <motion.div
+                      initial={{ scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.5, delay: 0.1 }}
+                      className={`relative flex w-full items-center justify-center ${
+                        isWorkbookHero ? 'max-sm:max-h-full' : 'max-h-full'
+                      }`}
+                      style={!isPhysicalProduct ? { filter: heroDigitalImageFilter } : undefined}
+                    >
+                      {heroDisplaySrc ? (
+                        <ImageWithFallback
+                          key={heroDisplaySrc}
+                          src={heroDisplaySrc}
+                          alt={product.name}
+                          className={
+                            isWorkbookHero
+                              ? 'relative z-10 w-auto max-w-[min(88vw,200px)] origin-center object-contain max-h-[min(42vw,168px)] sm:max-w-[min(240px,48vw)] sm:max-h-[176px] md:max-h-[196px] lg:max-h-[220px]'
+                              : `relative z-10 w-auto max-h-full origin-center object-contain ${
+                                  isLandscape
+                                    ? isDigitalHero
+                                      ? 'max-h-[143px] sm:max-h-[176px] lg:max-h-[220px]'
+                                      : 'max-h-[20px] scale-[0.62] sm:max-h-[124px] sm:scale-100 lg:max-h-[156px]'
+                                    : isDigitalHero
+                                      ? 'max-h-[220px] sm:max-h-[286px] lg:max-h-[374px]'
+                                      : 'max-h-[20px] scale-[0.64] sm:max-h-[168px] sm:scale-100 lg:max-h-[220px]'
+                                }`
+                          }
+                          style={
+                            isPhysicalProduct ? { filter: PRINT_BOOK_COVER_DROP_SHADOW } : undefined
+                          }
+                          onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
+                            const img = e.currentTarget;
+                            setIsLandscape(img.naturalWidth >= img.naturalHeight);
+                          }}
+                        />
+                      ) : (
+                        <div
+                          className={
+                            isWorkbookHero
+                              ? 'flex h-[min(40vw,156px)] w-[min(30vw,118px)] items-center justify-center rounded-2xl sm:h-[220px] sm:w-[160px] md:h-[280px] md:w-[200px]'
+                              : 'flex h-[220px] w-[160px] items-center justify-center rounded-2xl sm:h-[280px] sm:w-[200px]'
+                          }
+                          style={{ background: catColors.bg }}
+                        >
+                          <BookOpen
+                            className={
+                              isWorkbookHero
+                                ? 'h-12 w-12 text-[#001161]/20 sm:h-16 sm:w-16 md:h-20 md:w-20'
+                                : 'h-16 w-16 text-[#001161]/20 sm:h-20 sm:w-20'
+                            }
+                          />
+                        </div>
+                      )}
+                    </motion.div>
+                  </div>
+                )}
+
+                {isDigitalHero && activeDigitalArgTitle ? (
+                  <div className="relative z-20 px-5 pb-3 pt-1 text-center sm:px-8">
+                    <h3 className="font-['Cooper_Light',serif] text-[#001161] text-[21px] leading-[1.12] sm:text-[25px]">
+                      {formatTypography(activeDigitalArgTitle)}
+                    </h3>
+                  </div>
+                ) : null}
 
                 {showImagePanelActions && (
-                  <div className="relative z-30 mt-auto flex shrink-0 gap-2 px-5 pb-5 pt-2 sm:pt-3">
+                  <div
+                    className={`relative z-30 flex shrink-0 flex-wrap gap-2 px-5 pb-5 ${
+                      isPosterMerchHero ? 'pt-0' : 'mt-auto pt-2 sm:pt-3'
+                    }`}
+                  >
                     {hasFlipbook && (
                       <button
                         type="button"
                         onClick={() => setFlipbookOpen(true)}
-                        className="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98]"
+                        className={imagePanelActionBtnClass}
                       >
                         <BookOpen className="h-3.5 w-3.5 shrink-0" />
                         {'Prolistovat uk\u00e1zku'}
+                      </button>
+                    )}
+                    {hasVideoPreview && (
+                      <button
+                        type="button"
+                        onClick={() => setVideoPreviewOpen(true)}
+                        className={imagePanelActionBtnClass}
+                      >
+                        <Play className="h-3.5 w-3.5 shrink-0" />
+                        {'Uk\u00e1zka videa'}
                       </button>
                     )}
                     <a
                       href={product.appLink || 'https://app.vividbooks.cz'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className={`flex items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] no-underline ${hasFlipbook ? 'flex-1' : 'w-full'}`}
+                      className={`${imagePanelActionBtnClass} no-underline`}
                     >
                       <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                       {'Otev\u0159\u00edt v aplikaci'}
@@ -901,6 +1307,56 @@ export function ProductDetailPage({
                 )}
               </div>
             </div>
+
+            {showHeroImageGallery && (
+              <div
+                className="relative z-20 w-full shrink-0 pt-1"
+                aria-label="Fotogalerie produktu"
+              >
+                <div
+                  className="flex w-full max-w-full flex-wrap justify-center gap-2.5 sm:gap-3 max-sm:justify-start max-sm:overflow-x-auto max-sm:flex-nowrap max-sm:pb-0.5"
+                  role="list"
+                >
+                  {productHeroImages.map((url, i) => {
+                    const selected = i === safeHeroImageIndex;
+                    return (
+                      <button
+                        key={`${url}-${i}`}
+                        type="button"
+                        role="listitem"
+                        onClick={() => {
+                          setDigitalArgPickIdx(-1);
+                          setHeroImageIndex(i);
+                        }}
+                        aria-label={`Zobrazit fotku ${i + 1} z ${productHeroImages.length}`}
+                        aria-current={selected ? 'true' : undefined}
+                        className={`shrink-0 overflow-hidden rounded-xl border-2 bg-white p-0 shadow-[0_2px_8px_rgba(0,17,97,0.12)] transition-all hover:brightness-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#001161] ${
+                          selected
+                            ? 'border-[#001161] ring-2 ring-[#001161]/30'
+                            : 'border-[#001161]/30 hover:border-[#001161]/55'
+                        }`}
+                      >
+                        <img
+                          src={url}
+                          alt=""
+                          className="h-16 w-16 object-cover sm:h-[4.5rem] sm:w-[4.5rem]"
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {showDigitalSubjectArgumentStrip && subjectTabsForHero.length > 0 ? (
+              <DigitalAccessSellingArgumentStrip
+                tabs={subjectTabsForHero}
+                selectedIndex={digitalArgPickIdx}
+                onSelect={setDigitalArgPickIdx}
+              />
+            ) : null}
 
             {/* ISBN + rok — REMOVED */}
           </div>
@@ -956,6 +1412,35 @@ export function ProductDetailPage({
               </p>
             )}
 
+            {product.type === 'merch' && merchVariants.length > 0 && (
+              <div className="mb-8">
+                <label
+                  htmlFor="merch-variant-select"
+                  className="block font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.12em] text-[#001161]/45 mb-2"
+                >
+                  {'Velikost / varianta'}
+                </label>
+                {merchVariants.length > 1 ? (
+                  <select
+                    id="merch-variant-select"
+                    value={merchPickId || merchVariants[0]?.id || ''}
+                    onChange={(e) => setMerchPickId(e.target.value)}
+                    className="w-full max-w-md px-4 py-3 rounded-[14px] border border-[#001161]/15 bg-white font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#5b4fd8]/30 cursor-pointer"
+                  >
+                    {merchVariants.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {`${v.label} — ${v.price}`}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161]/80">
+                    {merchVariants[0] ? `${merchVariants[0].label} — ${merchVariants[0].price}` : ''}
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Price block + sklad vedle ceny */}
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2 mb-8 pb-8 border-b border-[#001161]/8">
               <div>
@@ -965,15 +1450,22 @@ export function ProductDetailPage({
                     ? (billingCycle === 'monthly'
                         ? (product.priceMonthly || price)
                         : (product.priceYearly || price))
-                    : price}
+                    : priceLabel}
                 </p>
               </div>
-              {product.type === 'workbook' && (
+              {isPhysicalProduct && (
                 <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/40 pb-1">{'v\u010d. DPH'}</p>
               )}
               {product.type !== 'online' && product.type !== 'license' && (
                 <>
-                  {stockLoading ? (
+                  {showsOnOrderByAvailability ? (
+                    <div
+                      className="inline-flex items-center rounded-full border border-[#001161]/18 bg-white/95 px-3 py-1.5 text-[12px] font-semibold font-['Fenomen_Sans',sans-serif] text-[#001161] shadow-sm pb-1"
+                      title="Dod\u00e1n\u00ed po objedn\u00e1vce"
+                    >
+                      {'Na objedn\u00e1vku'}
+                    </div>
+                  ) : stockLoading ? (
                     <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45 pb-1 max-w-[200px]">
                       {'Ověřujeme skladovost…'}
                     </p>
@@ -996,7 +1488,7 @@ export function ProductDetailPage({
             {product.type !== 'online' && (
             <div className="flex flex-col gap-2 mb-10">
               <div className="flex gap-2">
-                {product.shopifyVariantId && (() => {
+                {effectiveCartVariantId && (() => {
                   const note = getNote(product);
                   // Přesné názvy měsíců + "dostupn" — zabrání omylnému shodě (list→listy, led→sledovat, dost→dostanete…)
                   const isAvailabilityNote = /\b(leden|únor|b[rř]ezen|duben|kv[eě]ten|[cč]ervenec|[cč]erven|srpen|z[aá][rř][ií]|[rř][ií]jen|listopad|prosinec|dostupn)/i.test(note);
@@ -1012,14 +1504,14 @@ export function ProductDetailPage({
                 )}
 
                 {/* Primary action */}
-                {isDistributorMode && product.type === 'workbook' ? (
+                {isDistributorMode && isPhysicalProduct ? (
                   <button
                     className="flex items-center justify-center gap-2 flex-1 py-3 px-4 bg-[#001161] hover:bg-[#000a3d] text-white rounded-[14px] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold transition-all hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
                   >
                     <Download className="w-4 h-4 shrink-0" />
                     {'St\u00e1hnout podklady'}
                   </button>
-                ) : !product.shopifyVariantId ? (
+                ) : !effectiveCartVariantId ? (
                   <a
                     href={product.link || getCategoryLink(product.category)}
                     target="_blank"
@@ -1032,9 +1524,21 @@ export function ProductDetailPage({
                 ) : null}
 
                 {/* Secondary — same row */}
-                {onOrder && (
+                               {onOrder && (
                   <button
-                    onClick={onOrder}
+                    onClick={() =>
+                      onOrder(
+                        product.type === 'merch' && selectedMerchVariant
+                          ? {
+                              shopifyVariantId: selectedMerchVariant.shopifyVariantId,
+                              shoptetSku: selectedMerchVariant.shoptetId,
+                              unitPriceHaler: Math.round(selectedMerchVariant.priceAmount * 100),
+                              productDisplayName: `${product.name} – ${selectedMerchVariant.label}`,
+                              variantLabel: selectedMerchVariant.label,
+                            }
+                          : undefined,
+                      )
+                    }
                     className="flex items-center justify-center gap-1.5 flex-1 py-3 px-3 rounded-[14px] font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-white bg-[#3d3d3d] hover:bg-[#555] transition-all cursor-pointer border border-[#3d3d3d] text-center leading-snug"
                   >
                     {'P\u0159idat do objedn\u00e1vky pro \u0161kolu'}
@@ -1043,7 +1547,7 @@ export function ProductDetailPage({
               </div>
 
               {/* Bundle button — přidat včetně ostatních dílů */}
-              {siblingDils.length > 0 && product.shopifyVariantId && (() => {
+              {siblingDils.length > 0 && effectiveCartVariantId && (() => {
                 const note = getNote(product);
                 const isAvailabilityNote = /\b(leden|únor|b[rř]ezen|duben|kv[eě]ten|[cč]ervenec|[cč]erven|srpen|z[aá][rř][ií]|[rř][íi]jen|listopad|prosinec|dostupn)/i.test(note);
                 if (isAvailabilityNote) return null;
@@ -1467,6 +1971,18 @@ export function ProductDetailPage({
                       );
                     })}
                   </div>
+                  {(relatedRocnikFilter != null || relatedRadaFilter != null) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRelatedRocnikFilter(null);
+                        setRelatedRadaFilter(null);
+                      }}
+                      className="font-['Fenomen_Sans',sans-serif] text-[14.4px] text-[#001161]/45 hover:text-[#001161] underline underline-offset-2 shrink-0 cursor-pointer bg-transparent border-0 p-0 self-center"
+                    >
+                      Zrušit filtry
+                    </button>
+                  )}
                 </div>
               )}
               {(isMath || relatedRadaOptions.length > 1) && (
@@ -1502,18 +2018,6 @@ export function ProductDetailPage({
                   </div>
                 </div>
               )}
-              {(relatedRocnikFilter != null || relatedRadaFilter != null) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRelatedRocnikFilter(null);
-                    setRelatedRadaFilter(null);
-                  }}
-                  className="font-['Fenomen_Sans',sans-serif] text-[14.4px] text-[#001161]/45 hover:text-[#001161] underline underline-offset-2 self-start cursor-pointer bg-transparent border-0 p-0"
-                >
-                  Zrušit filtry
-                </button>
-              )}
             </div>
           )}
 
@@ -1521,21 +2025,9 @@ export function ProductDetailPage({
           <div className="max-w-[1200px] mx-auto px-4 sm:px-6 pb-6">
             {relatedFinal.length === 0 ? (
               <div className="w-full py-10 px-4 text-center">
-                <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/55 mb-3">
+                <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/55">
                   Žádný titul neodpovídá zvoleným filtrům.
                 </p>
-                {(relatedRocnikFilter != null || relatedRadaFilter != null) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRelatedRocnikFilter(null);
-                      setRelatedRadaFilter(null);
-                    }}
-                    className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161] underline underline-offset-2 cursor-pointer bg-transparent border-0"
-                  >
-                    Zrušit filtry
-                  </button>
-                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-10 justify-items-stretch">
@@ -1773,6 +2265,99 @@ export function ProductDetailPage({
         </AnimatePresence>,
         document.body
       )}
+
+      {typeof document !== 'undefined' &&
+        createPortal(
+        <AnimatePresence>
+          {videoPreviewOpen && videoPreviewParsed && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2 }}
+              className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-8"
+              onClick={() => setVideoPreviewOpen(false)}
+            >
+              <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94, y: 16 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.94, y: 16 }}
+                transition={{ duration: 0.25, ease: [0.32, 0.72, 0, 1] }}
+                className="relative z-10 flex w-full max-w-[min(100%,960px)] flex-col overflow-hidden rounded-[24px] bg-white shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-100 bg-white px-5 py-4">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[#001161]/5">
+                      <Play className="h-4 w-4 text-[#001161]" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-['Fenomen_Sans',sans-serif] text-[14px] font-bold leading-tight text-[#001161]">
+                        {product.name}
+                      </p>
+                      <p className="text-[11px] text-gray-400">{'Uk\u00e1zka videa'}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <a
+                      href={previewVideoRaw}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-medium text-gray-500 transition-colors hover:bg-gray-50 hover:text-[#001161]"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      {'Otev\u0159\u00edt v okn\u011b'}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setVideoPreviewOpen(false)}
+                      className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl bg-gray-100 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
+                      aria-label="Zav\u0159\u00edt"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-black">
+                  {videoPreviewParsed.mode === 'file' ? (
+                    <video
+                      src={videoPreviewParsed.src}
+                      className="max-h-[min(78vh,720px)] w-full"
+                      controls
+                      playsInline
+                      autoPlay
+                    >
+                      {'V\u00e1\u0161 prohl\u00ed\u017ee\u010d nep\u0159ehr\u00e1v\u00e1 video v tomto form\u00e1tu.'}
+                    </video>
+                  ) : (
+                    <div
+                      className={`relative w-full bg-black ${
+                        videoPreviewParsed.mode === 'iframe' ? 'min-h-[min(50vh,420px)]' : 'aspect-video'
+                      }`}
+                    >
+                      <iframe
+                        src={
+                          videoPreviewParsed.mode === 'youtube' || videoPreviewParsed.mode === 'vimeo'
+                            ? videoPreviewParsed.embedUrl
+                            : videoPreviewParsed.src
+                        }
+                        className="absolute inset-0 h-full w-full border-0"
+                        title={'Uk\u00e1zka videa'}
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        allowFullScreen
+                      />
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+        )}
 
       {typeof document !== 'undefined' &&
         createPortal(

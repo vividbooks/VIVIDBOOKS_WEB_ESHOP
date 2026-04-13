@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router';
 import { Loader2, Package, Sparkles } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useProducts } from '../contexts/ProductsContext';
-import { type ProductBundleRecord } from '../utils/bundlePricing';
+import { bundleIsNxPlusOneSubject, type ProductBundleRecord } from '../utils/bundlePricing';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { SEOHead } from './SEOHead';
 import { resolveShareImageUrl } from '../utils/ogImage';
@@ -42,6 +42,10 @@ export function AkcePage() {
 
   const handleAddKvBundleToSchoolOrder = (bundle: ProductBundleRecord) => {
     if (kvBundleAddingId || productsLoading || !products.length) return;
+    if (bundleIsNxPlusOneSubject(bundle)) {
+      navigate(`/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`);
+      return;
+    }
     setKvBundleAddingId(bundle.id);
     try {
       const subjects = new Set<string>();

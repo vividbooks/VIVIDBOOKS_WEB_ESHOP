@@ -844,63 +844,59 @@ export function SubjectPage({
             {
               id: 'krok' as const,
               label: 'Krok za krokem',
-              note: 'Pracovní sešity',
               desc: 'Vede žáky k vlastnímu objevování a procvičení učiva.',
             },
             {
               id: 'pro-vsechny' as const,
               label: 'Pro všechny',
-              note: 'Pracovní sešity',
               desc: 'Díky pestrým úlohám různé obtížnosti vede k důkladnému pochopení.',
             },
             {
               id: 'digital' as const,
               label: 'Digitální přístup',
-              note: 'Zdarma od 15 ks',
-              desc: 'Tisíce příkladů v různých obtížnostech, soutěže a interaktivní pracovní listy. Lze zakoupit i samostatně bez sešitů.',
+              desc: 'Tisíce příkladů v různých obtížnostech, soutěže a interaktivní pracovní listy. Zdarma od 15 ks sešitů. Lze zakoupit i samostatně bez sešitů.',
             },
           ];
           const activeInfo = SERIES_INFO.find(s => s.id === activeSeries);
           const showSeriesExplainBox = !!(activeInfo || baseSubject === 'Matematika');
           return (
             <div className="mt-3 mb-5">
-              <div className="flex flex-wrap gap-3 mb-2">
-                {SERIES_INFO.map(s => {
-                  const active = activeSeries === s.id;
-                  return (
+              <div className="flex flex-wrap items-baseline gap-x-[14px] gap-y-2.5 mb-2">
+                <span className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40 shrink-0 pt-0.5">
+                  {'Typ matematiky:'}
+                </span>
+                <div className="flex flex-wrap gap-2.5">
+                  {SERIES_INFO.map(s => {
+                    const active = activeSeries === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => toggleSeries(s.id)}
+                        className={`px-[14px] py-[7px] rounded-full font-['Fenomen_Sans',sans-serif] text-[15.6px] font-normal leading-tight transition-colors cursor-pointer border-0 whitespace-nowrap ${
+                          active
+                            ? 'bg-[#001161] text-white'
+                            : 'bg-[#eef2fb] text-[#001161]/75 hover:bg-[#e2e8f4] hover:text-[#001161]'
+                        }`}
+                      >
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                  {activeSeries !== 'all' && (
                     <button
-                      key={s.id}
-                      onClick={() => toggleSeries(s.id)}
-                      className="inline-flex items-center gap-2 transition-all cursor-pointer"
-                      style={{
-                        fontFamily: "'Fenomen Sans', sans-serif",
-                        background: active ? '#001161' : '#ffffff',
-                        border: active ? '1.5px solid #001161' : '1.5px solid rgba(0,17,97,0.18)',
-                        borderRadius: '16px',
-                        padding: '10px 20px',
-                      }}
+                      type="button"
+                      onClick={clearSeriesFilter}
+                      className="px-[14px] py-[7px] rounded-full font-['Fenomen_Sans',sans-serif] text-[14px] leading-tight text-[#001161]/55 hover:text-[#001161] bg-[#eef2fb] hover:bg-[#e2e8f4] border-0 transition-colors cursor-pointer self-center"
                     >
-                      <span style={{ fontSize: '14px', fontWeight: 700, color: active ? '#fff' : '#001161' }}>{s.label}</span>
-                      <span style={{ fontSize: '13px', fontWeight: 400, color: active ? 'rgba(255,255,255,0.75)' : 'rgba(0,17,97,0.55)' }}>{s.note}</span>
+                      × Vše
                     </button>
-                  );
-                })}
-                {activeSeries !== 'all' && (
-                  <button
-                    onClick={clearSeriesFilter}
-                    className="inline-flex items-center gap-1.5 transition-all cursor-pointer"
-                    style={{ fontFamily: "'Fenomen Sans', sans-serif", fontSize: '12px', color: 'rgba(0,17,97,0.4)', background: 'rgba(0,17,97,0.05)', border: '1.5px solid rgba(0,17,97,0.08)', borderRadius: '16px', padding: '10px 14px' }}
-                  >
-                    × Vše
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
               {/* Popisek aktivní řady + u matematiky odkaz na srovnávací video */}
               {showSeriesExplainBox && (
-                <div
-                  className="px-4 py-3 rounded-[14px] transition-all"
-                  style={{ background: 'rgba(0,17,97,0.05)', fontFamily: "'Fenomen Sans', sans-serif" }}
-                >
+                <div className="font-['Fenomen_Sans',sans-serif] pt-1">
                   {activeInfo && (
                     <div>
                       <span className="text-[13px] font-bold text-[#001161]">{activeInfo.label}: </span>

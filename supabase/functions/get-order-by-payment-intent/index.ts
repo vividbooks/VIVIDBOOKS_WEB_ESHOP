@@ -77,6 +77,8 @@ type OrderHeadRow = {
   tracking_number: string | null;
   invoice_status: string | null;
   idoklad_invoice_id: string | null;
+  /** Objednávka jen z plakátů — ruční stav v adminu (pending | done). */
+  poster_fulfillment_status: string | null;
 };
 
 type FulfillmentPhase = {
@@ -92,14 +94,39 @@ function buildFulfillmentPayload(order: {
   shipped_at: string | null;
   tracking_number: string | null;
   shipping_method: string;
+  poster_fulfillment_status: string | null;
 }): { phases: FulfillmentPhase[]; courier_label: string } {
   const paid = order.payment_status === 'paid';
+  const courier = shippingLabel(order.shipping_method);
+  const posterFlow = order.poster_fulfillment_status != null;
+  const posterDone = order.poster_fulfillment_status === 'done';
+
+  if (posterFlow) {
+    let transitDetail: string | undefined;
+    if (posterDone && order.tracking_number?.trim()) {
+      transitDetail = `Sledovací číslo: ${order.tracking_number.trim()}`;
+    }
+    return {
+      courier_label: courier,
+      phases: [
+        { key: 'received', label: 'Objednávka přijata', done: true },
+        { key: 'paid', label: 'Objednávka zaplacena', done: paid },
+        { key: 'printing', label: 'Objednávka se tiskne', done: posterDone },
+        {
+          key: 'transit',
+          label: 'Objednávka je na cestě k vám',
+          done: posterDone,
+          detail: transitDetail,
+        },
+      ],
+    };
+  }
+
   /**
    * `exported` / `processing` = v naší DB včetně přenosu do BaseLinker/FF (např. „Vytvořeno v FF“),
    * ještě to není „zabaleno“ ani odesláno. Sklad + kurýr až u `shipped` / `delivered`.
    */
   const leftWarehouse = ['shipped', 'delivered'].includes(order.status);
-  const courier = shippingLabel(order.shipping_method);
 
   let phase4Detail: string | undefined;
   if (leftWarehouse) {
@@ -202,6 +229,8 @@ Deno.serve(async (req) => {
   );
   const transferThankYou = url.searchParams.get('transfer') === '1';
   const trackingTokenParam = (url.searchParams.get('t') || '').trim();
+  const emailParamRaw = (url.searchParams.get('email') || '').trim();
+  const emailParamNorm = emailParamRaw.toLowerCase();
 
   if (!paymentIntentId && !orderNumber) {
     return jsonResponse({ error: 'Missing payment_intent_id or order (order_number).' }, 400);
@@ -245,7 +274,8 @@ Deno.serve(async (req) => {
           shipped_at,
           tracking_number,
           invoice_status,
-          idoklad_invoice_id
+          idoklad_invoice_id,
+          poster_fulfillment_status
         from public.orders
         where stripe_payment_intent_id = ${paymentIntentId}
         limit 1
@@ -269,7 +299,8 @@ Deno.serve(async (req) => {
           shipped_at,
           tracking_number,
           invoice_status,
-          idoklad_invoice_id
+          idoklad_invoice_id,
+          poster_fulfillment_status
         from public.orders
         where order_number = ${orderNumber}
         limit 1
@@ -283,12 +314,17 @@ Deno.serve(async (req) => {
 
     if (orderNumber && !paymentIntentId && !transferThankYou) {
       const secret = getTrackingSecret();
-      if (!secret || !trackingTokenParam) {
-        return jsonResponse({ error: 'Missing or invalid tracking link.' }, 403);
-      }
-      const ok = await verifyOrderTrackingToken(order.id, secret, trackingTokenParam);
-      if (!ok) {
-        return jsonResponse({ error: 'Invalid tracking token.' }, 403);
+      const tokenOk =
+        Boolean(secret && trackingTokenParam)
+        && await verifyOrderTrackingToken(order.id, secret, trackingTokenParam);
+      const emailOk =
+        emailParamNorm.includes('@')
+        && order.customer_email.trim().toLowerCase() === emailParamNorm;
+      if (!tokenOk && !emailOk) {
+        return jsonResponse({
+          error:
+            'Neplatný odkaz ke sledování. Použijte celý odkaz z e-mailu, nebo zadejte e-mail z objednávky na stránce sledování.',
+        }, 403);
       }
     }
 

@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate, Link } from 'react-router';
 import {
   Plus, Search, Trash2, Save, X, ChevronRight, Loader2,
-  AlertCircle, Settings, LayoutGrid, Unlock, ArrowRight,
+  AlertCircle, Settings, LayoutGrid, Unlock, ArrowRight, ArrowLeft,
   ExternalLink, BookOpen, Package, ShoppingCart, MapPin, BarChart3, RefreshCw,
   CircleHelp, GripVertical, Pencil, EyeOff, Eye, Sparkles,
 } from 'lucide-react';
@@ -50,6 +50,11 @@ import {
 } from '../../data/subjectMethodPrinciples';
 import { DEFAULT_NOTIFICATIONS } from '../../data/notifications';
 import { ImagePicker } from './ImagePicker';
+import {
+  getMerchCategoryLabel,
+  getMerchSubcategoryLabel,
+  type MerchBrowseState,
+} from '../../utils/merchProducts';
 
 function isHeroBooksFanLayout(d: { layout?: string }) {
   return (
@@ -62,7 +67,7 @@ function isHeroBooksFanLayout(d: { layout?: string }) {
 interface FieldDef {
   key: string;
   label: string;
-  type: 'text' | 'textarea' | 'select' | 'number' | 'url' | 'image' | 'color' | 'boolean' | 'json';
+  type: 'text' | 'textarea' | 'select' | 'number' | 'url' | 'image' | 'imageGallery' | 'color' | 'boolean' | 'json';
   options?: { value: string; label: string }[];
   placeholder?: string;
   fullWidth?: boolean;
@@ -93,11 +98,43 @@ const PRODUCT_FIELDS: FieldDef[] = [
     { value: 'online', label: 'Digitální licence' },
     { value: 'workbook', label: 'Pracovní sešit' },
     { value: 'vividboard', label: 'Vividboard' },
+    { value: 'merch', label: 'Další produkt (merch)' },
   ]},
+  {
+    key: 'merchCategory',
+    label: 'Skupina (dlaždice)',
+    type: 'text',
+    placeholder: 'např. Plakáty, Žákovské knížky',
+    fullWidth: true,
+    showIf: (d) => d.type === 'merch',
+    hint: 'Zobrazí se jako kategorie nahoře na stránce Další produkty a v admin filtru.',
+  },
+  {
+    key: 'merchSubcategory',
+    label: 'Podkategorie (volitelné)',
+    type: 'text',
+    placeholder: 'např. Na stěnu, A5',
+    fullWidth: true,
+    showIf: (d) => d.type === 'merch',
+  },
   { key: 'price', label: 'Cena', type: 'text', placeholder: '390,-' },
   { key: 'image', label: 'Obrázek produktu', type: 'image', fullWidth: true },
+  {
+    key: 'images',
+    label: 'Další náhledy (galerie)',
+    type: 'imageGallery',
+    fullWidth: true,
+    hint: 'Zobrazí se v detailu produktu pod hlavním obrázkem. Import ze Shoptetu je může doplnit automaticky.',
+  },
   { key: 'note', label: 'Poznámka (bobánek)', type: 'text', placeholder: 'Dostupné v dubnu 2026' },
   { key: 'previewLink', label: 'Odkaz na ukázku', type: 'url', fullWidth: true },
+  {
+    key: 'previewVideoLink',
+    label: 'Ukázka videa (URL)',
+    type: 'url',
+    fullWidth: true,
+    hint: 'YouTube, Vimeo nebo přímý odkaz na soubor (.mp4, .webm). V detailu se zobrazí tlačítko vedle „Prolistovat ukázku“.',
+  },
   { key: 'appLink', label: 'Odkaz otevřít v aplikaci', type: 'url', fullWidth: true, placeholder: 'https://app.vividbooks.cz/...', hint: 'Přímý odkaz pro otevření tohoto produktu v aplikaci Vividbooks' },
   { key: 'dolozka', label: 'Doložka MŠMT', type: 'text', fullWidth: true },
   { key: 'obsah', label: 'Obsah sešitu (RAG)', type: 'textarea', fullWidth: true, placeholder: 'Kapitola 1: Přirozená čísla\nKapitola 2: Zlomky\n...', hint: 'Zobrazuje se pouze v RAG databázi. Pomáhá AI lépe odpovídat na dotazy.' },
@@ -526,6 +563,129 @@ const COLLECTION_CONFIG: Record<string, {
   tabs: { fields: TABS_FIELDS, nameKey: 'tabText', subtitleKey: 'subject', imageKey: 'contentImage', apiName: 'tabs', displayName: 'Taby (prodejní argumenty)' },
 };
 
+function normalizeImageGalleryUrls(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw
+      .filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+      .map((u) => u.trim());
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return normalizeImageGalleryUrls(parsed);
+    } catch {
+      /* single string or newline-separated */
+    }
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function ImageGalleryField({ fieldKey, editData, updateField }: { fieldKey: string; editData: any; updateField: (k: string, v: any) => void }) {
+  const [addPickerKey, setAddPickerKey] = useState(0);
+  const urls = normalizeImageGalleryUrls(editData[fieldKey]);
+
+  const setUrls = (next: string[]) => {
+    updateField(fieldKey, next);
+  };
+
+  const removeAt = (idx: number) => {
+    const next = urls.filter((_, i) => i !== idx);
+    setUrls(next);
+  };
+
+  const move = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir;
+    if (j < 0 || j >= urls.length) return;
+    const next = [...urls];
+    [next[idx], next[j]] = [next[j], next[idx]];
+    setUrls(next);
+  };
+
+  return (
+    <div className="space-y-3">
+      {urls.length === 0 ? (
+        <p className="text-[12px] text-gray-400 italic">Žádné další náhledy — přidej z galerie nebo nahraj soubor níže.</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+          {urls.map((url, idx) => (
+            <div
+              key={`${idx}-${url.slice(-24)}`}
+              className="relative group rounded-xl overflow-hidden border border-gray-100 bg-gray-50"
+              style={{ height: 100 }}
+            >
+              <img
+                src={url}
+                alt=""
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.opacity = '0.25';
+                }}
+              />
+              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/35 transition-all flex items-end justify-center gap-1 pb-1.5 opacity-0 group-hover:opacity-100">
+                <button
+                  type="button"
+                  onClick={() => move(idx, -1)}
+                  disabled={idx === 0}
+                  className="bg-white text-[#001161] text-[10px] font-bold px-2 py-1 rounded-lg shadow disabled:opacity-40"
+                >
+                  ←
+                </button>
+                <button
+                  type="button"
+                  onClick={() => move(idx, 1)}
+                  disabled={idx === urls.length - 1}
+                  className="bg-white text-[#001161] text-[10px] font-bold px-2 py-1 rounded-lg shadow disabled:opacity-40"
+                >
+                  →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeAt(idx)}
+                  className="bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-lg shadow hover:bg-red-600"
+                >
+                  Odstranit
+                </button>
+              </div>
+              <a
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                className="absolute top-1 right-1 text-[9px] font-bold bg-white/90 text-[#001161] px-1.5 py-0.5 rounded-md shadow opacity-0 group-hover:opacity-100"
+              >
+                Otevřít
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="border border-dashed border-gray-200 rounded-xl p-2 bg-gray-50/50">
+        <p className="text-[10px] text-gray-500 mb-2 font-semibold uppercase tracking-wide">Přidat obrázek do galerie</p>
+        <ImagePicker
+          key={addPickerKey}
+          value=""
+          onChange={(url) => {
+            if (!url) return;
+            const cur = normalizeImageGalleryUrls(editData[fieldKey]);
+            if (cur.includes(url)) {
+              toast.info('Tento obrázek už v galerii je.');
+              setAddPickerKey((k) => k + 1);
+              return;
+            }
+            setUrls([...cur, url]);
+            setAddPickerKey((k) => k + 1);
+          }}
+          compact
+          previewHeight={72}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── Shared: renderField ─────────────────────────────────────────────────────
 function FieldRenderer({ field, editData, updateField }: { field: FieldDef; editData: any; updateField: (k: string, v: any) => void }) {
   if (field.key.startsWith('_') && field.key.endsWith('Section')) {
@@ -625,6 +785,9 @@ function FieldRenderer({ field, editData, updateField }: { field: FieldDef; edit
     }
     if (field.type === 'image') {
       return <ImagePicker value={editData[field.key] || ''} onChange={(url) => updateField(field.key, url)} previewHeight={140} />;
+    }
+    if (field.type === 'imageGallery') {
+      return <ImageGalleryField fieldKey={field.key} editData={editData} updateField={updateField} />;
     }
     return (
       <input
@@ -2014,6 +2177,8 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
   const [editData, setEditData] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
+  /** null = předměty; jinak filtr typu „další produkty“ v adminu */
+  const [merchBrowse, setMerchBrowse] = useState<MerchBrowseState>(null);
   const [isNew, setIsNew] = useState(false);
   const [productEditorTab, setProductEditorTab] = useState<'settings' | 'eshop'>('settings');
   const draggingHeroSlideIdRef = useRef<string | null>(null);
@@ -2034,7 +2199,16 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
     finally { setLoading(false); }
   }, [config]);
 
-  useEffect(() => { loadItems(); setSelectedId(null); setEditData(null); setIsNew(false); setSearchQuery(''); setSubjectFilter(null); setProductEditorTab('settings'); }, [collection, loadItems]);
+  useEffect(() => {
+    loadItems();
+    setSelectedId(null);
+    setEditData(null);
+    setIsNew(false);
+    setSearchQuery('');
+    setSubjectFilter(null);
+    setMerchBrowse(null);
+    setProductEditorTab('settings');
+  }, [collection, loadItems]);
 
   useEffect(() => {
     if (config.apiName !== 'hero-slidy') return;
@@ -2218,10 +2392,32 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
     }
   };
 
-  const filtered = items.filter(item => {
-    const s = !searchQuery || (item[config.nameKey] || '').toLowerCase().includes(searchQuery.toLowerCase());
-    const f = !subjectFilter || (config.apiName === 'tabs' ? item.subject === subjectFilter : item.category === subjectFilter);
-    return s && f;
+  const filtered = items.filter((item) => {
+    const s =
+      !searchQuery ||
+      (item[config.nameKey] || '').toLowerCase().includes(searchQuery.toLowerCase());
+    if (!s) return false;
+
+    if (config.apiName === 'tabs') {
+      return !subjectFilter || item.subject === subjectFilter;
+    }
+
+    if (config.apiName !== 'produkty') {
+      return !subjectFilter || item.category === subjectFilter;
+    }
+
+    if (merchBrowse !== null) {
+      if (item.type !== 'merch') return false;
+      if (merchBrowse === 'all') return true;
+      if (getMerchCategoryLabel(item) !== merchBrowse.category) return false;
+      if (merchBrowse.subcategory && getMerchSubcategoryLabel(item) !== merchBrowse.subcategory) {
+        return false;
+      }
+      return true;
+    }
+
+    if (item.type === 'merch') return false;
+    return !subjectFilter || item.category === subjectFilter;
   });
 
   const heroPublishedList = useMemo(() => {
@@ -2451,14 +2647,138 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
           )}
           {/* Category chips for produkty / tabs */}
           {(config.apiName === 'produkty' || config.apiName === 'tabs') && !loading && (() => {
-            const vals = Array.from(new Set(items.map((i: any) => config.apiName === 'tabs' ? i.subject : i.category).filter(Boolean))).sort() as string[];
-            if (!vals.length) return null;
+            if (config.apiName === 'tabs') {
+              const vals = Array.from(new Set(items.map((i: any) => i.subject).filter(Boolean))).sort() as string[];
+              if (!vals.length) return null;
+              return (
+                <div className="flex flex-wrap gap-1 pt-0.5">
+                  <button type="button" onClick={() => setSubjectFilter(null)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${!subjectFilter ? 'bg-[#001161] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>Vše</button>
+                  {vals.map((s) => (
+                    <button key={s} type="button" onClick={() => setSubjectFilter(subjectFilter === s ? null : s)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors truncate max-w-[120px] ${subjectFilter === s ? 'bg-[#ff8c66] text-white' : 'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]'}`} title={s}>{s}</button>
+                  ))}
+                </div>
+              );
+            }
+
+            if (merchBrowse !== null) {
+              const merchItems = items.filter((i: any) => i.type === 'merch');
+              if (merchBrowse === 'all') {
+                const cats = Array.from(new Set(merchItems.map((i: any) => getMerchCategoryLabel(i)))).sort();
+                return (
+                  <div className="flex flex-col gap-1.5 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setMerchBrowse(null)}
+                      className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-[#001161] hover:bg-gray-200"
+                    >
+                      <ArrowLeft className="w-3 h-3 shrink-0" aria-hidden />
+                      Zpět k předmětům
+                    </button>
+                    <div className="flex flex-wrap gap-1">
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide w-full">Skupiny</span>
+                      {cats.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setMerchBrowse({ category: c, subcategory: null })}
+                          className="px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors truncate max-w-[140px] bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]"
+                          title={c}
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              const subcats = Array.from(
+                new Set(
+                  merchItems
+                    .filter((i: any) => getMerchCategoryLabel(i) === merchBrowse.category)
+                    .map((i: any) => getMerchSubcategoryLabel(i))
+                    .filter(Boolean),
+                ),
+              ).sort() as string[];
+              return (
+                <div className="flex flex-col gap-1.5 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (merchBrowse.subcategory) {
+                        setMerchBrowse({ category: merchBrowse.category, subcategory: null });
+                      } else {
+                        setMerchBrowse('all');
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-[#001161] hover:bg-gray-200"
+                  >
+                    <ArrowLeft className="w-3 h-3 shrink-0" aria-hidden />
+                    Zpět
+                  </button>
+                  <div className="flex flex-wrap gap-1 items-center">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide w-full">
+                      {merchBrowse.category}
+                      {subcats.length > 0 ? ' — podkategorie' : ''}
+                    </span>
+                    {subcats.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setMerchBrowse({ category: merchBrowse.category, subcategory: null })}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${!merchBrowse.subcategory ? 'bg-[#ff8c66] text-white' : 'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]'}`}
+                      >
+                        Vše v skupině
+                      </button>
+                    ) : null}
+                    {subcats.map((sub) => (
+                      <button
+                        key={sub}
+                        type="button"
+                        onClick={() => setMerchBrowse({ category: merchBrowse.category, subcategory: sub })}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors truncate max-w-[120px] ${merchBrowse.subcategory === sub ? 'bg-[#ff8c66] text-white' : 'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]'}`}
+                        title={sub}
+                      >
+                        {sub}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
+
+            const nonMerch = items.filter((i: any) => i.type !== 'merch');
+            const vals = Array.from(new Set(nonMerch.map((i: any) => i.category).filter(Boolean))).sort() as string[];
+            const hasMerch = items.some((i: any) => i.type === 'merch');
+            if (!vals.length && !hasMerch) return null;
             return (
               <div className="flex flex-wrap gap-1 pt-0.5">
-                <button onClick={() => setSubjectFilter(null)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${!subjectFilter ? 'bg-[#001161] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>Vše</button>
-                {vals.map(s => (
-                  <button key={s} onClick={() => setSubjectFilter(subjectFilter === s ? null : s)} className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors truncate max-w-[120px] ${subjectFilter === s ? 'bg-[#ff8c66] text-white' : 'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]'}`} title={s}>{s}</button>
+                <button
+                  type="button"
+                  onClick={() => { setSubjectFilter(null); setMerchBrowse(null); }}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors ${!subjectFilter ? 'bg-[#001161] text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}
+                >
+                  Vše
+                </button>
+                {vals.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => { setMerchBrowse(null); setSubjectFilter(subjectFilter === s ? null : s); }}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors truncate max-w-[120px] ${subjectFilter === s ? 'bg-[#ff8c66] text-white' : 'bg-gray-100 text-gray-500 hover:bg-orange-50 hover:text-[#ff8c66]'}`}
+                    title={s}
+                  >
+                    {s}
+                  </button>
                 ))}
+                {hasMerch ? (
+                  <button
+                    type="button"
+                    onClick={() => { setSubjectFilter(null); setMerchBrowse('all'); }}
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold transition-colors max-w-[160px] truncate bg-violet-50 text-[#5b21b6] hover:bg-violet-100"
+                    title="Merch a doplňkový sortiment"
+                  >
+                    Další produkty
+                  </button>
+                ) : null}
               </div>
             );
           })()}

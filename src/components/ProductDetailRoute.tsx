@@ -1,10 +1,11 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { ProductDetailPage } from './ProductDetailPage';
+import { ProductDetailPage, type SchoolOrderMerchContext } from './ProductDetailPage';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCart } from '../contexts/CartContext';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import { mergeSchoolOrderDraft, matchSchoolSubjectKeysFromCategory } from '../utils/schoolOrderDraft';
+import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 
 export function ProductDetailRoute() {
   const { id }     = useParams<{ id: string }>();
@@ -46,7 +47,7 @@ export function ProductDetailRoute() {
       product={product}
       products={products}
       onBack={() => navigate(-1)}
-      onOrder={() => {
+      onOrder={(ctx?: SchoolOrderMerchContext) => {
         const predmetQ = product.category ? `&predmet=${encodeURIComponent(product.category)}` : '';
         const state = { category: product.category };
 
@@ -66,18 +67,30 @@ export function ProductDetailRoute() {
           ...(subjKeys.length > 0 ? { selSubjects: subjKeys } : {}),
         });
 
-        if (product.type === 'workbook' && product.shopifyVariantId) {
+        const merchVid = ctx?.shopifyVariantId?.trim();
+        const merchSku = ctx?.shoptetSku?.trim();
+        const fallbackVid = product.shopifyVariantId?.trim();
+        const lineVariantId = merchVid || merchSku || fallbackVid || '';
+        if (
+          (product.type === 'workbook' || product.type === 'merch') &&
+          lineVariantId
+        ) {
           const pid = String(product.id);
-          const vid = product.shopifyVariantId;
+          const vid = lineVariantId;
           const already = items.some((i) => i.productId === pid && i.variantId === vid);
           if (!already) {
+                       const posterMerch =
+              product.type === 'merch' &&
+              (product.availabilityDisplay === 'on_order' || isMerchWallArtBoardsProduct(product));
             addItem({
               productId: pid,
-              productName: product.name || 'Produkt',
+              productName: ctx?.productDisplayName ?? (product.name || 'Produkt'),
               variantId: vid,
+              variantName: ctx?.variantLabel,
               quantity: 1,
-              unitPrice: getProductUnitPriceInHaler(product),
+              unitPrice: ctx ? ctx.unitPriceHaler : getProductUnitPriceInHaler(product),
               imageUrl: product.image || undefined,
+              ...(posterMerch ? { posterMerch: true as const } : {}),
             });
           }
         }

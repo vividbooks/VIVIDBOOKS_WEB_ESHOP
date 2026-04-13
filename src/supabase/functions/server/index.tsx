@@ -818,7 +818,8 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
           backgroundColor: '#FFF4C8',
           buttonType: 'subscribe',
           previewLink: f['ukazka-link'] || f['ukázka-link'] || f['link-na-prolistovani'] || f['prolistovat'] || f['ukazka'] || f['preview'] || '',
-          flipbookLink: f['ukazka-link'] || f['ukázka-link'] || f['link-na-prolistovani'] || f['prolistovat'] || f['ukazka'] || f['preview'] || ''
+          flipbookLink: f['ukazka-link'] || f['ukázka-link'] || f['link-na-prolistovani'] || f['prolistovat'] || f['ukazka'] || f['preview'] || '',
+          previewVideoLink: f['ukazka-video'] || f['ukázka-video'] || f['video-ukazka'] || ''
         };
       }),
       ...printItems.map((i: any) => {
@@ -844,6 +845,7 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
           poznamka: f['poznamka'] || f['poznámka'] || f['akce'] || f['note'] || '',
           previewLink: f['ukazka-link'] || f['ukázka-link'] || f['link-na-prolistovani'] || f['prolistovat'] || f['ukazka'] || f['preview'] || '',
           flipbookLink: f['ukazka-link'] || f['ukázka-link'] || f['link-na-prolistovani'] || f['prolistovat'] || f['ukazka'] || f['preview'] || '',
+          previewVideoLink: f['ukazka-video'] || f['ukázka-video'] || f['video-ukazka'] || '',
           // Přidáme všechna ostatní pole do metadata, abychom nic neztratili
           metadata: f,
           backgroundColor: '#DEE4F1',
@@ -916,6 +918,61 @@ app.delete('/make-server-93a20b6f/products/:id', async (c) => {
   const products = await getAllProducts();
   await saveAllProducts(products.filter((p: any) => p.id !== id));
   return c.json({ success: true });
+});
+
+/** Proxy stažení Shoptet productsComplete.xml (prohlížeč jinak často blokuje CORS). Povoleno jen https://eshop.vividbooks.com/export/… */
+app.post('/make-server-93a20b6f/admin/shoptet-products-xml-fetch', async (c) => {
+  let body: { url?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Neplatné JSON tělo' }, 400);
+  }
+  const url = typeof body?.url === 'string' ? body.url.trim() : '';
+  if (!url) return c.json({ error: 'Chybí url' }, 400);
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return c.json({ error: 'Neplatná URL' }, 400);
+  }
+  if (u.protocol !== 'https:') return c.json({ error: 'Povolené je jen HTTPS' }, 400);
+  if (u.hostname !== 'eshop.vividbooks.com') {
+    return c.json({ error: 'Povolený je jen host eshop.vividbooks.com' }, 403);
+  }
+  if (!u.pathname.startsWith('/export/')) {
+    return c.json({ error: 'Povolena je jen cesta /export/…' }, 403);
+  }
+  const hash = u.searchParams.get('hash');
+  if (!hash || !String(hash).trim()) {
+    return c.json(
+      {
+        error:
+          'V URL chybí parametr hash. Zkopíruj celý exportní odkaz z administrace Shoptetu (Export → productsComplete) — bez platného hashe Shoptet vrací 404.',
+      },
+      400,
+    );
+  }
+  const r = await fetch(url, {
+    redirect: 'follow',
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (compatible; VividbooksAdmin-ShoptetImport/1.0; +https://www.vividbooks.com)',
+      Accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'cs,en;q=0.8',
+    },
+  });
+  if (!r.ok) {
+    const hint =
+      r.status === 404
+        ? ' Odkaz byl nejspíš neúplný, nebo hash vypršel — vygeneruj nový export ve Shoptetu a znovu zkopíruj URL.'
+        : '';
+    const status = r.status >= 400 && r.status < 500 ? 400 : 502;
+    return c.json({ error: `Shoptet vrátil HTTP ${r.status}.${hint}`, upstreamStatus: r.status }, status);
+  }
+  const xml = await r.text();
+  if (xml.length > 25_000_000) return c.json({ error: 'Odpověď je příliš velká' }, 413);
+  return c.json({ xml });
 });
 
 app.post('/make-server-93a20b6f/clear-products', async (c) => {
@@ -16589,7 +16646,7 @@ app.post('/make-server-93a20b6f/generate-collage-ai', async (c) => {
 ═══════════════════════════════════════════════════════════════════ */
 
 function slimProductForAgent(p: any): any {
-  const keys = ['id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'appLink', 'shopifyVariantId', 'shopifyProductId', 'shoptetId'];
+  const keys = ['id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'previewVideoLink', 'appLink', 'shopifyVariantId', 'shopifyProductId', 'shoptetId'];
   const o: any = {};
   for (const k of keys) {
     const v = p[k];
@@ -16604,8 +16661,8 @@ function slimProductForAgent(p: any): any {
 const ADMIN_AGENT_TOOLS = [
   // ── Produkty ──────────────────────────────────────────────────────
   { name: 'get_products', description: 'Načte seznam produktů z katalogu. Výchozí (full_fields false): krátký přehled polí (id, name, type, category, ceny, ročník, doložka, odkazy, obrázek…) — šetří paměť edge workeru. full_fields true: všechna pole, ale max ~60 položek — použij jen když opravdu potřebuješ dlouhé description/obsah/metadata.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', description: 'workbook | online | vividboard | all', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', description: 'Substring v názvu, diakritika OK', nullable: true }, full_fields: { type: 'BOOLEAN', description: 'true = celé záznamy (max ~60), false = lehké záznamy (max ~250)', nullable: true } } } },
-  { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shopifyVariantId: { type: 'STRING', nullable: true }, shopifyProductId: { type: 'STRING', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
-  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, category, price, priceAmount, description, autori, rocnik, dolozka, image, shopifyVariantId, shopifyProductId, shoptetId, flipbookLink, previewLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "price": "299 Kč", "shopifyVariantId": "123", "description": "..." }' } }, required: ['id', 'fields'] } },
+   { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shopifyVariantId: { type: 'STRING', nullable: true }, shopifyProductId: { type: 'STRING', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, previewVideoLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
+  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, category, price, priceAmount, description, autori, rocnik, dolozka, image, shopifyVariantId, shopifyProductId, shoptetId, flipbookLink, previewLink, previewVideoLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "price": "299 Kč", "shopifyVariantId": "123", "description": "..." }' } }, required: ['id', 'fields'] } },
   { name: 'bulk_update_products', description: 'Hromadně přepíše pole u skupiny produktů. Okamžitě uloží.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true }, fields: { type: 'OBJECT' } }, required: ['fields'] } },
   { name: 'bulk_update_prices_percentage', description: 'Změní ceny skupiny produktů o procento. Kladné = zdražení, záporné = zlevnění. Zaokrouhlení na desítky.', parameters: { type: 'OBJECT', properties: { percentage: { type: 'NUMBER', description: 'např. 10 = +10%, -5 = -5%' }, filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true } }, required: ['percentage'] } },
   { name: 'delete_product', description: 'Smaže produkt z katalogu.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },

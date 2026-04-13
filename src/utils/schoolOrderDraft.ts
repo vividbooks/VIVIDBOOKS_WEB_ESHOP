@@ -12,6 +12,10 @@ export interface SchoolOrderDraft {
   vividboardCount: number;
   /** Počty balíčků (školský formulář) podle ID z KV. */
   bundleQuantities?: Record<string, number>;
+  /**
+   * Jen `nx_plus_one_subject`: jedna sada = mapa productId → ks (stejná pro každý řádek počtu balíčků).
+   */
+  subjectBundleSelections?: Record<string, Record<string, number>>;
 }
 
 function canUseStorage() {
@@ -28,8 +32,24 @@ function sanitizeBundleQuantities(raw: unknown): Record<string, number> {
   return out;
 }
 
+export function sanitizeSubjectBundleSelections(raw: unknown): Record<string, Record<string, number>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, Record<string, number>> = {};
+  for (const [bundleId, inner] of Object.entries(raw as Record<string, unknown>)) {
+    if (!inner || typeof inner !== 'object') continue;
+    const row: Record<string, number> = {};
+    for (const [pid, q] of Object.entries(inner as Record<string, unknown>)) {
+      const n = Math.max(0, Math.floor(Number(q) || 0));
+      if (n > 0) row[pid] = n;
+    }
+    if (Object.keys(row).length > 0) out[bundleId] = row;
+  }
+  return out;
+}
+
 function sanitizeDraft(raw: any): SchoolOrderDraft | null {
   if (!raw || typeof raw !== 'object') return null;
+  const subjectBundleSelections = sanitizeSubjectBundleSelections(raw.subjectBundleSelections);
   return {
     selSubjects: Array.isArray(raw.selSubjects) ? raw.selSubjects.filter((v) => typeof v === 'string') : [],
     selTypes: Array.isArray(raw.selTypes) ? raw.selTypes.filter((v) => typeof v === 'string') : [],
@@ -38,6 +58,7 @@ function sanitizeDraft(raw: any): SchoolOrderDraft | null {
     digitalSubjects: Array.isArray(raw.digitalSubjects) ? raw.digitalSubjects.filter((v) => typeof v === 'string') : [],
     vividboardCount: Number(raw.vividboardCount) > 0 ? Number(raw.vividboardCount) : 1,
     bundleQuantities: sanitizeBundleQuantities(raw.bundleQuantities),
+    ...(Object.keys(subjectBundleSelections).length > 0 ? { subjectBundleSelections } : {}),
   };
 }
 
@@ -84,13 +105,30 @@ export function matchSchoolSubjectKeysFromCategory(category: string | undefined 
   return match ? [match] : [];
 }
 
-export function mergeSchoolOrderDraft(partial: Partial<SchoolOrderDraft>) {
+export type MergeSchoolOrderDraftOptions = {
+  /** Přepsat počty balíčků jen z `partial` (bez sloučení se starým draftem). */
+  replaceBundleQuantities?: boolean;
+  /** Přepsat výběry předmětových balíčků jen z `partial`. */
+  replaceSubjectBundleSelections?: boolean;
+};
+
+export function mergeSchoolOrderDraft(
+  partial: Partial<SchoolOrderDraft>,
+  options?: MergeSchoolOrderDraftOptions,
+) {
   const current = readSchoolOrderDraft();
-  const mergedBundles = {
-    ...(current?.bundleQuantities || {}),
-    ...(partial.bundleQuantities || {}),
-  };
-  const bundleQuantities = sanitizeBundleQuantities(mergedBundles);
+  const bundleQuantities = options?.replaceBundleQuantities
+    ? sanitizeBundleQuantities(partial.bundleQuantities ?? {})
+    : sanitizeBundleQuantities({
+        ...(current?.bundleQuantities || {}),
+        ...(partial.bundleQuantities || {}),
+      });
+  const subjectBundleSelections = options?.replaceSubjectBundleSelections
+    ? sanitizeSubjectBundleSelections(partial.subjectBundleSelections ?? {})
+    : sanitizeSubjectBundleSelections({
+        ...(current?.subjectBundleSelections || {}),
+        ...(partial.subjectBundleSelections || {}),
+      });
   const next: SchoolOrderDraft = {
     selSubjects: Array.from(new Set([...(current?.selSubjects || []), ...(partial.selSubjects || [])])),
     selTypes: Array.from(new Set([...(current?.selTypes || []), ...(partial.selTypes || [])])),
@@ -99,6 +137,7 @@ export function mergeSchoolOrderDraft(partial: Partial<SchoolOrderDraft>) {
     digitalSubjects: Array.from(new Set([...(current?.digitalSubjects || []), ...(partial.digitalSubjects || [])])),
     vividboardCount: partial.vividboardCount ?? current?.vividboardCount ?? 1,
     ...(Object.keys(bundleQuantities).length > 0 ? { bundleQuantities } : {}),
+    ...(Object.keys(subjectBundleSelections).length > 0 ? { subjectBundleSelections } : {}),
   };
   writeSchoolOrderDraft(next);
   return next;

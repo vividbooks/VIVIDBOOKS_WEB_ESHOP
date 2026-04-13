@@ -1,7 +1,13 @@
-import { useState } from 'react';
-import { Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper, ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft } from 'lucide-react';
+import { useState, useMemo, type ChangeEvent } from 'react';
+import { Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper, ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft, Store } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { seedCollection } from '../../utils/adminApi';
+import { fetchProducts, seedCollection } from '../../utils/adminApi';
+import {
+  parseShoptetProductsCompleteXml,
+  summarizeShoptetImportByCategory,
+  SHOPTET_IMPORT_ALLOWED_ROOTS,
+  type ShoptetMerchMergedProduct,
+} from '../../utils/shoptetProductsXmlImport';
 import { BLOG_POSTS } from '../../data/blogPosts';
 import { NOVINKA_POSTS } from '../../data/novinkaPosts';
 import { WEBINARS } from '../../data/webinars';
@@ -78,6 +84,158 @@ export default function MigrationPage() {
   const [jsonError, setJsonError] = useState('');
   const [jsonMapping, setJsonMapping] = useState<Record<string,string>>({});
   const [jsonResult, setJsonResult] = useState<any>(null);
+
+  // Shoptet productsComplete.xml → merch
+  const [shoptetUrl, setShoptetUrl] = useState('');
+  const [shoptetFileName, setShoptetFileName] = useState('');
+  const [shoptetStatus, setShoptetStatus] = useState<'idle' | 'loading' | 'importing'>('idle');
+  const [shoptetPreview, setShoptetPreview] = useState<ShoptetMerchMergedProduct[] | null>(null);
+  const [shoptetByCat, setShoptetByCat] = useState<Record<string, number> | null>(null);
+  const [shoptetSkipExisting, setShoptetSkipExisting] = useState(true);
+  const [shoptetImportResult, setShoptetImportResult] = useState<{ ok: number; skipped: number; fail: number } | null>(null);
+  /** Které konkrétní varianty (id řádku) se mají importovat — po načtení XML defaultně vše zaškrtnuto. */
+  const [shoptetRowSelected, setShoptetRowSelected] = useState<Record<string, boolean>>({});
+
+  const shoptetRowsToImport = useMemo(() => {
+    if (!shoptetPreview?.length) return [];
+    return shoptetPreview.filter((p) => shoptetRowSelected[p.id]);
+  }, [shoptetPreview, shoptetRowSelected]);
+
+  const applyShoptetXml = (xml: string, toastLabel?: string) => {
+    const products = parseShoptetProductsCompleteXml(xml);
+    const byCat = summarizeShoptetImportByCategory(products);
+    const selected: Record<string, boolean> = {};
+    for (const p of products) selected[p.id] = true;
+    setShoptetRowSelected(selected);
+    setShoptetPreview(products);
+    setShoptetByCat(byCat);
+    setShoptetImportResult(null);
+    toast.success(
+      toastLabel
+        ? `Načteno ${products.length} variant (${toastLabel}).`
+        : `Načteno ${products.length} variant.`,
+    );
+  };
+
+  const handleShoptetLoadUrl = async () => {
+    const u = shoptetUrl.trim();
+    if (!u) {
+      toast.error('Zadej URL exportu z Shoptetu.');
+      return;
+    }
+    try {
+      const parsed = new URL(u);
+      const h = parsed.searchParams.get('hash');
+      if (!h || !h.trim()) {
+        toast.error(
+          'V URL chybí parametr hash=… Z administrace Shoptetu zkopíruj celý odkaz u exportu productsComplete (bez něj eshop vrací 404).',
+        );
+        return;
+      }
+    } catch {
+      toast.error('Neplatná URL.');
+      return;
+    }
+    setShoptetStatus('loading');
+    setShoptetImportResult(null);
+    try {
+      const res = await fetch(`${SERVER}/admin/shoptet-products-xml-fetch`, {
+        method: 'POST',
+        headers: AUTH(publicAnonKey),
+        body: JSON.stringify({ url: u }),
+      });
+      const data = await safeJson(res);
+      if (data.error) {
+        toast.error(String(data.error));
+        return;
+      }
+      if (typeof data.xml !== 'string') {
+        toast.error('Neočekávaná odpověď serveru.');
+        return;
+      }
+      applyShoptetXml(data.xml, 'URL');
+    } catch (e: any) {
+      toast.error(e.message || 'Stažení XML selhalo.');
+    } finally {
+      setShoptetStatus('idle');
+    }
+  };
+
+  const handleShoptetFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setShoptetFileName(f.name);
+    setShoptetStatus('loading');
+    setShoptetImportResult(null);
+    try {
+      const text = await f.text();
+      applyShoptetXml(text, f.name);
+    } catch (err: any) {
+      toast.error(err.message || 'Čtení souboru selhalo.');
+    } finally {
+      setShoptetStatus('idle');
+      e.target.value = '';
+    }
+  };
+
+  const handleShoptetImport = async () => {
+    if (!shoptetPreview?.length) {
+      toast.error('Nejdřív načti XML (tlačítkem u URL nebo výběrem souboru).');
+      return;
+    }
+    if (shoptetRowsToImport.length === 0) {
+      toast.error('Zaškrtni alespoň jednu variantu v tabulce.');
+      return;
+    }
+    if (
+      !confirm(
+        `Importovat ${shoptetRowsToImport.length} produktů (merch, včetně variant uvnitř) do katalogu? ${
+          shoptetSkipExisting ? 'Záznamy se stejným ID už v katalogu jsou přeskočeny.' : 'Pozor: bez přeskakování může vzniknout duplicita se stejným id.'
+        }`,
+      )
+    )
+      return;
+    setShoptetStatus('importing');
+    setShoptetImportResult(null);
+    let existing = new Set<string>();
+    if (shoptetSkipExisting) {
+      try {
+        const list = await fetchProducts();
+        existing = new Set(list.map((p: { id?: string }) => String(p.id)));
+      } catch {
+        toast.error('Nepodařilo se načíst stávající produkty.');
+        setShoptetStatus('idle');
+        return;
+      }
+    }
+    let ok = 0;
+    let skipped = 0;
+    let fail = 0;
+    for (const p of shoptetRowsToImport) {
+      if (shoptetSkipExisting && existing.has(p.id)) {
+        skipped++;
+        continue;
+      }
+      try {
+        const res = await fetch(`${SERVER}/products`, {
+          method: 'POST',
+          headers: AUTH(publicAnonKey),
+          body: JSON.stringify(p),
+        });
+        const data = await safeJson(res);
+        if (res.ok && data.success !== false) {
+          ok++;
+          existing.add(p.id);
+        } else fail++;
+      } catch {
+        fail++;
+      }
+    }
+    setShoptetImportResult({ ok, skipped, fail });
+    setShoptetStatus('idle');
+    if (fail === 0) toast.success(`Import hotov: ${ok} nových, ${skipped} přeskočeno.`);
+    else toast.warning(`Import dokončen s chybami: ${ok} OK, ${skipped} přeskočeno, ${fail} selhalo.`);
+  };
 
   const handleWebflowMigrate = async () => {
     if (!confirm('Tímto přemažete všechna produktová data v Supabase daty z Webflow. Pokračovat?')) return;
@@ -528,7 +686,7 @@ export default function MigrationPage() {
       <div className="max-w-3xl">
         <h1 className="text-2xl font-bold text-[#001161] mb-1 font-['Fenomen_Sans']">{'Migrace obsahu'}</h1>
         <p className="text-[14px] text-gray-500 mb-8">
-          {'Import dat z Webflow a statických souborů do Supabase databáze.'}
+          {'Import dat z Webflow, Shoptetu (merch / XML) a statických souborů do Supabase databáze.'}
         </p>
 
         {/* Webflow Produkty Migration */}
@@ -580,6 +738,244 @@ export default function MigrationPage() {
             {isMigrating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
             {'Spustit migraci z Webflow'}
           </button>
+        </div>
+
+        {/* Shoptet productsComplete.xml → merch */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center shrink-0">
+              <Store className="w-6 h-6 text-emerald-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-bold text-[#001161]">{'Merch ze Shoptetu (productsComplete.xml)'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {
+                  'Z exportu se berou jen produkty, jejichž strom kategorií ve Shoptetu začíná na některou z těchto skupin: '
+                }
+                <span className="font-mono text-[12px] text-gray-600">
+                  {SHOPTET_IMPORT_ALLOWED_ROOTS.join(', ')}
+                </span>
+                {
+                  '. Ostatní zboží v XML se ignoruje. Jeden „Shoptet produkt“ = jeden záznam u nás; velikosti jsou v poli variant uvnitř. Po importu typicky doplníš Shopify variant ID u každé velikosti (Shopify linker).'
+                }
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-emerald-50 rounded-xl p-4 mb-4">
+            <div className="flex items-start gap-2 mb-3">
+              <AlertCircle className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
+              <p className="text-[12px] text-emerald-900">
+                {
+                  'Pro platby kartou přes Stripe je potřeba u nových položek doplnit Shopify variant ID (např. nástrojem Shopify linker v adminu). Pole Shoptet ID slouží ke skladu / párování.'
+                }
+              </p>
+            </div>
+            <label className="block text-[11px] font-bold text-emerald-900 mb-1">{'URL exportu (eshop.vividbooks.com)'}</label>
+            <p className="text-[11px] text-emerald-800 mb-2">
+              {
+                'Ve Shoptetu: Export → productsComplete.xml → zkopíruj celou adresu včetně hash= (dlouhý řetězec). Neúplná URL bez hashe skončí chybou 404.'
+              }
+            </p>
+            <input
+              value={shoptetUrl}
+              onChange={(e) => setShoptetUrl(e.target.value)}
+              className="w-full px-3 py-2 text-[12px] bg-white border border-emerald-200 rounded-lg focus:border-emerald-500 outline-none font-mono mb-3"
+              placeholder="https://eshop.vividbooks.com/export/productsComplete.xml?patternId=…&partnerId=…&hash=…"
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleShoptetLoadUrl}
+                disabled={shoptetStatus !== 'idle'}
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                {shoptetStatus === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                {'Stáhnout a zobrazit náhled'}
+              </button>
+              <label className="flex items-center gap-2 text-[13px] font-bold text-emerald-900 cursor-pointer">
+                <span className="px-3 py-2 rounded-xl bg-white border border-emerald-200 hover:bg-emerald-100/50 transition-colors">
+                  {shoptetStatus === 'loading' ? '…' : 'Nebo vybrat soubor .xml'}
+                </span>
+                <input type="file" accept=".xml,text/xml,application/xml" className="hidden" onChange={handleShoptetFile} disabled={shoptetStatus !== 'idle'} />
+              </label>
+              {shoptetFileName ? (
+                <span className="text-[11px] text-gray-500 truncate max-w-[200px]" title={shoptetFileName}>
+                  {shoptetFileName}
+                </span>
+              ) : null}
+            </div>
+          </div>
+
+          {shoptetPreview && shoptetPreview.length > 0 && (
+            <div className="space-y-4 mb-4">
+              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[12px] font-bold text-gray-700 w-full sm:w-auto sm:mr-2">
+                    {'Vyber konkrétní varianty v tabulce níže:'}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShoptetRowSelected((prev) => {
+                        const next = { ...prev };
+                        for (const p of shoptetPreview) next[p.id] = true;
+                        return next;
+                      })
+                    }
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer"
+                  >
+                    {'Vybrat vše'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShoptetRowSelected((prev) => {
+                        const next = { ...prev };
+                        for (const p of shoptetPreview) next[p.id] = false;
+                        return next;
+                      })
+                    }
+                    className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-white border border-gray-300 text-gray-800 hover:bg-gray-50 cursor-pointer"
+                  >
+                    {'Odznačit vše'}
+                  </button>
+                  {shoptetByCat &&
+                    Object.entries(shoptetByCat)
+                      .filter(([, n]) => n > 0)
+                      .map(([cat]) => (
+                        <button
+                          key={cat}
+                          type="button"
+                          onClick={() =>
+                            setShoptetRowSelected((prev) => {
+                              const next = { ...prev };
+                              for (const p of shoptetPreview) next[p.id] = p.merchCategory === cat;
+                              return next;
+                            })
+                          }
+                          className="text-[12px] font-bold px-3 py-1.5 rounded-lg bg-emerald-100 border border-emerald-200 text-emerald-900 hover:bg-emerald-200/80 cursor-pointer"
+                        >
+                          {`Jen: ${cat.length > 28 ? `${cat.slice(0, 28)}…` : cat}`}
+                        </button>
+                      ))}
+                </div>
+                <div className="flex flex-wrap gap-2 text-[11px] text-gray-600">
+                  {shoptetByCat &&
+                    Object.entries(shoptetByCat).map(([cat, n]) => (
+                      <span key={cat} className="px-2 py-0.5 rounded-md bg-white border border-gray-200">
+                        <strong>{cat}</strong>
+                        {`: ${n}`}
+                      </span>
+                    ))}
+                </div>
+                <p className="text-[11px] text-gray-500">
+                  {`K importu: ${shoptetRowsToImport.length} z ${shoptetPreview.length} řádků.`}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-[13px] text-gray-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={shoptetSkipExisting}
+                  onChange={(e) => setShoptetSkipExisting(e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                {'Přeskočit ID, která už v katalogu jsou (doporučeno)'}
+              </label>
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={handleShoptetImport}
+                  disabled={shoptetStatus !== 'idle' || shoptetRowsToImport.length === 0}
+                  className="flex items-center gap-2 bg-[#001161] hover:bg-[#001a8a] text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {shoptetStatus === 'importing' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                  {`Importovat do katalogu (${shoptetRowsToImport.length})`}
+                </button>
+              </div>
+              {shoptetImportResult ? (
+                <p className="text-[12px] text-gray-600">
+                  {`Výsledek: ${shoptetImportResult.ok} nových, ${shoptetImportResult.skipped} přeskočeno, ${shoptetImportResult.fail} chyb.`}
+                </p>
+              ) : null}
+              <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-x-auto max-h-[min(70vh,520px)] overflow-y-auto">
+                <table className="w-full text-[11px] min-w-[720px]">
+                  <thead className="sticky top-0 bg-gray-100 z-10 shadow-sm">
+                    <tr>
+                      <th className="text-left p-2 w-10 font-bold text-gray-600">
+                        <span className="sr-only">{'Import'}</span>
+                        <input
+                          type="checkbox"
+                          title="Vybrat / zrušit všechny řádky"
+                          checked={
+                            shoptetPreview.length > 0 &&
+                            shoptetPreview.every((p) => shoptetRowSelected[p.id])
+                          }
+                          onChange={(e) => {
+                            const v = e.target.checked;
+                            setShoptetRowSelected((prev) => {
+                              const next = { ...prev };
+                              for (const p of shoptetPreview) next[p.id] = v;
+                              return next;
+                            });
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                      </th>
+                      <th className="text-left p-2 font-bold text-gray-600">{'ID'}</th>
+                      <th className="text-left p-2 font-bold text-gray-600">{'Název'}</th>
+                      <th className="text-left p-2 font-bold text-gray-600">{'Varianty'}</th>
+                      <th className="text-left p-2 font-bold text-gray-600">{'Cena'}</th>
+                      <th className="text-left p-2 font-bold text-gray-600">{'Skupina'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {shoptetPreview.map((row) => {
+                      const on = !!shoptetRowSelected[row.id];
+                      return (
+                        <tr
+                          key={row.id}
+                          className={`border-t border-gray-200 ${on ? '' : 'opacity-45 bg-gray-100/50'}`}
+                        >
+                          <td className="p-2 align-middle">
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              onChange={() =>
+                                setShoptetRowSelected((prev) => ({
+                                  ...prev,
+                                  [row.id]: !prev[row.id],
+                                }))
+                              }
+                              className="rounded border-gray-300"
+                            />
+                          </td>
+                          <td className="p-2 font-mono text-gray-500 whitespace-nowrap">{row.id}</td>
+                          <td className="p-2 text-gray-800">{row.name}</td>
+                          <td className="p-2 text-gray-700">{`${row.merchVariants?.length ?? 0}× (${row.merchVariants?.map((v) => v.label).join(', ') || '—'})`}</td>
+                          <td className="p-2 whitespace-nowrap">{row.price}</td>
+                          <td className="p-2 text-gray-600">{row.merchCategory}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {shoptetRowsToImport.length === 0 ? (
+                  <p className="p-3 text-[12px] text-amber-800 bg-amber-50 border-t border-amber-100">
+                    {'Není zaškrtnutá žádná varianta — import je vypnutý.'}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          {shoptetPreview && shoptetPreview.length === 0 ? (
+            <p className="text-[13px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              {
+                'V XML nejsou žádné položky z povolených kategorií. Zkontroluj export nebo kategorie ve Shoptetu.'
+              }
+            </p>
+          ) : null}
         </div>
 
         {/* ── Blog z Webflow ─────────────────────────────────────── */}

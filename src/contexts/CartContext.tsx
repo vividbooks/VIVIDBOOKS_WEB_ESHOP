@@ -13,6 +13,8 @@ export interface CartItem {
   bundleTitle?: string;
   /** Jedna instance přidání balíčku — odděluje řádky od běžného nákupu stejného produktu. */
   bundleInstanceId?: string;
+  /** Plakáty / merch „na objednávku“ — objednávka jen z těchto řádků nejde do Base.com. */
+  posterMerch?: boolean;
 }
 
 interface CartContextValue {

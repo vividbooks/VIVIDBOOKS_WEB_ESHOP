@@ -8,6 +8,8 @@ type ActionPayload = {
   trackingNumber?: string;
   /** true = jen PUT štítků/PRINT u existujícího dealu */
   refreshPipedrive?: boolean;
+  /** Jen u objednávek plakátů (`poster_fulfillment_status` IS NOT NULL). */
+  posterFulfillmentStatus?: 'pending' | 'done';
 };
 
 type OrderEmailType = 'order_confirmed' | 'order_shipped' | 'order_cancelled';
@@ -16,6 +18,7 @@ type OrderStatusRow = {
   id: string;
   status: string;
   basecom_status: string | null;
+  poster_fulfillment_status: string | null;
 };
 
 const corsHeaders = {
@@ -155,7 +158,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Invalid JSON body.' }, 400);
   }
 
-  const { action, orderId, cancelledReason, trackingNumber, refreshPipedrive } = payload;
+  const { action, orderId, cancelledReason, trackingNumber, refreshPipedrive, posterFulfillmentStatus } = payload;
   if (!action || !orderId) {
     return jsonResponse({ error: 'Missing action or orderId.' }, 400);
   }
@@ -170,7 +173,7 @@ Deno.serve(async (req) => {
 
   try {
     const orderRows = await sql<OrderStatusRow[]>`
-      select id, status, basecom_status
+      select id, status, basecom_status, poster_fulfillment_status
       from public.orders
       where id = ${orderId}::uuid
       limit 1
@@ -181,7 +184,47 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Order not found.' }, 404);
     }
 
+    if (action === 'set_poster_fulfillment') {
+      if (order.poster_fulfillment_status == null) {
+        return jsonResponse({ error: 'Tato objednávka není v režimu plakátů.' }, 400);
+      }
+      if (posterFulfillmentStatus !== 'pending' && posterFulfillmentStatus !== 'done') {
+        return jsonResponse({ error: 'Chybí platný posterFulfillmentStatus (pending | done).' }, 400);
+      }
+      await sql`
+        update public.orders
+        set
+          poster_fulfillment_status = ${posterFulfillmentStatus},
+          updated_at = now()
+        where id = ${orderId}::uuid
+      `;
+      await sql`
+        insert into public.order_events (
+          order_id,
+          event_type,
+          from_status,
+          to_status,
+          details,
+          actor
+        ) values (
+          ${orderId}::uuid,
+          'admin_action',
+          ${order.status},
+          ${order.status},
+          ${JSON.stringify({
+            action: 'set_poster_fulfillment',
+            posterFulfillmentStatus,
+          })}::jsonb,
+          'admin'
+        )
+      `;
+      return jsonResponse({ success: true });
+    }
+
     if (action === 'retry_export') {
+      if (order.poster_fulfillment_status != null) {
+        return jsonResponse({ error: 'Objednávky plakátů se do Base.com neexportují.' }, 400);
+      }
       if (order.basecom_status !== 'failed') {
         return jsonResponse({ error: 'Retry export is only available for failed Base.com exports.' }, 400);
       }

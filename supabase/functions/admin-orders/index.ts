@@ -14,6 +14,7 @@ type OrderListRow = {
   shipping_method: string;
   tracking_number: string | null;
   items_summary: string | null;
+  poster_fulfillment_status: string | null;
 };
 
 type OrderDetailRow = {
@@ -740,7 +741,8 @@ Deno.serve(async (req) => {
           paid_at,
           shipped_at,
           delivered_at,
-          cancelled_at
+          cancelled_at,
+          poster_fulfillment_status
         from public.orders
         where id = ${detailId}::uuid
         limit 1
@@ -837,10 +839,15 @@ Deno.serve(async (req) => {
     const offset = (page - 1) * pageSize;
     const search = (url.searchParams.get('search') || '').trim();
     const filter = normalizeFilter(url.searchParams.get('filter'));
+    const posterOnly = url.searchParams.get('poster') === '1' || url.searchParams.get('poster') === 'true';
     const searchPattern = `%${search}%`;
 
     const searchClause = search
       ? sql`and (o.order_number ilike ${searchPattern} or o.customer_email ilike ${searchPattern})`
+      : sql``;
+
+    const posterClause = posterOnly
+      ? sql`and o.poster_fulfillment_status is not null`
       : sql``;
 
     const filterClause = filter === 'new'
@@ -857,6 +864,7 @@ Deno.serve(async (req) => {
         from public.orders o
         where true
         ${searchClause}
+        ${posterClause}
         ${filterClause}
       `,
       sql<OrderListRow[]>`
@@ -873,11 +881,13 @@ Deno.serve(async (req) => {
           o.payment_status,
           o.shipping_method,
           o.tracking_number,
+          o.poster_fulfillment_status,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
         left join public.order_items oi on oi.order_id = o.id
         where true
         ${searchClause}
+        ${posterClause}
         ${filterClause}
         group by o.id
         order by o.created_at desc
@@ -893,6 +903,7 @@ Deno.serve(async (req) => {
       pageSize,
       filter,
       search,
+      posterOnly,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load admin orders.';

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
@@ -35,10 +35,23 @@ import { PaymentMethodSection } from './checkout/PaymentMethodCards';
 import { StripePaymentSubmitForm } from './checkout/StripePaymentSubmitForm';
 import { CheckoutPaymentPartnersInfo } from './checkout/CheckoutPaymentPartnersInfo';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
-import type { ProductBundleRecord } from '../utils/bundlePricing';
+import {
+  allocateSubjectBundleQuantities,
+  bundleIsNxPlusOneSubject,
+  bundleWorkbookSlotCountForSchoolOrder,
+  subjectBundleQtySummary,
+  subjectBundleSelectionPaidListSumHaler,
+  type ProductBundleRecord,
+} from '../utils/bundlePricing';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
-import { clearSchoolOrderDraft, hasSchoolOrderDraft, readSchoolOrderDraft, writeSchoolOrderDraft } from '../utils/schoolOrderDraft';
+import {
+  clearSchoolOrderDraft,
+  hasSchoolOrderDraft,
+  readSchoolOrderDraft,
+  sanitizeSubjectBundleSelections,
+  writeSchoolOrderDraft,
+} from '../utils/schoolOrderDraft';
 import { AddressStreetAutocomplete } from './AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -419,8 +432,15 @@ export function OrderPage() {
   /* ── product quantities ── */
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [schoolBundleQtyById, setSchoolBundleQtyById] = useState<Record<string, number>>({});
+  /** Jedna sada předmětového balíčku: productId → ks (nx_plus_one_subject). */
+  const [schoolSubjectBundleSelectionsById, setSchoolSubjectBundleSelectionsById] = useState<
+    Record<string, Record<string, number>>
+  >({});
   const [publicProductBundles, setPublicProductBundles] = useState<ProductBundleRecord[]>([]);
   const appliedSchoolBundleNavKeysRef = useRef<Set<string>>(new Set());
+  const appliedSchoolSubjectBundleNavKeysRef = useRef<Set<string>>(new Set());
+  const schoolSubjectBundleSelectionsRef = useRef(schoolSubjectBundleSelectionsById);
+  schoolSubjectBundleSelectionsRef.current = schoolSubjectBundleSelectionsById;
 
   /* ── digital / vividboard ── */
   const [students2, setStudents2]   = useState(100);
@@ -537,6 +557,11 @@ export function OrderPage() {
         }
         if (Object.keys(next).length > 0) setSchoolBundleQtyById(next);
       }
+      const sb = draft.subjectBundleSelections;
+      if (sb && typeof sb === 'object') {
+        const cleaned = sanitizeSubjectBundleSelections(sb);
+        if (Object.keys(cleaned).length > 0) setSchoolSubjectBundleSelectionsById(cleaned);
+      }
     }
     setDraftHydrated(true);
   }, []);
@@ -606,6 +631,29 @@ export function OrderPage() {
     if (appliedSchoolBundleNavKeysRef.current.has(k)) return;
     appliedSchoolBundleNavKeysRef.current.add(k);
     setSchoolBundleQtyById((prev) => ({ ...prev, [add.id]: (prev[add.id] || 0) + 1 }));
+    setSelTypes((prev) => (prev.includes('workbook') ? prev : [...prev, 'workbook']));
+    navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+  }, [location.state, location.key, location.pathname, location.search, navigate]);
+
+  useEffect(() => {
+    const add = (location.state as { addSchoolSubjectBundle?: { bundleId: string; quantities: Record<string, number> } } | null)?.addSchoolSubjectBundle;
+    if (!add?.bundleId) return;
+    const k = location.key;
+    if (appliedSchoolSubjectBundleNavKeysRef.current.has(k)) return;
+    appliedSchoolSubjectBundleNavKeysRef.current.add(k);
+    const cleanedMap = sanitizeSubjectBundleSelections({ [add.bundleId]: add.quantities });
+    const cleaned = cleanedMap[add.bundleId];
+    if (!cleaned || Object.keys(cleaned).length === 0) {
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
+      return;
+    }
+    const existing = schoolSubjectBundleSelectionsRef.current[add.bundleId];
+    const same = !existing || workbookQuantitiesRecordsEqual(existing, cleaned);
+    setSchoolBundleQtyById((qPrev) => ({
+      ...qPrev,
+      [add.bundleId]: same ? (qPrev[add.bundleId] || 0) + 1 : 1,
+    }));
+    setSchoolSubjectBundleSelectionsById((prev) => ({ ...prev, [add.bundleId]: cleaned }));
     setSelTypes((prev) => (prev.includes('workbook') ? prev : [...prev, 'workbook']));
     navigate(`${location.pathname}${location.search}`, { replace: true, state: {} });
   }, [location.state, location.key, location.pathname, location.search, navigate]);
@@ -766,6 +814,9 @@ export function OrderPage() {
     const bundleQuantities = Object.fromEntries(
       Object.entries(schoolBundleQtyById).filter(([, q]) => (q || 0) > 0),
     );
+    const subjectBundleSelections = Object.fromEntries(
+      Object.entries(schoolSubjectBundleSelectionsById).filter(([bid]) => (schoolBundleQtyById[bid] || 0) > 0),
+    );
     const nextDraft = {
       selSubjects,
       selTypes,
@@ -774,8 +825,10 @@ export function OrderPage() {
       digitalSubjects,
       vividboardCount,
       ...(Object.keys(bundleQuantities).length > 0 ? { bundleQuantities } : {}),
+      ...(Object.keys(subjectBundleSelections).length > 0 ? { subjectBundleSelections } : {}),
     };
     const noBundles = Object.keys(bundleQuantities).length === 0;
+    const noSubjectSel = Object.keys(subjectBundleSelections).length === 0;
     if (
       selSubjects.length === 0 &&
       selTypes.length === 0 &&
@@ -783,13 +836,24 @@ export function OrderPage() {
       licYears === 1 &&
       digitalSubjects.length === 0 &&
       vividboardCount === 1 &&
-      noBundles
+      noBundles &&
+      noSubjectSel
     ) {
       clearSchoolOrderDraft();
       return;
     }
     writeSchoolOrderDraft(nextDraft);
-  }, [digitalSubjects, draftHydrated, licYears, schoolBundleQtyById, selSubjects, selTypes, students2, vividboardCount]);
+  }, [
+    digitalSubjects,
+    draftHydrated,
+    licYears,
+    schoolBundleQtyById,
+    schoolSubjectBundleSelectionsById,
+    selSubjects,
+    selTypes,
+    students2,
+    vividboardCount,
+  ]);
 
   const syncWorkbookQuantity = useCallback((product: Product, quantity: number) => {
     const nextQuantity = Math.max(0, Math.floor(quantity));
@@ -834,8 +898,14 @@ export function OrderPage() {
       const cur = prev[bundleId] || 0;
       const next = Math.max(0, Math.floor(cur + delta));
       const out = { ...prev };
-      if (next <= 0) delete out[bundleId];
-      else out[bundleId] = next;
+      if (next <= 0) {
+        delete out[bundleId];
+        setSchoolSubjectBundleSelectionsById((sPrev) => {
+          const sn = { ...sPrev };
+          delete sn[bundleId];
+          return sn;
+        });
+      } else out[bundleId] = next;
       return out;
     });
   }, []);
@@ -844,8 +914,14 @@ export function OrderPage() {
     const v = Math.max(0, Math.floor(parseInt(value.replace(/\D/g, ''), 10) || 0));
     setSchoolBundleQtyById((prev) => {
       const out = { ...prev };
-      if (v <= 0) delete out[bundleId];
-      else out[bundleId] = v;
+      if (v <= 0) {
+        delete out[bundleId];
+        setSchoolSubjectBundleSelectionsById((sPrev) => {
+          const sn = { ...sPrev };
+          delete sn[bundleId];
+          return sn;
+        });
+      } else out[bundleId] = v;
       return out;
     });
   }, []);
@@ -890,14 +966,26 @@ export function OrderPage() {
   const workbookBundleSubtotalHalers = Object.entries(schoolBundleQtyById).reduce((sum, [bundleId, qty]) => {
     if (!qty) return sum;
     const b = productBundlesById[bundleId];
-    return b ? sum + Math.max(0, Math.round(b.bundlePriceHaler)) * qty : sum;
+    if (!b) return sum;
+    if (bundleIsNxPlusOneSubject(b)) {
+      const sel = schoolSubjectBundleSelectionsById[bundleId];
+      const oneSetHaler = sel ? subjectBundleSelectionPaidListSumHaler(products, b, sel) : 0;
+      return sum + oneSetHaler * qty;
+    }
+    return sum + Math.max(0, Math.round(b.bundlePriceHaler)) * qty;
   }, 0);
   const workbookBundlePcs = Object.entries(schoolBundleQtyById).reduce((s, [bundleId, qty]) => {
     if (!qty) return s;
     const b = productBundlesById[bundleId];
     if (!b) return s + qty;
-    const n = (b.productIds || []).filter((pid) => workbookProductIds.has(String(pid))).length;
-    const per = n > 0 ? n : Math.max(1, (b.productIds || []).length);
+    if (bundleIsNxPlusOneSubject(b)) {
+      const sel = schoolSubjectBundleSelectionsById[bundleId];
+      const per = sel
+        ? Object.values(sel).reduce((n, q) => n + Math.max(0, Math.floor(Number(q) || 0)), 0)
+        : bundleWorkbookSlotCountForSchoolOrder(b, workbookProductIds);
+      return s + qty * Math.max(1, per);
+    }
+    const per = bundleWorkbookSlotCountForSchoolOrder(b, workbookProductIds);
     return s + qty * per;
   }, 0);
   const workbookTotal = workbookIndividualTotalKc + Math.round(workbookBundleSubtotalHalers / 100);
@@ -1025,16 +1113,41 @@ export function OrderPage() {
             const b = productBundlesById[bundleId];
             if (!b) return null;
             const unitKc = Math.max(0, Math.round(b.bundlePriceHaler / 100));
-            const breakdown = (b.productIds || [])
-              .map((pid) => products.find((x) => String(x.id) === String(pid))?.name)
-              .filter(Boolean);
-            const name = breakdown.length
-              ? `${b.title} — ${breakdown.join('; ')}`
-              : b.title;
+            const sel = schoolSubjectBundleSelectionsById[bundleId];
+            const subjectOneHaler = sel && bundleIsNxPlusOneSubject(b)
+              ? subjectBundleSelectionPaidListSumHaler(products, b, sel)
+              : 0;
+            const priceLabel = bundleIsNxPlusOneSubject(b)
+              ? `${Math.max(0, Math.round(subjectOneHaler / 100))},-`
+              : `${unitKc},-`;
+            const breakdown = bundleIsNxPlusOneSubject(b)
+              ? (() => {
+                  if (!sel) return (b.bundleSubjectLabels || []).slice();
+                  return Object.entries(sel)
+                    .map(([pid, q]) => {
+                      const n = Math.max(0, Math.floor(Number(q) || 0));
+                      if (n <= 0) return null;
+                      const p = products.find((x) => String(x.id) === String(pid));
+                      const nm = p?.name || pid;
+                      return n > 1 ? `${n}× ${nm}` : nm;
+                    })
+                    .filter((x): x is string => x != null)
+                    .sort((a, b) => a.localeCompare(b, 'cs'));
+                })()
+              : (b.productIds || [])
+                .map((pid) => products.find((x) => String(x.id) === String(pid))?.name)
+                .filter(Boolean) as string[];
+            const name = bundleIsNxPlusOneSubject(b)
+              ? (breakdown.length
+                ? `${b.title} — ${breakdown.join('; ')}`
+                : `${b.title} (${b.paidItemCount ?? '?'}+${b.freeItemCount ?? '?'})`)
+              : breakdown.length
+                ? `${b.title} — ${breakdown.join('; ')}`
+                : b.title;
             return {
               id: `bundle:${bundleId}`,
               name,
-              price: `${unitKc},-`,
+              price: priceLabel,
               quantity,
               bundleId,
               bundleTitle: b.title,
@@ -1047,15 +1160,28 @@ export function OrderPage() {
         .map(([bundleId, quantity]) => {
           const b = productBundlesById[bundleId];
           if (!b) return null;
-          const breakdown = (b.productIds || []).map((pid) => {
-            const p = products.find((x) => String(x.id) === String(pid));
-            return { id: String(pid), name: p?.name };
-          });
+          const sel = schoolSubjectBundleSelectionsById[bundleId];
+          const breakdown = bundleIsNxPlusOneSubject(b)
+            ? (sel
+              ? Object.entries(sel).flatMap(([pid, q]) => {
+                  const n = Math.max(0, Math.floor(Number(q) || 0));
+                  if (n <= 0) return [];
+                  const p = products.find((x) => String(x.id) === String(pid));
+                  return [{ id: String(pid), name: n > 1 ? `${n}× ${p?.name || pid}` : (p?.name || pid) }];
+                }).sort((a, b) => String(a.name).localeCompare(String(b.name), 'cs'))
+              : (b.bundleSubjectLabels || []).map((label) => ({ id: `subject:${label}`, name: label })))
+            : (b.productIds || []).map((pid) => {
+              const p = products.find((x) => String(x.id) === String(pid));
+              return { id: String(pid), name: p?.name };
+            });
+          const oneSetHaler = bundleIsNxPlusOneSubject(b) && sel
+            ? subjectBundleSelectionPaidListSumHaler(products, b, sel)
+            : Math.max(0, Math.round(b.bundlePriceHaler));
           return {
             bundleId,
             title: b.title,
             quantity,
-            bundlePriceHaler: b.bundlePriceHaler,
+            bundlePriceHaler: oneSetHaler,
             lines: breakdown,
           };
         })
@@ -1092,6 +1218,7 @@ export function OrderPage() {
     selSubjects,
     shipping,
     schoolBundleQtyById,
+    schoolSubjectBundleSelectionsById,
     productBundlesById,
   ]);
 
@@ -1135,7 +1262,10 @@ export function OrderPage() {
         .map(([bundleId, quantity]) => {
           const b = productBundlesById[bundleId];
           if (!b) return null;
-          const unitPrice = Math.max(1, Math.round(b.bundlePriceHaler));
+          const sel = schoolSubjectBundleSelectionsById[bundleId];
+          const unitPrice = bundleIsNxPlusOneSubject(b) && sel
+            ? Math.max(1, subjectBundleSelectionPaidListSumHaler(products, b, sel))
+            : Math.max(1, Math.round(b.bundlePriceHaler));
           return {
             productId: `bundle:${bundleId}`,
             productName: b.title,
@@ -1242,6 +1372,7 @@ export function OrderPage() {
     clientSecret,
     buildSchoolOrdersPayload,
     schoolBundleQtyById,
+    schoolSubjectBundleSelectionsById,
     productBundlesById,
   ]);
 
@@ -1895,25 +2026,88 @@ export function OrderPage() {
                                     <div className="flex flex-col gap-1.5">
                                       {activeSchoolBundleLines.map(({ bundleId, qty, bundle }) => {
                                         const active = qty > 0;
-                                        const unitKc = bundle ? Math.max(0, Math.round(bundle.bundlePriceHaler / 100)) : 0;
+                                        const subjSel = schoolSubjectBundleSelectionsById[bundleId];
+                                        const isSubjectBundle = bundleIsNxPlusOneSubject(bundle);
+                                        const subjectOneHaler = bundle && isSubjectBundle && subjSel
+                                          ? subjectBundleSelectionPaidListSumHaler(products, bundle, subjSel)
+                                          : 0;
+                                        const unitKc = bundle
+                                          ? (isSubjectBundle
+                                            ? Math.max(0, Math.round(subjectOneHaler / 100))
+                                            : Math.max(0, Math.round(bundle.bundlePriceHaler / 100)))
+                                          : 0;
                                         const breakdown = bundle
-                                          ? (bundle.productIds || [])
-                                            .map((pid) => products.find((x) => String(x.id) === String(pid)))
-                                            .filter((p): p is Product => Boolean(p && p.type === 'workbook'))
+                                          ? (isSubjectBundle && subjSel
+                                            ? Object.entries(subjSel)
+                                              .map(([pid, q]) => {
+                                                const n = Math.max(0, Math.floor(Number(q) || 0));
+                                                if (n <= 0) return null;
+                                                const p = products.find((x) => String(x.id) === String(pid));
+                                                if (!p || p.type !== 'workbook') return null;
+                                                return p;
+                                              })
+                                              .filter((p): p is Product => Boolean(p))
+                                              .sort((a, b) => a.name.localeCompare(b.name, 'cs'))
+                                            : (bundle.productIds || [])
+                                              .map((pid) => products.find((x) => String(x.id) === String(pid)))
+                                              .filter((p): p is Product => Boolean(p && p.type === 'workbook')))
                                           : [];
                                         const title = bundle?.title || `Balíček (${bundleId})`;
-                                        const nInBundle = breakdown.length > 0
-                                          ? breakdown.length
-                                          : bundle
-                                            ? Math.max(
+                                        const nInBundle = (() => {
+                                          if (isSubjectBundle && subjSel) {
+                                            const n = Object.values(subjSel).reduce(
+                                              (s, q) => s + Math.max(0, Math.floor(Number(q) || 0)),
+                                              0,
+                                            );
+                                            if (n > 0) return n;
+                                          }
+                                          if (bundle && !isSubjectBundle) {
+                                            return Math.max(
                                               1,
                                               (bundle.productIds || []).filter((pid) => workbookProductIds.has(String(pid))).length
                                                 || (bundle.productIds || []).length,
-                                            )
-                                            : 1;
+                                            );
+                                          }
+                                          if (bundle && isSubjectBundle) {
+                                            return bundleWorkbookSlotCountForSchoolOrder(bundle, workbookProductIds);
+                                          }
+                                          return 1;
+                                        })();
                                         const lineTotalKc = unitKc * qty;
                                         const lineKs = qty * nInBundle;
                                         const lineTotalFmt = String(lineTotalKc).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                                        const subjectAggSel =
+                                          isSubjectBundle && subjSel && qty > 0
+                                            ? Object.fromEntries(
+                                              Object.entries(subjSel).map(([k, v]) => [
+                                                k,
+                                                Math.max(0, Math.floor(Number(v) || 0)) * qty,
+                                              ]),
+                                            )
+                                            : null;
+                                        const subjectPcsSplit =
+                                          bundle && isSubjectBundle && subjectAggSel
+                                            && Object.keys(subjectAggSel).length > 0
+                                            ? subjectBundleQtySummary(bundle, subjectAggSel)
+                                            : null;
+                                        const subjectAlloc =
+                                          bundle && isSubjectBundle && subjectAggSel
+                                            && Object.keys(subjectAggSel).length > 0
+                                            ? allocateSubjectBundleQuantities(products, bundle, subjectAggSel)
+                                            : null;
+                                        const paidFreeByProduct = subjectAlloc
+                                          ? subjectAlloc.reduce(
+                                            (acc, u) => {
+                                              const m = u.isFree ? acc.free : acc.paid;
+                                              m.set(u.productId, (m.get(u.productId) || 0) + 1);
+                                              return acc;
+                                            },
+                                            {
+                                              paid: new Map<string, number>(),
+                                              free: new Map<string, number>(),
+                                            },
+                                          )
+                                          : null;
                                         return (
                                           <div key={bundleId} className="flex flex-col">
                                             <div className="flex flex-col gap-3 sm:flex-row sm:gap-2 sm:items-stretch">
@@ -1924,8 +2118,37 @@ export function OrderPage() {
                                                 </p>
                                                 {breakdown.length > 0 ? (
                                                   <ul style={FF} className="text-[#001161]/75 text-[13px] leading-snug list-disc pl-4 space-y-0.5">
-                                                    {breakdown.map((p) => (
-                                                      <li key={p.id}>{p.name}</li>
+                                                    {breakdown.map((p) => {
+                                                      const lineQty = isSubjectBundle && subjSel
+                                                        ? Math.max(0, Math.floor(Number(subjSel[String(p.id)]) || 0))
+                                                        : 1;
+                                                      const pid = String(p.id);
+                                                      const nPaid = paidFreeByProduct?.paid.get(pid) ?? 0;
+                                                      const nFree = paidFreeByProduct?.free.get(pid) ?? 0;
+                                                      if (isSubjectBundle && subjSel && paidFreeByProduct && (nPaid > 0 || nFree > 0)) {
+                                                        return (
+                                                          <Fragment key={p.id}>
+                                                            {nPaid > 0 ? (
+                                                              <li>{`${nPaid}× ${p.name} — placené`}</li>
+                                                            ) : null}
+                                                            {nFree > 0 ? (
+                                                              <li>{`${nFree}× ${p.name} — zdarma`}</li>
+                                                            ) : null}
+                                                          </Fragment>
+                                                        );
+                                                      }
+                                                      const lineQtyTotal = isSubjectBundle && subjSel ? lineQty * qty : lineQty;
+                                                      return (
+                                                        <li key={p.id}>
+                                                          {lineQtyTotal > 1 ? `${lineQtyTotal}× ` : ''}{p.name}
+                                                        </li>
+                                                      );
+                                                    })}
+                                                  </ul>
+                                                ) : isSubjectBundle && bundle ? (
+                                                  <ul style={FF} className="text-[#001161]/75 text-[13px] leading-snug list-disc pl-4 space-y-0.5">
+                                                    {(bundle.bundleSubjectLabels || []).map((l) => (
+                                                      <li key={l}>{l}</li>
                                                     ))}
                                                   </ul>
                                                 ) : (
@@ -1973,6 +2196,11 @@ export function OrderPage() {
                                                         delete n[bundleId];
                                                         return n;
                                                       });
+                                                      setSchoolSubjectBundleSelectionsById((prev) => {
+                                                        const n = { ...prev };
+                                                        delete n[bundleId];
+                                                        return n;
+                                                      });
                                                     }}
                                                     className="text-[#001161]/50 text-[11px] underline font-['Fenomen_Sans',sans-serif] cursor-pointer shrink-0"
                                                   >
@@ -1981,7 +2209,25 @@ export function OrderPage() {
                                                 </div>
                                                 <div className="flex shrink-0 flex-wrap items-baseline gap-3 sm:gap-4">
                                                   <p style={FF} className="text-[#001161] text-[13px] font-bold">{lineTotalFmt}{',−'}</p>
-                                                  <p style={FF} className="text-[#001161] text-[13px]">{lineKs}{' ks'}</p>
+                                                  {subjectPcsSplit && subjectPcsSplit.total > 0 ? (
+                                                    <p style={FF} className="text-[#001161] text-[13px]">
+                                                      <span className="font-semibold">
+                                                        {subjectPcsSplit.paidPieces}
+                                                        {' ks placených'}
+                                                      </span>
+                                                      {subjectPcsSplit.freePieces > 0 ? (
+                                                        <>
+                                                          {' + '}
+                                                          <span className="font-semibold text-emerald-800">
+                                                            {subjectPcsSplit.freePieces}
+                                                            {' ks zdarma'}
+                                                          </span>
+                                                        </>
+                                                      ) : null}
+                                                    </p>
+                                                  ) : (
+                                                    <p style={FF} className="text-[#001161] text-[13px]">{lineKs}{' ks'}</p>
+                                                  )}
                                                 </div>
                                               </div>
                                             )}

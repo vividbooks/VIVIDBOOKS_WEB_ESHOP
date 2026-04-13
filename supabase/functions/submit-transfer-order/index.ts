@@ -72,6 +72,10 @@ function isPositiveInteger(value: unknown) {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
+function isNonNegativeInteger(value: unknown) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 function validateItems(items: unknown): items is CheckoutItem[] {
   return Array.isArray(items) && items.length > 0 && items.every((item) => {
     if (!item || typeof item !== 'object') return false;
@@ -81,7 +85,7 @@ function validateItems(items: unknown): items is CheckoutItem[] {
       typeof candidate.productId === 'string' &&
       typeof candidate.productName === 'string' &&
       isPositiveInteger(candidate.quantity) &&
-      isPositiveInteger(candidate.unitPrice) &&
+      isNonNegativeInteger(candidate.unitPrice) &&
       variantOk
     );
   });

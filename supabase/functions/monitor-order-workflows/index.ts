@@ -13,6 +13,8 @@ type OrderRow = {
   payment_status: string | null;
   payment_method: string;
   basecom_status: string | null;
+  /** Objednávky jen z plakátů — bez exportu do Base.com. */
+  poster_fulfillment_status: string | null;
   invoice_status: string | null;
   tracking_number: string | null;
   stripe_payment_intent_id: string | null;
@@ -154,6 +156,7 @@ Deno.serve(async (req) => {
         payment_status,
         payment_method,
         basecom_status,
+        poster_fulfillment_status,
         invoice_status,
         tracking_number,
         stripe_payment_intent_id,
@@ -283,6 +286,8 @@ Deno.serve(async (req) => {
       if (order.status === 'cancelled') {
         baseStepStatus = 'skipped';
       } else if (transferPending) {
+        baseStepStatus = 'skipped';
+      } else if (order.basecom_status === 'skipped' || order.poster_fulfillment_status != null) {
         baseStepStatus = 'skipped';
       } else if (order.basecom_status === 'done' || ['exported', 'shipped', 'delivered'].includes(order.status)) {
         baseStepStatus = 'done';
@@ -432,6 +437,7 @@ Deno.serve(async (req) => {
       } else if (
         order.payment_status === 'paid'
         && order.basecom_status !== 'done'
+        && order.basecom_status !== 'skipped'
         && !transferPending
       ) {
         const severity = severityByMinutes(orderAgeMinutes, 3, 8);

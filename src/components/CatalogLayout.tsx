@@ -76,10 +76,6 @@ function MenuAttentionDot() {
 
 const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
   {
-    title: 'Akce',
-    items: [{ label: 'Akční balíčky', internal: '/akce' }],
-  },
-  {
     title: 'Vividboard',
     items: [
       { label: 'Vividboard', internal: '/vividboard' },
@@ -124,7 +120,7 @@ function SidebarAccordion() {
   };
 
   return (
-    <div className="mt-5 pt-4 border-t border-gray-200 flex flex-col">
+    <div className="mt-[calc(0.5rem*0.85)] pt-[calc(0.5rem*0.85)] border-t border-gray-200 flex flex-col gap-[calc(0.5rem*0.85)]">
       {SIDEBAR_SECTIONS.map(section => {
         // Sekce s jedinou položkou → přímý odkaz bez akordeonu
         if (section.items.length === 1) {
@@ -134,7 +130,7 @@ function SidebarAccordion() {
             <button
               key={section.title}
               onClick={() => handleItem(item)}
-              className={`w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer flex items-center gap-2 border ${
+              className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer flex items-center gap-2 border ${
                 isActive
                   ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
                   : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
@@ -150,7 +146,7 @@ function SidebarAccordion() {
         <div key={section.title}>
           <button
             onClick={() => toggle(section.title)}
-            className="w-full flex items-center justify-between px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
+            className="w-full flex items-center justify-between px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
           >
             <span>{section.title}</span>
             <ChevronDown
@@ -169,12 +165,12 @@ function SidebarAccordion() {
                 transition={{ duration: 0.2, ease: 'easeInOut' }}
                 className="overflow-hidden"
               >
-                <div className="flex flex-col pl-3 pr-1 pb-1">
+                <div className="flex flex-col pl-3 pr-1 pb-[calc(0.25rem*0.85)]">
                   {section.items.map(item => (
                     !item.href && !item.internal ? (
                       <span
                         key={item.label}
-                        className="px-3 pt-1.5 pb-0.5 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider text-[#001161]/50"
+                        className="px-3 pt-[calc(0.375rem*0.85)] pb-[calc(0.125rem*0.85)] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider text-[#001161]/50"
                       >
                         {item.label}
                       </span>
@@ -182,7 +178,7 @@ function SidebarAccordion() {
                     <button
                       key={item.label}
                       onClick={() => handleItem(item)}
-                      className="w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
+                      className="w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
                     >
                       {item.label}
                     </button>
@@ -374,7 +370,7 @@ export default function CatalogLayout() {
                 className="md:hidden fixed top-0 left-0 bottom-0 w-[280px] bg-[#f8f9fc] z-[60] flex flex-col overflow-y-auto shadow-2xl"
               >
                 {/* Drawer header */}
-                <div className="flex items-center justify-between px-4 py-4 border-b border-gray-100 bg-white shrink-0">
+                <div className="flex items-center justify-between px-[calc(1rem*0.85)] py-[calc(1rem*0.85)] border-b border-gray-100 bg-white shrink-0">
                   <div className="scale-90 origin-left" onClick={() => { navigate('/'); setMobileSidebarOpen(false); }}>
                     <VividbooksLogo />
                   </div>
@@ -384,16 +380,16 @@ export default function CatalogLayout() {
                 </div>
 
                 {/* CTA buttons */}
-                <div className="px-4 pt-4 pb-2 flex flex-col gap-2 shrink-0">
+                <div className="px-[calc(1rem*0.85)] pt-[calc(1rem*0.85)] pb-[calc(0.5rem*0.85)] flex flex-col gap-[calc(0.5rem*0.85)] shrink-0">
                   <button
                     onClick={() => { navigate('/vyzkousejte'); setMobileSidebarOpen(false); }}
-                    className="w-full py-3 rounded-[999px] bg-[#7C3AED] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold"
+                    className="w-full py-[calc(0.75rem*0.85)] rounded-[999px] bg-[#7C3AED] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold"
                   >
                     Vyzkoušet zdarma
                   </button>
                   <button
                     onClick={() => { onOrder(); setMobileSidebarOpen(false); }}
-                    className="w-full py-3 rounded-[999px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2"
+                    className="w-full py-[calc(0.75rem*0.85)] rounded-[999px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2"
                   >
                     <span>Objednat pro školu</span>
                     {schoolOrderCount > 0 && (
@@ -406,7 +402,7 @@ export default function CatalogLayout() {
                     <button
                       type="button"
                       onClick={() => { openCart(); setMobileSidebarOpen(false); }}
-                      className="w-full py-3 rounded-[999px] border-2 border-[#001161] text-[#001161] font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2"
+                      className="w-full py-[calc(0.75rem*0.85)] rounded-[999px] border-2 border-[#001161] text-[#001161] font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2"
                     >
                       <ShoppingCart className="size-5 shrink-0" />
                       <span>Košík</span>
@@ -420,7 +416,7 @@ export default function CatalogLayout() {
                       type="button"
                       onClick={() => { handleDownloadPack(); setMobileSidebarOpen(false); }}
                       disabled={isDownloadingPack}
-                      className="w-full py-3 rounded-[999px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2 disabled:opacity-60"
+                      className="w-full py-[calc(0.75rem*0.85)] rounded-[999px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold flex items-center justify-center gap-2 disabled:opacity-60"
                     >
                       {isDownloadingPack ? (
                         <div className="size-4 border-2 border-white/30 border-t-white rounded-full animate-spin shrink-0" />
@@ -433,28 +429,28 @@ export default function CatalogLayout() {
                 </div>
 
                 {/* Subject nav */}
-                <div className="px-4 pt-3 pb-2">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-2">2. stupeň</p>
-                  <div className="flex flex-col gap-0.5">
+                <div className="px-[calc(1rem*0.85)] pt-[calc(0.75rem*0.85)] pb-[calc(0.5rem*0.85)]">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)]">2. stupeň</p>
+                  <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                     {secondGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                       return (
                         <button key={item} onClick={() => { navigate(`/predmet/${slug}`); setMobileSidebarOpen(false); }}
-                          className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
+                          className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
                           {label}
                         </button>
                       );
                     })}
                   </div>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-2 mt-3">1. stupeň</p>
-                  <div className="flex flex-col gap-0.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)] mt-[calc(0.75rem*0.85)]">1. stupeň</p>
+                  <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                     {firstGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                       return (
                         <button key={item} onClick={() => { navigate(`/predmet/${slug}`); setMobileSidebarOpen(false); }}
-                          className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
+                          className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
                           {label}
                         </button>
                       );
@@ -462,58 +458,78 @@ export default function CatalogLayout() {
                   </div>
                 </div>
 
+                <div className="px-[calc(1rem*0.85)] pt-[calc(0.125rem*0.85)] pb-[calc(0.55rem*0.85)]">
+                  <div className="flex gap-8">
+                    <button
+                      type="button"
+                      onClick={() => { navigate('/dalsi-produkty'); setMobileSidebarOpen(false); }}
+                      className={`flex-1 min-w-0 text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] leading-snug border border-transparent transition-all ${
+                        location.pathname === '/dalsi-produkty'
+                          ? 'bg-[#c8d7f7] text-[#001161]'
+                          : 'text-[#001161] hover:bg-white hover:border-gray-200'
+                      }`}
+                    >
+                      Další produkty
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { navigate('/akce'); setMobileSidebarOpen(false); }}
+                      className={`flex-1 min-w-0 text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] leading-snug border border-transparent transition-all ${
+                        location.pathname === '/akce'
+                          ? 'bg-[#c8d7f7] text-[#001161]'
+                          : 'text-[#001161] hover:bg-white hover:border-gray-200'
+                      }`}
+                    >
+                      {'Akce'}
+                    </button>
+                  </div>
+                </div>
+
                 {/* Other nav */}
-                <div className="px-4 pt-2 pb-4 border-t border-gray-200 mt-2 flex flex-col gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() => { navigate('/akce'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
-                  >
-                    {'Akce'}
-                  </button>
+                <div className="px-[calc(1rem*0.85)] pt-[calc(0.35rem*0.85)] pb-[calc(1rem*0.85)] border-t border-gray-200 mt-[calc(0.65rem*0.85)] flex flex-col gap-[calc(0.125rem*0.85)]">
                   <button
                     type="button"
                     onClick={() => { navigate('/vividboard'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
                   >
                     {'Vividboard'}
                   </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/webinare'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1 flex items-center gap-2"
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-[calc(0.25rem*0.85)] flex items-center gap-2"
                   >
                     <MenuAttentionDot />
                     {'DVPP webin\u00e1\u0159e'}
                   </button>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-2 px-3 pt-2">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)] px-3 pt-[calc(0.5rem*0.85)]">
                     {'Novinky a blog'}
                   </p>
                   <button
                     type="button"
                     onClick={() => { navigate('/novinky'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
                   >
                     Novinky
                   </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/blog'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
                   >
                     Blog
                   </button>
                   <button
                     type="button"
                     onClick={() => { navigate('/kontakt'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-2 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-1"
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all mt-[calc(0.25rem*0.85)]"
                   >
                     Kontakt
                   </button>
                 </div>
 
                 {/* Phone */}
-                <div className="px-4 py-3 border-t border-gray-200 mt-auto shrink-0">
+                <div className="px-[calc(1rem*0.85)] py-[calc(0.75rem*0.85)] border-t border-gray-200 mt-auto shrink-0">
                   <Link
                     to="/kontakt"
                     onClick={() => setMobileSidebarOpen(false)}
@@ -636,15 +652,15 @@ export default function CatalogLayout() {
             className={`hidden md:flex w-[245px] md:fixed md:top-0 md:bottom-0 bg-[#f8f9fc] border-r border-[#001161]/8 flex-col z-40 ${
               isCheckoutLikeSidebar
                 ? isSchoolCountsStep
-                  ? 'overflow-hidden justify-start px-5 pb-5 pt-5'
-                  : 'overflow-hidden justify-start px-5 pb-5 pt-12'
-                : 'overflow-y-auto justify-between p-5'
+                  ? 'overflow-hidden justify-start px-[calc(1.25rem*0.85)] pb-[calc(1.25rem*0.85)] pt-[calc(1.25rem*0.85)]'
+                  : 'overflow-hidden justify-start px-[calc(1.25rem*0.85)] pb-[calc(1.25rem*0.85)] pt-[calc(3rem*0.85)]'
+                : 'overflow-y-auto justify-between p-[calc(1.25rem*0.85)]'
             }`}
           >
             <div className={isCheckoutLikeSidebar ? 'flex flex-col flex-1 min-h-0 w-full' : ''}>
               {!(isSchoolCountsStep) && (
                 <div
-                  className={`pt-2 cursor-pointer ${isCheckoutLikeSidebar ? 'mb-0' : 'mb-5'}`}
+                  className={`pt-[calc(0.5rem*0.85)] cursor-pointer ${isCheckoutLikeSidebar ? 'mb-0' : 'mb-[calc(1.25rem*0.85)]'}`}
                   onClick={() => navigate('/')}
                 >
                   <VividbooksLogo />
@@ -680,16 +696,16 @@ export default function CatalogLayout() {
                 </>
               ) : (
                 <>
-                  <div className="mb-6 px-2">
+                  <div className="mb-[calc(1.5rem*0.85)] px-2">
                     <p className="font-['Cooper_Light',serif] text-[#001161] text-[23px] leading-snug">
                       {'U\u010den\u00ed, kter\u00e9'}<br />{'inspiruje a bav\u00ed.'}
                     </p>
                   </div>
 
-                  <div className="space-y-5">
+                  <div className="space-y-[calc(1.25rem*0.85)]">
                     {/* 2. stupeň */}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-0.5">
+                    <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]">
                         {'2. stupe\u0148'}
                       </span>
                       <div className="flex flex-col">
@@ -702,7 +718,7 @@ export default function CatalogLayout() {
                             <button
                               key={item}
                               onClick={() => navigate(`/predmet/${slug}`)}
-                              className={`w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
+                              className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
                                 isActive ? 'bg-[#c8d7f7] text-[#001161]' : 'text-[#001161] hover:bg-white border border-transparent hover:border-gray-200'
                               }`}
                             >
@@ -714,8 +730,8 @@ export default function CatalogLayout() {
                     </div>
 
                     {/* 1. stupeň */}
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-0.5">
+                    <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]">
                         {'1. stupe\u0148'}
                       </span>
                       <div className="flex flex-col">
@@ -728,7 +744,7 @@ export default function CatalogLayout() {
                             <button
                               key={item}
                               onClick={() => navigate(`/predmet/${slug}`)}
-                              className={`w-full text-left px-3 py-1.5 rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
+                              className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
                                 isActive ? 'bg-[#c8d7f7] text-[#001161]' : 'text-[#001161] hover:bg-white border border-transparent hover:border-gray-200'
                               }`}
                             >
@@ -740,6 +756,31 @@ export default function CatalogLayout() {
                     </div>
                   </div>
 
+                  <div className="mt-[calc(0.375rem*0.85)] mb-5 flex gap-8">
+                    <button
+                      type="button"
+                      onClick={() => navigate('/dalsi-produkty')}
+                      className={`flex-1 min-w-0 text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] leading-snug transition-all cursor-pointer border ${
+                        location.pathname === '/dalsi-produkty'
+                          ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
+                          : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
+                      }`}
+                    >
+                      Další produkty
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/akce')}
+                      className={`flex-1 min-w-0 text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] leading-snug transition-all cursor-pointer border ${
+                        location.pathname === '/akce'
+                          ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
+                          : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
+                      }`}
+                    >
+                      {'Akce'}
+                    </button>
+                  </div>
+
                   {/* Accordion nav sections */}
                   <SidebarAccordion />
                 </>
@@ -747,11 +788,11 @@ export default function CatalogLayout() {
             </div>
 
             {isDistributorMode && (
-              <div className="mt-8 pt-6 border-t border-gray-100">
+              <div className="mt-[calc(2rem*0.85)] pt-[calc(1.5rem*0.85)] border-t border-gray-100">
                 <button
                   onClick={handleDownloadPack}
                   disabled={isDownloadingPack}
-                  className="w-full py-4 px-4 rounded-2xl font-['Fenomen_Sans',sans-serif] text-[18px] font-bold shadow-lg transition-all cursor-pointer bg-[#001161] text-white hover:bg-[#6b58ff] hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
+                  className="w-full py-[calc(1rem*0.85)] px-[calc(1rem*0.85)] rounded-2xl font-['Fenomen_Sans',sans-serif] text-[18px] font-bold shadow-lg transition-all cursor-pointer bg-[#001161] text-white hover:bg-[#6b58ff] hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3"
                 >
                   {isDownloadingPack ? (
                     <>

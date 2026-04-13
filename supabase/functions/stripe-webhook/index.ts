@@ -10,7 +10,13 @@ type OrderItemMetadata = {
   variant?: string;
   bundleId?: string;
   bundleTitle?: string;
+  /** Položka z košíku označená jako plakát / merch „na objednávku“ — celá objednávka jen z těchto položek nejde do Base.com. */
+  posterMerch?: boolean;
 };
+
+function isPosterOnlyOrder(items: OrderItemMetadata[]): boolean {
+  return items.length > 0 && items.every((i) => i.posterMerch === true);
+}
 
 type CustomerMetadata = {
   email: string;
@@ -427,6 +433,7 @@ Deno.serve(async (req) => {
       const items = normalizeItems(checkoutSession.cart_data);
       const customer = normalizeCustomer(checkoutSession.customer_data);
       const shipping = normalizeShipping(checkoutSession.shipping_data);
+      const posterOnly = isPosterOnlyOrder(items);
 
       const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
       const total = subtotal + (Number.isInteger(shipping.price) ? shipping.price : 0);
@@ -463,7 +470,9 @@ Deno.serve(async (req) => {
                   stripe_receipt_url = ${receiptUrl},
                   payment_method = ${pm},
                   paid_at = now(),
-                  updated_at = now()
+                  updated_at = now(),
+                  poster_fulfillment_status = ${posterOnly ? 'pending' : null},
+                  basecom_status = ${posterOnly ? 'skipped' : 'pending'}
                 where id = ${existing.id}::uuid
                   and status = 'pending_payment'
                 returning id, order_number
@@ -480,19 +489,21 @@ Deno.serve(async (req) => {
                 where order_id = ${order.id}::uuid
               `;
               if ((eqCount[0]?.c ?? 0) === 0) {
-                await tx`
-                  insert into public.export_queue (
-                    order_id,
-                    service,
-                    status,
-                    payload
-                  ) values (
-                    ${order.id},
-                    'basecom',
-                    'pending',
-                    ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
-                  )
-                `;
+                if (!posterOnly) {
+                  await tx`
+                    insert into public.export_queue (
+                      order_id,
+                      service,
+                      status,
+                      payload
+                    ) values (
+                      ${order.id},
+                      'basecom',
+                      'pending',
+                      ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
+                    )
+                  `;
+                }
                 await tx`
                   insert into public.export_queue (
                     order_id,
@@ -550,6 +561,14 @@ Deno.serve(async (req) => {
                   orderNumber: order.order_number,
                 },
               });
+              if (posterOnly) {
+                await upsertWorkflowStep(tx, {
+                  orderId: order.id,
+                  stepKey: 'basecom_exported',
+                  status: 'skipped',
+                  metadata: { reason: 'poster_only_order' },
+                });
+              }
               return;
             }
 
@@ -584,7 +603,9 @@ Deno.serve(async (req) => {
               stripe_receipt_url,
               subtotal,
               total,
-              paid_at
+              paid_at,
+              poster_fulfillment_status,
+              basecom_status
             ) values (
               'paid',
               ${customer.email},
@@ -607,7 +628,9 @@ Deno.serve(async (req) => {
               ${receiptUrl},
               ${subtotal},
               ${total},
-              now()
+              now(),
+              ${posterOnly ? 'pending' : null},
+              ${posterOnly ? 'skipped' : 'pending'}
             )
             returning id, order_number
           `;
@@ -651,19 +674,21 @@ Deno.serve(async (req) => {
             `;
           }
 
-          await tx`
-            insert into public.export_queue (
-              order_id,
-              service,
-              status,
-              payload
-            ) values (
-              ${order.id},
-              'basecom',
-              'pending',
-              ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
-            )
-          `;
+          if (!posterOnly) {
+            await tx`
+              insert into public.export_queue (
+                order_id,
+                service,
+                status,
+                payload
+              ) values (
+                ${order.id},
+                'basecom',
+                'pending',
+                ${JSON.stringify({ orderId: order.id, paymentIntentId: paymentIntent.id, items, customer, shipping })}::jsonb
+              )
+            `;
+          }
           await tx`
             insert into public.export_queue (
               order_id,
@@ -720,6 +745,14 @@ Deno.serve(async (req) => {
               orderNumber: order.order_number,
             },
           });
+          if (posterOnly) {
+            await upsertWorkflowStep(tx, {
+              orderId: order.id,
+              stepKey: 'basecom_exported',
+              status: 'skipped',
+              metadata: { reason: 'poster_only_order' },
+            });
+          }
         });
       } catch (error) {
         if (error && typeof error === 'object' && 'code' in error && error.code === '23505') {

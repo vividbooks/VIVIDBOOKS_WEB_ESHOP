@@ -132,6 +132,10 @@ export const router = createBrowserRouter(
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
             { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
+            {
+              path: 'dalsi-produkty',
+              lazy: lazyNamed(() => import('./components/OtherProductsPage'), 'OtherProductsPage'),
+            },
             { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
@@ -171,6 +175,10 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/admin/AdminOrderAlertsPage'), 'AdminOrderAlertsPage'),
         },
         { path: 'balicky', lazy: lazyDefault(() => import('./components/admin/ProductBundlesPage')) },
+        {
+          path: 'plakaty',
+          lazy: lazyNamed(() => import('./components/admin/AdminPosterOrdersPage'), 'AdminPosterOrdersPage'),
+        },
         { path: 'agent', lazy: lazyNamed(() => import('./components/admin/AdminAgentPage'), 'AdminAgentPage') },
         {
           path: 'visual-editor',

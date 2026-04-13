@@ -78,7 +78,7 @@ function TrackingProgress({ phases }: { phases: FulfillmentPhase[] }) {
                     <CheckCircle2 className="w-4 h-4 text-[#16a34a]" />
                   ) : phase.key === 'transit' ? (
                     <Truck className="w-4 h-4 text-[#001161]/35" />
-                  ) : phase.key === 'packed' ? (
+                  ) : phase.key === 'packed' || phase.key === 'printing' ? (
                     <Package className="w-4 h-4 text-[#001161]/35" />
                   ) : (
                     <span className="text-[11px] font-bold text-[#001161]/30">{index + 1}</span>
@@ -92,7 +92,7 @@ function TrackingProgress({ phases }: { phases: FulfillmentPhase[] }) {
                   >
                     {phase.label}
                   </p>
-                  {phase.detail && (done || phase.key === 'transit') && (
+                  {phase.detail && (done || phase.key === 'transit' || phase.key === 'printing') && (
                     <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/50 mt-1">
                       {phase.detail}
                     </p>
@@ -116,10 +116,15 @@ export function OrderTrackingPage() {
   const [order, setOrder] = useState<OrderTrackingSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  /** E-mail z objednávky — po potvrzení formuláře, když v URL chybí parametr `t`. */
+  const [emailForLookup, setEmailForLookup] = useState('');
+  const [emailSubmitted, setEmailSubmitted] = useState('');
 
   const paymentIntentTrimmed = paymentIntent?.trim() ?? '';
   const orderTrimmed = orderFromUrl?.trim() ?? '';
   const tokenTrimmed = tokenFromUrl?.trim() ?? '';
+  const needsEmailGate = Boolean(orderTrimmed && !tokenTrimmed && !paymentIntentTrimmed);
+  const emailQueryNorm = emailSubmitted.trim().toLowerCase();
 
   const lookupUrl = useMemo(() => {
     if (paymentIntentTrimmed) {
@@ -131,8 +136,14 @@ export function OrderTrackingPage() {
       u.searchParams.set('t', tokenTrimmed);
       return u.toString();
     }
+    if (orderTrimmed && emailQueryNorm.includes('@')) {
+      const u = new URL(GET_ORDER_FN);
+      u.searchParams.set('order', orderTrimmed);
+      u.searchParams.set('email', emailQueryNorm);
+      return u.toString();
+    }
     return null;
-  }, [paymentIntentTrimmed, orderTrimmed, tokenTrimmed]);
+  }, [paymentIntentTrimmed, orderTrimmed, tokenTrimmed, emailQueryNorm]);
 
   const applyOrderSuccess = useCallback((data: OrderTrackingSummary) => {
     setOrder(data);
@@ -146,6 +157,16 @@ export function OrderTrackingPage() {
 
     if (!lookupUrl) {
       setLoading(false);
+      if (needsEmailGate && !emailQueryNorm.includes('@')) {
+        setError('');
+        return;
+      }
+      if (!paymentIntentTrimmed && !orderTrimmed && !tokenTrimmed) {
+        setError(
+          'Pro zobrazení sledování použijte odkaz z e-mailu (číslo objednávky a ověřovací kód), nebo se vraťte z potvrzení platby.',
+        );
+        return;
+      }
       setError(
         'Pro zobrazení sledování použijte odkaz z e-mailu (číslo objednávky a ověřovací kód), nebo se vraťte z potvrzení platby.',
       );
@@ -179,7 +200,7 @@ export function OrderTrackingPage() {
     return () => {
       cancelled = true;
     };
-  }, [lookupUrl, applyOrderSuccess]);
+  }, [lookupUrl, applyOrderSuccess, needsEmailGate, emailQueryNorm, paymentIntentTrimmed, orderTrimmed, tokenTrimmed]);
 
   const upsellCartItems: CartItem[] = useMemo(() => {
     if (!order?.items?.length) return [];
@@ -198,6 +219,8 @@ export function OrderTrackingPage() {
       : null;
 
   const showLoader = loading && !order && !error;
+  const showEmailGate =
+    needsEmailGate && !emailQueryNorm.includes('@') && !order && !error && !loading;
 
   return (
     <div className="min-h-screen bg-[#f8f9fc]">
@@ -209,7 +232,55 @@ export function OrderTrackingPage() {
       />
       <div className="max-w-[820px] mx-auto px-4 sm:px-6 py-10 md:py-16">
         <div className="rounded-[28px] border border-[#001161]/10 bg-white p-8 md:p-10 text-center overflow-hidden">
-          {order ? (
+          {showEmailGate ? (
+            <>
+              <div className="w-16 h-16 rounded-full bg-[#eff6ff] flex items-center justify-center mx-auto mb-5">
+                <Mail className="w-8 h-8 text-[#001161]" />
+              </div>
+              <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] md:text-[40px] leading-tight mb-3">
+                {'Sledování objednávky'}
+              </h1>
+              <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/60 leading-relaxed max-w-[480px] mx-auto mb-6">
+                {
+                  'V odkazu chybí ověřovací kód z e-mailu. Zadejte prosím stejný e-mail, který jste uvedli u objednávky (objednávka '
+                }
+                <span className="font-bold text-[#001161]/80">{orderTrimmed}</span>
+                {').'}
+              </p>
+              <form
+                className="max-w-[400px] mx-auto text-left space-y-3"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const v = emailForLookup.trim().toLowerCase();
+                  if (!v.includes('@')) return;
+                  setEmailSubmitted(v);
+                }}
+              >
+                <label className="block font-['Fenomen_Sans',sans-serif] text-[12px] font-bold uppercase tracking-wide text-[#001161]/45">
+                  {'E-mail z objednávky'}
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={emailForLookup}
+                    onChange={(e) => setEmailForLookup(e.target.value)}
+                    className="mt-1.5 w-full rounded-[14px] border border-[#001161]/15 px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:ring-2 focus:ring-[#001161]/20"
+                    placeholder="vas@email.cz"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="w-full rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold py-3 hover:bg-[#001161]/90 transition-colors"
+                >
+                  {'Zobrazit stav objednávky'}
+                </button>
+              </form>
+              <p className="mt-6 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/40">
+                <Link to="/" className="underline hover:text-[#001161]/60">
+                  {'Zpět do obchodu'}
+                </Link>
+              </p>
+            </>
+          ) : order ? (
             <>
               <div className="w-16 h-16 rounded-full bg-[#eff6ff] flex items-center justify-center mx-auto mb-5">
                 <Truck className="w-8 h-8 text-[#001161]" />
@@ -335,6 +406,19 @@ export function OrderTrackingPage() {
               <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/60 leading-relaxed max-w-[440px] mx-auto">
                 {error}
               </p>
+              {needsEmailGate && emailQueryNorm.includes('@') ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError('');
+                    setEmailSubmitted('');
+                    setEmailForLookup('');
+                  }}
+                  className="mt-6 inline-flex items-center justify-center px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"
+                >
+                  {'Znovu zadat e-mail'}
+                </button>
+              ) : null}
             </>
           ) : (
             <>

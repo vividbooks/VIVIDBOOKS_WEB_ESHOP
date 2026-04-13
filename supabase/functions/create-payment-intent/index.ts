@@ -18,6 +18,7 @@ type CheckoutItem = {
   variant?: string;
   bundleId?: string;
   bundleTitle?: string;
+  posterMerch?: boolean;
 };
 
 type CheckoutShipping = {
@@ -73,17 +74,23 @@ function isPositiveInteger(value: unknown) {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
+function isNonNegativeInteger(value: unknown) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
 function validateItems(items: unknown): items is CheckoutItem[] {
   return Array.isArray(items) && items.length > 0 && items.every((item) => {
     if (!item || typeof item !== 'object') return false;
     const candidate = item as Record<string, unknown>;
     const variantOk = candidate.variant === undefined || typeof candidate.variant === 'string';
+    const posterOk = candidate.posterMerch === undefined || candidate.posterMerch === true;
     return (
       typeof candidate.productId === 'string' &&
       typeof candidate.productName === 'string' &&
       isPositiveInteger(candidate.quantity) &&
-      isPositiveInteger(candidate.unitPrice) &&
-      variantOk
+      isNonNegativeInteger(candidate.unitPrice) &&
+      variantOk &&
+      posterOk
     );
   });
 }

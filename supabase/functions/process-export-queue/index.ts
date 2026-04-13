@@ -236,6 +236,34 @@ async function resolveIdokladNumericSequenceId(
 }
 
 /** Hodnoty dle [iDoklad API v3](https://api.idoklad.cz/Help/v3/cs/index.html) / nastavení účtu — lze přepsat secrety. */
+/**
+ * ID způsobu úhrady v iDokladu (Nastavení → Způsoby úhrady). Výchozí `3` často odpovídá hotovosti —
+ * pro Stripe platby kartou nastavte `IDOKLAD_PAYMENT_OPTION_ID_CARD` na ID „karta / online“ z iDokladu.
+ */
+function resolveIdokladPaymentOptionId(order: { payment_method: string }): number {
+  const fallback = idokladEnvInt(
+    'IDOKLAD_PAYMENT_OPTION_ID',
+    idokladEnvInt('IDOKLAD_PAYMENT_TYPE_ID', 3),
+  );
+  const cardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+  if (cardLike) {
+    const raw = (Deno.env.get('IDOKLAD_PAYMENT_OPTION_ID_CARD') || '').trim();
+    if (raw) {
+      const n = Number.parseInt(raw, 10);
+      if (Number.isInteger(n)) return n;
+    }
+    return fallback;
+  }
+  if (order.payment_method === 'transfer') {
+    const raw = (Deno.env.get('IDOKLAD_PAYMENT_OPTION_ID_TRANSFER') || '').trim();
+    if (raw) {
+      const n = Number.parseInt(raw, 10);
+      if (Number.isInteger(n)) return n;
+    }
+  }
+  return fallback;
+}
+
 function getIdokladNumericSettings() {
   return {
     countryIdCz: idokladEnvInt('IDOKLAD_COUNTRY_ID', 2),
@@ -710,6 +738,40 @@ async function getIdokladAccessToken(forceRefresh = false) {
   return data.access_token;
 }
 
+/**
+ * Označí vydanou fakturu jako plně uhrazenou (PaymentStatus = Uhrazeno). Samotné `DateOfPayment` v POST IssuedInvoices
+ * často nestačí — v UI zůstane „neuhrazeno“, dokud neexistuje záznam platby (viz IdokladSdk IssuedDocumentPaymentClient.FullyPay).
+ */
+async function idokladFullyPayInvoice(
+  tokenIn: string,
+  invoiceNumericId: string,
+  dateOfPaymentYmd: string,
+): Promise<string> {
+  let token = tokenIn;
+  const id = invoiceNumericId.trim();
+  if (!id) {
+    throw new Error('iDoklad FullyPay: missing invoice id.');
+  }
+  const url = new URL(`https://api.idoklad.cz/v3/IssuedDocumentPayments/FullyPay/${encodeURIComponent(id)}`);
+  url.searchParams.set('dateOfPayment', dateOfPaymentYmd);
+  let res = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: idokladSdkHeaders(token),
+  });
+  if (res.status === 401) {
+    token = await getIdokladAccessToken(true);
+    res = await fetch(url.toString(), {
+      method: 'PUT',
+      headers: idokladSdkHeaders(token),
+    });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`iDoklad FullyPay HTTP ${res.status}: ${text.slice(0, 400)}`);
+  }
+  return token;
+}
+
 function parseIdokladInvoiceResponse(data: IdokladInvoiceResponse) {
   const payload = (data.Data ?? data.data ?? data) as Record<string, unknown> | undefined;
   const invoiceId = payload?.Id ?? payload?.id;
@@ -900,7 +962,7 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
     PartnerId: partnerId,
     DocumentSerialNumber: documentSerialNumber,
     IsIncomeTax: idok.isIncomeTax,
-    PaymentOptionId: idok.paymentOptionId,
+    PaymentOptionId: resolveIdokladPaymentOptionId(order),
     NumericSequenceId: numericSequenceId,
     DateOfIssue: issueIso,
     DateOfMaturity: maturityIso,
@@ -934,9 +996,6 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
         : []),
     ],
   };
-  if (isPaid) {
-    payload.DateOfPayment = issueIso;
-  }
   if (order.note?.trim()) {
     payload.Note = order.note.trim().slice(0, 2000);
   }
@@ -962,6 +1021,9 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
   }
 
   const parsed = parseIdokladInvoiceResponse(data);
+  if (isPaid) {
+    token = await idokladFullyPayInvoice(token, parsed.invoiceId, issueIso);
+  }
   return {
     invoiceId: parsed.invoiceId,
     documentNumber: parsed.documentNumber,

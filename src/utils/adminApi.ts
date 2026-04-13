@@ -173,6 +173,8 @@ export interface AdminOrderListItem {
   shipping_method: string;
   tracking_number?: string | null;
   items_summary?: string | null;
+  /** Jen objednávky plakátů (admin záložka). */
+  poster_fulfillment_status?: string | null;
 }
 
 export interface AdminOrderItem {
@@ -490,6 +492,7 @@ export interface AdminOrderDetail {
   shipped_at?: string | null;
   delivered_at?: string | null;
   cancelled_at?: string | null;
+  poster_fulfillment_status?: string | null;
 }
 
 /** Stav plnění z Base.com (Baselinker) — admin-orders GET detail. */
@@ -524,12 +527,15 @@ export async function fetchAdminOrders(params: {
   search?: string;
   page?: number;
   pageSize?: number;
+  /** Jen řádky s `poster_fulfillment_status` (objednávky jen z plakátů v košíku). */
+  posterOnly?: boolean;
 }) {
   const url = new URL(ADMIN_ORDERS_BASE);
   url.searchParams.set('filter', params.filter || 'all');
   url.searchParams.set('search', params.search || '');
   url.searchParams.set('page', String(params.page || 1));
   url.searchParams.set('pageSize', String(params.pageSize || 20));
+  if (params.posterOnly) url.searchParams.set('poster', '1');
 
   const res = await fetch(url.toString(), { headers: HEADERS });
   if (!res.ok) {
@@ -598,12 +604,19 @@ export async function downloadIdokladInvoicePdf(orderId: string, filenameBase: s
 }
 
 export async function runAdminOrderAction(payload: {
-  action: 'retry_export' | 'retry_idoklad_export' | 'cancel_order' | 'mark_shipped' | 'sync_pipedrive';
+  action:
+    | 'retry_export'
+    | 'retry_idoklad_export'
+    | 'cancel_order'
+    | 'mark_shipped'
+    | 'sync_pipedrive'
+    | 'set_poster_fulfillment';
   orderId: string;
   cancelledReason?: string;
   trackingNumber?: string;
   /** true = jen aktualizace štítků/PRINT u existujícího dealu */
   refreshPipedrive?: boolean;
+  posterFulfillmentStatus?: 'pending' | 'done';
 }) {
   const res = await fetch(ADMIN_ORDER_ACTION_BASE, {
     method: 'POST',

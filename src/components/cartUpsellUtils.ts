@@ -61,9 +61,39 @@ export function isAddable(product: any): boolean {
   return !!getProductVariantId(product);
 }
 
+/**
+ * ID řádku košíku / balíčku: Shopify variantId, jinak u merchu Shoptet SKU / id varianty (viz ProductDetailPage `effectiveCartVariantId`),
+ * jinak shoptetId u záznamu produktu.
+ */
 export function getProductVariantId(product: any): string | undefined {
   const variantId = product.shopifyVariantId || product.variantId;
-  return typeof variantId === 'string' && variantId.length > 0 ? variantId : undefined;
+  if (typeof variantId === 'string' && variantId.trim().length > 0) return variantId.trim();
+  const merch = product.merchVariants;
+  if (Array.isArray(merch)) {
+    for (const v of merch) {
+      const vid = v?.shopifyVariantId;
+      if (typeof vid === 'string' && vid.trim().length > 0) return vid.trim();
+    }
+  }
+  if (String(product.type || '').toLowerCase() === 'merch' && Array.isArray(merch) && merch.length > 0) {
+    for (const v of merch) {
+      const sku = typeof v?.shoptetId === 'string' ? v.shoptetId.trim() : '';
+      if (sku) return sku;
+    }
+    for (const v of merch) {
+      const metaVid = v?.metadata?.shoptetVariantId;
+      if (typeof metaVid === 'string' && metaVid.trim().length > 0) return metaVid.trim();
+    }
+    for (const v of merch) {
+      const rowId = typeof v?.id === 'string' ? v.id.trim() : '';
+      if (rowId) return rowId;
+    }
+  }
+  const shoptetProduct = product.shoptetId || product.shoptetProductId;
+  if (typeof shoptetProduct === 'string' && shoptetProduct.trim().length > 0) {
+    return shoptetProduct.trim();
+  }
+  return undefined;
 }
 
 export function getProductImage(product: any): string | undefined {
@@ -73,6 +103,25 @@ export function getProductImage(product: any): string | undefined {
 export function getProductUnitPriceInHaler(product: any): number {
   if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
     return Math.max(0, Math.round(product.priceAmount * 100));
+  }
+
+  const merch = product.merchVariants;
+  if (Array.isArray(merch) && merch.length > 0) {
+    for (const v of merch) {
+      if (typeof v?.priceAmount === 'number' && Number.isFinite(v.priceAmount)) {
+        return Math.max(0, Math.round(v.priceAmount * 100));
+      }
+    }
+    for (const v of merch) {
+      const fromVariant = String(v?.price || '')
+        .replace(/\s/g, '')
+        .replace('Kč', '')
+        .replace(/\./g, '')
+        .replace(',', '.')
+        .replace(/[^\d.]/g, '');
+      const pv = Number.parseFloat(fromVariant);
+      if (Number.isFinite(pv)) return Math.max(0, Math.round(pv * 100));
+    }
   }
 
   const normalized = String(product.price || '')
