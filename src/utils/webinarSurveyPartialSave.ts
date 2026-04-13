@@ -26,7 +26,10 @@ export async function saveWebinarSurveyPartialAnswer(args: {
   email: string;
   questionId: string;
   value: string;
+  /** Jméno z úvodního formuláře — doplní přehled odpovědí i bez záznamu v KV (light lead / registrace). */
+  participantName?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pn = String(args.participantName ?? '').trim();
   const res = await fetch(`${SERVER}/webinar-survey-partial`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
@@ -35,6 +38,7 @@ export async function saveWebinarSurveyPartialAnswer(args: {
       email: args.email.trim(),
       questionId: args.questionId.trim(),
       value: args.value,
+      ...(pn ? { participantName: pn } : {}),
     }),
   });
   const rawText = await res.text();

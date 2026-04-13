@@ -246,6 +246,7 @@ export function WebinarPostSurvey({
         body: JSON.stringify({
           webinarId: String(webinar.id ?? '').trim(),
           email: email.trim(),
+          participantName: (participantName || '').trim(),
           answers,
         }),
       });
@@ -273,7 +274,7 @@ export function WebinarPostSurvey({
     } finally {
       setSubmitting(false);
     }
-  }, [answers, email, webinar.id, restQuestions.length, restQuestionsComplete]);
+  }, [answers, email, webinar.id, restQuestions.length, restQuestionsComplete, participantName]);
 
   const savePartialAnswer = useCallback(
     async (questionId: string, value: string): Promise<void | { wrongAnswer?: boolean }> => {
@@ -281,13 +282,14 @@ export function WebinarPostSurvey({
       const r = await saveWebinarSurveyPartialAnswer({
         webinarId: String(webinar.id ?? '').trim(),
         email: email.trim(),
+        participantName: (participantName || '').trim(),
         questionId,
         value,
       });
       if (!r.ok) throw new Error(r.error || 'Chyba');
       return 'wrongAnswer' in r && r.wrongAnswer ? { wrongAnswer: true } : undefined;
     },
-    [scope, webinar.id, email],
+    [scope, webinar.id, email, participantName],
   );
 
   const saveRestQuestionPartial = useCallback(
@@ -301,6 +303,7 @@ export function WebinarPostSurvey({
         const r = await saveWebinarSurveyPartialAnswer({
           webinarId: String(webinar.id ?? '').trim(),
           email: email.trim(),
+          participantName: (participantName || '').trim(),
           questionId: q.id,
           value: raw,
         });
@@ -315,7 +318,7 @@ export function WebinarPostSurvey({
         setRestPartialSavingId(null);
       }
     },
-    [scope, webinar.id, email, answers],
+    [scope, webinar.id, email, answers, participantName],
   );
 
   useEffect(() => {

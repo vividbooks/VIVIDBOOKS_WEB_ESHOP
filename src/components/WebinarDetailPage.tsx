@@ -1134,6 +1134,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   <WebinarPostSurvey
                     webinar={webinar}
                     email={form.email}
+                    participantName={form.name}
                     onAnswersChange={onPostSurveyAnswersChange}
                     scope="pre"
                   />

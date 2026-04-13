@@ -5301,6 +5301,28 @@ async function kvGetWebinarSurveyParticipantForEmail(
   return { name: '', email, surveyNoPriorKvContact: true };
 }
 
+/**
+ * Jméno pro přehled odpovědí: nejdřív z klienta (úvodní formulář), pak KV registrace / certifikát,
+ * nakonec rozpracovaný záznam v KV (partial).
+ */
+function resolveSurveyParticipantDisplayName(
+  reg: unknown,
+  opts: { clientName?: string; partialStoredName?: string },
+): string {
+  const c = String(opts.clientName || '').trim();
+  if (c) return c;
+  const r = reg as Record<string, unknown> | null | undefined;
+  if (r && typeof r === 'object') {
+    const n = String(r.name || '').trim();
+    if (n) return n;
+    const cp = String(r.certificateParticipantName || '').trim();
+    if (cp) return cp;
+  }
+  const p = String(opts.partialStoredName || '').trim();
+  if (p) return p;
+  return '';
+}
+
 const webinarSurveyPartialHandler = async (c: Context) => {
   try {
     const body = await c.req.json();
@@ -5342,7 +5364,17 @@ const webinarSurveyPartialHandler = async (c: Context) => {
       dvppCorrect != null && value.trim() !== dvppCorrect.trim();
 
     const partialKey = webinarSurveyPartialKey(webinarId, email);
-    const nameForPartial = (reg as any).name || '';
+    const clientName =
+      typeof body?.participantName === 'string'
+        ? body.participantName
+        : typeof body?.name === 'string'
+          ? body.name
+          : '';
+    const initialPrev = (await kv.get(partialKey)) as { answers?: Record<string, string>; name?: string } | null;
+    const nameForPartial = resolveSurveyParticipantDisplayName(reg, {
+      clientName,
+      partialStoredName: String(initialPrev?.name || ''),
+    });
     /** Read–merge–write bez transakce: souběžné POSTy (dvojklik) si jinak přepisovaly `answers`. */
     let mergedOk = false;
     for (let attempt = 0; attempt < 24; attempt++) {
@@ -5407,11 +5439,22 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
     const partialKey = webinarSurveyPartialKey(webinarId, email);
-    const partialDoc = (await kv.get(partialKey)) as { answers?: Record<string, string> } | null;
+    const partialDoc = (await kv.get(partialKey)) as { answers?: Record<string, string>; name?: string } | null;
     const mergedIncoming: Record<string, unknown> = {
       ...(partialDoc?.answers || {}),
       ...(answers as Record<string, unknown>),
     };
+
+    const clientName =
+      typeof body?.participantName === 'string'
+        ? body.participantName
+        : typeof body?.name === 'string'
+          ? body.name
+          : '';
+    const storedName = resolveSurveyParticipantDisplayName(reg, {
+      clientName,
+      partialStoredName: String(partialDoc?.name || ''),
+    });
 
     const out: Record<string, string> = {};
     for (const q of questions) {
@@ -5433,7 +5476,7 @@ const webinarSurveySubmitHandler = async (c: Context) => {
     await kv.set(webinarSurveyAnswerKey(webinarId, email), {
       webinarId,
       email,
-      name: (reg as any).name || '',
+      name: storedName,
       answers: out,
       submittedAt: new Date().toISOString(),
     });
