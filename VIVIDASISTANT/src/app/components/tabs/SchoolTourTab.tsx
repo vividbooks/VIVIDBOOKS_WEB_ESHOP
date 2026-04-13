@@ -24,6 +24,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { toast } from 'sonner';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { projectId, publicAnonKey } from '/utils/supabase/info';
 import { SchoolDetailPanel } from '../ui/SchoolDetailPanel';
 import { isSchoolWithinKmOfPrague, SCHOOL_TOUR_RADIUS_KM } from '../../utils/schoolTourRegion';
@@ -151,7 +152,7 @@ type TourRowProps = {
 const SchoolTourListRow = memo(
   function SchoolTourListRow({ school, flags, primary, onToggleFlag, onOpenDetail }: TourRowProps) {
     return (
-      <div className="p-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:gap-4 md:items-start [content-visibility:auto] [contain-intrinsic-size:auto_200px]">
+      <div className="p-4 md:grid md:grid-cols-[minmax(0,1fr)_auto] md:gap-4 md:items-start border-b border-white/10">
         <div className="min-w-0">
           <div className="flex items-start gap-2 flex-wrap">
             <span
@@ -271,6 +272,7 @@ export const SchoolTourTab: React.FC = () => {
   const [showDetailPanel, setShowDetailPanel] = useState(false);
 
   const mapRef = useRef<L.Map | null>(null);
+  const listScrollParentRef = useRef<HTMLDivElement | null>(null);
 
   const regionalSchools = useMemo(
     () => schools.filter((s) => isSchoolWithinKmOfPrague(s.lat, s.lng)),
@@ -407,6 +409,22 @@ export const SchoolTourTab: React.FC = () => {
   const filteredForDisplay = useMemo(() => {
     return schoolsWithMeta.filter((row) => visibleCategories[row.primary]);
   }, [schoolsWithMeta, visibleCategories]);
+
+  const listVirtualCount =
+    innerTab === 'list' &&
+    !isLoading &&
+    !isBuilding &&
+    regionalSchools.length > 0 &&
+    filteredForDisplay.length > 0
+      ? filteredForDisplay.length
+      : 0;
+
+  const listRowVirtualizer = useVirtualizer({
+    count: listVirtualCount,
+    getScrollElement: () => listScrollParentRef.current,
+    estimateSize: () => 168,
+    overscan: 14,
+  });
 
   /** Stabilní reference — aby FitBounds nespouštěl fit při každém překreslení (klik na školu, panel). */
   const schoolsForMapBounds = useMemo(
@@ -633,18 +651,34 @@ export const SchoolTourTab: React.FC = () => {
               </p>
             </div>
           ) : innerTab === 'list' ? (
-            <div className="absolute inset-0 overflow-y-auto scrollbar-hide">
-              <div className="divide-y divide-white/10">
-                {filteredForDisplay.map(({ school, flags, primary }) => (
-                  <SchoolTourListRow
-                    key={school.id}
-                    school={school}
-                    flags={flags}
-                    primary={primary}
-                    onToggleFlag={updateFlags}
-                    onOpenDetail={fetchSchoolDetail}
-                  />
-                ))}
+            <div
+              ref={listScrollParentRef}
+              className="absolute inset-0 overflow-y-auto overflow-x-hidden scrollbar-hide"
+            >
+              <div
+                className="relative w-full"
+                style={{ height: listRowVirtualizer.getTotalSize() }}
+              >
+                {listRowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const { school, flags, primary } = filteredForDisplay[virtualRow.index];
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      data-index={virtualRow.index}
+                      ref={listRowVirtualizer.measureElement}
+                      className="absolute left-0 top-0 w-full"
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      <SchoolTourListRow
+                        school={school}
+                        flags={flags}
+                        primary={primary}
+                        onToggleFlag={updateFlags}
+                        onOpenDetail={fetchSchoolDetail}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
