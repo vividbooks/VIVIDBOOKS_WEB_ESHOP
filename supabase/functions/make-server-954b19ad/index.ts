@@ -2549,7 +2549,15 @@ app.post("/make-server-954b19ad/crm/build-school-cache", async (c) => {
 const SCHOOL_TOUR_FLAGS_KEY = "school_tour_flags";
 
 function sanitizeSchoolTourFlags(raw: any): Record<string, boolean> {
-  const keys = ["vitekVisited", "vitekPlanned", "ivetaVisited", "ivetaPlanned", "danVisited", "danPlanned"];
+  const keys = [
+    "vitekVisited",
+    "vitekPlanned",
+    "ivetaVisited",
+    "ivetaPlanned",
+    "danVisited",
+    "danPlanned",
+    "nemaSmysl",
+  ];
   const out: Record<string, boolean> = {};
   for (const k of keys) {
     out[k] = Boolean(raw?.[k]);

@@ -8,6 +8,8 @@ export type SchoolTourFlags = {
   ivetaPlanned: boolean;
   danVisited: boolean;
   danPlanned: boolean;
+  /** Škola bez smyslu navštěvovat / oslovovat. */
+  nemaSmysl: boolean;
 };
 
 export type TourPrimaryCategory =
@@ -17,6 +19,7 @@ export type TourPrimaryCategory =
   | 'vitekPlanned'
   | 'ivetaPlanned'
   | 'danPlanned'
+  | 'nemaSmysl'
   | 'none';
 
 export const TOUR_FLAG_LABELS: { key: keyof SchoolTourFlags; label: string }[] = [
@@ -26,6 +29,7 @@ export const TOUR_FLAG_LABELS: { key: keyof SchoolTourFlags; label: string }[] =
   { key: 'ivetaPlanned', label: 'Iveta plánuje' },
   { key: 'danVisited', label: 'Dan navštívil' },
   { key: 'danPlanned', label: 'Dan plánuje' },
+  { key: 'nemaSmysl', label: 'Nemá smysl' },
 ];
 
 export function emptySchoolTourFlags(): SchoolTourFlags {
@@ -36,6 +40,7 @@ export function emptySchoolTourFlags(): SchoolTourFlags {
     ivetaPlanned: false,
     danVisited: false,
     danPlanned: false,
+    nemaSmysl: false,
   };
 }
 
@@ -88,6 +93,7 @@ export function getPrimaryTourCategory(flags: SchoolTourFlags): TourPrimaryCateg
   if (flags.vitekPlanned) return 'vitekPlanned';
   if (flags.ivetaPlanned) return 'ivetaPlanned';
   if (flags.danPlanned) return 'danPlanned';
+  if (flags.nemaSmysl) return 'nemaSmysl';
   return 'none';
 }
 
@@ -98,6 +104,7 @@ export const TOUR_CATEGORY_COLORS: Record<TourPrimaryCategory, string> = {
   vitekPlanned: '#4ADE80',
   ivetaPlanned: '#C084FC',
   danPlanned: '#FBBF24',
+  nemaSmysl: '#78716C',
   none: '#6B7280',
 };
 
@@ -108,5 +115,6 @@ export const TOUR_CATEGORY_LABELS: Record<TourPrimaryCategory, string> = {
   vitekPlanned: 'Vítek plánuje',
   ivetaPlanned: 'Iveta plánuje',
   danPlanned: 'Dan plánuje',
+  nemaSmysl: 'Nemá smysl',
   none: 'Bez označení',
 };

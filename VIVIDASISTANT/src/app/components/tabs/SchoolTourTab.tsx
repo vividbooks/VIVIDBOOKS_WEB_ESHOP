@@ -77,6 +77,7 @@ const iconByCategory: Record<TourPrimaryCategory, L.DivIcon> = {
   vitekPlanned: makeCategoryIcon(TOUR_CATEGORY_COLORS.vitekPlanned),
   ivetaPlanned: makeCategoryIcon(TOUR_CATEGORY_COLORS.ivetaPlanned),
   danPlanned: makeCategoryIcon(TOUR_CATEGORY_COLORS.danPlanned),
+  nemaSmysl: makeCategoryIcon(TOUR_CATEGORY_COLORS.nemaSmysl),
   none: makeCategoryIcon(TOUR_CATEGORY_COLORS.none),
 };
 
@@ -113,6 +114,7 @@ const defaultVisibleCategories: Record<TourPrimaryCategory, boolean> = {
   vitekPlanned: true,
   ivetaPlanned: true,
   danPlanned: true,
+  nemaSmysl: true,
   none: true,
 };
 
@@ -137,7 +139,8 @@ function flagsEqual(a: SchoolTourFlags, b: SchoolTourFlags): boolean {
     a.ivetaVisited === b.ivetaVisited &&
     a.ivetaPlanned === b.ivetaPlanned &&
     a.danVisited === b.danVisited &&
-    a.danPlanned === b.danPlanned
+    a.danPlanned === b.danPlanned &&
+    a.nemaSmysl === b.nemaSmysl
   );
 }
 
@@ -422,7 +425,7 @@ export const SchoolTourTab: React.FC = () => {
   const listRowVirtualizer = useVirtualizer({
     count: listVirtualCount,
     getScrollElement: () => listScrollParentRef.current,
-    estimateSize: () => 168,
+    estimateSize: () => 180,
     overscan: 14,
   });
 
@@ -440,6 +443,7 @@ export const SchoolTourTab: React.FC = () => {
       vitekPlanned: 0,
       ivetaPlanned: 0,
       danPlanned: 0,
+      nemaSmysl: 0,
       none: 0,
     };
     for (const row of schoolsWithMeta) {
