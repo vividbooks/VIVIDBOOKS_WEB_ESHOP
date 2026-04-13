@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -90,6 +91,8 @@ interface CachedSchool {
   isActive: boolean;
   isOpen?: boolean;
 }
+
+const EMPTY_MAP_SCHOOLS: CachedSchool[] = [];
 
 /**
  * Jednorázové přiblížení po prvním vykreslení značek — další změny (checkboxy, filtry) už zoom nemění.
@@ -268,6 +271,8 @@ export const SchoolTourTab: React.FC = () => {
   const [nameSearch, setNameSearch] = useState('');
   /** Odlehčí filtrování při psaní do vyhledávání (velké seznamy). */
   const deferredNameSearch = useDeferredValue(nameSearch);
+  /** Stejné pro barevné filtry — pill reaguje hned, přepočet seznamu/map neblokuje UI. */
+  const deferredVisibleCategories = useDeferredValue(visibleCategories);
 
   const [selectedSchool, setSelectedSchool] = useState<CachedSchool | null>(null);
   const [schoolDetail, setSchoolDetail] = useState<any | null>(null);
@@ -410,8 +415,13 @@ export const SchoolTourTab: React.FC = () => {
   }, [regionalSchoolsByName, flagsBySchoolId]);
 
   const filteredForDisplay = useMemo(() => {
-    return schoolsWithMeta.filter((row) => visibleCategories[row.primary]);
-  }, [schoolsWithMeta, visibleCategories]);
+    return schoolsWithMeta.filter((row) => deferredVisibleCategories[row.primary]);
+  }, [schoolsWithMeta, deferredVisibleCategories]);
+
+  useLayoutEffect(() => {
+    if (innerTab !== 'list') return;
+    listScrollParentRef.current?.scrollTo({ top: 0 });
+  }, [deferredVisibleCategories, innerTab]);
 
   const listVirtualCount =
     innerTab === 'list' &&
@@ -422,18 +432,24 @@ export const SchoolTourTab: React.FC = () => {
       ? filteredForDisplay.length
       : 0;
 
+  const listItemKey = useCallback(
+    (index: number) => filteredForDisplay[index]?.school.id ?? index,
+    [filteredForDisplay],
+  );
+
   const listRowVirtualizer = useVirtualizer({
     count: listVirtualCount,
     getScrollElement: () => listScrollParentRef.current,
     estimateSize: () => 180,
     overscan: 14,
+    getItemKey: listItemKey,
   });
 
   /** Stabilní reference — aby FitBounds nespouštěl fit při každém překreslení (klik na školu, panel). */
-  const schoolsForMapBounds = useMemo(
-    () => filteredForDisplay.map((r) => r.school),
-    [filteredForDisplay],
-  );
+  const schoolsForMapBounds = useMemo(() => {
+    if (innerTab !== 'map') return EMPTY_MAP_SCHOOLS;
+    return filteredForDisplay.map((r) => r.school);
+  }, [innerTab, filteredForDisplay]);
 
   const countsByCategory = useMemo(() => {
     const c: Record<TourPrimaryCategory, number> = {
