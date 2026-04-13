@@ -25,6 +25,7 @@ jobs:
     # VITE_* musí být dostupné celému jobu (vite build je citlivý na process.env při startu).
     env:
       GITHUB_ACTIONS: 'true'
+      NODE_OPTIONS: --max-old-space-size=6144
       VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
       VITE_PACKETA_API_KEY: ${{ secrets.VITE_PACKETA_API_KEY }}
       VITE_TWITTER_SITE: ${{ secrets.VITE_TWITTER_SITE }}
@@ -45,13 +46,12 @@ jobs:
           if [ -n "${VITE_PACKETA_API_KEY:-}" ]; then
             echo "::notice::VITE_PACKETA_API_KEY je v běhu k dispozici (zabalí se do buildu)."
           else
-            echo "::error::VITE_PACKETA_API_KEY je v tomto běhu PRÁZDNÝ — do JS se neuloží a na webu uvidíte chybu widgetu."
-            echo "::error::Zkontrolujte: název repository secretu přesně VITE_PACKETA_API_KEY (bez mezer). Po uložení secretu znovu spusťte tento workflow (Run workflow). V Settings → Pages musí být zdroj „GitHub Actions“, ne deploy z větve."
+            echo "::warning::VITE_PACKETA_API_KEY je prázdný — doplňte repository secret (přesný název) a znovu spusťte workflow; Packeta na Pages nemusí fungovat."
           fi
           if [ -n "${VITE_STRIPE_PUBLISHABLE_KEY:-}" ]; then
             echo "::notice::VITE_STRIPE_PUBLISHABLE_KEY je v běhu k dispozici."
           else
-            echo "::error::VITE_STRIPE_PUBLISHABLE_KEY je PRÁZDNÝ — Stripe na Pages nebude fungovat."
+            echo "::warning::VITE_STRIPE_PUBLISHABLE_KEY je prázdný — Stripe na Pages nemusí fungovat; doplňte repository secret."
           fi
 
       # Repository secrets: Settings → Secrets and variables → Actions
