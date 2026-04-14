@@ -120,7 +120,7 @@ export function CartDrawer() {
 
   /** Overlay košíku (z-[90]) by jinak mohla zůstat přes celou pokladnu při zvláštním toku navigace. */
   useEffect(() => {
-    if (location.pathname === '/pokladna' && isCartOpen) closeCart();
+    if ((location.pathname === '/pokladna' || location.pathname === '/platit') && isCartOpen) closeCart();
   }, [location.pathname, isCartOpen, closeCart]);
 
   useEffect(() => {

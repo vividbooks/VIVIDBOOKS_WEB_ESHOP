@@ -221,6 +221,7 @@ export default function CatalogLayout() {
 
   const isSchoolOrderView = location.pathname === '/objednat';
   const isCheckoutView = location.pathname === '/pokladna';
+  const isResumePaymentView = location.pathname === '/platit';
   const isCheckoutLikeSidebar = isCheckoutView || isSchoolOrderView;
   const { step: orderStep } = useOrderNav();
   /** Krok „Počty“ — více místa vlevo: bez loga, odkaz nahoře */
@@ -274,7 +275,7 @@ export default function CatalogLayout() {
   /* ── mobile nav scroll check ───────────────────────────────── */
   useEffect(() => {
     const el = navRef.current;
-    if (!el || isSchoolOrderView || isCheckoutView) return;
+    if (!el || isSchoolOrderView || isCheckoutView || isResumePaymentView) return;
     const check = () => {
       setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 10);
     };
@@ -282,7 +283,7 @@ export default function CatalogLayout() {
     setTimeout(check, 100);
     window.addEventListener('resize', check);
     return () => { el.removeEventListener('scroll', check); window.removeEventListener('resize', check); };
-  }, [groupingMode, isSchoolOrderView, isCheckoutView, location.pathname]);
+  }, [groupingMode, isSchoolOrderView, isCheckoutView, isResumePaymentView, location.pathname]);
 
   const scrollMobileNext = () => {
     const el = navRef.current;
@@ -308,7 +309,10 @@ export default function CatalogLayout() {
   const isTrialPageFullscreen = location.pathname === '/vyzkousejte';
 
   const isMinimalCatalogChrome =
-    isWebinarSurveyFullscreen || isZaznamFromEmailFullscreen || isTrialPageFullscreen;
+    isWebinarSurveyFullscreen
+    || isZaznamFromEmailFullscreen
+    || isTrialPageFullscreen
+    || isResumePaymentView;
 
   const catalogContextValue = {
     groupingMode, setGroupingMode,
@@ -326,7 +330,9 @@ export default function CatalogLayout() {
           className={
             isWebinarSurveyFullscreen
               ? 'flex h-dvh max-h-dvh min-h-0 w-full flex-col overflow-hidden bg-[#E8EBF4]'
-              : 'min-h-dvh w-full bg-[#E8EBF4]'
+              : isResumePaymentView
+                ? 'min-h-dvh w-full bg-[#f8f9fc]'
+                : 'min-h-dvh w-full bg-[#E8EBF4]'
           }
         >
           <main

@@ -192,6 +192,7 @@ export function PopupRenderer() {
   const isCheckoutFlow =
     location.pathname === '/objednat'
     || location.pathname === '/pokladna'
+    || location.pathname === '/platit'
     || location.pathname === '/objednavka/dekujeme';
 
   // Load active popups on mount

@@ -88,7 +88,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `PUBLIC_SITE_URL` | Odkazy v e‑mailech webináře (`getPublicSiteOrigin()`). |
 | `GOOGLE_MAPS_API_KEY` nebo `GOOGLE_PLACES_API_KEY` | **Našeptávání adres** v objednávce / pokladně (Google Places API přes Edge: `GET …/address-autocomplete`, `GET …/place-details`). Bez klíče pole fungují ručně. V Google Cloud zapnout Places API (legacy) a fakturaci; klíč jen v Edge Secrets. |
 
-Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PUBLIC_SITE_URL` / `SITE_URL`.
+Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PUBLIC_SITE_URL` / `SITE_URL`, `ORDER_TRACKING_HMAC_SECRET`. Pokud hlavní web (`PUBLIC_SITE_URL`) není React e‑shop (např. Webflow), doplňte **`PUBLIC_ESHOP_URL`** — plná adresa nasazení Vite aplikace (včetně cesty `/VIVIDBOOKS_WEB_ESHOP` u GitHub Pages), aby odkazy *Sledovat objednávku* a *Dokončit platbu* mířily na SPA, ne na 404 marketingového webu.
 
 ---
 

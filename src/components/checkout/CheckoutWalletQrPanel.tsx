@@ -3,10 +3,10 @@ import QRCode from 'react-qr-code';
 import { absoluteAppUrl } from '../../utils/appBaseUrl';
 
 /**
- * Odkaz pro dokončení platby na telefonu (resume CheckoutPage — stejné pro pokladnu i školní PI).
+ * Odkaz pro dokončení platby na telefonu (/platit?resume= — stejné pro pokladnu i školní PI).
  */
 export function walletResumeCheckoutUrl(resumeToken: string): string {
-  return absoluteAppUrl(`pokladna?resume=${encodeURIComponent(resumeToken)}`);
+  return absoluteAppUrl(`platit?resume=${encodeURIComponent(resumeToken)}`);
 }
 
 export function CheckoutWalletQrPanel({
@@ -37,7 +37,7 @@ export function CheckoutWalletQrPanel({
       </p>
       <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/70 leading-relaxed mb-5">
         {
-          'Naskenujte QR kód fotoaparátem nebo aplikací banky. Otevře se pokladna — dokončete platbu na iPhonu (Apple Pay) nebo Androidu (Google Pay). Tato záložka se po zaplacení sama přesměruje na poděkování.'
+          'Naskenujte QR kód fotoaparátem nebo aplikací banky. Otevře se jen stránka k platbě — dokončete na iPhonu (Apple Pay) nebo Androidu (Google Pay). Tato záložka na počítači se po zaplacení sama přesměruje na poděkování.'
         }
       </p>
       <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-start sm:justify-center">

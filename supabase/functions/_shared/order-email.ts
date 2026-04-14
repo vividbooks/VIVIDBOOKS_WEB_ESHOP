@@ -102,12 +102,23 @@ function getPublicSiteUrl() {
   return 'https://vividbooks.com';
 }
 
+/**
+ * Kořen URL, kde je nasazený React e-shop (pokladna, /platit, sledování objednávky).
+ * Když hlavní doména (PUBLIC_SITE_URL) vede na Webflow bez SPA, nastavte v Supabase secrets
+ * např. PUBLIC_ESHOP_URL = https://<user>.github.io/VIVIDBOOKS_WEB_ESHOP nebo URL, kde běží Vite build.
+ */
+function getPublicEshopBaseUrl(): string {
+  const raw = (Deno.env.get('PUBLIC_ESHOP_URL') || Deno.env.get('PUBLIC_SITE_URL') || Deno.env.get('SITE_URL') || '').trim();
+  if (raw) return raw.replace(/\/$/, '');
+  return 'https://vividbooks.com';
+}
+
 async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string): Promise<string | null> {
   const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
   if (!secret) return null;
   try {
     const token = await computeOrderTrackingToken(orderId, secret);
-    const site = getPublicSiteUrl().replace(/\/$/, '');
+    const site = getPublicEshopBaseUrl().replace(/\/$/, '');
     const u = new URL('objednavka/sledovani', `${site}/`);
     u.searchParams.set('order', orderNumber);
     u.searchParams.set('t', token);
@@ -248,7 +259,10 @@ function buildOrderShippedHtml(order: OrderRow, trackingUrl: string | null) {
 }
 
 function buildPaymentReminderHtml(order: OrderRow, items: OrderItemRow[], resumeToken: string) {
-  const resumeUrl = `${getPublicSiteUrl()}/pokladna?resume=${encodeURIComponent(resumeToken)}`;
+  const site = getPublicEshopBaseUrl().replace(/\/$/, '');
+  const ru = new URL('platit', `${site}/`);
+  ru.searchParams.set('resume', resumeToken);
+  const resumeUrl = ru.toString();
 
   return buildShell(
     `Dokončete platbu — objednávka ${order.order_number} — VividBooks`,

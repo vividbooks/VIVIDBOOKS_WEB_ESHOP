@@ -79,9 +79,10 @@ export function PaymentMethodCards({
               index < options.length - 1 ? 'border-b border-[#001161]/8' : ''
             } ${isSelected ? 'bg-[#f8f9fc]' : 'bg-white'} ${isDisabled || !onSelect ? 'disabled:opacity-55 disabled:cursor-not-allowed' : 'cursor-pointer'}`}
           >
-            <div className="flex items-start gap-3">
+            <div className="flex items-start gap-3 min-w-0">
               <span
-                className={`mt-1 inline-flex w-4 h-4 rounded-full border-2 ${
+                aria-hidden
+                className={`mt-1.5 shrink-0 size-4 rounded-full border-2 box-border ${
                   isSelected ? 'border-[#0ea5e9] bg-[#0ea5e9]' : 'border-[#001161]/25 bg-white'
                 }`}
               />

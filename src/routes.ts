@@ -106,6 +106,10 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/checkout/CheckoutPage'), 'CheckoutPage'),
             },
             {
+              path: 'platit',
+              lazy: lazyNamed(() => import('./components/checkout/ResumePaymentPage'), 'ResumePaymentPage'),
+            },
+            {
               path: 'objednavka/dekujeme',
               lazy: lazyNamed(() => import('./components/checkout/OrderConfirmationPage'), 'OrderConfirmationPage'),
             },
