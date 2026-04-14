@@ -2,9 +2,11 @@ import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
 import App from './App.tsx';
 import './index.css';
+import { bootstrapGoogleAnalytics } from './lib/googleAnalytics';
 import { installChunkLoadRecovery } from './utils/installChunkLoadRecovery';
 import { isVividbooksRemovableCacheKey } from './utils/vividbooksLocalStoragePreserve';
 
+bootstrapGoogleAnalytics();
 installChunkLoadRecovery();
 
 // Stará verze ukládala celý katalog do localStorage a vyčerpala kvótu — OAuth pak nemohl zapsat session.

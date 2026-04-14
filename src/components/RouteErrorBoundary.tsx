@@ -29,7 +29,7 @@ export function RouteErrorBoundary() {
   const msg = messageFromRouteError(err);
 
   if (isStaleChunkError(msg)) {
-    return <ChunkLoadErrorFallback />;
+    return <ChunkLoadErrorFallback devDetail={import.meta.env.DEV ? msg : undefined} />;
   }
 
   return (

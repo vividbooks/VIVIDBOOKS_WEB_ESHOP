@@ -136,6 +136,11 @@ function getMakeServerOrdersUrl(fallbackRequestUrl?: string) {
   return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/orders` : '';
 }
 
+function getEshopPipedriveSyncUrl(fallbackRequestUrl?: string) {
+  const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
+  return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
+}
+
 function extractStripeReceiptUrl(paymentIntent: Stripe.PaymentIntent): string | null {
   const lc = paymentIntent.latest_charge;
   if (lc && typeof lc === 'object' && 'receipt_url' in lc) {
@@ -349,6 +354,33 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || `process-export-queue HTTP ${response.status}`);
+  }
+}
+
+async function invokeEshopPipedriveSync(
+  orderId: string,
+  mode: 'b2c_card_won' | 'b2b_card_won',
+  fallbackRequestUrl?: string,
+) {
+  const url = getEshopPipedriveSyncUrl(fallbackRequestUrl);
+  if (!url) {
+    throw new Error('Missing base URL for eshop/pipedrive-sync invocation.');
+  }
+  const headers = getFunctionAuthHeaders();
+  if (!headers.Authorization) {
+    throw new Error('Missing service key for eshop/pipedrive-sync.');
+  }
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers,
+    },
+    body: JSON.stringify({ orderId, mode }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `eshop/pipedrive-sync HTTP ${response.status}`);
   }
 }
 
@@ -771,7 +803,10 @@ Deno.serve(async (req) => {
         const isSchoolObjednat =
           paymentIntent.metadata?.order_source === 'school_objednat' || hasStoredInquiry;
 
-        const [emailResult, exportQueueResult, schoolOrdersResult] = await Promise.allSettled([
+        const icoNorm = String(customer.ico || '').trim().replace(/\s/g, '');
+        const eshopPipedriveMode: 'b2c_card_won' | 'b2b_card_won' = icoNorm ? 'b2b_card_won' : 'b2c_card_won';
+
+        const [emailResult, exportQueueResult, schoolOrdersResult, pipedriveSyncResult] = await Promise.allSettled([
           invokeOrderEmail(createdOrderId, 'order_confirmed', req.url),
           invokeProcessExportQueue(req.url),
           forwardSchoolInquiryToMakeServer(sql, {
@@ -784,6 +819,9 @@ Deno.serve(async (req) => {
             items,
             fallbackRequestUrl: req.url,
           }),
+          isSchoolObjednat
+            ? Promise.resolve()
+            : invokeEshopPipedriveSync(createdOrderId, eshopPipedriveMode, req.url),
         ]);
 
         if (emailResult.status === 'rejected') {
@@ -823,7 +861,12 @@ Deno.serve(async (req) => {
           console.error('[stripe-webhook] make-server /orders forward invocation failed:', message);
         }
 
-        // Pipedrive deal pro e‑shop (B2C/B2B) se netvoří automaticky — pouze ručně z adminu (objednávka → Pipedrive).
+        if (pipedriveSyncResult.status === 'rejected' && !isSchoolObjednat) {
+          const message = pipedriveSyncResult.reason instanceof Error
+            ? pipedriveSyncResult.reason.message
+            : 'Unknown eshop/pipedrive-sync error.';
+          console.error('[stripe-webhook] eshop/pipedrive-sync invocation failed:', message);
+        }
       }
 
       return okResponse();

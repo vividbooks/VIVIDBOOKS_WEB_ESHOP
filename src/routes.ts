@@ -21,6 +21,11 @@ function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
   });
 }
 
+function formatLazyImportError(e: unknown): string {
+  if (e instanceof Error) return `${e.message}${e.stack ? `\n\n${e.stack}` : ''}`;
+  return String(e);
+}
+
 /** Default export → RouteObject.lazy */
 function lazyDefault(importer: () => Promise<{ default: ComponentType<unknown> }>) {
   return async () => {
@@ -28,8 +33,11 @@ function lazyDefault(importer: () => Promise<{ default: ComponentType<unknown> }
       const m = await importer();
       return { Component: m.default };
     } catch (e) {
-      console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
-      return { Component: ChunkLoadErrorFallback };
+      if (import.meta.env.DEV) console.error('[routes] lazy route import failed', e);
+      else console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
+      const devDetail = import.meta.env.DEV ? formatLazyImportError(e) : undefined;
+      const Comp = () => React.createElement(ChunkLoadErrorFallback, { devDetail });
+      return { Component: Comp };
     }
   };
 }
@@ -44,8 +52,11 @@ function lazyNamed<T extends Record<string, ComponentType<unknown>>>(
       const m = await importer();
       return { Component: m[name] };
     } catch (e) {
-      console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
-      return { Component: ChunkLoadErrorFallback };
+      if (import.meta.env.DEV) console.error('[routes] lazy route import failed', e);
+      else console.warn('[routes] lazy chunk failed (deploy / cache?)', e);
+      const devDetail = import.meta.env.DEV ? formatLazyImportError(e) : undefined;
+      const Comp = () => React.createElement(ChunkLoadErrorFallback, { devDetail });
+      return { Component: Comp };
     }
   };
 }

@@ -2,11 +2,16 @@ import React from 'react';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
+export type ChunkLoadErrorFallbackProps = {
+  /** Ve vývoji: skutečná chyba importu (Vite HMR / chybějící modul), ať není potřeba konzole. */
+  devDetail?: string;
+};
+
 /**
  * Zobrazení po selhání dynamického importu (typicky po deployi: starý hash v main bundle,
  * chunk už na GitHub Pages neexistuje → „Failed to fetch dynamically imported module“).
  */
-export function ChunkLoadErrorFallback() {
+export function ChunkLoadErrorFallback({ devDetail }: ChunkLoadErrorFallbackProps = {}) {
   return (
     <div
       className="flex min-h-[50vh] flex-col items-center justify-center gap-4 px-6 py-16 text-center"
@@ -24,6 +29,11 @@ export function ChunkLoadErrorFallback() {
       >
         Obnovit stránku
       </button>
+      {import.meta.env.DEV && devDetail ? (
+        <pre className="mt-4 max-h-[40vh] max-w-3xl overflow-auto rounded-lg border border-amber-200 bg-amber-50 p-3 text-left text-[11px] text-amber-950 whitespace-pre-wrap">
+          {devDetail}
+        </pre>
+      ) : null}
     </div>
   );
 }

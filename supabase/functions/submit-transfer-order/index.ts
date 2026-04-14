@@ -58,6 +58,52 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
+function getFunctionBaseUrl(fallbackRequestUrl?: string) {
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
+  if (supabaseUrl) return supabaseUrl;
+  if (fallbackRequestUrl) {
+    try {
+      return new URL(fallbackRequestUrl).origin;
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+/** Neblokuje odpověď klientovi; chyby jen do logu. */
+function fireEshopPipedriveTransferSync(orderId: string, fallbackRequestUrl?: string) {
+  const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
+  const url = baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
+  if (!url) {
+    console.error('[submit-transfer-order] Missing SUPABASE_URL for eshop/pipedrive-sync.');
+    return;
+  }
+  const key = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+  if (!key) {
+    console.error('[submit-transfer-order] Missing SUPABASE_SERVICE_ROLE_KEY for eshop/pipedrive-sync.');
+    return;
+  }
+  void fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+      apikey: key,
+    },
+    body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
+  })
+    .then(async (res) => {
+      if (!res.ok) {
+        const t = await res.text().catch(() => '');
+        console.error('[submit-transfer-order] eshop/pipedrive-sync HTTP', res.status, t.slice(0, 500));
+      }
+    })
+    .catch((e) => {
+      console.error('[submit-transfer-order] eshop/pipedrive-sync:', e);
+    });
+}
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -330,6 +376,8 @@ Deno.serve(async (req) => {
     } catch (e) {
       console.error('[submit-transfer-order] Email:', e);
     }
+
+    fireEshopPipedriveTransferSync(orderRow.id, req.url);
 
     return jsonResponse({
       success: true,

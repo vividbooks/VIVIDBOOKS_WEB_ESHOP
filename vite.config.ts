@@ -77,7 +77,17 @@
       outDir: 'build',
     },
     server: {
-      port: 3000,
+      port: Number(process.env.PORT) || 3000,
       open: true,
+      /** Sníží „Failed to fetch dynamically imported module“ při prvním lazy načtení (předtransformace). */
+      warmup: {
+        clientFiles: [
+          './src/components/CatalogLayout.tsx',
+          './src/components/CatalogGrid.tsx',
+          './src/components/SubjectPageRoute.tsx',
+          './src/components/SubjectPage.tsx',
+          './src/components/ProductDetailRoute.tsx',
+        ],
+      },
     },
   });

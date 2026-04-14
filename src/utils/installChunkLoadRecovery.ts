@@ -7,6 +7,8 @@ const STORAGE_KEY = 'vb_chunk_autoreload_once';
  */
 export function installChunkLoadRecovery(): void {
   if (typeof window === 'undefined') return;
+  // Ve vývoji Vite často hlásí stejnou hlášku při HMR / restartu dev serveru — auto-reload by jen překážel.
+  if (import.meta.env.DEV) return;
 
   window.addEventListener('unhandledrejection', (event) => {
     const reason = event.reason;

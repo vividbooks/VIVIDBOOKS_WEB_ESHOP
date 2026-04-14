@@ -14,6 +14,7 @@ import { AdminPanel } from './AdminPanel';
 import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
 import { CookieConsentBar } from './CookieConsentBar';
+import { GoogleAnalyticsBridge } from './GoogleAnalyticsBridge';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -53,6 +54,7 @@ function RootInner() {
       {/* Popup Manager renderer */}
       <PopupRenderer />
       <CookieConsentBar />
+      <GoogleAnalyticsBridge />
       <Outlet />
     </>
   );
