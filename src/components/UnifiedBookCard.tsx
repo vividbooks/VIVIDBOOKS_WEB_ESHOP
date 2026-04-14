@@ -134,7 +134,7 @@ export function UnifiedBookCard({
     >
       {/* ── image area (tiskoviny: nižší poměr = méně „prázdna“ nad obálkou; digitály ponecháme 3/4) ── */}
       <div
-        className={`relative w-full mb-2 flex items-end overflow-visible ${isDigitalTile ? 'aspect-[3/4]' : 'aspect-[5/6]'}`}
+        className={`relative w-full mb-1 flex items-end overflow-visible ${isDigitalTile ? 'aspect-[3/4]' : 'aspect-[5/6]'}`}
       >
         {/* Coloured background only for digital / license tiles — starts lower */}
         {isDigitalTile && (
@@ -180,7 +180,7 @@ export function UnifiedBookCard({
         {/* Bobánek jen předmětu — ročník filtrujte na stránce předmětu (Dostupné tituly). */}
         {badgeSubject && (
           <span
-            className={`self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-1.5 whitespace-nowrap ${hideSubjectBadgeOnMobile ? 'hidden sm:inline-flex' : ''}`}
+            className={`self-start px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal leading-[1.2] mb-1 whitespace-nowrap ${hideSubjectBadgeOnMobile ? 'hidden sm:inline-flex' : ''}`}
             style={{ background: catBg, color: catColor }}
           >
             {badgeSubject}

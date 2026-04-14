@@ -1896,7 +1896,7 @@ export default function CatalogGrid() {
                       {subGroup !== '_all' && (
                         <p className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[22px] xl:text-[26px] text-center mb-1.5">{subGroup}</p>
                       )}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-1 justify-items-center items-end">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-0 justify-items-center items-end">
                         {[...(index === 0 ? [getDigitalLicenseForGroup(mainGroup)] : []), ...(books as any[])].map(b => renderCard(b, false))}
                       </div>
                     </div>
