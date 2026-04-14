@@ -1,5 +1,8 @@
-import { useState, useMemo, type ChangeEvent } from 'react';
-import { Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper, ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft, Store } from 'lucide-react';
+import { useState, useMemo, useEffect, type ChangeEvent } from 'react';
+import {
+  Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper,
+  ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft, Store, Sparkles,
+} from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { fetchProducts, seedCollection } from '../../utils/adminApi';
 import {
@@ -11,10 +14,17 @@ import {
 import { BLOG_POSTS } from '../../data/blogPosts';
 import { NOVINKA_POSTS } from '../../data/novinkaPosts';
 import { WEBINARS } from '../../data/webinars';
+import { getMethodPrinciplesTemplateForSlug } from '../../data/subjectMethodPrinciples';
+import {
+  matchFilesToPrincipleIndices,
+  methodPrincipleTitleToFileStem,
+  type PrincipleMatch,
+} from '../../utils/methodPrinciplesImageBulk';
 import { toast } from 'sonner@2.0.3';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
+const UPLOAD_AUTH_HEADERS = { Authorization: `Bearer ${publicAnonKey}` };
 
 export default function MigrationPage() {
   const [isMigrating, setIsMigrating] = useState(false);
@@ -56,6 +66,13 @@ export default function MigrationPage() {
   });
   const [imgMigrating, setImgMigrating] = useState(false);
   const [imgResult, setImgResult] = useState<any>(null);
+
+  /** Metodické principy — hromadné obrázky podle názvu souboru */
+  const [mpiSubjects, setMpiSubjects] = useState<any[] | null>(null);
+  const [mpiSubjectId, setMpiSubjectId] = useState('');
+  const [mpiSeedTemplate, setMpiSeedTemplate] = useState(true);
+  const [mpiBusy, setMpiBusy] = useState(false);
+  const [mpiPreview, setMpiPreview] = useState<{ matches: PrincipleMatch[]; unmatchedFiles: string[] } | null>(null);
 
   // DVPP Videa sync state
   const [dvppStatus, setDvppStatus] = useState<'idle' | 'syncing' | 'done' | 'error'>('idle');
@@ -283,6 +300,117 @@ export default function MigrationPage() {
       return JSON.parse(text);
     } catch (_e) {
       throw new Error(`Server nevrátil JSON (status ${res.status}): ${text.slice(0, 300)}`);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${SERVER}/admin/predmety`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+        const data = await res.json();
+        if (!cancelled && Array.isArray(data.items)) setMpiSubjects(data.items);
+      } catch {
+        if (!cancelled) toast.error('Nepodařilo se načíst předměty (metodické obrázky).');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const mpiSelected = useMemo(
+    () => (mpiSubjects && mpiSubjectId ? mpiSubjects.find((s: any) => s.id === mpiSubjectId) : null),
+    [mpiSubjects, mpiSubjectId],
+  );
+  const mpiTemplate = useMemo(
+    () => (mpiSelected?.slug ? getMethodPrinciplesTemplateForSlug(String(mpiSelected.slug)) : null),
+    [mpiSelected],
+  );
+  const mpiWorkingRows = useMemo(() => {
+    if (!mpiSelected) return [];
+    const existing = Array.isArray(mpiSelected.methodPrinciplesItems) ? mpiSelected.methodPrinciplesItems : [];
+    if (existing.length > 0) {
+      return existing.map((x: any) => ({ ...x }));
+    }
+    if (mpiSeedTemplate && mpiTemplate) {
+      return mpiTemplate.map((p) => ({
+        title: p.title,
+        body: p.body,
+        visualId: p.visualId,
+        imageUrl: p.imageUrl || '',
+      }));
+    }
+    return [];
+  }, [mpiSelected, mpiSeedTemplate, mpiTemplate]);
+
+  useEffect(() => {
+    setMpiPreview(null);
+  }, [mpiSubjectId, mpiSeedTemplate]);
+
+  const handleMpiFilesChosen = (e: ChangeEvent<HTMLInputElement>) => {
+    const list = e.target.files;
+    if (!list?.length) {
+      e.target.value = '';
+      return;
+    }
+    if (!mpiWorkingRows.length) {
+      toast.error('Nejdřív vyber předmět se šablonou nebo s už vyplněnými kartami v CMS.');
+      e.target.value = '';
+      return;
+    }
+    const files = [...list];
+    const matches = matchFilesToPrincipleIndices(files, mpiWorkingRows);
+    const matchedNames = new Set(matches.map((m) => m.file.name));
+    const unmatchedFiles = files.filter((f) => !matchedNames.has(f.name)).map((f) => f.name);
+    setMpiPreview({ matches, unmatchedFiles });
+    if (unmatchedFiles.length) {
+      toast.warning(`Nespárováno ${unmatchedFiles.length} souborů — zkontroluj název (slug z nadpisu).`);
+    }
+    e.target.value = '';
+  };
+
+  const handleMpiApply = async () => {
+    if (!mpiPreview?.matches.length || !mpiSelected) {
+      toast.error('Vyber předmět a soubory, které se podařilo spárovat.');
+      return;
+    }
+    if (!mpiWorkingRows.length) {
+      toast.error('Žádné metodické karty — vyplň je v Předmětech nebo zapni „Ze šablony předmětu“.');
+      return;
+    }
+    if (
+      !confirm(
+        `Nahrát ${mpiPreview.matches.length} obrázků a uložit předmět „${mpiSelected.displayName || mpiSelected.slug}“?`,
+      )
+    ) {
+      return;
+    }
+    setMpiBusy(true);
+    try {
+      const items = mpiWorkingRows.map((x: any) => ({ ...x }));
+      for (const m of mpiPreview.matches) {
+        const fd = new FormData();
+        fd.append('file', m.file);
+        const res = await fetch(`${SERVER}/upload-image`, { method: 'POST', headers: UPLOAD_AUTH_HEADERS, body: fd });
+        const data = await res.json();
+        if (!data.url) throw new Error(data.error || `Upload selhal: ${m.file.name}`);
+        items[m.index] = { ...items[m.index], imageUrl: data.url };
+      }
+      const putRes = await fetch(`${SERVER}/admin/predmety/${encodeURIComponent(mpiSelected.id)}`, {
+        method: 'PUT',
+        headers: AUTH(publicAnonKey),
+        body: JSON.stringify({ methodPrinciplesItems: items }),
+      });
+      const putData = await safeJson(putRes);
+      if (putData.error) throw new Error(String(putData.error));
+      toast.success(`Uloženo — ${mpiPreview.matches.length} obrázků přiřazeno ke kartám.`);
+      setMpiSubjects((prev) =>
+        prev ? prev.map((s: any) => (s.id === mpiSelected.id ? { ...s, methodPrinciplesItems: items } : s)) : null,
+      );
+      setMpiPreview(null);
+    } catch (err: any) {
+      toast.error(err.message || 'Ukládání selhalo.');
+    } finally {
+      setMpiBusy(false);
     }
   };
 
@@ -1438,6 +1566,132 @@ export default function MigrationPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── Metodické principy: hromadné obrázky ───────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-sky-50 rounded-xl flex items-center justify-center shrink-0">
+              <Sparkles className="w-6 h-6 text-sky-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-[#001161]">Metodické principy — hromadné obrázky</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                Vyber předmět, nahraj více souborů najednou. Soubory se přiřadí kartám podle{' '}
+                <strong>názvu bez přípony</strong> — odpovídá „slugu“ z nadpisu karty (malá písmena, bez diakritiky,
+                místo mezer pomlčky). Volitelně <code className="text-[11px] bg-gray-100 px-1 rounded">0.png</code> až{' '}
+                <code className="text-[11px] bg-gray-100 px-1 rounded">8.png</code> podle pole <code className="text-[11px] bg-gray-100 px-1 rounded">visualId</code>.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2 mb-4">
+            <div>
+              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Předmět</label>
+              <select
+                value={mpiSubjectId}
+                onChange={(e) => setMpiSubjectId(e.target.value)}
+                className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl bg-white focus:border-sky-400 outline-none"
+              >
+                <option value="">— vyber předmět —</option>
+                {(mpiSubjects ?? []).map((s: any) => (
+                  <option key={s.id} value={s.id}>
+                    {s.displayName || s.slug || s.id}
+                    {s.slug ? ` (${s.slug})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <label className="flex items-center gap-2 mt-6 sm:mt-7 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={mpiSeedTemplate}
+                onChange={(e) => setMpiSeedTemplate(e.target.checked)}
+                className="w-4 h-4 accent-sky-600"
+              />
+              <span className="text-[13px] text-gray-700">
+                Pokud předmět nemá v CMS žádné karty, použít <strong>šablonu</strong> podle slugu (Prvouka, Mat 1/2, …)
+              </span>
+            </label>
+          </div>
+
+          {mpiSelected && (
+            <div className="rounded-xl border border-sky-100 bg-sky-50/60 p-4 mb-4">
+              <p className="text-[11px] font-bold text-sky-900 mb-2">
+                {mpiWorkingRows.length
+                  ? `Očekávané názvy souborů (${mpiWorkingRows.length} karet):`
+                  : 'Pro tento předmět není šablona ani uložené karty — nejdřív vyplň metodické principy v kolekci Předměty.'}
+              </p>
+              {mpiWorkingRows.length > 0 && (
+                <ul className="max-h-40 overflow-y-auto space-y-1 text-[11px] font-mono text-sky-900/85">
+                  {mpiWorkingRows.map((row: any, i: number) => (
+                    <li key={i}>
+                      <span className="text-sky-600/70 w-5 inline-block">{i + 1}.</span>
+                      {methodPrincipleTitleToFileStem(row.title)}
+                      <span className="text-gray-400">.png</span>
+                      {row.visualId != null && (
+                        <span className="text-sky-700/60 ml-2">(nebo {String(row.visualId)}.png)</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!mpiWorkingRows.length && mpiTemplate == null && (
+                <p className="text-[12px] text-amber-800">
+                  Slug „{String(mpiSelected.slug)}“ nemá automatickou šablonu. Otevři{' '}
+                  <strong>Admin → Kolekce → Předměty</strong> a použij tlačítko pro vyplnění principů, pak sem vrať.
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <label className="flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white px-4 py-2.5 rounded-xl text-[13px] font-bold cursor-pointer transition-colors disabled:opacity-50">
+              <Upload className="w-4 h-4" />
+              Vybrat obrázky…
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                className="hidden"
+                disabled={!mpiSubjectId || mpiBusy || !mpiWorkingRows.length}
+                onChange={handleMpiFilesChosen}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleMpiApply}
+              disabled={mpiBusy || !mpiPreview?.matches.length}
+              className="flex items-center gap-2 bg-[#001161] hover:bg-[#000d4a] text-white px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50"
+            >
+              {mpiBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+              Nahrát a uložit předmět
+            </button>
+          </div>
+
+          {mpiPreview && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 space-y-2">
+              <p className="text-[12px] font-bold text-gray-700">
+                Náhled párování: {mpiPreview.matches.length} souborů → karty
+              </p>
+              <ul className="text-[11px] text-gray-600 space-y-1 max-h-36 overflow-y-auto">
+                {mpiPreview.matches.map((m, i) => (
+                  <li key={i}>
+                    <span className="font-mono text-[#001161]">{m.file.name}</span>
+                    {' → '}
+                    karta {m.index + 1} ({m.how})
+                    {' — '}
+                    {mpiWorkingRows[m.index]?.title ?? '?'}
+                  </li>
+                ))}
+              </ul>
+              {mpiPreview.unmatchedFiles.length > 0 && (
+                <div className="text-[11px] text-amber-800 pt-2 border-t border-amber-100">
+                  <span className="font-bold">Nespárováno:</span> {mpiPreview.unmatchedFiles.join(', ')}
+                </div>
+              )}
             </div>
           )}
         </div>

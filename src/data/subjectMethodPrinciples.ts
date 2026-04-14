@@ -344,7 +344,7 @@ export const PRVOUKA_PRINCIPLES: SubjectMethodPrinciple[] = [
   },
 ];
 
-const CESKY_JAZYK_PRINCIPLY: SubjectMethodPrinciple[] = [
+export const CESKY_JAZYK_PRINCIPLY: SubjectMethodPrinciple[] = [
   {
     visualId: 7,
     title: 'Od mluveného slova k psanému',
@@ -385,6 +385,36 @@ const BY_BASE: Record<string, SubjectMethodPrinciple[]> = {
   Prvouka: PRVOUKA_PRINCIPLES,
   'Český jazyk': CESKY_JAZYK_PRINCIPLY,
 };
+
+/**
+ * Výchozí sada metodických karet podle slugu předmětu (stejná logika jako tlačítka šablony v adminu).
+ * Pro hromadné nahrávání obrázků v Migraci dat.
+ */
+export function getMethodPrinciplesTemplateForSlug(slug: string): SubjectMethodPrinciple[] | null {
+  const slugNorm = String(slug || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  if (
+    slugNorm === 'matematika-1-stupen'
+    || (slugNorm.includes('matematika-1') && !slugNorm.includes('matematika-2'))
+  ) {
+    return [...MATEMATIKA_1_STUPEN_PRINCIPLES];
+  }
+  if (
+    slugNorm === 'matematika-2-stupen'
+    || (slugNorm.includes('matematika-2') && !slugNorm.includes('matematika-1'))
+  ) {
+    return [...MATEMATIKA_2_STUPEN_PRINCIPLES];
+  }
+  if (slugNorm === 'prvouka') return [...PRVOUKA_PRINCIPLES];
+  if (slugNorm === 'prirodopis') return [...PRIRODOPIS_PRINCIPLES];
+  if (slugNorm === 'fyzika' || slugNorm === 'chemie') return [...FYZIKA_CHEMIE_PRINCIPLES];
+  if (slugNorm === 'cesky-jazyk' || slugNorm === 'cestina') return [...CESKY_JAZYK_PRINCIPLY];
+  return null;
+}
 
 export function getSubjectMethodPrinciples(
   baseSubject: string,
