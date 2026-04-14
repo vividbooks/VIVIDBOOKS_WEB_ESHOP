@@ -151,19 +151,20 @@ export function UnifiedBookCard({
               className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
             />
           ) : (
-            <>
-              {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
+            <div
+              className={`relative z-10 mx-auto min-h-0 h-full ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}
+            >
               <ImageWithFallback
                 src={book.image}
                 alt={book.name}
-                className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
+                className="h-full w-full object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
                 style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
                   setIsLandscape(img.naturalWidth >= img.naturalHeight);
                 }}
               />
-            </>
+            </div>
           )
         ) : (
           <div className="w-full h-full rounded-2xl bg-[#eef2fb] flex items-center justify-center">
