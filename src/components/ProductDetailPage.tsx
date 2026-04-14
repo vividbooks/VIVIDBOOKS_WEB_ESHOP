@@ -2297,7 +2297,7 @@ export function ProductDetailPage({
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-10 justify-items-stretch">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-1 justify-items-stretch items-end">
                 {relatedFinal.map((p) => (
                   <UnifiedBookCard
                     key={p.id}
