@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { getSubjectMethodPrinciples, type SubjectMethodPrinciple } from '../data/subjectMethodPrinciples';
+import { formatTypography } from '../utils/formatTypography';
 
 const FF = "'Fenomen Sans', sans-serif";
 const COOPER = "'Cooper Light', serif";
@@ -158,44 +159,49 @@ export function SubjectMethodPrinciplesSection({
   };
 
   return (
-    <section className="border-t border-[#001161]/8 py-14 md:py-16" style={{ backgroundColor: SECTION_BG }}>
-      <div className="max-w-[1200px] mx-auto px-6 md:px-12">
-        <h2
-          className="text-[#001161] text-[24px] md:text-[30px] leading-tight mb-3"
-          style={{ fontFamily: COOPER }}
-        >
-          Metodické principy
-        </h2>
-        <p className="text-[14px] md:text-[15px] text-[#001161]/65 leading-relaxed max-w-[720px]" style={{ fontFamily: FF }}>
-          Náš přístup k výuce {displayNameGenitive} staví na těchto východiscích — použijte šipky nebo posuňte
-          pruhem níže.
-        </p>
+    <section className="w-full border-t border-[#001161]/8 py-14 md:py-16" style={{ backgroundColor: SECTION_BG }}>
+      {/* Blok s okraji jen pro nadpis — karusel musí být mimo px-wrapper, jinak se šířka scrollu nebere přes celé main */}
+      <div className="px-6 md:px-12">
+        <div className="max-w-[1200px] mx-auto">
+          <h2
+            className="text-[#001161] text-[24px] md:text-[30px] leading-tight mb-3"
+            style={{ fontFamily: COOPER }}
+          >
+            Metodické principy
+          </h2>
+          <p className="text-[14px] md:text-[15px] text-[#001161]/65 leading-relaxed max-w-[720px]" style={{ fontFamily: FF }}>
+            Náš přístup k výuce {displayNameGenitive} staví na těchto východiscích — použijte šipky nebo posuňte
+            pruhem níže.
+          </p>
 
-        {/* Šipky nahoře vlevo (stejná logika jako mini-taby na stránce produktu) */}
-        <div className="flex items-center gap-2 mt-5 mb-4">
-          <button
-            type="button"
-            onClick={() => scrollByDir(-1)}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-sm shrink-0"
-            style={{ background: '#001161', color: '#fff' }}
-            aria-label="Posunout principy doleva"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => scrollByDir(1)}
-            className="w-9 h-9 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-sm shrink-0"
-            style={{ background: '#001161', color: '#fff' }}
-            aria-label="Posunout principy doprava"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          {/* Šipky nahoře vlevo (stejná logika jako mini-taby na stránce produktu) */}
+          <div className="flex items-center gap-2 mt-5 mb-4">
+            <button
+              type="button"
+              onClick={() => scrollByDir(-1)}
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-sm shrink-0"
+              style={{ background: '#001161', color: '#fff' }}
+              aria-label="Posunout principy doleva"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => scrollByDir(1)}
+              className="w-9 h-9 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-sm shrink-0"
+              style={{ background: '#001161', color: '#fff' }}
+              aria-label="Posunout principy doprava"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+      </div>
 
+      <div className="w-full min-w-0">
         <div
           ref={scrollerRef}
-          className="flex touch-pan-x gap-5 overflow-x-auto overflow-y-visible overscroll-x-contain py-3 pb-5 pl-4 pr-4 sm:pl-5 sm:pr-5 md:pl-4 md:pr-4"
+          className="flex touch-pan-x gap-5 overflow-x-auto overflow-y-visible overscroll-x-contain py-3 pb-5 pl-[60px] [scrollbar-gutter:stable]"
           style={{
             scrollbarWidth: 'thin',
             WebkitOverflowScrolling: 'touch',
@@ -206,17 +212,17 @@ export function SubjectMethodPrinciplesSection({
             <article
               key={`${p.title}-${i}`}
               data-principle-card
-              className="shrink-0 w-[272px] sm:w-[300px] lg:w-auto lg:flex-[0_0_calc((100%-2.5rem)/3)] lg:max-w-none rounded-[22px] border border-[#001161]/10 bg-[#E8EBF3]/90 shadow-sm lg:shadow-[0_4px_20px_rgba(0,17,97,0.06)] flex flex-col overflow-hidden"
+              className="shrink-0 w-[272px] sm:w-[300px] lg:w-auto lg:flex-[0_0_calc((100%-2.5rem)/3)] lg:max-w-none rounded-[22px] border border-[#001161]/10 bg-white shadow-sm lg:shadow-[0_4px_20px_rgba(0,17,97,0.06)] flex flex-col overflow-hidden"
             >
               <div className="px-4 pt-5 pb-2">
                 <h3
-                  className="text-[#001161] text-[15px] md:text-[16px] font-bold leading-snug text-center min-h-[2.75rem] flex items-center justify-center"
-                  style={{ fontFamily: COOPER }}
+                  className="text-[#001161] text-[15px] md:text-[16px] font-bold leading-snug text-left min-h-[2.75rem] flex items-start justify-start"
+                  style={{ fontFamily: FF }}
                 >
-                  {p.title}
+                  {formatTypography(p.title)}
                 </h3>
               </div>
-              <div className="px-4 py-2 flex-1 flex items-center justify-center bg-[#f4f6fb]/50 min-h-[104px]">
+              <div className="px-4 py-2 flex-1 flex items-center justify-center bg-white min-h-[104px]">
                 {p.imageUrl ? (
                   <img
                     src={p.imageUrl}
@@ -229,16 +235,16 @@ export function SubjectMethodPrinciplesSection({
               </div>
               <div className="px-4 pb-5 pt-2 flex-1">
                 <p
-                  className="text-[13px] md:text-[14px] text-[#001161]/72 leading-relaxed text-center"
+                  className="text-[13px] md:text-[14px] text-[#001161]/72 leading-relaxed text-left"
                   style={{ fontFamily: FF }}
                 >
-                  {p.body}
+                  {formatTypography(p.body)}
                 </p>
               </div>
             </article>
           ))}
           {/* Odsazení vpravo — stín/zaoblení + poslední karta u konce scrollu */}
-          <div className="shrink-0 w-4 sm:w-6" aria-hidden />
+          <div className="shrink-0 w-4 sm:w-6 md:w-8" aria-hidden />
         </div>
       </div>
     </section>

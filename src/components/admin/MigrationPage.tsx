@@ -17,6 +17,7 @@ import { WEBINARS } from '../../data/webinars';
 import { getMethodPrinciplesTemplateForSlug } from '../../data/subjectMethodPrinciples';
 import {
   matchFilesToPrincipleIndices,
+  mergeMethodPrinciplesWithTemplate,
   methodPrincipleTitleToFileStem,
   type PrincipleMatch,
 } from '../../utils/methodPrinciplesImageBulk';
@@ -70,7 +71,6 @@ export default function MigrationPage() {
   /** Metodické principy — hromadné obrázky podle názvu souboru */
   const [mpiSubjects, setMpiSubjects] = useState<any[] | null>(null);
   const [mpiSubjectId, setMpiSubjectId] = useState('');
-  const [mpiSeedTemplate, setMpiSeedTemplate] = useState(true);
   const [mpiBusy, setMpiBusy] = useState(false);
   const [mpiPreview, setMpiPreview] = useState<{ matches: PrincipleMatch[]; unmatchedFiles: string[] } | null>(null);
 
@@ -328,23 +328,18 @@ export default function MigrationPage() {
   const mpiWorkingRows = useMemo(() => {
     if (!mpiSelected) return [];
     const existing = Array.isArray(mpiSelected.methodPrinciplesItems) ? mpiSelected.methodPrinciplesItems : [];
+    if (mpiTemplate && mpiTemplate.length > 0) {
+      return mergeMethodPrinciplesWithTemplate(mpiTemplate, existing);
+    }
     if (existing.length > 0) {
       return existing.map((x: any) => ({ ...x }));
     }
-    if (mpiSeedTemplate && mpiTemplate) {
-      return mpiTemplate.map((p) => ({
-        title: p.title,
-        body: p.body,
-        visualId: p.visualId,
-        imageUrl: p.imageUrl || '',
-      }));
-    }
     return [];
-  }, [mpiSelected, mpiSeedTemplate, mpiTemplate]);
+  }, [mpiSelected, mpiTemplate]);
 
   useEffect(() => {
     setMpiPreview(null);
-  }, [mpiSubjectId, mpiSeedTemplate]);
+  }, [mpiSubjectId]);
 
   const handleMpiFilesChosen = (e: ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
@@ -374,7 +369,7 @@ export default function MigrationPage() {
       return;
     }
     if (!mpiWorkingRows.length) {
-      toast.error('Žádné metodické karty — vyplň je v Předmětech nebo zapni „Ze šablony předmětu“.');
+      toast.error('Žádné metodické karty — vyplň je v Předmětech u tohoto předmětu.');
       return;
     }
     if (
@@ -1581,40 +1576,30 @@ export default function MigrationPage() {
               <p className="text-[13px] text-gray-500 mt-1">
                 Vyber předmět, nahraj více souborů najednou. Soubory se přiřadí kartám podle{' '}
                 <strong>názvu bez přípony</strong> — odpovídá „slugu“ z nadpisu karty (malá písmena, bez diakritiky,
-                místo mezer pomlčky). Volitelně <code className="text-[11px] bg-gray-100 px-1 rounded">0.png</code> až{' '}
-                <code className="text-[11px] bg-gray-100 px-1 rounded">8.png</code> podle pole <code className="text-[11px] bg-gray-100 px-1 rounded">visualId</code>.
+                místo mezer pomlčky). Volitelně <code className="text-[11px] bg-gray-100 px-1 rounded">1.png</code> až{' '}
+                <code className="text-[11px] bg-gray-100 px-1 rounded">N.png</code> podle pořadí karty v seznamu níže.
               </p>
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 mb-4">
-            <div>
-              <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Předmět</label>
-              <select
-                value={mpiSubjectId}
-                onChange={(e) => setMpiSubjectId(e.target.value)}
-                className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl bg-white focus:border-sky-400 outline-none"
-              >
-                <option value="">— vyber předmět —</option>
-                {(mpiSubjects ?? []).map((s: any) => (
-                  <option key={s.id} value={s.id}>
-                    {s.displayName || s.slug || s.id}
-                    {s.slug ? ` (${s.slug})` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <label className="flex items-center gap-2 mt-6 sm:mt-7 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={mpiSeedTemplate}
-                onChange={(e) => setMpiSeedTemplate(e.target.checked)}
-                className="w-4 h-4 accent-sky-600"
-              />
-              <span className="text-[13px] text-gray-700">
-                Pokud předmět nemá v CMS žádné karty, použít <strong>šablonu</strong> podle slugu (Prvouka, Mat 1/2, …)
-              </span>
-            </label>
+          <div className="mb-4">
+            <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wide mb-1">Předmět</label>
+            <select
+              value={mpiSubjectId}
+              onChange={(e) => setMpiSubjectId(e.target.value)}
+              className="w-full max-w-xl px-3 py-2 text-[13px] border border-gray-200 rounded-xl bg-white focus:border-sky-400 outline-none"
+            >
+              <option value="">— vyber předmět —</option>
+              {(mpiSubjects ?? []).map((s: any) => (
+                <option key={s.id} value={s.id}>
+                  {s.displayName || s.slug || s.id}
+                  {s.slug ? ` (${s.slug})` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="text-[12px] text-gray-500 mt-2">
+              U předmětů se známou šablonou se seznam doplní o chybějící karty z repa (např. 9. princip u matematiky 2. st.), aby šlo nahrát všechny obrázky.
+            </p>
           </div>
 
           {mpiSelected && (
@@ -1631,9 +1616,7 @@ export default function MigrationPage() {
                       <span className="text-sky-600/70 w-5 inline-block">{i + 1}.</span>
                       {methodPrincipleTitleToFileStem(row.title)}
                       <span className="text-gray-400">.png</span>
-                      {row.visualId != null && (
-                        <span className="text-sky-700/60 ml-2">(nebo {String(row.visualId)}.png)</span>
-                      )}
+                      <span className="text-sky-700/60 ml-2">(nebo {i + 1}.png)</span>
                     </li>
                   ))}
                 </ul>
