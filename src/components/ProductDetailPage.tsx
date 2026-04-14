@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronLeft, ChevronRight, BookOpen, ShoppingCart, Download, ExternalLink, Star, Award, FileText, Calendar, Layers, Hash, User2, BookMarked, CheckCircle2, Maximize2, Repeat2, School, CreditCard, List, Sparkles, Play, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, BookOpen, ShoppingCart, Download, ExternalLink, Star, Award, FileText, Calendar, Layers, Hash, User2, BookMarked, CheckCircle2, Maximize2, School, CreditCard, List, Sparkles, Play, ChevronDown } from 'lucide-react';
 import { Link, useNavigate } from 'react-router';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { UnifiedBookCard } from './UnifiedBookCard';
@@ -28,8 +28,11 @@ import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
+import { publicAssetUrl } from '../utils/publicAssetUrl';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
+const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
+const CHECKOUT_BOBAN_PARENT_IMG = publicAssetUrl('checkout/customer-individual.png');
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 
 /* maps category → tab subject name */
@@ -57,6 +60,23 @@ function isMatematika2StupenCategory(category: string | undefined): boolean {
   const c = (category || '').toLowerCase();
   if (!c.includes('matematik')) return false;
   return c.includes('2') || c.includes('druh');
+}
+
+/**
+ * Digitální licence u předmětů 2. stupně (shodně s řazením v katalogu).
+ * Matematika jen2. stupeň; Fyzika / Chemie / Přírodopis bez 1. stupně v kategorii.
+ */
+function isDigitalLicenseSecondStageOnline(product: any): boolean {
+  if (product?.type !== 'online') return false;
+  const cat = (product.category || '').trim();
+  if (!cat) return false;
+  const lower = cat.toLowerCase();
+  if (lower.includes('matematika')) {
+    if (lower.includes('1.') && lower.includes('stup')) return false;
+    return (lower.includes('2.') && lower.includes('stup')) || lower.includes('druh');
+  }
+  const base = cat.replace(/\s+\d+\.\s*stupe\u0148.*$/i, '').trim();
+  return base === 'Fyzika' || base === 'Chemie' || base === 'P\u0159\u00edrodopis';
 }
 
 /** Stejné ID jako SubjectPage — video „Rozdíl: Pro všechny vs. Krok za krokem“. */
@@ -486,6 +506,60 @@ const getCategoryLink = (cat: string): string => {
   return links[cat] || 'https://www.vividbooks.cz';
 };
 
+/** Rozd\u011bl\u00ed popis na prvn\u00ed odstavec a zbytek; u jednoho dlouh\u00e9ho bloku zkr\u00e1t\u00ed na rozumnou d\u00e9lku. */
+function splitDescriptionForMoreFold(text: string): { first: string; rest: string | null } {
+  const trimmed = text.trim();
+  if (!trimmed) return { first: '', rest: null };
+  const paras = trimmed.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  if (paras.length >= 2) {
+    return { first: paras[0], rest: paras.slice(1).join('\n\n') };
+  }
+  const single = paras[0] || trimmed;
+  const maxFirst = 420;
+  const minTail = 80;
+  if (single.length <= maxFirst) return { first: single, rest: null };
+  let cut = maxFirst;
+  const slice = single.slice(0, cut);
+  const lastSpace = slice.lastIndexOf(' ');
+  if (lastSpace > maxFirst * 0.55) cut = lastSpace;
+  const firstPart = single.slice(0, cut).trimEnd();
+  const restPart = single.slice(cut).trimStart();
+  if (restPart.length < minTail) return { first: single, rest: null };
+  return { first: firstPart, rest: restPart };
+}
+
+function CollapsibleProductDescription({ text, productId }: { text: string; productId: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const { first, rest } = useMemo(() => splitDescriptionForMoreFold(text), [text]);
+
+  useEffect(() => {
+    setExpanded(false);
+  }, [productId]);
+
+  if (!rest) {
+    return (
+      <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/70 leading-[1.65] mb-8 whitespace-pre-wrap">
+        {text}
+      </p>
+    );
+  }
+
+  return (
+    <div className="mb-8">
+      <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/70 leading-[1.65] whitespace-pre-wrap">
+        {expanded ? text : first}
+      </p>
+      <button
+        type="button"
+        onClick={() => setExpanded((e) => !e)}
+        className="mt-2 font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#6b58ff] hover:text-[#001161] underline-offset-4 hover:underline cursor-pointer bg-transparent border-0 p-0"
+      >
+        {expanded ? 'M\u00e9n\u011b' : 'V\u00edce'}
+      </button>
+    </div>
+  );
+}
+
 const CATEGORY_COLORS: Record<string, { bg: string; accent: string }> = {
   'Matematika': { bg: '#eef2fb', accent: '#6b58ff' },
   'Anglick\u00fd jazyk': { bg: '#fdf0e6', accent: '#FF6B1A' },
@@ -582,6 +656,7 @@ export function ProductDetailPage({
   const [relatedRocnikFilter, setRelatedRocnikFilter] = useState<string | null>(null);
   const [relatedRadaFilter, setRelatedRadaFilter] = useState<RelatedRadaKey | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
+  const [digitalSubscriptionBuyer, setDigitalSubscriptionBuyer] = useState<'school' | 'parent'>('parent');
   const [internalBundleAdding, setInternalBundleAdding] = useState(false);
   const [internalBundleAdded, setInternalBundleAdded] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
@@ -764,6 +839,20 @@ export function ProductDetailPage({
   const price = formatPrice(product);
   const priceLabel =
     product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.price : price;
+
+  const isSecondStageDigitalCta = useMemo(
+    () => isDigitalLicenseSecondStageOnline(product),
+    [product.type, product.category],
+  );
+  const canDigitalParentSubscribe = !!(product.stripeMonthlyUrl || product.stripeYearlyUrl);
+  const canDigitalSchoolOrder = typeof onOrder === 'function';
+
+  useEffect(() => {
+    if (!isSecondStageDigitalCta) return;
+    if (canDigitalParentSubscribe && !canDigitalSchoolOrder) setDigitalSubscriptionBuyer('parent');
+    else if (!canDigitalParentSubscribe && canDigitalSchoolOrder) setDigitalSubscriptionBuyer('school');
+    else setDigitalSubscriptionBuyer('parent');
+  }, [isSecondStageDigitalCta, product.id, canDigitalParentSubscribe, canDigitalSchoolOrder]);
 
   /** Identifikátor řádku košíku: Shopify variantId nebo u merchu Shoptet SKU. */
   const effectiveCartVariantId = useMemo(() => {
@@ -1408,11 +1497,7 @@ export function ProductDetailPage({
             )}
 
             {/* Description */}
-            {desc && (
-              <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/70 leading-[1.65] mb-8 whitespace-pre-wrap">
-                {desc}
-              </p>
-            )}
+            {desc && <CollapsibleProductDescription text={desc} productId={product.id} />}
 
             {product.type === 'merch' && merchVariants.length > 0 && (
               <div className="mb-8">
@@ -1443,7 +1528,8 @@ export function ProductDetailPage({
               </div>
             )}
 
-            {/* Price block + sklad vedle ceny */}
+            {/* Price block + sklad — u digitálu 2. st. je cena až pod bobánky */}
+            {!(product.type === 'online' && isSecondStageDigitalCta) && (
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2 mb-8 pb-8 border-b border-[#001161]/8">
               <div>
                 <p className="font-['Fenomen_Sans',sans-serif] text-[11px] uppercase tracking-[0.15em] text-[#001161]/40 mb-1">{'Cena'}</p>
@@ -1485,6 +1571,7 @@ export function ProductDetailPage({
                 </>
               )}
             </div>
+            )}
 
             {/* CTA buttons — only for non-digital products */}
             {product.type !== 'online' && (
@@ -1606,123 +1693,301 @@ export function ProductDetailPage({
 
             {/* ── Subscription block — only for digital licences ── */}
             {product.type === 'online' && (product.stripeMonthlyUrl || product.stripeYearlyUrl || onOrder) && (
-              <div className="mb-10 rounded-[22px] border border-[#001161]/8 overflow-hidden">
-                {/* Header */}
-                <div className="px-5 py-3.5 bg-[#f5f7fb] border-b border-[#001161]/8 flex items-center gap-2">
-                  <Repeat2 className="w-4 h-4 text-[#001161]/40" />
-                  <p className="font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.14em] text-[#001161]/50">
-                    {'P\u0159edplatn\u00e9 digit\u00e1ln\u00ed licence'}
-                  </p>
-                </div>
-
-                {/* Rodič / Žák row */}
-                {(product.stripeMonthlyUrl || product.stripeYearlyUrl) && (
-                  <div className="px-5 py-5 border-b border-[#001161]/6">
-                    <div className="flex items-center gap-2 mb-4">
-                      <User2 className="w-3.5 h-3.5 text-[#001161]/40" />
-                      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]/70">
-                        {'P\u0159edplatit jako rodi\u010d\u00a0/\u00a0\u017e\u00e1k'}
-                      </p>
-                    </div>
-
-                    {/* Billing cycle radios */}
-                    <div className="flex flex-col gap-2.5 mb-4">
-                      {product.stripeMonthlyUrl && (
+              <>
+                {isSecondStageDigitalCta && (
+                  <div className="mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {([
+                      {
+                        id: 'school' as const,
+                        label: 'Nakupuji jako \u0161kola',
+                        imageSrc: CHECKOUT_BOBAN_SCHOOL_IMG,
+                        imageAlt: '\u0160kola',
+                        disabled: !canDigitalSchoolOrder,
+                      },
+                      {
+                        id: 'parent' as const,
+                        label: 'Nakupuji jako rodi\u010d',
+                        imageSrc: CHECKOUT_BOBAN_PARENT_IMG,
+                        imageAlt: 'Rodi\u010d a d\u00edt\u011b',
+                        disabled: !canDigitalParentSubscribe,
+                      },
+                    ]).map((option) => {
+                      const isActive = digitalSubscriptionBuyer === option.id;
+                      return (
                         <button
-                          onClick={() => setBillingCycle('monthly')}
-                          className={`flex items-center justify-between w-full px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
-                            ${billingCycle === 'monthly'
-                              ? 'border-[#635BFF] bg-[#635BFF]/5'
-                              : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                          key={option.id}
+                          type="button"
+                          disabled={option.disabled}
+                          onClick={() => {
+                            if (!option.disabled) setDigitalSubscriptionBuyer(option.id);
+                          }}
+                          className={`relative rounded-[18px] border px-5 pt-4 pb-0 text-left transition-all overflow-hidden min-h-[108px] ${
+                            option.disabled
+                              ? 'opacity-45 cursor-not-allowed border-[#001161]/8 bg-[#f8f9fc]/80'
+                              : isActive
+                                ? 'border-[#001161] bg-[#f8f9fc] shadow-[0_12px_30px_rgba(0,17,97,0.08)] cursor-pointer'
+                                : 'border-[#001161]/10 bg-white hover:border-[#001161]/20 cursor-pointer'
+                          }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
-                              ${billingCycle === 'monthly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
-                              {billingCycle === 'monthly' && (
-                                <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
-                              )}
-                            </div>
-                            <span className={`font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold transition-colors
-                              ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
-                              {'M\u011bs\u00ed\u010dn\u011b'}
-                            </span>
+                          <div className="min-h-[88px] pr-[120px] pb-3 flex items-start">
+                            <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-bold text-[#001161] leading-snug min-w-0 pr-2">
+                              {option.label}
+                            </p>
                           </div>
-                          {product.priceMonthly && (
-                            <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] font-bold transition-colors
-                              ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
-                              {product.priceMonthly}
-                            </span>
-                          )}
-                        </button>
-                      )}
-
-                      {product.stripeYearlyUrl && (
-                        <button
-                          onClick={() => setBillingCycle('yearly')}
-                          className={`flex items-center justify-between w-full px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
-                            ${billingCycle === 'yearly'
-                              ? 'border-[#635BFF] bg-[#635BFF]/5'
-                              : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
-                              ${billingCycle === 'yearly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
-                              {billingCycle === 'yearly' && (
-                                <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
-                              )}
-                            </div>
-                            <span className={`font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold transition-colors
-                              ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
-                              {'Ro\u010dn\u011b'}
-                            </span>
+                          <div
+                            className={`absolute right-4 bottom-0 shrink-0 transition-all duration-200 origin-bottom ${isActive && !option.disabled ? 'scale-110' : 'scale-90 opacity-85'}`}
+                          >
+                            <img
+                              src={option.imageSrc}
+                              alt={option.imageAlt}
+                              className={`block object-contain object-bottom ${option.id === 'school' ? 'w-[96px] h-[96px]' : 'w-[100px] h-[100px]'}`}
+                            />
                           </div>
-                          {product.priceYearly && (
-                            <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] font-bold transition-colors
-                              ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
-                              {product.priceYearly}
-                            </span>
-                          )}
                         </button>
-                      )}
-                    </div>
-
-                    {/* Single CTA */}
-                    <a
-                      href={billingCycle === 'monthly'
-                        ? (product.stripeMonthlyUrl || product.stripeYearlyUrl)
-                        : (product.stripeYearlyUrl || product.stripeMonthlyUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[16px] bg-[#635BFF] hover:bg-[#5248e8] text-white no-underline font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] shadow-[0_6px_20px_rgba(99,91,255,0.32)]"
-                    >
-                      <CreditCard className="w-4 h-4 shrink-0" />
-                      {'P\u0159edplatit jako rodi\u010d\u00a0/\u00a0\u017e\u00e1k pro\u00a01\u00a0za\u0159\u00edzen\u00ed'}
-                    </a>
+                      );
+                    })}
                   </div>
                 )}
 
-                {/* Škola row */}
-                {onOrder && (
-                  <div className="px-5 py-5">
-                    <div className="flex items-center gap-2 mb-4">
-                      <School className="w-3.5 h-3.5 text-[#001161]/40" />
-                      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]/70">
-                        {'P\u0159edplatit \u0161kola'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={onOrder}
-                      className="w-full py-3.5 px-4 rounded-[16px] bg-[#3d3d3d] hover:bg-[#555] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                {isSecondStageDigitalCta && (
+                  <div className="mb-6 pb-6 border-b border-[#001161]/8">
+                    <p className="font-['Fenomen_Sans',sans-serif] text-[11px] uppercase tracking-[0.15em] text-[#001161]/40 mb-1">
+                      {'Cena'}
+                    </p>
+                    <p
+                      className={`font-['Cooper_Light',serif] text-[#001161] leading-none ${
+                        digitalSubscriptionBuyer === 'school'
+                          ? 'text-[26px] sm:text-[32px]'
+                          : 'text-[40px]'
+                      }`}
                     >
-                      <School className="w-4 h-4" />
-                      {'P\u0159idat do objedn\u00e1vky pro \u0161kolu'}
-                    </button>
-                    <p className="font-['Fenomen_Sans',sans-serif] text-[11px] text-[#001161]/35 text-center mt-2.5">
-                      {'Vyplnte formul\u00e1\u0159 \u2014 nab\u00eddku zpracujeme na m\u00edru'}
+                      {digitalSubscriptionBuyer === 'school'
+                        ? (formatPrice(product) || 'Cena podle po\u010dtu \u017e\u00e1k\u016f')
+                        : billingCycle === 'monthly'
+                          ? (product.priceMonthly || price)
+                          : (product.priceYearly || price)}
                     </p>
                   </div>
                 )}
-              </div>
+
+                <div className="mb-10">
+                {isSecondStageDigitalCta ? (
+                  <>
+                    {digitalSubscriptionBuyer === 'parent' && canDigitalParentSubscribe && (
+                      <div className="py-1">
+                        <div
+                          className={`grid gap-2 sm:gap-2.5 mb-4 ${
+                            product.stripeMonthlyUrl && product.stripeYearlyUrl ? 'grid-cols-2' : 'grid-cols-1'
+                          }`}
+                        >
+                          {product.stripeMonthlyUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setBillingCycle('monthly')}
+                              className={`flex items-center justify-between gap-1.5 min-w-0 px-2.5 sm:px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
+                                ${billingCycle === 'monthly'
+                                  ? 'border-[#635BFF] bg-[#635BFF]/5'
+                                  : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
+                                  ${billingCycle === 'monthly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
+                                  {billingCycle === 'monthly' && (
+                                    <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
+                                  )}
+                                </div>
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] font-semibold transition-colors truncate
+                                  ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
+                                  {'M\u011bs\u00ed\u010dn\u011b'}
+                                </span>
+                              </div>
+                              {product.priceMonthly && (
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
+                                  ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
+                                  {product.priceMonthly}
+                                </span>
+                              )}
+                            </button>
+                          )}
+
+                          {product.stripeYearlyUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setBillingCycle('yearly')}
+                              className={`flex items-center justify-between gap-1.5 min-w-0 px-2.5 sm:px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
+                                ${billingCycle === 'yearly'
+                                  ? 'border-[#635BFF] bg-[#635BFF]/5'
+                                  : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
+                                  ${billingCycle === 'yearly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
+                                  {billingCycle === 'yearly' && (
+                                    <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
+                                  )}
+                                </div>
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] font-semibold transition-colors truncate
+                                  ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
+                                  {'Ro\u010dn\u011b'}
+                                </span>
+                              </div>
+                              {product.priceYearly && (
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
+                                  ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
+                                  {product.priceYearly}
+                                </span>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        <a
+                          href={billingCycle === 'monthly'
+                            ? (product.stripeMonthlyUrl || product.stripeYearlyUrl)
+                            : (product.stripeYearlyUrl || product.stripeMonthlyUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[16px] bg-[#635BFF] hover:bg-[#5248e8] text-white no-underline font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] shadow-[0_6px_20px_rgba(99,91,255,0.32)]"
+                        >
+                          <CreditCard className="w-4 h-4 shrink-0" />
+                          {'P\u0159edplatit jako rodi\u010d\u00a0/\u00a0\u017e\u00e1k pro\u00a01\u00a0za\u0159\u00edzen\u00ed'}
+                        </a>
+                      </div>
+                    )}
+
+                    {digitalSubscriptionBuyer === 'school' && canDigitalSchoolOrder && onOrder && (
+                      <div className="py-1">
+                        <button
+                          type="button"
+                          onClick={onOrder}
+                          className="w-full py-3.5 px-4 rounded-[16px] bg-[#3d3d3d] hover:bg-[#555] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                        >
+                          <School className="w-4 h-4" />
+                          {'P\u0159idat do objedn\u00e1vky pro \u0161kolu'}
+                        </button>
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[11px] text-[#001161]/35 text-center mt-2.5">
+                          {'Vyplnte formul\u00e1\u0159 \u2014 nab\u00eddku zpracujeme na m\u00edru'}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {/* Rodič / Žák row */}
+                    {(product.stripeMonthlyUrl || product.stripeYearlyUrl) && (
+                      <div className="py-1 mb-6 pb-6 border-b border-[#001161]/8">
+                        <div className="flex items-center gap-2 mb-4">
+                          <User2 className="w-3.5 h-3.5 text-[#001161]/40" />
+                          <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]/70">
+                            {'P\u0159edplatit jako rodi\u010d\u00a0/\u00a0\u017e\u00e1k'}
+                          </p>
+                        </div>
+
+                        <div
+                          className={`grid gap-2 sm:gap-2.5 mb-4 ${
+                            product.stripeMonthlyUrl && product.stripeYearlyUrl ? 'grid-cols-2' : 'grid-cols-1'
+                          }`}
+                        >
+                          {product.stripeMonthlyUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setBillingCycle('monthly')}
+                              className={`flex items-center justify-between gap-1.5 min-w-0 px-2.5 sm:px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
+                                ${billingCycle === 'monthly'
+                                  ? 'border-[#635BFF] bg-[#635BFF]/5'
+                                  : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
+                                  ${billingCycle === 'monthly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
+                                  {billingCycle === 'monthly' && (
+                                    <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
+                                  )}
+                                </div>
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] font-semibold transition-colors truncate
+                                  ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
+                                  {'M\u011bs\u00ed\u010dn\u011b'}
+                                </span>
+                              </div>
+                              {product.priceMonthly && (
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
+                                  ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
+                                  {product.priceMonthly}
+                                </span>
+                              )}
+                            </button>
+                          )}
+
+                          {product.stripeYearlyUrl && (
+                            <button
+                              type="button"
+                              onClick={() => setBillingCycle('yearly')}
+                              className={`flex items-center justify-between gap-1.5 min-w-0 px-2.5 sm:px-4 py-3 rounded-[14px] border-2 transition-all cursor-pointer
+                                ${billingCycle === 'yearly'
+                                  ? 'border-[#635BFF] bg-[#635BFF]/5'
+                                  : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-all
+                                  ${billingCycle === 'yearly' ? 'border-[#635BFF]' : 'border-[#001161]/25'}`}>
+                                  {billingCycle === 'yearly' && (
+                                    <div className="w-2 h-2 rounded-full bg-[#635BFF]" />
+                                  )}
+                                </div>
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] font-semibold transition-colors truncate
+                                  ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
+                                  {'Ro\u010dn\u011b'}
+                                </span>
+                              </div>
+                              {product.priceYearly && (
+                                <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
+                                  ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
+                                  {product.priceYearly}
+                                </span>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        <a
+                          href={billingCycle === 'monthly'
+                            ? (product.stripeMonthlyUrl || product.stripeYearlyUrl)
+                            : (product.stripeYearlyUrl || product.stripeMonthlyUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[16px] bg-[#635BFF] hover:bg-[#5248e8] text-white no-underline font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] shadow-[0_6px_20px_rgba(99,91,255,0.32)]"
+                        >
+                          <CreditCard className="w-4 h-4 shrink-0" />
+                          {'P\u0159edplatit jako rodi\u010d\u00a0/\u00a0\u017e\u00e1k pro\u00a01\u00a0za\u0159\u00edzen\u00ed'}
+                        </a>
+                      </div>
+                    )}
+
+                    {onOrder && (
+                      <div className="py-1">
+                        <div className="flex items-center gap-2 mb-4">
+                          <School className="w-3.5 h-3.5 text-[#001161]/40" />
+                          <p className="font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]/70">
+                            {'P\u0159edplatit \u0161kola'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={onOrder}
+                          className="w-full py-3.5 px-4 rounded-[16px] bg-[#3d3d3d] hover:bg-[#555] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
+                        >
+                          <School className="w-4 h-4" />
+                          {'P\u0159idat do objedn\u00e1vky pro \u0161kolu'}
+                        </button>
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[11px] text-[#001161]/35 text-center mt-2.5">
+                          {'Vyplnte formul\u00e1\u0159 \u2014 nab\u00eddku zpracujeme na m\u00edru'}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+                </div>
+              </>
             )}
 
             {/* Specs */}

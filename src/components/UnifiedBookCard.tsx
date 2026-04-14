@@ -22,6 +22,15 @@ const formatPrice = (book: any): string => {
   return `${p.replace(/[,\s\.].*$/, '').trim()}\u00a0K\u010d`;
 };
 
+/** Cena pro rodiče na dlaždici digitální licence (preferuje `priceMonthly` z CMS). */
+const formatDigitalTileParentMonthly = (book: any): string => {
+  const raw = book.priceMonthly != null ? String(book.priceMonthly).trim() : '';
+  const m = raw.match(/(\d[\d\u00a0\s]*)/);
+  const num = m ? m[1].replace(/[\s\u00a0]/g, '') : '';
+  const amount = num || '290';
+  return `od\u00a0${amount}\u00a0K\u010d/m\u011bs\u00ed\u010dn\u011b`;
+};
+
 const getNote = (book: any): string =>
   book.note || book.poznamka || book.metadata?.poznamka || book.metadata?.note || '';
 
@@ -206,10 +215,10 @@ export function UnifiedBookCard({
               className="font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal"
               style={{ color: catColor }}
             >
-              {price &&
-                (isDigitalTile
-                  ? price
-                  : price.includes('K\u010d') || price.includes('Cena')
+              {isDigitalTile
+                ? formatDigitalTileParentMonthly(book)
+                : price &&
+                  (price.includes('K\u010d') || price.includes('Cena')
                     ? price
                     : `${price}\u00a0K\u010d`)}
             </p>

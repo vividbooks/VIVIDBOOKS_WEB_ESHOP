@@ -61,6 +61,9 @@ export function splitImageClassName(className: string | undefined): {
     'duration-500',
   ].join(' ');
 
+  /** Jinak Tailwind přepne `transition-property` jen na opacity a group-hover transformy „skočí“. */
+  const hasTransitionUtility = interactiveTokens.some((t) => t.startsWith('transition'));
+
   const full = [
     'absolute',
     'inset-0',
@@ -70,9 +73,9 @@ export function splitImageClassName(className: string | undefined): {
     objectPart,
     ...interactiveTokens,
     ...effectTokens,
-    'transition-opacity',
-    'duration-500',
-    'ease-out',
+    ...(hasTransitionUtility
+      ? []
+      : ['transition-opacity', 'duration-500', 'ease-out']),
   ].join(' ');
 
   return { wrapper, thumb, full };
