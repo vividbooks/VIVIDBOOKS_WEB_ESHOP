@@ -17,7 +17,7 @@ import {
   User,
 } from 'lucide-react';
 import { Elements } from '@stripe/react-stripe-js';
-import { loadStripeForApp } from '../../utils/stripe/loadStripeApp';
+import { useStripePublishableKey } from '../../utils/stripe/useStripePublishableKey';
 import { getCartLineKey, useCart } from '../../contexts/CartContext';
 import { useProducts } from '../../contexts/ProductsContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
@@ -27,7 +27,7 @@ import { CheckoutSummaryCard } from './CheckoutSummaryCard';
 import { formatPrice } from './formatPrice';
 import { PaymentMethodSection } from './PaymentMethodCards';
 import { StripePaymentSubmitForm } from './StripePaymentSubmitForm';
-import { CheckoutPaymentPartnersInfo } from './CheckoutPaymentPartnersInfo';
+import { CheckoutWalletQrPanel } from './CheckoutWalletQrPanel';
 import { getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import { flashInvalidField } from '../../utils/formFieldHighlight';
 import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
@@ -92,8 +92,6 @@ interface ShippingState {
   pickupPointZip?: string;
 }
 
-const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? '';
-const stripePromise = stripePublishableKey ? loadStripeForApp(stripePublishableKey) : null;
 const CREATE_PAYMENT_INTENT_URL = `https://${projectId}.supabase.co/functions/v1/create-payment-intent`;
 const SUBMIT_TRANSFER_ORDER_URL = `https://${projectId}.supabase.co/functions/v1/submit-transfer-order`;
 const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resume-checkout`;
@@ -148,13 +146,15 @@ const PAYMENT_OPTIONS: Array<{
   {
     id: 'apple_pay',
     label: 'Apple Pay',
-    description: 'Dostupné na podporovaných Apple zařízeních.',
+    description:
+      'Na iPhonu nebo Macu přímo v prohlížeči. Na stolním PC zobrazíme QR — platbu dokončíte v telefonu.',
     priceLabel: 'Zdarma',
   },
   {
     id: 'google_pay',
     label: 'Google Pay',
-    description: 'Dostupné na podporovaných zařízeních a prohlížečích.',
+    description:
+      'Na Androidu přímo v prohlížeči. Na stolním PC zobrazíme QR — platbu dokončíte v telefonu.',
     priceLabel: 'Zdarma',
   },
   {
@@ -185,6 +185,7 @@ function PlaceholderSection({ title, text = 'Bude doplněno' }: { title: string;
 }
 
 export function CheckoutPage() {
+  const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
   const { products } = useProducts();
   const { items, subtotal, itemCount, updateQuantity, removeItem, replaceUnitPrice } = useCart();
   const [currentStep, setCurrentStep] = useState<CheckoutStep>(1);
@@ -200,6 +201,7 @@ export function CheckoutPage() {
   const [paymentIntentError, setPaymentIntentError] = useState('');
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
+  const [paymentResumeToken, setPaymentResumeToken] = useState<string | null>(null);
   const [resumeFlowActive, setResumeFlowActive] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState('');
@@ -409,14 +411,16 @@ export function CheckoutPage() {
       setEmailMxChecking(false);
       return;
     }
+    const ac = new AbortController();
     if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
     setEmailMxChecking(true);
     setEmailMxHint('');
     emailMxDebounceRef.current = setTimeout(async () => {
+      const maxWaitId = window.setTimeout(() => ac.abort(), 12_000);
       try {
         const res = await fetch(
           `${CONTACT_SERVER_URL}/validate-email?email=${encodeURIComponent(email)}`,
-          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+          { headers: { Authorization: `Bearer ${publicAnonKey}` }, signal: ac.signal },
         );
         const data = (await res.json()) as { ok?: boolean; message?: string };
         if (data.ok) {
@@ -425,12 +429,14 @@ export function CheckoutPage() {
           setEmailMxHint(typeof data.message === 'string' ? data.message : EMAIL_MX_REJECT_CS);
         }
       } catch {
-        setEmailMxHint('');
+        if (!ac.signal.aborted) setEmailMxHint('');
       } finally {
+        clearTimeout(maxWaitId);
         setEmailMxChecking(false);
       }
     }, 480);
     return () => {
+      ac.abort();
       if (emailMxDebounceRef.current) clearTimeout(emailMxDebounceRef.current);
     };
   }, [customer.email]);
@@ -609,11 +615,17 @@ export function CheckoutPage() {
     return () => window.clearTimeout(timer);
   }, [customer.ico, customerType, applySchoolAddressFromIco]);
 
+  const wantsCardLikePayment =
+    paymentMethod === 'card' ||
+    paymentMethod === 'apple_pay' ||
+    paymentMethod === 'google_pay';
+
   useEffect(() => {
     if (currentStep !== 4) return;
-    if (paymentMethod !== 'card') {
+    if (!wantsCardLikePayment) {
       setClientSecret(null);
       setPaymentIntentId(null);
+      setPaymentResumeToken(null);
       setPaymentIntentError('');
       lastPaymentKeyRef.current = null;
       return;
@@ -622,6 +634,7 @@ export function CheckoutPage() {
     if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) {
       setClientSecret(null);
       setPaymentIntentId(null);
+      setPaymentResumeToken(null);
       lastPaymentKeyRef.current = null;
       return;
     }
@@ -660,6 +673,7 @@ export function CheckoutPage() {
         city: customer.city.trim(),
         zip: customer.zip.trim(),
       },
+      checkoutPaymentMethod: paymentMethod,
     };
 
     const paymentKey = JSON.stringify(payload);
@@ -684,10 +698,12 @@ export function CheckoutPage() {
         }
         setClientSecret(data.clientSecret ?? null);
         setPaymentIntentId(data.paymentIntentId ?? null);
+        setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
       })
       .catch((error: unknown) => {
         setClientSecret(null);
         setPaymentIntentId(null);
+        setPaymentResumeToken(null);
         setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => setPaymentIntentLoading(false));
@@ -703,7 +719,55 @@ export function CheckoutPage() {
     clientSecret,
     resumeFlowActive,
     paymentMethod,
+    wantsCardLikePayment,
   ]);
+
+  const desktopWalletQrActive =
+    currentStep === 4 &&
+    isDesktopPaymentView &&
+    (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
+    Boolean(paymentResumeToken) &&
+    !resumeFlowActive;
+
+  const showStripePaymentElement =
+    Boolean(clientSecret && stripePromise) &&
+    !(
+      isDesktopPaymentView &&
+      (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay')
+    );
+
+  useEffect(() => {
+    if (!desktopWalletQrActive || !paymentResumeToken) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const response = await fetch(RESUME_CHECKOUT_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ token: paymentResumeToken }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (data.status === 'already_paid') {
+          const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
+          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
+          if (num) thankYou.searchParams.set('order', num);
+          window.location.replace(thankYou.toString());
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = window.setInterval(tick, 4000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [desktopWalletQrActive, paymentResumeToken]);
 
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
@@ -853,10 +917,12 @@ export function CheckoutPage() {
     if (currentStep === 2) {
       if (!validateCustomerStep()) return;
       setContinueEmailMx(true);
+      const ac = new AbortController();
+      const maxWaitId = window.setTimeout(() => ac.abort(), 15_000);
       try {
         const res = await fetch(
           `${CONTACT_SERVER_URL}/validate-email?email=${encodeURIComponent(customer.email.trim())}`,
-          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+          { headers: { Authorization: `Bearer ${publicAnonKey}` }, signal: ac.signal },
         );
         const data = (await res.json()) as { ok?: boolean; message?: string };
         if (!data.ok) {
@@ -882,10 +948,13 @@ export function CheckoutPage() {
       } catch {
         setFormErrors((prev) => ({
           ...prev,
-          email: 'E-mail se nepodařilo ověřit. Zkuste to znovu za chvíli.',
+          email: ac.signal.aborted
+            ? 'Ověření e-mailu trvá příliš dlouho. Zkuste to prosím znovu.'
+            : 'E-mail se nepodařilo ověřit. Zkuste to znovu za chvíli.',
         }));
         return;
       } finally {
+        clearTimeout(maxWaitId);
         setContinueEmailMx(false);
       }
     } else if (currentStep === 3 && !validateShippingStep()) {
@@ -1712,21 +1781,30 @@ export function CheckoutPage() {
             {currentStep === 4 && (
               <PaymentMethodSection
                 description={
-                  paymentMethod === 'card'
-                    ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
-                    : 'Objednávku uložíme a obchodník vás kontaktuje.'
+                  paymentMethod === 'transfer'
+                    ? 'Objednávku uložíme a obchodník vás kontaktuje.'
+                    : paymentMethod === 'card'
+                      ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
+                      : (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
+                          isDesktopPaymentView
+                        ? 'Na širší obrazovce zobrazíme QR kód. Otevřete odkaz v telefonu a zaplaťte přes Apple Pay nebo Google Pay — desktopová záložka po zaplacení přesměruje na poděkování.'
+                        : 'Platba přes Stripe na tomto zařízení (Payment Element včetně peněženky, pokud ji prohlížeč nabídne).'
                 }
                 options={paymentOptionsVisible}
                 selectedId={paymentMethod}
                 onSelect={(id) => setPaymentMethod(id as PaymentMethodOption)}
-                isOptionDisabled={(id) =>
-                  (id !== 'card' && id !== 'transfer' && isDesktopPaymentView)
-                }
               >
                 <>
-                  {!stripePublishableKey && (
+                  {!publishableKey && !stripePkLoading && (
                     <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#dc2626]">
-                      {'Chybí VITE_STRIPE_PUBLISHABLE_KEY.'}
+                      {
+                        'Chybí platný Stripe publishable key (musí začínat pk_test_ nebo pk_live_). Doplňte ho do buildu (VITE_STRIPE_PUBLISHABLE_KEY) nebo do Supabase Edge Secrets jako STRIPE_PUBLISHABLE_KEY / VITE_STRIPE_PUBLISHABLE_KEY a nasaďte make-server.'
+                      }
+                    </p>
+                  )}
+                  {stripePkLoading && (
+                    <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/55 mb-2">
+                      {'Načítám platební klíč…'}
                     </p>
                   )}
 
@@ -1756,7 +1834,14 @@ export function CheckoutPage() {
                     </p>
                   )}
 
-                  {clientSecret && stripePromise && (
+                  {desktopWalletQrActive && paymentResumeToken && (
+                    <CheckoutWalletQrPanel
+                      resumeToken={paymentResumeToken}
+                      walletKind={paymentMethod === 'apple_pay' ? 'apple_pay' : 'google_pay'}
+                    />
+                  )}
+
+                  {showStripePaymentElement && stripePromise && (
                     <Elements
                       stripe={stripePromise}
                       options={{
@@ -1778,11 +1863,7 @@ export function CheckoutPage() {
                     </Elements>
                   )}
 
-                  {paymentMethod === 'card' && stripePublishableKey && (
-                    <CheckoutPaymentPartnersInfo className="mt-5" />
-                  )}
-
-                  {paymentIntentId && paymentMethod === 'card' && (
+                  {paymentIntentId && wantsCardLikePayment && showStripePaymentElement && (
                     <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45">
                       {`PaymentIntent: ${paymentIntentId}`}
                     </p>

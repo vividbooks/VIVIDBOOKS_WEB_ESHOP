@@ -116,6 +116,8 @@ export function UnifiedBookCard({
 
   const isRelated = variant === 'related';
   const isDigitalTile = book.type === 'online' || book.type === 'license';
+  /** Homepage — horizontální řada: sešity o kousek níž než první dlaždice (digitální licence). */
+  const relatedPrintNudgeDown = isRelated && !isDigitalTile;
   const rawTitle = String(subject ? titleRest : (book.name || ''));
   const titleText = formatTypography(rawTitle);
   const titleClass =
@@ -127,7 +129,7 @@ export function UnifiedBookCard({
 
   return (
     <motion.div
-      className={`flex flex-col cursor-pointer group ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'}`}
+      className={`flex flex-col cursor-pointer group ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'} ${relatedPrintNudgeDown ? 'mt-8 max-[1050px]:mt-6' : ''}`}
       whileHover={{ y: -6 }}
       transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
       onClick={onClick}

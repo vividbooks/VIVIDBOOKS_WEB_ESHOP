@@ -12,7 +12,13 @@ import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
-import { FyzikaAccessJourney } from './FyzikaAccessJourney';
+import {
+  FyzikaAccessJourney,
+  DIGITAL_ACCESS_TYPES_INTRO_TITLE,
+  DIGITAL_ACCESS_TYPES_INTRO_BODY,
+  COOPER_ACCESS_INTRO_HEADING_STYLE,
+  COOPER_ACCESS_INTRO_MUTED_STYLE,
+} from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { SubjectWebinarsSlider } from './SubjectWebinarsSlider';
@@ -595,6 +601,8 @@ export function SubjectPage({
   const digitalBooks = subjectProducts.filter(p => p.type === 'online' && p.image).slice(0, 3);
 
   const showComparison = ['Fyzika', 'Chemie', 'P\u0159\u00edrodopis'].includes(subject);
+  /** ČJ — metodické principy zatím nezobrazujeme (požadavek obsahu). */
+  const showMethodPrinciples = baseSubject !== '\u010cesk\u00fd jazyk';
   const showMsmtSubjectBadge = subjectShowsMsmtDolozkaBadge(baseSubject);
 
   const heroRocnikLabel = subjectHeroRocnikLabel(baseSubject, subjectGradeNum, cfg);
@@ -998,33 +1006,32 @@ export function SubjectPage({
             ecosystemHeading={true}
           />
 
-          {/* Srovnání Základní vs. Rozšířený */}
+          {/* Základní vs. rozšířený — stejný úvodní text jako u bloku na PDP (FyzikaAccessJourney) */}
           <div className="px-6 md:px-12 max-w-[1200px] mx-auto py-14">
-            <div className="flex items-center gap-4 mb-10">
-              <h2
-                className="text-[#001161] text-[26px] md:text-[32px] leading-tight shrink-0"
-                style={{ fontFamily: "'Cooper Light', serif" }}
-              >
-                Srovnání základního a rozšířeného přístupu
-              </h2>
-              <div className="h-px flex-1 bg-[#001161]/10" />
-            </div>
             {['Fyzika', 'Chemie', 'Přírodopis'].includes(subject) ? (
-              <FyzikaAccessJourney onOrder={onOrder} subject={subject} />
+              <FyzikaAccessJourney onOrder={onOrder} subject={subject} showIntro={true} />
             ) : (
-              <DigitalAccessComparison subject={subject} workbooks={workbooks} onOrder={onOrder} />
+              <>
+                <h2 className="leading-tight max-w-[820px] mb-8" style={COOPER_ACCESS_INTRO_HEADING_STYLE}>
+                  {DIGITAL_ACCESS_TYPES_INTRO_TITLE}
+                  <span style={COOPER_ACCESS_INTRO_MUTED_STYLE}>{DIGITAL_ACCESS_TYPES_INTRO_BODY}</span>
+                </h2>
+                <DigitalAccessComparison subject={subject} workbooks={workbooks} onOrder={onOrder} />
+              </>
             )}
           </div>
         </>
       )}
 
-      <SubjectMethodPrinciplesSection
-        baseSubject={baseSubject}
-        displayNameGenitive={cfg.displayNameGenitive}
-        itemsFromCms={cmsMethodPrinciples}
-        matematikaFirstStage={baseSubject === 'Matematika' && subjectGradeNum === '1'}
-        matematikaSecondStage={baseSubject === 'Matematika' && subjectGradeNum === '2'}
-      />
+      {showMethodPrinciples && (
+        <SubjectMethodPrinciplesSection
+          baseSubject={baseSubject}
+          displayNameGenitive={cfg.displayNameGenitive}
+          itemsFromCms={cmsMethodPrinciples}
+          matematikaFirstStage={baseSubject === 'Matematika' && subjectGradeNum === '1'}
+          matematikaSecondStage={baseSubject === 'Matematika' && subjectGradeNum === '2'}
+        />
+      )}
 
       <SubjectWebinarsSlider
         subject={subject}

@@ -30,10 +30,10 @@ import { parseSchoolAddress } from '../utils/parseSchoolAddress';
 import { CheckoutSummaryCard } from './checkout/CheckoutSummaryCard';
 import { formatPrice } from './checkout/formatPrice';
 import { Elements } from '@stripe/react-stripe-js';
-import { loadStripeForApp } from '../utils/stripe/loadStripeApp';
+import { useStripePublishableKey } from '../utils/stripe/useStripePublishableKey';
 import { PaymentMethodSection } from './checkout/PaymentMethodCards';
 import { StripePaymentSubmitForm } from './checkout/StripePaymentSubmitForm';
-import { CheckoutPaymentPartnersInfo } from './checkout/CheckoutPaymentPartnersInfo';
+import { CheckoutWalletQrPanel } from './checkout/CheckoutWalletQrPanel';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import {
   allocateSubjectBundleQuantities,
@@ -67,12 +67,12 @@ import { loadSavedDvppContacts, type SavedDvppContact } from '../utils/dvppSaved
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/streetHouseNumberCZ';
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
+import { appPath } from '../utils/appBaseUrl';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
-const stripePublishableKey = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? '';
-const stripePromise = stripePublishableKey ? loadStripeForApp(stripePublishableKey) : null;
 const CREATE_PAYMENT_INTENT_URL = `https://${projectId}.supabase.co/functions/v1/create-payment-intent`;
+const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resume-checkout`;
 const MAKE_SERVER_FN = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
 const SCHOOL_ORDER_STEPS = [
@@ -147,13 +147,15 @@ const SCHOOL_PAYMENT_OPTIONS: Array<{
   {
     id: 'apple_pay',
     label: 'Apple Pay',
-    description: 'Dostupné na podporovaných Apple zařízeních.',
+    description:
+      'Na iPhonu přímo v prohlížeči. U široké obrazovky zobrazíme QR — platbu dokončíte v telefonu.',
     priceLabel: 'Zdarma',
   },
   {
     id: 'google_pay',
     label: 'Google Pay',
-    description: 'Dostupné na podporovaných zařízeních a prohlížečích.',
+    description:
+      'Na Androidu přímo v prohlížeči. U široké obrazovky zobrazíme QR — platbu dokončíte v telefonu.',
     priceLabel: 'Zdarma',
   },
   {
@@ -389,6 +391,8 @@ export function OrderPage() {
     return () => media.removeEventListener('change', apply);
   }, []);
 
+  const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
+
   /* ── pre-select from location state / URL param ── */
   const preselectedCategory =
     (location.state as { category?: string } | null)?.category ??
@@ -464,6 +468,7 @@ export function OrderPage() {
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [schoolPaymentIntentLoading, setSchoolPaymentIntentLoading] = useState(false);
   const [schoolPaymentIntentError, setSchoolPaymentIntentError] = useState('');
+  const [schoolPaymentResumeToken, setSchoolPaymentResumeToken] = useState<string | null>(null);
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const lastSchoolPaymentKeyRef = useRef<string | null>(null);
 
@@ -1222,17 +1227,24 @@ export function OrderPage() {
     productBundlesById,
   ]);
 
+  const schoolWantsOnlinePayment =
+    paymentMethod === 'card' ||
+    paymentMethod === 'apple_pay' ||
+    paymentMethod === 'google_pay';
+
   useEffect(() => {
-    if (step !== 5 || paymentMethod !== 'card') {
+    if (step !== 5 || !schoolWantsOnlinePayment) {
       setClientSecret(null);
       setPaymentIntentId(null);
+      setSchoolPaymentResumeToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
     }
-    if (!canPrepareSchoolCardPayment || !stripePublishableKey) {
+    if (!canPrepareSchoolCardPayment) {
       setClientSecret(null);
       setPaymentIntentId(null);
+      setSchoolPaymentResumeToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
@@ -1281,10 +1293,11 @@ export function OrderPage() {
     if (paymentItems.length === 0) {
       setClientSecret(null);
       setPaymentIntentId(null);
+      setSchoolPaymentResumeToken(null);
       return;
     }
 
-    const schoolInquiry = buildSchoolOrdersPayload('card');
+    const schoolInquiry = buildSchoolOrdersPayload(paymentMethod);
 
     const payload = {
       items: paymentItems,
@@ -1314,6 +1327,7 @@ export function OrderPage() {
         zip: form.zip.trim(),
       },
       schoolInquiry,
+      checkoutPaymentMethod: paymentMethod,
     };
 
     const paymentKey = JSON.stringify(payload);
@@ -1338,16 +1352,19 @@ export function OrderPage() {
         }
         setClientSecret(data.clientSecret ?? null);
         setPaymentIntentId(data.paymentIntentId ?? null);
+        setSchoolPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
       })
       .catch((error: unknown) => {
         setClientSecret(null);
         setPaymentIntentId(null);
+        setSchoolPaymentResumeToken(null);
         setSchoolPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => setSchoolPaymentIntentLoading(false));
   }, [
     step,
     paymentMethod,
+    schoolWantsOnlinePayment,
     canPrepareSchoolCardPayment,
     quantities,
     products,
@@ -1375,6 +1392,54 @@ export function OrderPage() {
     schoolSubjectBundleSelectionsById,
     productBundlesById,
   ]);
+
+  const schoolDesktopWalletQrActive =
+    step === 5 &&
+    !isDigitalServicesOnly &&
+    hasSchoolWorkbookSelection &&
+    isDesktopPaymentView &&
+    (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
+    Boolean(schoolPaymentResumeToken);
+
+  const schoolShowStripePaymentElement =
+    Boolean(clientSecret && stripePromise) &&
+    !(
+      isDesktopPaymentView &&
+      (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay')
+    );
+
+  useEffect(() => {
+    if (!schoolDesktopWalletQrActive || !schoolPaymentResumeToken) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const response = await fetch(RESUME_CHECKOUT_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${publicAnonKey}`,
+          },
+          body: JSON.stringify({ token: schoolPaymentResumeToken }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (cancelled) return;
+        if (data.status === 'already_paid') {
+          const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
+          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
+          if (num) thankYou.searchParams.set('order', num);
+          window.location.replace(thankYou.toString());
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    const id = window.setInterval(tick, 4000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [schoolDesktopWalletQrActive, schoolPaymentResumeToken]);
 
   const maxOrderStep = isDigitalServicesOnly ? 3 : 6;
   const canGoBack = step > 1;
@@ -1440,16 +1505,29 @@ export function OrderPage() {
     }
     if (
       step === 5
-      && paymentMethod === 'card'
+      && (paymentMethod === 'card' || paymentMethod === 'apple_pay' || paymentMethod === 'google_pay')
       && !isDigitalServicesOnly
       && hasSchoolWorkbookSelection
     ) {
-      if (!stripePublishableKey) {
-        setFormError('Online platba kartou není k dispozici. Zvolte prosím jinou metodu nebo kontaktujte podporu.');
+      if (stripePkLoading) {
+        setFormError('Chvilku strpení, načítá se platební rozhraní…');
+        return;
+      }
+      if (!publishableKey) {
+        setFormError('Online platba není k dispozici. Zvolte prosím jinou metodu nebo kontaktujte podporu.');
+        return;
+      }
+      if (
+        isDesktopPaymentView &&
+        (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay')
+      ) {
+        setFormError(
+          'Na široké obrazovce dokončíte platbu přes QR kód v telefonu. Po zaplacení vás přesměruje poděkování — tuto záložku nechte otevřenou nebo později ji obnovte.',
+        );
         return;
       }
       setFormError(
-        'U platby kartou nejdřív vyplňte údaje v platebním formuláři níže a klikněte na „Zaplatit“. Po úspěchu vás přesměrujeme na poděkování (stejně jako v pokladně).',
+        'U online platby nejdřív vyplňte platební formulář níže a klikněte na „Zaplatit“. Po úspěchu vás přesměrujeme na poděkování (stejně jako v pokladně).',
       );
       return;
     }
@@ -2968,14 +3046,20 @@ export function OrderPage() {
             <motion.div key="step-platba" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="space-y-6">
               <PaymentMethodSection
                 description={
-                  paymentMethod === 'card' && hasSchoolWorkbookSelection && !isDigitalServicesOnly
-                    ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení (stejně jako v pokladně). U ostatních metod platbu domluvíme po odeslání poptávky.'
-                    : 'Platbu u školní poptávky domluvíme po odeslání. Níže zvolte preferovanou metodu.'
+                  !hasSchoolWorkbookSelection || isDigitalServicesOnly
+                    ? 'Platbu u školní poptávky domluvíme po odeslání. Níže zvolte preferovanou metodu.'
+                    : paymentMethod === 'transfer'
+                      ? 'Platbu u školní poptávky domluvíme po odeslání poptávky.'
+                      : paymentMethod === 'card'
+                        ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení (stejně jako v pokladně).'
+                        : (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
+                            isDesktopPaymentView
+                          ? 'Na širší obrazovce zobrazíme QR — platbu dokončíte v telefonu; tato záložka po zaplacení přesměruje na poděkování.'
+                          : 'Platba přes Stripe na tomto zařízení (včetně peněženky, pokud ji prohlížeč nabídne).'
                 }
                 options={schoolPaymentOptionsVisible}
                 selectedId={paymentMethod}
                 onSelect={(id) => setPaymentMethod(id as SchoolPaymentPref)}
-                isOptionDisabled={(id) => id !== 'card' && id !== 'transfer' && isDesktopPaymentView}
                 notice={showDigitalPlusPrintNotice ? (
                   <div className="mb-5 flex items-start gap-3 rounded-[16px] border border-amber-200/80 bg-amber-50/90 px-4 py-3">
                     <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -2983,11 +3067,18 @@ export function OrderPage() {
                   </div>
                 ) : undefined}
               >
-                {paymentMethod === 'card' && hasSchoolWorkbookSelection && !isDigitalServicesOnly && (
+                {schoolWantsOnlinePayment && hasSchoolWorkbookSelection && !isDigitalServicesOnly && (
                   <>
-                    {!stripePublishableKey && (
+                    {!publishableKey && !stripePkLoading && (
                       <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#dc2626] mb-4">
-                        {'Chybí VITE_STRIPE_PUBLISHABLE_KEY — online platba kartou není k dispozici.'}
+                        {
+                          'Chybí platný Stripe publishable key (pk_test_… / pk_live_…). Vite: VITE_STRIPE_PUBLISHABLE_KEY; Supabase Secrets: STRIPE_PUBLISHABLE_KEY nebo VITE_STRIPE_PUBLISHABLE_KEY + nasazený make-server.'
+                        }
+                      </p>
+                    )}
+                    {stripePkLoading && (
+                      <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/55 mb-4">
+                        {'Načítám platební klíč…'}
                       </p>
                     )}
                     {!canPrepareSchoolCardPayment && (
@@ -3006,7 +3097,13 @@ export function OrderPage() {
                         {schoolPaymentIntentError}
                       </p>
                     )}
-                    {clientSecret && stripePromise && (
+                    {schoolDesktopWalletQrActive && schoolPaymentResumeToken && (
+                      <CheckoutWalletQrPanel
+                        resumeToken={schoolPaymentResumeToken}
+                        walletKind={paymentMethod === 'apple_pay' ? 'apple_pay' : 'google_pay'}
+                      />
+                    )}
+                    {schoolShowStripePaymentElement && stripePromise && (
                       <Elements
                         stripe={stripePromise}
                         options={{
@@ -3027,10 +3124,7 @@ export function OrderPage() {
                         />
                       </Elements>
                     )}
-                    {paymentMethod === 'card' && hasSchoolWorkbookSelection && !isDigitalServicesOnly && stripePublishableKey && (
-                      <CheckoutPaymentPartnersInfo className="mt-5" />
-                    )}
-                    {paymentIntentId && (
+                    {paymentIntentId && schoolShowStripePaymentElement && (
                       <p className="mt-4 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45">
                         {`PaymentIntent: ${paymentIntentId}`}
                       </p>
@@ -3049,10 +3143,12 @@ export function OrderPage() {
                   onClick={() => void goForward()}
                   disabled={
                     continueEmailMx
-                    || (paymentMethod === 'card'
-                    && !isDigitalServicesOnly
-                    && hasSchoolWorkbookSelection
-                    && Boolean(stripePublishableKey))
+                    || ((paymentMethod === 'card' ||
+                      paymentMethod === 'apple_pay' ||
+                      paymentMethod === 'google_pay') &&
+                      !isDigitalServicesOnly
+                      && hasSchoolWorkbookSelection
+                      && (stripePkLoading || Boolean(publishableKey)))
                   }
                   className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
@@ -3060,9 +3156,11 @@ export function OrderPage() {
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
-              {paymentMethod === 'card' && !isDigitalServicesOnly && hasSchoolWorkbookSelection && stripePublishableKey && (
+              {schoolWantsOnlinePayment && !isDigitalServicesOnly && hasSchoolWorkbookSelection && publishableKey && (
                 <p style={FF} className="text-[12px] text-[#001161]/50 text-center -mt-2">
-                  {'U platby kartou použijte tlačítko „Zaplatit“ výše — po úspěchu vás přesměrujeme. Krok „Potvrzení“ je pro platbu převodem / domluvenou platbu.'}
+                  {schoolDesktopWalletQrActive
+                    ? 'Po naskenování QR dokončíte platbu v telefonu. Po zaplacení přesměrujeme i tuto záložku na poděkování (nechte ji otevřenou). Krok „Potvrzení“ je pro platbu převodem.'
+                    : 'U online platby použijte tlačítko „Zaplatit“ výše — po úspěchu vás přesměrujeme. Krok „Potvrzení“ je pro platbu převodem / domluvenou platbu.'}
                 </p>
               )}
             </motion.div>

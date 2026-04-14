@@ -135,7 +135,7 @@ const PRODUCT_FIELDS: FieldDef[] = [
     fullWidth: true,
     hint: 'YouTube, Vimeo nebo přímý odkaz na soubor (.mp4, .webm). V detailu se zobrazí tlačítko vedle „Prolistovat ukázku“.',
   },
-  { key: 'appLink', label: 'Odkaz otevřít v aplikaci', type: 'url', fullWidth: true, placeholder: 'https://app.vividbooks.cz/...', hint: 'Přímý odkaz pro otevření tohoto produktu v aplikaci Vividbooks' },
+  { key: 'appLink', label: 'Odkaz otevřít v aplikaci', type: 'url', fullWidth: true, hint: 'Přímý odkaz pro otevření tohoto produktu v aplikaci Vividbooks. Nechte prázdné, pokud nemá být vlastní deep link.' },
   { key: 'dolozka', label: 'Doložka MŠMT', type: 'text', fullWidth: true },
   { key: 'obsah', label: 'Obsah sešitu (RAG)', type: 'textarea', fullWidth: true, placeholder: 'Kapitola 1: Přirozená čísla\nKapitola 2: Zlomky\n...', hint: 'Zobrazuje se pouze v RAG databázi. Pomáhá AI lépe odpovídat na dotazy.' },
   { key: 'isbn', label: 'ISBN', type: 'text' },

@@ -7005,6 +7005,23 @@ const validateEmailHandler = async (c: Context) => {
 app.get('/make-server-93a20b6f/validate-email', validateEmailHandler);
 app.get('/validate-email', validateEmailHandler);
 
+/**
+ * Veřejný publishable key pro Stripe.js.
+ * Supabase Secrets: STRIPE_PUBLISHABLE_KEY nebo VITE_STRIPE_PUBLISHABLE_KEY (hodnota vždy pk_test_… / pk_live_…).
+ */
+const stripePublishableKeyHandler = async (c: Context) => {
+  const pk =
+    (Deno.env.get('STRIPE_PUBLISHABLE_KEY')?.trim() ||
+      Deno.env.get('VITE_STRIPE_PUBLISHABLE_KEY')?.trim() ||
+      '');
+  if (!pk.startsWith('pk_test_') && !pk.startsWith('pk_live_')) {
+    return c.json({ publishableKey: null as string | null });
+  }
+  return c.json({ publishableKey: pk });
+};
+app.get('/make-server-93a20b6f/stripe-publishable-key', stripePublishableKeyHandler);
+app.get('/stripe-publishable-key', stripePublishableKeyHandler);
+
 /* ── Check trial email (dedup, 6mesicni cooldown) ──────────────── */
 app.get('/make-server-93a20b6f/check-trial-email', async (c) => {
   const email = c.req.query('email') || '';

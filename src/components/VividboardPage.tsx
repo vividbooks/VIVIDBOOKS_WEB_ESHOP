@@ -220,11 +220,11 @@ function HeroSlider() {
       >
         Možnosti Vividboardu
       </p>
-      <div className="relative w-full overflow-hidden bg-[#2a3142]">
+      <div className="relative w-full overflow-hidden bg-white flex justify-center">
         <img
           src={HERO_SLIDES[i]}
           alt=""
-          className="w-full h-auto block"
+          className="w-[80%] max-w-full h-auto block"
           width={1206}
           height={680}
         />
@@ -232,7 +232,7 @@ function HeroSlider() {
           type="button"
           aria-label="Předchozí snímek"
           onClick={() => go(-1)}
-          className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/95 hover:bg-white shadow-md flex items-center justify-center text-[#15185a]"
+          className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white border border-[#001161]/12 shadow-md hover:bg-[#f2f6ff] flex items-center justify-center text-[#15185a]"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>
@@ -240,7 +240,7 @@ function HeroSlider() {
           type="button"
           aria-label="Další snímek"
           onClick={() => go(1)}
-          className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white/95 hover:bg-white shadow-md flex items-center justify-center text-[#15185a]"
+          className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-white border border-[#001161]/12 shadow-md hover:bg-[#f2f6ff] flex items-center justify-center text-[#15185a]"
         >
           <ChevronRight className="w-6 h-6" />
         </button>
@@ -251,7 +251,7 @@ function HeroSlider() {
               type="button"
               aria-label={`Snímek ${idx + 1}`}
               onClick={() => setI(idx)}
-              className={`h-2 rounded-full transition-all ${idx === i ? 'w-6 bg-white' : 'w-2 bg-white/45 hover:bg-white/70'}`}
+              className={`h-2 rounded-full transition-all ${idx === i ? 'w-6 bg-[#001161]' : 'w-2 bg-[#001161]/25 hover:bg-[#001161]/40'}`}
             />
           ))}
         </div>

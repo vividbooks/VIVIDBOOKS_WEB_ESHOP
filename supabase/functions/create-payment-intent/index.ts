@@ -172,6 +172,7 @@ Deno.serve(async (req) => {
     shipping?: unknown;
     customer?: unknown;
     schoolInquiry?: unknown;
+    checkoutPaymentMethod?: unknown;
   };
 
   try {
@@ -181,6 +182,12 @@ Deno.serve(async (req) => {
   }
 
   const { items, shipping, customer, schoolInquiry } = payload;
+
+  const rawPm = payload.checkoutPaymentMethod;
+  const checkoutPaymentMethod =
+    rawPm === 'apple_pay' || rawPm === 'google_pay'
+      ? rawPm
+      : 'card';
 
   const schoolInquiryJson =
     schoolInquiry != null && typeof schoolInquiry === 'object' && !Array.isArray(schoolInquiry)
@@ -265,7 +272,7 @@ Deno.serve(async (req) => {
       },
       metadata: {
         checkout_session_id: checkoutSessionId,
-        payment_method: 'card',
+        payment_method: checkoutPaymentMethod,
         ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
       },
     });
@@ -316,7 +323,7 @@ Deno.serve(async (req) => {
             ${shipping.price ?? 0},
             ${shipping.pickupPointId ?? null},
             ${shipping.pickupPointName ?? null},
-            'card',
+            ${checkoutPaymentMethod},
             'pending',
             ${paymentIntent.id},
             ${subtotal},
@@ -389,6 +396,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
+      resumeToken,
     });
   } catch (error) {
     try {

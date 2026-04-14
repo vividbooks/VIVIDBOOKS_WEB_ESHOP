@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useLocation } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ShoppingCart, Minus, Plus, Trash2, ArrowRight } from 'lucide-react';
 import { getCartLineKey, useCart } from '../../contexts/CartContext';
@@ -114,8 +114,14 @@ function CartRow({
 
 export function CartDrawer() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { products } = useProducts();
   const { items, itemCount, subtotal, isCartOpen, closeCart, replaceUnitPrice } = useCart();
+
+  /** Overlay košíku (z-[90]) by jinak mohla zůstat přes celou pokladnu při zvláštním toku navigace. */
+  useEffect(() => {
+    if (location.pathname === '/pokladna' && isCartOpen) closeCart();
+  }, [location.pathname, isCartOpen, closeCart]);
 
   useEffect(() => {
     if (products.length === 0) return;

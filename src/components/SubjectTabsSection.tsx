@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import {
+  COOPER_ACCESS_INTRO_HEADING_STYLE,
+  COOPER_ACCESS_INTRO_MUTED_STYLE,
+} from './FyzikaAccessJourney';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -78,8 +82,14 @@ export function SubjectTabsSection({ subject, displayName, light = false, ecosys
     return (
       <div style={{ background: light ? '#f5f7fd' : '#243653' }} className="py-10 px-4">
         <h2
-          className="leading-tight mb-6 text-[24px]"
-          style={{ fontFamily: "'Cooper Light', serif", color: light ? '#001161' : '#fff' }}
+          className="leading-tight mb-6"
+          style={{
+            fontFamily: "'Cooper Light', serif",
+            fontSize: 'clamp(24px, 5vw, 28px)',
+            fontWeight: 400,
+            lineHeight: 1.15,
+            color: light ? '#001161' : '#fff',
+          }}
         >
           Co vše obsahuje naše {displayName}?
         </h2>
@@ -181,12 +191,9 @@ export function SubjectTabsSection({ subject, displayName, light = false, ecosys
       {/* Ecosystem heading — zobrazí se jen když je prop true */}
       {ecosystemHeading && (
         <div className="max-w-[1200px] mx-auto pb-10">
-          <h2
-            className="text-[#001161] leading-tight max-w-[720px]"
-            style={{ fontFamily: "'Cooper Light', serif", fontSize: wide ? '38px' : '28px' }}
-          >
+          <h2 className="leading-tight max-w-[720px]" style={COOPER_ACCESS_INTRO_HEADING_STYLE}>
             {'U\u010debnice jako ekosyst\u00e9m: '}
-            <span style={{ color: 'rgba(0,17,97,0.45)' }}>
+            <span style={COOPER_ACCESS_INTRO_MUTED_STYLE}>
               {'Nab\u00edz\u00edme komplexn\u00ed digit\u00e1ln\u00ed p\u0159\u00edstup pro celou \u0161kolu, v\u0161e co u\u010ditel\u00e9 a \u017e\u00e1ci pot\u0159ebuj\u00ed v jedn\u00e9 aplikaci.'}
             </span>
           </h2>
@@ -199,8 +206,14 @@ export function SubjectTabsSection({ subject, displayName, light = false, ecosys
         {/* Left menu */}
         <div style={{ width: wide ? '240px' : '100%', flexShrink: 0 }}>
           <h2
-            className="leading-tight mb-8 font-bold"
-            style={{ fontFamily: "'Fenomen Sans', sans-serif", fontSize: wide ? '30px' : '26px', color: light ? '#001161' : '#fff' }}
+            className="leading-tight mb-8"
+            style={{
+              fontFamily: "'Cooper Light', serif",
+              fontSize: 'clamp(26px, 2.75vw, 32px)',
+              fontWeight: 400,
+              lineHeight: 1.15,
+              color: light ? '#001161' : '#fff',
+            }}
           >
             Co vše obsahuje naše {displayName}?
           </h2>

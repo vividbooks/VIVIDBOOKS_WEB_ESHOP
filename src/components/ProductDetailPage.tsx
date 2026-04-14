@@ -26,7 +26,6 @@ import { ProductBundlePromoTile } from './ProductBundlePromoTile';
 import type { MerchVariantOption } from '../types/merchVariants';
 import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
-import { useMatchMedia } from '../hooks/useMatchMedia';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 
@@ -401,7 +400,7 @@ function DigitalAccessSellingArgumentStrip({
               aria-label={label}
               aria-current={selected ? 'true' : undefined}
               style={{ backgroundColor: thumbBg }}
-              className={`shrink-0 overflow-hidden rounded-xl border-2 p-0 shadow-[0_2px_8px_rgba(0,17,97,0.12)] transition-all hover:brightness-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#001161] ${
+              className={`shrink-0 overflow-hidden rounded-xl border-2 p-0 transition-all hover:brightness-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#001161] ${
                 selected
                   ? 'border-[#001161] ring-2 ring-[#001161]/30'
                   : 'border-[#001161]/30 hover:border-[#001161]/55'
@@ -669,16 +668,21 @@ export function ProductDetailPage({
   const { addItem, openCart: openInternalCart } = useCart();
 
   const hasFlipbook = !!(product.flipbookLink || product.previewLink);
-  const hasCustomAppLink = !!(product.appLink && String(product.appLink).trim());
+  /** Ignorovat prázdné řetězce a omylem uložený placeholder z administrace (`…` v URL). */
+  const appLinkTrimmed = String(product.appLink || '').trim();
+  const hasCustomAppLink =
+    appLinkTrimmed.length > 0 && !/^https?:\/\/app\.vividbooks\.cz\/\.{3}\s*$/i.test(appLinkTrimmed);
+  const appLinkHref = (hasCustomAppLink ? appLinkTrimmed : '') || 'https://app.vividbooks.cz';
   const previewVideoRaw = String(product.previewVideoLink || '').trim();
   const videoPreviewParsed = useMemo(
     () => parseProductVideoPreviewUrl(previewVideoRaw),
     [previewVideoRaw]
   );
   const hasVideoPreview = !!videoPreviewParsed;
-  /** Ukázka v dlaždici + odkaz do aplikace; odkaz zobrazit i bez flipbooku (např. předobjednávky s poznámkou o dostupnosti). */
+  /** Panel akcí u obrázku: flipbook / video / vlastní app odkaz. „Otevřít v aplikaci“ jen když je vyplněné pole appLink. */
   const showImagePanelActions = hasFlipbook || hasCustomAppLink || hasVideoPreview;
-  const imagePanelActionCount = (hasFlipbook ? 1 : 0) + (hasVideoPreview ? 1 : 0) + 1;
+  const imagePanelActionCount =
+    (hasFlipbook ? 1 : 0) + (hasVideoPreview ? 1 : 0) + (hasCustomAppLink ? 1 : 0);
   const imagePanelActionLayout = imagePanelActionCount > 1 ? 'flex-1' : 'w-full';
   const imagePanelActionBtnClass = `flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] ${imagePanelActionLayout}`;
   const flipbookUrl = product.flipbookLink || product.previewLink;
@@ -704,14 +708,6 @@ export function ProductDetailPage({
   /** Vedle ceny: štítek „Na objednávku“, bez dotazu na sklad. */
   const showsOnOrderByAvailability = isPosterMerchHero;
   const isWorkbookHero = isPhysicalProduct && !isPosterMerchHero;
-  const mdUp = useMatchMedia('(min-width: 768px)', false);
-  /** Jen digitály — tiskoviny používají PRINT_BOOK_COVER_DROP_SHADOW na obálce. */
-  const heroDigitalImageFilter = useMemo(() => {
-    if (isPhysicalProduct) return undefined as string | undefined;
-    return mdUp
-      ? 'drop-shadow(0 16px 28px rgba(0,17,97,0.14))'
-      : 'drop-shadow(0 6px 12px rgba(0,17,97,0.1))';
-  }, [mdUp, isPhysicalProduct]);
 
   const merchVariants: MerchVariantOption[] = Array.isArray(product.merchVariants)
     ? product.merchVariants
@@ -1300,7 +1296,6 @@ export function ProductDetailPage({
                       className={`relative flex w-full items-center justify-center ${
                         isWorkbookHero ? 'max-sm:max-h-full' : 'max-h-full'
                       }`}
-                      style={!isPhysicalProduct ? { filter: heroDigitalImageFilter } : undefined}
                     >
                       {heroDisplaySrc ? (
                         <ImageWithFallback
@@ -1385,15 +1380,17 @@ export function ProductDetailPage({
                         {'Uk\u00e1zka videa'}
                       </button>
                     )}
-                    <a
-                      href={product.appLink || 'https://app.vividbooks.cz'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`${imagePanelActionBtnClass} no-underline`}
-                    >
-                      <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                      {'Otev\u0159\u00edt v aplikaci'}
-                    </a>
+                    {hasCustomAppLink && (
+                      <a
+                        href={appLinkHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`${imagePanelActionBtnClass} no-underline`}
+                      >
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+                        {'Otev\u0159\u00edt v aplikaci'}
+                      </a>
+                    )}
                   </div>
                 )}
               </div>
@@ -2149,7 +2146,7 @@ export function ProductDetailPage({
                     <div className="flex gap-2">
                       {/* Mám přístup */}
                       <a
-                        href={product.appLink || 'https://app.vividbooks.cz'}
+                        href={appLinkHref}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-[10px] font-semibold text-[#001161] no-underline transition-all hover:bg-[#001161]/8 active:scale-[0.98] text-center border border-[#001161]/15 bg-white"
