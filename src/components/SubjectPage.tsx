@@ -943,7 +943,7 @@ export function SubjectPage({
                   <div className="h-px flex-1 bg-[#001161]/8" />
                 </div>
                 {books.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-[0.85rem] items-start">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-2 items-start">
                     {books.map((book: any) => (
                       <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
                     ))}
@@ -958,7 +958,7 @@ export function SubjectPage({
           </div>
         ) : filteredBooks.length > 0 ? (
           <div
-            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-[0.85rem] items-start ${showSeriesPanels ? '' : 'mt-2'}`}
+            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-2 items-start ${showSeriesPanels ? '' : 'mt-2'}`}
           >
             {filteredBooks.map(book => (
               <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
