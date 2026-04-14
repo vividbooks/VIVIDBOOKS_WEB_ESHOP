@@ -45,7 +45,11 @@ export function splitImageClassName(className: string | undefined): {
 
   const objectPart = objectTokens.length ? objectTokens.join(' ') : 'object-contain object-bottom';
 
-  const wrapper = [...layoutTokens, 'relative', 'isolate'].join(' ').replace(/\s+/g, ' ').trim();
+  /** `inline-block` nutné, když není <span> přímým flex itemem — jinak se w/h ignorují a absolute děti sbalí výšku na 0. */
+  const wrapper = [...layoutTokens, 'relative', 'isolate', 'inline-block']
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   const thumb = [
     'pointer-events-none',
