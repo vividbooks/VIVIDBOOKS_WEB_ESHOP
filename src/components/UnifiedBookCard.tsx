@@ -132,9 +132,15 @@ export function UnifiedBookCard({
       transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
       onClick={onClick}
     >
-      {/* ── image area (tiskoviny: nižší poměr = méně „prázdna“ nad obálkou; digitály ponecháme 3/4) ── */}
+      {/* ── image area (tiskoviny: výšku určuje obálka — bez aspect boxu by nad úzkou obálkou vznikalo prázdné pole; digitály:3/4 + podklad) ── */}
       <div
-        className={`relative w-full mb-1 flex items-end overflow-visible ${isDigitalTile ? 'aspect-[3/4]' : 'aspect-[5/6]'}`}
+        className={`relative w-full mb-1 overflow-visible ${
+          isDigitalTile
+            ? 'aspect-[3/4] flex items-end'
+            : book.image
+              ? 'flex justify-center'
+              : 'aspect-[5/6] flex items-end'
+        }`}
       >
         {/* Coloured background only for digital / license tiles — starts lower */}
         {isDigitalTile && (
@@ -151,13 +157,11 @@ export function UnifiedBookCard({
               className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
             />
           ) : (
-            <div
-              className={`relative z-10 mx-auto min-h-0 h-full ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}
-            >
+            <div className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}>
               <ImageWithFallback
                 src={book.image}
                 alt={book.name}
-                className="h-full w-full object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
+                className="block w-full h-auto object-contain transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
                 style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
                 onLoad={(e) => {
                   const img = e.currentTarget;
