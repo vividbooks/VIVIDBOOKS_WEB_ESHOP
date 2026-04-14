@@ -137,8 +137,8 @@ export function UnifiedBookCard({
         className={`relative w-full mb-1 overflow-visible ${
           isDigitalTile
             ? 'aspect-[3/4] flex items-end'
-            : book.image
-              ? 'flex justify-center pt-9'
+                       : book.image
+              ? 'flex justify-center pt-[4.5rem]'
               : 'aspect-[5/6] flex items-end'
         }`}
       >
