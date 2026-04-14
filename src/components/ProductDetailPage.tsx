@@ -1174,6 +1174,7 @@ export function ProductDetailPage({
                             key={heroDisplaySrc}
                             src={heroDisplaySrc}
                             alt={product.name}
+                            priority
                             className="absolute inset-0 z-10 block h-full w-full min-h-full min-w-full object-cover object-center"
                             onLoad={(e: React.SyntheticEvent<HTMLImageElement>) => {
                               const img = e.currentTarget;
@@ -1217,6 +1218,7 @@ export function ProductDetailPage({
                           key={heroDisplaySrc}
                           src={heroDisplaySrc}
                           alt={product.name}
+                          priority
                           className={
                             isWorkbookHero
                               ? 'relative z-10 w-auto max-w-[min(88vw,200px)] origin-center object-contain max-h-[min(42vw,168px)] sm:max-w-[min(240px,48vw)] sm:max-h-[176px] md:max-h-[196px] lg:max-h-[220px]'

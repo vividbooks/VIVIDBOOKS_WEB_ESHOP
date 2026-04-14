@@ -144,7 +144,7 @@ export function UnifiedBookCard({
           ) : (
             <>
               {/* Tiskoviny — obalový obrázek zmenšen o 40%, oproti původní velikosti dlaždice ještě −15 % (digitální licence beze změny) */}
-              <img
+              <ImageWithFallback
                 src={book.image}
                 alt={book.name}
                 className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'} mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom`}
