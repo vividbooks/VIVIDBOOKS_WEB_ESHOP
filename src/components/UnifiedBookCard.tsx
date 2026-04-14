@@ -138,7 +138,7 @@ export function UnifiedBookCard({
           isDigitalTile
             ? 'aspect-[3/4] flex items-end'
             : book.image
-              ? 'flex justify-center'
+              ? 'flex justify-center pt-9'
               : 'aspect-[5/6] flex items-end'
         }`}
       >
