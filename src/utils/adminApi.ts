@@ -836,11 +836,27 @@ export interface AdminSchoolOrderSummary {
     orderCount: number;
   }>;
   digitalLicenses: string[];
+  /** Posledních ~20 objednávek (náhled). */
   recentOrders: Array<{
     id: string;
     orderNumber: string;
     createdAt: string;
     status: string;
+    paymentStatus?: string | null;
+    total: number;
+    items: Array<{
+      productName: string;
+      quantity: number;
+      totalPrice: number;
+    }>;
+  }>;
+  /** Kompletní historie v rámci načteného okna (max 500 řádků z DB). */
+  allOrders?: Array<{
+    id: string;
+    orderNumber: string;
+    createdAt: string;
+    status: string;
+    paymentStatus?: string | null;
     total: number;
     items: Array<{
       productName: string;

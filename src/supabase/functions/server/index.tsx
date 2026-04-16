@@ -11486,60 +11486,7 @@ function isUsableSchoolRecordForAdmin(school: SchoolRecord) {
   return Boolean(name) && !name.startsWith(';') && ico.length >= 6;
 }
 
-async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: string }) {
-  const supabase = getServiceSupabaseClient();
-  if (!supabase) {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
-      digitalLicenses: [] as string[],
-      recentOrders: [] as Array<{
-        id: string;
-        orderNumber: string;
-        createdAt: string;
-        status: string;
-        total: number;
-        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
-      }>,
-    };
-  }
-
-  const ico = String(params.ico || '').trim();
-  const schoolName = String(params.schoolName || '').trim();
-  let query = supabase
-    .from('orders')
-    .select('id, order_number, created_at, status, total, school_name, ico, order_items(product_name, quantity, total_price)')
-    .order('created_at', { ascending: false })
-    .limit(20);
-
-  if (ico) {
-    query = query.eq('ico', ico);
-  } else if (schoolName) {
-    query = query.ilike('school_name', `%${schoolName}%`);
-  } else {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    console.log(`[Schools] Order summary fetch error: ${error.message}`);
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
-  }
-
-  const orders = Array.isArray(data) ? data : [];
+function buildSchoolOrderSummaryFromRows(orders: any[]) {
   const productMap = new Map<string, { name: string; quantity: number; orderIds: Set<string> }>();
   const digitalLicenses = new Set<string>();
 
@@ -11570,6 +11517,9 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
       orderNumber: String(order?.order_number || ''),
       createdAt: String(order?.created_at || ''),
       status: String(order?.status || ''),
+      paymentStatus: order?.payment_status != null && order?.payment_status !== ''
+        ? String(order.payment_status)
+        : null,
       total: Number(order?.total) || 0,
       items: (Array.isArray(order?.order_items) ? order.order_items : []).map((item: any) => ({
         productName: String(item?.product_name || ''),
@@ -11577,6 +11527,110 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
         totalPrice: Number(item?.total_price) || 0,
       })),
     })),
+  };
+}
+
+async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: string }) {
+  const supabase = getServiceSupabaseClient();
+  if (!supabase) {
+    return {
+      orderCount: 0,
+      totalRevenue: 0,
+      purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
+      digitalLicenses: [] as string[],
+      recentOrders: [] as Array<{
+        id: string;
+        orderNumber: string;
+        createdAt: string;
+        status: string;
+        paymentStatus: string | null;
+        total: number;
+        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+      }>,
+      allOrders: [] as Array<{
+        id: string;
+        orderNumber: string;
+        createdAt: string;
+        status: string;
+        paymentStatus: string | null;
+        total: number;
+        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+      }>,
+    };
+  }
+
+  const ico = String(params.ico || '').trim();
+  const schoolName = String(params.schoolName || '').trim();
+  const selectCols =
+    'id, order_number, created_at, status, payment_status, total, school_name, ico, order_items(product_name, quantity, total_price)';
+
+  if (ico) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select(selectCols)
+      .eq('ico', ico)
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    if (error) {
+      console.log(`[Schools] Order summary fetch error: ${error.message}`);
+      return {
+        orderCount: 0,
+        totalRevenue: 0,
+        purchasedProducts: [],
+        digitalLicenses: [],
+        recentOrders: [],
+        allOrders: [],
+      };
+    }
+
+    const orders = Array.isArray(data) ? data : [];
+    const base = buildSchoolOrderSummaryFromRows(orders);
+    return {
+      ...base,
+      recentOrders: base.recentOrders.slice(0, 20),
+      allOrders: base.recentOrders,
+    };
+  }
+
+  if (schoolName) {
+    const query = supabase
+      .from('orders')
+      .select(selectCols)
+      .ilike('school_name', `%${schoolName}%`)
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    const { data, error } = await query;
+    if (error) {
+      console.log(`[Schools] Order summary fetch error: ${error.message}`);
+      return {
+        orderCount: 0,
+        totalRevenue: 0,
+        purchasedProducts: [],
+        digitalLicenses: [],
+        recentOrders: [],
+        allOrders: [],
+      };
+    }
+
+    const orders = Array.isArray(data) ? data : [];
+    const base = buildSchoolOrderSummaryFromRows(orders);
+    return {
+      ...base,
+      orderCount: orders.length,
+      recentOrders: base.recentOrders.slice(0, 20),
+      allOrders: base.recentOrders,
+    };
+  }
+
+  return {
+    orderCount: 0,
+    totalRevenue: 0,
+    purchasedProducts: [],
+    digitalLicenses: [],
+    recentOrders: [],
+    allOrders: [],
   };
 }
 
