@@ -14115,23 +14115,186 @@ function buildSchoolOrderDealTitle(schoolName: string, orderId: string) {
   return `Školní objednávka ${schoolName} (${orderId.slice(-8)})`;
 }
 
-function buildSchoolOrderNoteContent(order: {
-  id: string;
-  schoolName: string;
-  contactName: string;
-  email: string;
-  phone: string;
-  address: string;
-  items: { name: string; qty: number; price: string }[];
-  totalPrice: string | number;
-  note: string;
-}) {
+function normalizeSchoolInquiryStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((x) => String(x ?? '').trim())
+    .filter(Boolean);
+}
+
+function schoolInquiryTypeLabel(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  const map: Record<string, string> = {
+    digital: 'Digitální licence',
+    print: 'Tiskoviny',
+    tisk: 'Tiskoviny',
+    tiskoviny: 'Tiskoviny',
+    interactive: 'Interaktivní licence',
+    combined: 'Kombinace (tisk + digitál)',
+    mixed: 'Kombinace',
+    workbook: 'Pracovní sešity',
+    workbooks: 'Pracovní sešity',
+    bundle: 'Balíček',
+    school: 'Školní licence',
+    parent: 'Rodičovská licence',
+  };
+  return map[key] || raw;
+}
+
+function formatCzechLicenceYears(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n === 1) return '1 rok';
+  if (n >= 2 && n <= 4) return `${n} roky`;
+  return `${n} let`;
+}
+
+/**
+ * Čitelné shrnutí z těla school_inquiry (subjects, types, digital, workbooks, …) pro poznámku v Pipedrivu.
+ */
+function formatSchoolInquiryMetadataHtml(body: Record<string, unknown> | null | undefined): string {
+  if (!body || typeof body !== 'object') return '';
+
+  const customer = body.customer && typeof body.customer === 'object'
+    ? (body.customer as Record<string, unknown>)
+    : null;
+  const ico = String(body.ico ?? customer?.ico ?? customer?.vat ?? '').trim();
+  const position = String(body.position ?? customer?.position ?? '').trim();
+
+  const subjectsTop = normalizeSchoolInquiryStringArray(body.subjects);
+  const typesRaw = normalizeSchoolInquiryStringArray(body.types);
+  const typesHuman = typesRaw.map(schoolInquiryTypeLabel);
+
+  const digital = body.digital && typeof body.digital === 'object' && body.digital !== null
+    ? (body.digital as Record<string, unknown>)
+    : null;
+  const digitalSubjects = digital ? normalizeSchoolInquiryStringArray(digital.subjects) : [];
+  const allSubjects = [...new Set([...subjectsTop, ...digitalSubjects])];
+
+  const rows: Array<{ label: string; value: string }> = [];
+
+  if (typesHuman.length) {
+    rows.push({ label: 'Typ licence / objednávky', value: typesHuman.join(', ') });
+  }
+  if (allSubjects.length) {
+    rows.push({ label: 'Předměty', value: allSubjects.join(', ') });
+  }
+
+  if (digital) {
+    const s2 = Number(digital.students2);
+    const s1 = Number(digital.students1);
+    const pupilParts: string[] = [];
+    if (Number.isFinite(s2) && s2 > 0) pupilParts.push(`2. stupeň: ${s2} žáků`);
+    if (Number.isFinite(s1) && s1 > 0) pupilParts.push(`1. stupeň: ${s1} žáků`);
+    if (pupilParts.length) {
+      rows.push({ label: 'Počet žáků', value: pupilParts.join(' · ') });
+    }
+    const years = Number(digital.licYears);
+    const yearsStr = formatCzechLicenceYears(years);
+    if (yearsStr) {
+      rows.push({ label: 'Délka licence', value: yearsStr });
+    }
+    const scopeNote = String(digital.scopeNote ?? '').trim();
+    if (scopeNote) {
+      rows.push({ label: 'Poznámka k rozsahu (digitál)', value: scopeNote });
+    }
+  }
+
+  const wb = body.workbooks;
+  if (wb && typeof wb === 'object' && wb !== null) {
+    const w = wb as Record<string, unknown>;
+    const items = Array.isArray(w.items) ? w.items : [];
+    if (items.length) {
+      const lines = items.map((it: unknown) => {
+        const o = it && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+        const name = String(o.name ?? 'Položka').trim() || 'Položka';
+        const qty = Number(o.quantity ?? o.qty) || 0;
+        const price = o.price != null ? String(o.price).trim() : '';
+        const bits = [`${qty} ks`];
+        if (price) bits.push(price);
+        return `• ${name} (${bits.join(', ')})`;
+      });
+      rows.push({ label: 'Pracovní sešity (workbooks)', value: lines.join('\n') });
+    }
+    const wbTotal = w.total != null ? String(w.total).trim() : '';
+    if (wbTotal && !items.length) {
+      rows.push({ label: 'Workbooks — celkem', value: wbTotal });
+    }
+  }
+
+  const vb = body.vividboard;
+  if (vb && typeof vb === 'object' && vb !== null) {
+    const count = (vb as Record<string, unknown>).count;
+    if (count != null && String(count).trim() !== '') {
+      rows.push({ label: 'Vividboard', value: `${String(count).trim()} licencí` });
+    }
+  }
+
+  if (ico) {
+    rows.push({ label: 'IČO', value: ico });
+  }
+  if (position) {
+    rows.push({ label: 'Pozice kontaktu', value: position });
+  }
+
+  if (!rows.length) return '';
+
+  const summaryParts: string[] = [];
+  if (typesHuman.length) summaryParts.push(typesHuman.join(', '));
+  if (allSubjects.length) summaryParts.push(`předměty: ${allSubjects.join(', ')}`);
+  if (digital) {
+    const s2 = Number(digital.students2);
+    const s1 = Number(digital.students1);
+    const y = Number(digital.licYears);
+    if (Number.isFinite(s2) && s2 > 0) summaryParts.push(`${s2} žáků (2. st.)`);
+    if (Number.isFinite(s1) && s1 > 0) summaryParts.push(`${s1} žáků (1. st.)`);
+    const ys = formatCzechLicenceYears(y);
+    if (ys) summaryParts.push(ys);
+  }
+
+  const summaryLine = summaryParts.length
+    ? `<p style="margin:0 0 12px;padding:10px 12px;background:#f1f5f9;border-radius:8px;font-size:14px;line-height:1.45;"><strong>Shrnutí:</strong> ${escapePipedriveHtml(summaryParts.join(' · '))}</p>`
+    : '';
+
+  const dl = rows
+    .map(
+      (r) =>
+        `<div style="display:grid;grid-template-columns:minmax(120px,200px) 1fr;gap:6px 16px;margin:6px 0;align-items:start;"><dt style="margin:0;font-weight:700;color:#334155;">${escapePipedriveHtml(r.label)}</dt><dd style="margin:0;white-space:pre-wrap;color:#0f172a;">${escapePipedriveHtml(r.value)}</dd></div>`,
+    )
+    .join('');
+
+  return [
+    `<h4 style="margin:16px 0 8px;">Co si škola objednala</h4>`,
+    summaryLine,
+    `<dl style="margin:0;padding:0;">${dl}</dl>`,
+  ].join('');
+}
+
+function buildSchoolOrderNoteContent(
+  order: {
+    id: string;
+    schoolName: string;
+    contactName: string;
+    email: string;
+    phone: string;
+    address: string;
+    items: { name: string; qty: number; price: string }[];
+    totalPrice: string | number;
+    note: string;
+  },
+  inquiryBody?: Record<string, unknown> | null,
+) {
   const itemLines = order.items.length
     ? `<ul>${order.items
         .filter((item) => item.qty > 0 || item.name)
         .map((item) => `<li><strong>${escapePipedriveHtml(String(item.name || '').trim() || 'Položka')}</strong>: ${item.qty} ks, ${escapePipedriveHtml(String(item.price || '').trim() || 'cena neuvedena')}</li>`)
         .join('')}</ul>`
     : '<p>Bez položek.</p>';
+
+  const formattedMeta = formatSchoolInquiryMetadataHtml(inquiryBody ?? null);
+  const rawMetaFallback =
+    !formattedMeta && order.note
+      ? `<h4>Metadata (raw)</h4><pre style="font-size:12px;white-space:pre-wrap;">${escapePipedriveHtml(String(order.note).slice(0, 12000))}</pre>`
+      : '';
 
   return [
     `<h3>Školní objednávka z webu</h3>`,
@@ -14141,10 +14304,11 @@ function buildSchoolOrderNoteContent(order: {
     `<p><strong>Email:</strong> ${escapePipedriveHtml(order.email)}</p>`,
     `<p><strong>Telefon:</strong> ${escapePipedriveHtml(order.phone || 'neuveden')}</p>`,
     `<p><strong>Adresa:</strong> ${escapePipedriveHtml(order.address || 'neuvedena')}</p>`,
+    formattedMeta || '',
     `<p><strong>Celkem:</strong> ${escapePipedriveHtml(String(order.totalPrice || 'neuvedeno'))}</p>`,
     `<h4>Položky</h4>`,
     itemLines,
-    order.note ? `<h4>Metadata</h4><pre>${escapePipedriveHtml(String(order.note).slice(0, 12000))}</pre>` : '',
+    rawMetaFallback,
   ]
     .filter(Boolean)
     .join('');
@@ -14260,7 +14424,7 @@ async function syncSchoolOrderToPipedrive(
   const dealId = parsePipedriveNumericId(deal?.id);
   const personId = parsePipedriveNumericId(person?.id);
   const note = await createPipedriveNote(apiToken, {
-    content: buildSchoolOrderNoteContent(order),
+    content: buildSchoolOrderNoteContent(order, body),
     dealId,
     orgId: orgLookup.orgId,
     personId,
