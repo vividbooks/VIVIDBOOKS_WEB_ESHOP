@@ -10416,7 +10416,18 @@ type PipedriveSchoolLookup = {
 
 const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
 let pipedriveOrgIcoFieldKeyCache: string | null | undefined;
+/** Cache: organization field id → { key, field_type } for school-order customer label detection */
+let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
+/** Cache: deal field id → { key, field_type } (order form label) */
+let pipedriveDealFieldMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 const PIPEDRIVE_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function pipedriveEnvInt(name: string, defaultVal: number): number {
+  const raw = (Deno.env.get(name) || '').trim();
+  if (!raw) return defaultVal;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : defaultVal;
+}
 const pipedriveSchoolLookupCache = new Map<string, { expiresAt: number; value: PipedriveSchoolLookup }>();
 
 function getPipedriveApiToken() {
@@ -10754,6 +10765,131 @@ async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   return pipedriveOrgIcoFieldKeyCache;
 }
 
+async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
+  if (pipedriveOrgFieldsMetaByIdCache) return pipedriveOrgFieldsMetaByIdCache;
+  const map = new Map<number, { key: string; fieldType: string }>();
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/organizationFields', {}, { limit: 500 });
+    const fields: any[] = data?.data || [];
+    for (const f of fields) {
+      const id = parsePipedriveNumericId(f?.id);
+      const key = String(f?.key || '').trim();
+      if (!id || !key) continue;
+      const rawFt = f?.field_type ?? f?.type;
+      const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
+      map.set(id, { key, fieldType });
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] organizationFields meta: ${e.message}`);
+  }
+  pipedriveOrgFieldsMetaByIdCache = map;
+  return map;
+}
+
+function orgRecordHasCustomerLabel(
+  org: Record<string, unknown> | null | undefined,
+  metaById: Map<number, { key: string; fieldType: string }>,
+  labelEnumFieldId: number,
+  labelSetFieldId: number,
+  customerOptionId: number,
+): boolean {
+  if (!org) return false;
+  const enumMeta = metaById.get(labelEnumFieldId);
+  if (enumMeta?.key) {
+    const v = (org as any)[enumMeta.key];
+    const n = parsePipedriveNumericId(v);
+    if (n === customerOptionId) return true;
+  }
+  const setMeta = metaById.get(labelSetFieldId);
+  if (setMeta?.key) {
+    const v = (org as any)[setMeta.key];
+    const arr = Array.isArray(v) ? v : (v != null && v !== '' ? [v] : []);
+    for (const item of arr) {
+      const n = parsePipedriveNumericId(typeof item === 'object' && item && 'id' in item ? (item as any).id : item);
+      if (n === customerOptionId) return true;
+    }
+  }
+  return false;
+}
+
+async function organizationHasCustomerLabel(apiToken: string, orgId: number): Promise<boolean> {
+  const labelEnumFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_FIELD_ID', 4003);
+  const labelSetFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_IDS_FIELD_ID', 4101);
+  const customerOptionId = pipedriveEnvInt('PIPEDRIVE_ORG_CUSTOMER_LABEL_OPTION_ID', 5);
+  const metaById = await loadPipedriveOrganizationFieldsMetaById(apiToken);
+  try {
+    const data = await pipedriveRequest<any>(apiToken, `/organizations/${orgId}`);
+    const org = data?.data;
+    return orgRecordHasCustomerLabel(org, metaById, labelEnumFieldId, labelSetFieldId, customerOptionId);
+  } catch (e: any) {
+    console.log(`[Pipedrive] organizationHasCustomerLabel: ${e.message}`);
+    return false;
+  }
+}
+
+async function loadPipedriveDealFieldMetaById(apiToken: string, fieldId: number): Promise<{ key: string; fieldType: string } | null> {
+  if (pipedriveDealFieldMetaByIdCache?.has(fieldId)) {
+    return pipedriveDealFieldMetaByIdCache.get(fieldId) || null;
+  }
+  if (!pipedriveDealFieldMetaByIdCache) pipedriveDealFieldMetaByIdCache = new Map();
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    for (const f of fields) {
+      const id = parsePipedriveNumericId(f?.id);
+      const key = String(f?.key || '').trim();
+      if (!id || !key) continue;
+      const rawFt = f?.field_type ?? f?.type;
+      const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
+      pipedriveDealFieldMetaByIdCache.set(id, { key, fieldType });
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] dealFields meta: ${e.message}`);
+  }
+  return pipedriveDealFieldMetaByIdCache.get(fieldId) || null;
+}
+
+async function resolveSchoolOrderDealFieldPayloadValue(
+  apiToken: string,
+  dealFieldId: number,
+  optionIds: number[],
+): Promise<Record<string, unknown> | null> {
+  if (!optionIds.length) return null;
+  const meta = await loadPipedriveDealFieldMetaById(apiToken, dealFieldId);
+  if (!meta?.key) {
+    console.log(`[Pipedrive school order] deal field id=${dealFieldId} not found in dealFields`);
+    return null;
+  }
+  const key = meta.key;
+  const ft = meta.fieldType.toLowerCase();
+  if (ft === 'set') {
+    return { [key]: optionIds };
+  }
+  if (ft === 'enum') {
+    return { [key]: optionIds[0] };
+  }
+  const fallback = optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',');
+  return { [key]: fallback };
+}
+
+async function searchPipedrivePersonByEmailGlobal(apiToken: string, email: string): Promise<any | null> {
+  const term = String(email || '').trim().toLowerCase();
+  if (!term || !term.includes('@')) return null;
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/persons/search', {}, { term, fields: 'email', limit: 10 });
+    const items: any[] = Array.isArray(data?.data?.items) ? data.data.items : [];
+    for (const entry of items) {
+      const person = entry?.item;
+      if (!person?.id) continue;
+      const emails = readPipedrivePersonEmails(person);
+      if (emails.includes(term)) return person;
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] persons/search: ${e.message}`);
+  }
+  return null;
+}
+
 async function searchPipedriveOrganizations(
   apiToken: string,
   term: string,
@@ -11014,6 +11150,31 @@ async function findOrCreatePipedrivePerson(
   const name = String(params.name || '').trim();
   const email = String(params.email || '').trim().toLowerCase();
   const phone = String(params.phone || '').trim();
+
+  if (email) {
+    const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
+    if (globalHit?.id) {
+      const existingOrgId = parsePipedriveNumericId(globalHit.org_id?.id ?? globalHit.org_id?.value ?? globalHit.org_id);
+      const patch: Record<string, any> = {};
+      if (existingOrgId !== orgId) patch.org_id = orgId;
+      if (name && String(globalHit.name || '').trim() !== name) patch.name = name;
+      if (phone) patch.phone = phone;
+      if (Object.keys(patch).length > 0) {
+        try {
+          await pipedriveRequest(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(patch),
+          });
+          const refreshed = await pipedriveRequest<any>(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`);
+          return refreshed?.data || globalHit;
+        } catch (e: any) {
+          console.log(`[Pipedrive] Person PUT (link org): ${e.message}`);
+        }
+      }
+      return globalHit;
+    }
+  }
+
   const persons = await getPipedriveOrganizationPersons(apiToken, orgId).catch(() => []);
 
   const existing =
@@ -13989,6 +14150,42 @@ function buildSchoolOrderNoteContent(order: {
     .join('');
 }
 
+async function createPipedriveSchoolOrderDeal(
+  apiToken: string,
+  params: {
+    title: string;
+    orgId: number;
+    personId?: number | null;
+    ownerUserId: number | null;
+    value?: number | null;
+    currency?: string;
+    pipelineId: number;
+    stageId: number;
+    orderFormExtra: Record<string, unknown> | null;
+  },
+) {
+  const payload: Record<string, any> = {
+    title: params.title,
+    org_id: params.orgId,
+    pipeline_id: params.pipelineId,
+    stage_id: params.stageId,
+  };
+  if (params.ownerUserId != null && params.ownerUserId > 0) {
+    payload.user_id = params.ownerUserId;
+  }
+  if (params.personId) payload.person_id = params.personId;
+  if (params.value != null && Number.isFinite(params.value)) payload.value = params.value;
+  if (params.currency) payload.currency = params.currency;
+  if (params.orderFormExtra && Object.keys(params.orderFormExtra).length) {
+    Object.assign(payload, params.orderFormExtra);
+  }
+  const data = await pipedriveRequest<any>(apiToken, '/deals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return data?.data || null;
+}
+
 async function syncSchoolOrderToPipedrive(
   order: {
     id: string;
@@ -14014,6 +14211,27 @@ async function syncSchoolOrderToPipedrive(
   });
   if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' as const };
 
+  const isCustomerOrg = await organizationHasCustomerLabel(apiToken, orgLookup.orgId);
+  const pipelineUpsell = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_PIPELINE_UPSELL_ID', 7);
+  const stageUpsell = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_STAGE_UPSELL_ID', 42);
+  const pipelineAkvizice = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_PIPELINE_AKVIZICE_ID', 6);
+  const stageAkvizice = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_STAGE_AKVIZICE_ID', 38);
+  const pipelineId = isCustomerOrg ? pipelineUpsell : pipelineAkvizice;
+  const stageId = isCustomerOrg ? stageUpsell : stageAkvizice;
+
+  const fallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
+  const ownerFromLookup = orgLookup.ownerUserId != null && orgLookup.ownerUserId > 0
+    ? orgLookup.ownerUserId
+    : null;
+  const ownerUserId = ownerFromLookup ?? (fallbackOwnerId > 0 ? fallbackOwnerId : null);
+  if (!ownerFromLookup && (!fallbackOwnerId || fallbackOwnerId <= 0)) {
+    console.log('[Pipedrive school order] Žádný owner z CRM a PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID není nastaveno — deal bez user_id.');
+  }
+
+  const orderFormFieldId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_FIELD_ID', 12463);
+  const orderFormOptionId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_OPTION_ID', 48);
+  const orderFormExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, orderFormFieldId, [orderFormOptionId]);
+
   const person = await findOrCreatePipedrivePerson(apiToken, {
     orgId: orgLookup.orgId,
     name: order.contactName,
@@ -14027,12 +14245,16 @@ async function syncSchoolOrderToPipedrive(
   const value = parsePriceNumber(order.totalPrice);
   const currency = body?.workbooks?.currency || 'CZK';
 
-  const deal = await createPipedriveDeal(apiToken, {
+  const deal = await createPipedriveSchoolOrderDeal(apiToken, {
     title: buildSchoolOrderDealTitle(order.schoolName, order.id),
     orgId: orgLookup.orgId,
     personId: parsePipedriveNumericId(person?.id),
+    ownerUserId,
     value,
     currency,
+    pipelineId,
+    stageId,
+    orderFormExtra,
   });
 
   const dealId = parsePipedriveNumericId(deal?.id);
@@ -14045,7 +14267,7 @@ async function syncSchoolOrderToPipedrive(
   });
 
   let activity: any = null;
-  const activityAssigneeId = orgLookup.ownerUserId ?? null;
+  const activityAssigneeId = ownerUserId;
   if (activityAssigneeId) {
     const { todayISO } = buildTodayContextBlock();
     activity = await createPipedriveActivity(apiToken, {
@@ -14068,6 +14290,10 @@ async function syncSchoolOrderToPipedrive(
     noteId: parsePipedriveNumericId(note?.id),
     activityId: parsePipedriveNumericId(activity?.id),
     matchedBy: orgLookup.matchedBy,
+    isCustomerOrg,
+    pipelineId,
+    stageId,
+    ownerUserId,
   };
 }
 
