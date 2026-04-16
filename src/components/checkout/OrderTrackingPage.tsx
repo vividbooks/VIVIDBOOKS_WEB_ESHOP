@@ -218,7 +218,6 @@ export function OrderTrackingPage() {
       ? `${INVOICE_FN}?orderNumber=${encodeURIComponent(order.order_number)}&t=${encodeURIComponent(order.tracking_token)}`
       : null;
 
-  const showLoader = loading && !order && !error;
   const showEmailGate =
     needsEmailGate && !emailQueryNorm.includes('@') && !order && !error && !loading;
 
@@ -434,11 +433,6 @@ export function OrderTrackingPage() {
             </>
           )}
 
-          {paymentIntentTrimmed && (
-            <div className="mt-6 inline-flex items-center rounded-full bg-[#f1f3f8] px-4 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/65">
-              {showLoader ? '…' : `payment_intent: ${paymentIntentTrimmed}`}
-            </div>
-          )}
         </div>
 
         {order && upsellCartItems.length > 0 && (

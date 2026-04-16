@@ -188,6 +188,13 @@ export function OrderConfirmationPage() {
 
   const showLoader = loading && !order && !pollExhausted && !error;
 
+  const loadingTitle = isPaymentIntentMode
+    ? 'Zpracováváme vaši platbu...'
+    : 'Načítáme vaši objednávku...';
+  const loadingDescription = isPaymentIntentMode
+    ? 'Objednávka se ještě zapisuje do systému. Stránka se automaticky obnovuje každé 3 sekundy.'
+    : 'Chvilku strpení, načítáme potvrzení objednávky.';
+
   const upsellCartItems: CartItem[] = useMemo(() => {
     if (!order?.items?.length) return [];
     return order.items.map((item) => ({
@@ -385,19 +392,14 @@ export function OrderConfirmationPage() {
                 {'Potvrzení objednávky'}
               </p>
               <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[38px] md:text-[52px] leading-none mb-4">
-                {'Zpracováváme vaši platbu...'}
+                {loadingTitle}
               </h1>
               <p className="font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]/60 leading-relaxed">
-                {'Objednávka se ještě zapisuje do systému. Stránka se automaticky obnovuje každé 3 sekundy.'}
+                {loadingDescription}
               </p>
             </>
           )}
 
-          {paymentIntentTrimmed && (
-            <div className="mt-6 inline-flex items-center rounded-full bg-[#f1f3f8] px-4 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/65">
-              {showLoader ? 'čekáme na webhook' : `payment_intent: ${paymentIntentTrimmed}`}
-            </div>
-          )}
           {orderTrimmed && !paymentIntentTrimmed && order && (
             <div className="mt-6 inline-flex items-center rounded-full bg-[#f1f3f8] px-4 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/65">
               {`objednávka: ${orderTrimmed}`}
