@@ -10415,6 +10415,8 @@ type PipedriveSchoolLookup = {
 };
 
 const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
+/** API v2 (products/search, …) — stejný host, jiný prefix než v1. */
+const PIPEDRIVE_V2_BASE_URL = 'https://api.pipedrive.com/api/v2';
 let pipedriveOrgIcoFieldKeyCache: string | null | undefined;
 /** Cache: organization field id → { key, field_type } for school-order customer label detection */
 let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
@@ -10746,6 +10748,139 @@ async function pipedriveRequest<T = any>(
     throw new Error(`Pipedrive ${res.status} ${path}: ${String(json?.error || text || 'Unknown error').slice(0, 300)}`);
   }
   return json as T;
+}
+
+async function pipedriveV2Request<T = any>(
+  apiToken: string,
+  path: string,
+  query: Record<string, string | number | boolean | null | undefined> = {},
+): Promise<T> {
+  const url = new URL(`${PIPEDRIVE_V2_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`);
+  url.searchParams.set('api_token', apiToken);
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '') continue;
+    url.searchParams.set(key, String(value));
+  }
+  const res = await fetch(url.toString());
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : {};
+  if (!res.ok || json?.success === false) {
+    throw new Error(
+      `Pipedrive v2 ${res.status} ${path}: ${String(json?.error || json?.message || text || 'Unknown error').slice(0, 300)}`,
+    );
+  }
+  return json as T;
+}
+
+function pickFirstNonEmptyTrimmedString(...candidates: unknown[]): string {
+  for (const c of candidates) {
+    const s = String(c ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+/** Jednoduchá cesta v KV produktu, např. `shoptetId` nebo `metadata.pipedrive_product_code`. */
+function getCatalogStringByKeyPath(obj: Record<string, unknown> | null | undefined, keyPath: string): string {
+  const parts = keyPath
+    .split('.')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object') return '';
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return String(cur ?? '').trim();
+}
+
+/**
+ * Kód produktu pro párování na Pipedrive pole `code`.
+ * Volitelně `PIPEDRIVE_PRODUCT_CODE_FIELD` = klíč v KV (nebo tečková cesta).
+ */
+function getPipedriveProductCodeFromCatalog(catalogItem: Record<string, unknown> | null | undefined): string {
+  if (!catalogItem) return '';
+  const envField = (Deno.env.get('PIPEDRIVE_PRODUCT_CODE_FIELD') || '').trim();
+  if (envField) {
+    const fromEnv = getCatalogStringByKeyPath(catalogItem, envField);
+    if (fromEnv) return fromEnv;
+  }
+  const md = (catalogItem.metadata && typeof catalogItem.metadata === 'object'
+    ? (catalogItem.metadata as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  return pickFirstNonEmptyTrimmedString(
+    catalogItem.pipedriveProductCode,
+    md.pipedrive_product_code,
+    md.pipedriveProductCode,
+    catalogItem.code,
+    catalogItem.productCode,
+    md.code,
+    catalogItem.shoptetId,
+    catalogItem.isbn,
+    catalogItem.shopifyVariantId,
+  );
+}
+
+function normalizePipedriveProductCodeForMatch(code: string): string {
+  return String(code ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Vyhledá numerické product_id v Pipedrive podle přesné shody kódu (API v2 products/search).
+ * Výsledky cachujeme v rámci jedné synchronizace dealu (včetně negativních).
+ */
+async function resolvePipedriveProductIdByCode(
+  apiToken: string,
+  code: string,
+  cache: Map<string, number | null>,
+): Promise<number | null> {
+  const term = String(code ?? '').trim();
+  if (!term) return null;
+  const cacheKey = normalizePipedriveProductCodeForMatch(term);
+  if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
+
+  try {
+    const json = await pipedriveV2Request<any>(apiToken, '/products/search', {
+      term,
+      fields: 'code',
+      exact_match: true,
+      limit: 50,
+    });
+    const raw = json?.data;
+    const rows: any[] = Array.isArray(raw?.items)
+      ? raw.items
+      : Array.isArray(raw)
+        ? raw
+        : [];
+    const want = normalizePipedriveProductCodeForMatch(term);
+
+    const exactHits: number[] = [];
+    for (const row of rows) {
+      const item = row?.item && typeof row.item === 'object' ? row.item : row;
+      const itemCode = item?.code != null ? String(item.code).trim() : '';
+      const id = parsePipedriveNumericId(item?.id);
+      if (id && itemCode && normalizePipedriveProductCodeForMatch(itemCode) === want) {
+        exactHits.push(id);
+      }
+    }
+    if (exactHits.length === 1) {
+      cache.set(cacheKey, exactHits[0]);
+      return exactHits[0];
+    }
+    if (exactHits.length > 1) {
+      console.log(
+        `[Pipedrive eshop] product code ambiguous: code=${term} ids=${exactHits.slice(0, 5).join(',')}${exactHits.length > 5 ? '…' : ''}`,
+      );
+      cache.set(cacheKey, null);
+      return null;
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive eshop] product code lookup failed code=${term}: ${e.message}`);
+  }
+  cache.set(cacheKey, null);
+  return null;
 }
 
 async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
@@ -13837,18 +13972,37 @@ async function addPipedriveDealLineItemsFromOrder(
   orderItems: any[],
   catalogById: Map<string, any>,
 ) {
+  /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
+  const codeToPdId = new Map<string, number | null>();
   let ord = 0;
   for (const oi of orderItems) {
     ord += 1;
     const pid = String(oi?.product_id ?? '').trim();
-    if (!pid || pid.startsWith('bundle:')) continue;
+    if (!pid) {
+      console.log('[Pipedrive eshop] skip line: empty product_id');
+      continue;
+    }
+    if (pid.startsWith('bundle:')) {
+      /* Balíčky: zatím nepřidáváme dílčí řádky — v Pipedrivu musí být produkty s kódem; rozvinutí bundle vyžaduje definici v KV. */
+      console.log(`[Pipedrive eshop] skip line: bundle rows not expanded product_id=${pid}`);
+      continue;
+    }
     const catalog = catalogById.get(pid);
     const rawPd = catalog?.pipedriveProductId ?? catalog?.metadata?.pipedrive_product_id ?? catalog?.metadata?.pipedriveProductId;
     let pipedriveProductId = parsePipedriveNumericId(rawPd);
     if (!pipedriveProductId) {
       pipedriveProductId = parsePipedriveNumericId(pid);
     }
-    if (!pipedriveProductId) continue;
+    const pdCode = getPipedriveProductCodeFromCatalog(catalog);
+    if (!pipedriveProductId && pdCode) {
+      pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, pdCode, codeToPdId);
+    }
+    if (!pipedriveProductId) {
+      console.log(
+        `[Pipedrive eshop] skip line: no product id for product_id=${pid} code=${pdCode || '(none)'}`,
+      );
+      continue;
+    }
     const qty = Number(oi.quantity) || 1;
     const unitHaler = Number(oi.unit_price) || 0;
     const itemPrice = Math.max(0, Math.round(unitHaler / 100));

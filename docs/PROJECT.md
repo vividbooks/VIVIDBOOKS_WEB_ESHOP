@@ -84,6 +84,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `PIPEDRIVE_API_TOKEN` | Pipedrive API. |
 | `PIPEDRIVE_DEFAULT_STAGE_ID`, `PIPEDRIVE_DEFAULT_OWNER_ID`, … | Pipeline / deal logika. |
 | `PIPEDRIVE_ESHOP_*` | E‑shop dealy v Pipedrivu (viz `.env.example`). |
+| `PIPEDRIVE_PRODUCT_CODE_FIELD` | Volitelně jeden klíč (nebo tečková cesta) v KV produktu pro **kód** odpovídající poli *Product code* v Pipedrivu; řádky dealu se přidají přes `GET /api/v2/products/search` (`exact_match` na `code`). Bez nastavení se bere heuristika (`pipedriveProductCode`, metadata, `shoptetId`, `isbn`, …). **Řádky `bundle:`** se zatím do dealu nepřidávají (nutné rozvinutí z definice balíčku). |
 | `PIPEDRIVE_SCHOOL_ORDER_*`, `PIPEDRIVE_ORG_*` | Školní poptávka z webu → deal v Pipedrivu (pipeline podle štítku customer u org; `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID` = user_id při chybějícím owner z CRM). |
 | `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN` | Slack integrace. |
 | `PUBLIC_SITE_URL` | Odkazy v e‑mailech webináře (`getPublicSiteOrigin()`). |
