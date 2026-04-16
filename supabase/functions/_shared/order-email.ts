@@ -190,9 +190,14 @@ function buildOrderItemsTable(items: OrderItemRow[]) {
 }
 
 function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackingUrl: string | null) {
-  const receiptBlock = order.stripe_receipt_url
+  const cardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+  const receiptBlock = cardLike
     ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
-        Účtenku od Stripe si můžete stáhnout zde:
+        Daňový doklad o zaplacení vám zašle e-mailem <strong>iDoklad</strong> (obvykle během několika minut po zpracování platby).
+      </p>`
+    : order.stripe_receipt_url
+    ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
+        Účtenku od Stripe:
         <a href="${escapeHtml(order.stripe_receipt_url)}" style="color:#2563eb;text-decoration:none;">Zobrazit účtenku</a>
       </p>`
     : '';

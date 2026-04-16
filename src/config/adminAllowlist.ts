@@ -7,7 +7,7 @@
  *   VITE_ADMIN_ALLOWLIST_OFF=true — lokálně povolit kohokoli (stejně jako u asistenta)
  */
 
-const ADMIN_ALLOWED_EMAILS: string[] = ['vitek@vividbooks.com'];
+const ADMIN_ALLOWED_EMAILS: string[] = ['vitek@vividbooks.com', 'dan@vividbooks.com'];
 
 function allowlistBypassEnabled(): boolean {
   const v = import.meta.env.VITE_ADMIN_ALLOWLIST_OFF as string | undefined;
