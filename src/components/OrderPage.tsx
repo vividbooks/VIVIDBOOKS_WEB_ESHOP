@@ -68,6 +68,7 @@ import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../utils/postalCodeC
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/streetHouseNumberCZ';
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
 import { appPath } from '../utils/appBaseUrl';
+import { buildThankYouUrlAfterPayment } from '../utils/checkoutThankYouRedirect';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -1441,9 +1442,9 @@ export function OrderPage() {
         if (cancelled) return;
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const piFromApi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const pi = (piFromApi || paymentIntentId || '').trim();
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
         }
       } catch {
         /* ignore */
@@ -1455,7 +1456,7 @@ export function OrderPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [schoolDesktopWalletQrActive, schoolPaymentResumeToken]);
+  }, [schoolDesktopWalletQrActive, schoolPaymentResumeToken, paymentIntentId]);
 
   const maxOrderStep = isDigitalServicesOnly ? 3 : 6;
   const canGoBack = step > 1;

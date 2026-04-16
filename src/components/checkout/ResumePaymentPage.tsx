@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { Elements } from '@stripe/react-stripe-js';
 import { Loader2 } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { appPath } from '../../utils/appBaseUrl';
+import { buildThankYouUrlAfterPayment } from '../../utils/checkoutThankYouRedirect';
 import { useStripePublishableKey } from '../../utils/stripe/useStripePublishableKey';
 import { SEOHead } from '../SEOHead';
 import { StripePaymentSubmitForm } from './StripePaymentSubmitForm';
@@ -55,9 +55,8 @@ export function ResumePaymentPage() {
         }
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const pi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
           return;
         }
         if (data.status === 'payment_cancelled') {

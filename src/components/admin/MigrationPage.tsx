@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, type ChangeEvent } from 'react';
+import { Link } from 'react-router';
 import {
   Upload, AlertCircle, CheckCircle, Database, Loader2, ArrowRight, Eye, FileText, Bug, Radio, Newspaper,
-  ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft, Store, Sparkles,
+  ImageIcon, FolderSync, Video, RefreshCw, LayoutGrid, Code2, ArrowRightLeft, Store, Sparkles, Mail,
 } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { fetchProducts, seedCollection } from '../../utils/adminApi';
@@ -26,6 +27,62 @@ import { toast } from 'sonner@2.0.3';
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = (key: string) => ({ Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' });
 const UPLOAD_AUTH_HEADERS = { Authorization: `Bearer ${publicAnonKey}` };
+
+type McAudienceKey = 'newsletter' | 'no_newsletter' | 'primary';
+
+type McBatchLocalState = {
+  resumeFrom: { offset: number; skipInPage: number } | null;
+  membersPerRun: number;
+  updatedAt: string;
+  lastMembersSynced?: number;
+  mailchimpTotal?: number;
+  lastMembersImportHasMore?: boolean;
+};
+
+const MC_BATCH_LS = 'vividbooks_mailchimp_batch_v1';
+
+function mcBatchStorageKey(audience: McAudienceKey): string {
+  return `${MC_BATCH_LS}:${audience}`;
+}
+
+function readMcBatchLocal(audience: McAudienceKey): McBatchLocalState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(mcBatchStorageKey(audience));
+    if (!raw) return null;
+    const p = JSON.parse(raw) as Partial<McBatchLocalState>;
+    if (typeof p.membersPerRun !== 'number' || typeof p.updatedAt !== 'string') return null;
+    if (p.resumeFrom != null) {
+      if (typeof p.resumeFrom.offset !== 'number' || typeof p.resumeFrom.skipInPage !== 'number') return null;
+    }
+    return {
+      resumeFrom: p.resumeFrom ?? null,
+      membersPerRun: p.membersPerRun,
+      updatedAt: p.updatedAt,
+      lastMembersSynced: typeof p.lastMembersSynced === 'number' ? p.lastMembersSynced : undefined,
+      mailchimpTotal: typeof p.mailchimpTotal === 'number' ? p.mailchimpTotal : undefined,
+      lastMembersImportHasMore: typeof p.lastMembersImportHasMore === 'boolean' ? p.lastMembersImportHasMore : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeMcBatchLocal(audience: McAudienceKey, state: McBatchLocalState): void {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(mcBatchStorageKey(audience), JSON.stringify(state));
+}
+
+function clearMcBatchLocal(audience: McAudienceKey): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(mcBatchStorageKey(audience));
+}
+
+const MC_AUDIENCE_LABEL: Record<McAudienceKey, string> = {
+  newsletter: 'Newsletter',
+  no_newsletter: 'Bez newsletteru',
+  primary: 'Primární',
+};
 
 export default function MigrationPage() {
   const [isMigrating, setIsMigrating] = useState(false);
@@ -67,6 +124,25 @@ export default function MigrationPage() {
   });
   const [imgMigrating, setImgMigrating] = useState(false);
   const [imgResult, setImgResult] = useState<any>(null);
+
+  /** Mailchimp → Postgres (`subscribers`, kampaně, volitelně události) */
+  const [mcMigrateBusy, setMcMigrateBusy] = useState(false);
+  const [mcMigrateResult, setMcMigrateResult] = useState<Record<string, unknown> | null>(null);
+  const [mcAudience, setMcAudience] = useState<McAudienceKey>('newsletter');
+  const [mcIncludeActivity, setMcIncludeActivity] = useState(false);
+  const [mcMembersPerRun, setMcMembersPerRun] = useState(() => readMcBatchLocal('newsletter')?.membersPerRun ?? 2000);
+  const [mcResumeCursor, setMcResumeCursor] = useState<{ offset: number; skipInPage: number } | null>(
+    () => readMcBatchLocal('newsletter')?.resumeFrom ?? null,
+  );
+  /** Poslední uložený stav dávky (localStorage) pro zobrazení po obnovení stránky. */
+  const [mcBatchLocalInfo, setMcBatchLocalInfo] = useState<McBatchLocalState | null>(() => readMcBatchLocal('newsletter'));
+
+  useEffect(() => {
+    const loaded = readMcBatchLocal(mcAudience);
+    setMcBatchLocalInfo(loaded);
+    setMcResumeCursor(loaded?.resumeFrom ?? null);
+    if (loaded) setMcMembersPerRun(loaded.membersPerRun);
+  }, [mcAudience]);
 
   /** Metodické principy — hromadné obrázky podle názvu souboru */
   const [mpiSubjects, setMpiSubjects] = useState<any[] | null>(null);
@@ -574,6 +650,183 @@ export default function MigrationPage() {
       toast.error(`Migrace obrázků selhala: ${e.message}`);
     } finally {
       setImgMigrating(false);
+    }
+  };
+
+  const handleMailchimpContactsMigrate = async (mode: 'full' | 'sample' | 'batch') => {
+    const isSample = mode === 'sample';
+    const isBatch = mode === 'batch';
+    if (isSample) {
+      if (
+        !confirm(
+          'Otestovat import jen prvních 10 kontaktů z vybrané audience? Kampaně se i tak naimportují celé z účtu Mailchimp.',
+        )
+      ) {
+        return;
+      }
+    } else if (isBatch) {
+      const n = Math.min(10_000, Math.max(1, Math.floor(mcMembersPerRun) || 2000));
+      if (
+        !confirm(
+          `Postupný import: dávky po max. ${n} členech, další dávka se spustí automaticky až do konce listu.${mcResumeCursor ? ' Začínáme od uložené pozice v Mailchimp API.' : ''} Nech tuto stránku otevřenou. Kampaně a případná aktivita se doplní až po poslední dávce.`,
+        )
+      ) {
+        return;
+      }
+    } else {
+      const n = Math.min(10_000, Math.max(1, Math.floor(mcMembersPerRun) || 2000));
+      if (
+        !confirm(
+          `Celý list: automaticky poběží dávky po ${n} členech (opakované volání Edge funkce, bez jednoho dlouhého běhu). Nech stránku otevřenou. Naplní subscribers, tagy, kampaně; import je idempotentní (upsert).`,
+        )
+      ) {
+        return;
+      }
+    }
+    setMcMigrateBusy(true);
+    if (mode === 'full') {
+      setMcResumeCursor(null);
+      clearMcBatchLocal(mcAudience);
+      setMcBatchLocalInfo(null);
+    }
+    setMcMigrateResult(null);
+    try {
+      const batchN = Math.min(10_000, Math.max(1, Math.floor(mcMembersPerRun) || 2000));
+
+      if (isSample) {
+        const res = await fetch(`${SERVER}/admin/migrate-mailchimp-contacts`, {
+          method: 'POST',
+          headers: AUTH(publicAnonKey),
+          body: JSON.stringify({
+            audience: mcAudience,
+            includeActivity: mcIncludeActivity,
+            maxMembers: 10,
+          }),
+        });
+        const data = await safeJson(res);
+        setMcMigrateResult(data);
+        if (data.ok) {
+          toast.success(
+            `Mailchimp: ${data.membersSynced ?? 0} členů, ${data.campaignsUpserted ?? 0} kampaní.` +
+              (data.emailEventsUpserted ? ` Události: ${data.emailEventsUpserted}.` : ''),
+          );
+          if (data.warning) toast.message(String(data.warning));
+        } else {
+          toast.error(String(data.error || 'Migrace kontaktů selhala'));
+        }
+        return;
+      }
+
+      /** Celý list i „postupně“ jedou stejnou smyčkou; další dávka se spustí sama. */
+      const runChained = isBatch || mode === 'full';
+      let cursor: { offset: number; skipInPage: number } | null = isBatch ? mcResumeCursor : null;
+      let totalMembersSynced = 0;
+      let batchIdx = 0;
+      let lastWarning: string | undefined;
+
+      while (runChained) {
+        batchIdx++;
+        const res = await fetch(`${SERVER}/admin/migrate-mailchimp-contacts`, {
+          method: 'POST',
+          headers: AUTH(publicAnonKey),
+          body: JSON.stringify({
+            audience: mcAudience,
+            includeActivity: mcIncludeActivity,
+            membersPerRun: batchN,
+            ...(cursor ? { resumeFrom: cursor } : {}),
+          }),
+        });
+        const data = await safeJson(res);
+        if (typeof data.membersSynced === 'number') totalMembersSynced += data.membersSynced;
+        if (data.warning) lastWarning = String(data.warning);
+
+        setMcMigrateResult({
+          ...data,
+          _mailchimpChained: {
+            batchIndex: batchIdx,
+            totalMembersSyncedSoFar: totalMembersSynced,
+            resumeFrom: cursor,
+          },
+        });
+
+        if (!data.ok) {
+          toast.error(String(data.error || 'Migrace kontaktů selhala'));
+          break;
+        }
+
+        const more = Boolean(data.membersImportHasMore);
+        let nextCursor: { offset: number; skipInPage: number } | null = null;
+        if (more) {
+          if (data.nextResume && typeof data.nextResume === 'object') {
+            const nr = data.nextResume as { offset?: unknown; skipInPage?: unknown };
+            if (typeof nr.offset === 'number' && typeof nr.skipInPage === 'number') {
+              nextCursor = { offset: nr.offset, skipInPage: nr.skipInPage };
+            }
+          }
+          if (!nextCursor) {
+            toast.error(
+              'Odpověď hlásí další dávku, ale chybí platné nextResume — automatické pokračování zastaveno. Zkontroluj JSON níže.',
+            );
+            setMcResumeCursor(cursor);
+            const batchSnapshot: McBatchLocalState = {
+              resumeFrom: cursor,
+              membersPerRun: batchN,
+              updatedAt: new Date().toISOString(),
+              lastMembersSynced: typeof data.membersSynced === 'number' ? data.membersSynced : undefined,
+              mailchimpTotal:
+                typeof data.mailchimpMembersApiTotalItems === 'number'
+                  ? data.mailchimpMembersApiTotalItems
+                  : undefined,
+              lastMembersImportHasMore: true,
+            };
+            writeMcBatchLocal(mcAudience, batchSnapshot);
+            setMcBatchLocalInfo(batchSnapshot);
+            break;
+          }
+        }
+
+        if (!more) nextCursor = null;
+        cursor = nextCursor;
+        setMcResumeCursor(nextCursor);
+
+        const batchSnapshot: McBatchLocalState = {
+          resumeFrom: nextCursor,
+          membersPerRun: batchN,
+          updatedAt: new Date().toISOString(),
+          lastMembersSynced: typeof data.membersSynced === 'number' ? data.membersSynced : undefined,
+          mailchimpTotal:
+            typeof data.mailchimpMembersApiTotalItems === 'number' ? data.mailchimpMembersApiTotalItems : undefined,
+          lastMembersImportHasMore: more,
+        };
+        writeMcBatchLocal(mcAudience, batchSnapshot);
+        setMcBatchLocalInfo(batchSnapshot);
+
+        if (!more) {
+          const lastCamp = typeof data.campaignsUpserted === 'number' ? data.campaignsUpserted : 0;
+          const lastEv = typeof data.emailEventsUpserted === 'number' ? data.emailEventsUpserted : 0;
+          setMcMigrateResult({
+            ...data,
+            _mailchimpChainedSummary: {
+              batches: batchIdx,
+              totalMembersSynced,
+            },
+          });
+          toast.success(
+            `Mailchimp hotovo: ${batchIdx} dávek, celkem ${totalMembersSynced} kontaktů v tomto běhu. ` +
+              `Kampaně (poslední dávka): ${lastCamp}.` +
+              (lastEv ? ` Události: ${lastEv}.` : ''),
+          );
+          if (lastWarning) toast.message(lastWarning);
+          break;
+        }
+
+        toast.message(`Dávka ${batchIdx}: +${data.membersSynced ?? 0} kontaktů (celkem ${totalMembersSynced}). Spouštím další…`);
+        await new Promise(r => setTimeout(r, 350));
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Migrace selhala');
+    } finally {
+      setMcMigrateBusy(false);
     }
   };
 
@@ -1465,6 +1718,157 @@ export default function MigrationPage() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* ── Mailchimp kontakty → Postgres ───────────────────── */}
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-4">
+            <div className="w-12 h-12 bg-sky-50 rounded-xl flex items-center justify-center shrink-0">
+              <Mail className="w-6 h-6 text-sky-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-[#001161]">{'Mailchimp → kontakty (Postgres)'}</h2>
+              <p className="text-[13px] text-gray-500 mt-1">
+                {'Použije MAILCHIMP_API_KEY a ID audience z Edge secrets. Vyplní tabulky lists, subscribers, subscriber_lists, tags, campaigns; volitelně email_events (pomalé).'}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <label className="text-[12px] font-bold text-gray-600">{'Audience:'}</label>
+            <select
+              value={mcAudience}
+              onChange={(e) => setMcAudience(e.target.value as McAudienceKey)}
+              disabled={mcMigrateBusy}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-[13px] bg-white min-w-[220px]"
+            >
+              <option value="newsletter">{'Newsletter (MAILCHIMP_AUDIENCE_NEWSLETTER)'}</option>
+              <option value="no_newsletter">{'Bez newsletteru (MAILCHIMP_AUDIENCE_NO_NEWSLETTER)'}</option>
+              <option value="primary">{'Primární (PRIMARY → NEWSLETTER fallback)'}</option>
+            </select>
+            <label className="flex items-center gap-2 text-[12px] text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={mcIncludeActivity}
+                onChange={(e) => setMcIncludeActivity(e.target.checked)}
+                disabled={mcMigrateBusy}
+                className="accent-sky-600"
+              />
+              {'Včetně aktivity (opens/clicks, ~180 dní; může trvat dlouho)'}
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <label className="flex items-center gap-2 text-[12px] text-gray-700">
+              <span className="font-bold text-gray-600">{'Velikost dávky:'}</span>
+              <input
+                type="number"
+                min={1}
+                max={10_000}
+                value={mcMembersPerRun}
+                onChange={(e) => setMcMembersPerRun(Number(e.target.value) || 2000)}
+                disabled={mcMigrateBusy}
+                className="border border-gray-200 rounded-lg px-2 py-1.5 w-[100px] text-[13px] bg-white"
+              />
+            </label>
+            {mcResumeCursor && (
+              <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 font-mono">
+                {`resume offset=${mcResumeCursor.offset} skip=${mcResumeCursor.skipInPage}`}
+              </span>
+            )}
+            {mcResumeCursor && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMcResumeCursor(null);
+                  clearMcBatchLocal(mcAudience);
+                  setMcBatchLocalInfo(null);
+                }}
+                disabled={mcMigrateBusy}
+                className="text-[12px] font-bold text-gray-600 underline hover:text-gray-900 disabled:opacity-50 cursor-pointer"
+              >
+                {'Zrušit uloženou pozici'}
+              </button>
+            )}
+          </div>
+          {mcBatchLocalInfo ? (
+            <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-[12px] text-amber-950">
+              <p className="font-bold text-[#001161]">{'Postup dávkového importu (uloženo v tomto prohlížeči)'}</p>
+              <p className="mt-1 text-[#001161]/80">
+                {`Audience: ${MC_AUDIENCE_LABEL[mcAudience]} · Poslední změna: ${new Date(mcBatchLocalInfo.updatedAt).toLocaleString('cs-CZ')}`}
+              </p>
+              {mcBatchLocalInfo.resumeFrom ? (
+                <p className="mt-1 font-mono text-[11px] text-[#001161]/90">
+                  {`Další dávka začne v Mailchimp API na offset=${mcBatchLocalInfo.resumeFrom.offset}, skipInPage=${mcBatchLocalInfo.resumeFrom.skipInPage}. Velikost dávky: ${mcBatchLocalInfo.membersPerRun}.`}
+                </p>
+              ) : (
+                <p className="mt-1 text-[#001161]/80">
+                  {mcBatchLocalInfo.lastMembersImportHasMore === false
+                    ? 'Uložený stav: poslední dávkový běh nahlásil, že už není co načítat (můžeš zkusit ještě jednou „Postupně“ — je to idempotentní).'
+                    : 'Není uložená pozice pokračování — klikni „Postupně (dávka)“ pro nový začátek, nebo pokračuj z poslední odpovědi API níže.'}
+                </p>
+              )}
+              {mcBatchLocalInfo.mailchimpTotal != null ? (
+                <p className="mt-1 text-[#001161]/75">
+                  {`Mailchimp u tohoto listu hlásí celkem cca ${mcBatchLocalInfo.mailchimpTotal} členů (z poslední odpovědi migrace).`}
+                </p>
+              ) : null}
+              {mcBatchLocalInfo.lastMembersSynced != null ? (
+                <p className="mt-1 text-[#001161]/75">
+                  {`Poslední dávka v jednom requestu: ${mcBatchLocalInfo.lastMembersSynced} zpracovaných záznamů.`}
+                </p>
+              ) : null}
+              <p className="mt-2 text-[11px] text-[#001161]/60">
+                {'Kdo už je v Postgresu, uvidíš v '}
+                <Link to="/mailing/audience" className="font-bold text-fuchsia-700 underline">
+                  Mailing → Audience
+                </Link>
+                {' (import je podle e-mailu idempotentní — stejný kontakt se nepřidá dvakrát).'}
+              </p>
+            </div>
+          ) : (
+            <p className="mb-3 text-[11px] text-gray-500">
+              {
+                'Tip: po každé dávce se pozice uloží do prohlížeče — obnovení stránky už nepřijdeš o „kde pokračovat“.'
+              }
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleMailchimpContactsMigrate('full')}
+              disabled={mcMigrateBusy}
+              className="flex items-center gap-2 bg-sky-600 hover:bg-sky-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {mcMigrateBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+              {mcMigrateBusy ? 'Probíhá import…' : 'Celý list (auto dávky)'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleMailchimpContactsMigrate('batch')}
+              disabled={mcMigrateBusy}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {mcMigrateBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {mcResumeCursor ? 'Pokračovat (auto až do konce)' : 'Postupně (auto až do konce)'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleMailchimpContactsMigrate('sample')}
+              disabled={mcMigrateBusy}
+              className="flex items-center gap-2 bg-white border-2 border-sky-200 text-sky-800 hover:bg-sky-50 px-4 py-2.5 rounded-xl text-[13px] font-bold transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              {'Ověřit: prvních 10 kontaktů'}
+            </button>
+          </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            {
+              '„Celý list“ i „Postupně“ po sobě automaticky spouští další dávku až do konce listu (velikost dávky výše). Po poslední dávce se doplní kampaně a případně aktivita. Nech stránku otevřenou. Zkouška 10 kontaktů je jednorázová a synchronizuje všechny kampaně z účtu.'
+            }
+          </p>
+          {mcMigrateResult && (
+            <div className="mt-4 bg-sky-50 rounded-xl p-4 border border-sky-200 text-[12px] text-sky-900 font-mono whitespace-pre-wrap break-all">
+              {JSON.stringify(mcMigrateResult, null, 2)}
+            </div>
+          )}
         </div>
 
         {/* ── Migrace obrázků do Supabase Storage ─────────────── */}

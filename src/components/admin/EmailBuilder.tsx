@@ -1,16 +1,34 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
+import { useLocation, useSearchParams } from 'react-router';
 import {
   Mail, Plus, Trash2, Save, Send, Loader2,
-  Copy, Check, ExternalLink, FileText, X,
+  CopyPlus, ClipboardCopy, ClipboardPaste, ExternalLink, X,
   Sparkles, Brain,
   PanelLeftClose, PanelLeftOpen,
-  ArrowUp, Settings2, MousePointerClick, TextCursor,
-  Layers, Code, ImageIcon, Video, Undo2, Redo2,
+  ArrowUp, ChevronUp, ChevronDown, Settings2, MousePointerClick, TextCursor,
+  Layers, Code, ImageIcon, Video, Undo2, Redo2, LayoutTemplate,
+  AlignLeft, AlignCenter, AlignRight, Minus, RectangleHorizontal, Columns2, Columns3, PanelTop, ShoppingBag,
+  ArrowDown, SquareDashed,
+  SquareStack,
+  BetweenVerticalStart,
+  Bold, Italic, Underline, Strikethrough, Link2, List, ListOrdered,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import CollageModal from './CollageModal';
+import { EmailProductCollagePanel, type EmailProductCollageLivePayload } from './EmailProductCollagePanel';
+import { EmailWebinarPanel, type EmailWebinarLivePayload } from './EmailWebinarPanel';
+import {
+  buildProductCollageBlockHtml,
+  encodeProductCollagePayload,
+  readProductCollageStateFromElement,
+} from './emailProductCollage';
+import {
+  buildWebinarBlockHtml,
+  encodeWebinarPayload,
+  readWebinarStateFromElement,
+} from './emailWebinarBlock';
 import { EmailImageEditModal } from './EmailImageEditModal';
 import { EmailAssetPickerModal } from './EmailAssetPickerModal';
 import { buildEmailProductImagesTableHtml } from './collageUtils';
@@ -20,12 +38,43 @@ import {
   fetchGenerateEmailWithRetry,
   getStoredEmailAiTier,
 } from '../../utils/emailAiTier';
+import {
+  EMAIL_BLOCK_PRESETS,
+  type EmailBlockPreset,
+  type EmailBlockType,
+  type EmailBuilderMode,
+  type EmailSectionFill,
+  buildEmailBlockHtml,
+  buildEmailSectionHtml,
+  extractFirstImage,
+  extractFirstLink,
+  getEmailBlockLabel,
+  inferEmailBlockType,
+  normalizeEmailBodyHtml,
+  readElementBackground,
+  readElementPadding,
+  setInlineStyleValue,
+  wrapRootBlockInSection,
+} from './emailBlocks';
+
+/** Přetahování typu bloku z knihovny do iframe náhledu (HTML5 DnD). */
+const VB_EMAIL_LIBRARY_DRAG_TYPE = 'application/x-vb-email-block-type';
+const EMAIL_PRESET_TYPE_SET = new Set<EmailBlockType>(EMAIL_BLOCK_PRESETS.map((p) => p.type));
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 const F = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
+/** HTML jednoho bloku (bez `data-vb-block-id`) pro vložení v jiném mailu přes + v postranní liště. */
+const EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY = 'vb-email-block-clipboard-html';
 /** Zapnutí RAG (vyhledávání v knihovně chunků) u `generate-email`. */
 const EMAIL_BUILDER_RAG_KEY = 'vb-email-rag-enabled';
+const EMAIL_TEST_TO_STORAGE_KEY = 'vb-email-test-recipient';
+const EMAIL_TEST_RECIPIENTS = [
+  'vitekskop@gmail.com',
+  'frantisek@vividbooks.com',
+  'gabriela@vividbooks.com',
+  'dan@vividbooks.com',
+] as const;
 
 /* ── Types ───────────────────────────────────────────── */
 interface EmailDraft {
@@ -45,9 +94,14 @@ interface EmailDraft {
   status: 'draft' | 'pushed' | 'sent';
   mailchimpCampaignId?: string;
   mailchimpUrl?: string;
+  /** ISO čas plánovaného odeslání (uloží se s draftem; Mailchimp push zatím neplánuje). */
+  scheduledSendAt?: string | null;
   createdAt: string;
   updatedAt: string;
   chatHistory?: ChatMsg[];
+  builderMode?: EmailBuilderMode;
+  editorVersion?: number;
+  lastSelectedBlockType?: EmailBlockType | null;
 }
 
 interface ChatMsg {
@@ -77,11 +131,14 @@ const DEFAULT_PREVIEW_OUTER_BG = '#f3f4f6';
 const DEFAULT_PREVIEW_COLUMN_BG = '#ffffff';
 
 const EMPTY_DRAFT: Omit<EmailDraft, 'id' | 'createdAt' | 'updatedAt'> = {
-  subject: '', previewText: '', headline: '', bodyHtml: '',
+  subject: '', previewText: '', headline: '', bodyHtml: normalizeEmailBodyHtml(''),
   ctaText: 'Vyzkoušejte zdarma', ctaUrl: 'https://www.vividbooks.com/vyzkousejte',
   previewOuterBg: DEFAULT_PREVIEW_OUTER_BG,
   previewColumnBg: DEFAULT_PREVIEW_COLUMN_BG,
   audience: 'newsletter', status: 'draft',
+  builderMode: 'block',
+  editorVersion: 2,
+  lastSelectedBlockType: null,
 };
 
 const MAX_UNDO_STEPS = 45;
@@ -108,8 +165,109 @@ function normalizeHexColor(input: string | undefined, fallback: string): string 
   return fallback;
 }
 
+interface BlockInspectorState {
+  id: string;
+  type: EmailBlockType;
+  label: string;
+  background: string;
+  padding: string;
+  textAlign: string;
+  ctaText: string;
+  ctaUrl: string;
+  imageSrc: string;
+}
+
+function normalizeDraftForBuilder(draft: EmailDraft): EmailDraft {
+  const legacy = draft as EmailDraft & { previewIslandLayout?: boolean };
+  const { previewIslandLayout: _legacyIsland, ...rest } = legacy;
+  return {
+    ...rest,
+    bodyHtml: normalizeEmailBodyHtml(draft.bodyHtml || ''),
+    builderMode: 'block',
+    editorVersion: 2,
+    lastSelectedBlockType: draft.lastSelectedBlockType ?? null,
+  };
+}
+
+/** Snapshot bez časových razítek / Mailchimp metadat — porovnání „co je uloženo“ vs. rozpracovaný stav. */
+function emailDraftContentFingerprint(d: EmailDraft, chatHistory: ChatMsg[]): string {
+  const base = normalizeDraftForBuilder({ ...d, chatHistory });
+  return JSON.stringify({
+    id: base.id,
+    subject: base.subject,
+    previewText: base.previewText,
+    headline: base.headline,
+    bodyHtml: base.bodyHtml,
+    ctaText: base.ctaText,
+    ctaUrl: base.ctaUrl,
+    previewOuterBg: base.previewOuterBg,
+    previewColumnBg: base.previewColumnBg,
+    audience: base.audience,
+    scheduledSendAt: base.scheduledSendAt ?? null,
+    status: base.status,
+    chatHistory: base.chatHistory,
+    builderMode: base.builderMode,
+    editorVersion: base.editorVersion,
+    lastSelectedBlockType: base.lastSelectedBlockType,
+  });
+}
+
+function normalizeBodyForBuilder(html: string): string {
+  return normalizeEmailBodyHtml(html || '');
+}
+
+function createBlockInspectorState(el: HTMLElement): BlockInspectorState {
+  const link = extractFirstLink(el);
+  const image = extractFirstImage(el);
+  const type = inferEmailBlockType(el);
+  const skipLinkImageInspector = type === 'product-collage' || type === 'webinar';
+  return {
+    id: el.getAttribute('data-vb-block-id') || '',
+    type,
+    label: getEmailBlockLabel(type),
+    background: readElementBackground(el),
+    padding: readElementPadding(el),
+    textAlign: el.style.textAlign || '',
+    ctaText: skipLinkImageInspector ? '' : (link?.textContent || '').trim(),
+    ctaUrl: skipLinkImageInspector ? '' : (link?.getAttribute('href') || ''),
+    imageSrc: skipLinkImageInspector ? '' : (image?.getAttribute('src') || ''),
+  };
+}
+
+function readSectionFillForSelectedBlock(
+  doc: Document | null | undefined,
+  blockId: string | null,
+): EmailSectionFill | null {
+  if (!doc?.body || !blockId) return null;
+  const root = getEmailDndRoot(doc);
+  const el = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null;
+  if (!el || !root.contains(el)) return null;
+  const sec =
+    el.getAttribute('data-vb-block') === 'section'
+      ? el
+      : (el.closest('[data-vb-block="section"]') as HTMLElement | null);
+  if (!sec || !root.contains(sec)) return null;
+  return sec.getAttribute('data-vb-section-fill') === 'plain' ? 'plain' : 'card';
+}
+
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleString('cs-CZ', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function isoToDatetimeLocal(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function datetimeLocalToIso(local: string): string | null {
+  const t = local.trim();
+  if (!t) return null;
+  const d = new Date(t);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString();
 }
 
 function getPlainTextBeforeInsertAnchor(doc: Document | null | undefined, anchorId: string | null): string {
@@ -130,6 +288,36 @@ function getPlainTextBeforeInsertAnchor(doc: Document | null | undefined, anchor
   } catch {
     return (doc.body.innerText || '').replace(/\s+/g, ' ').trim().slice(-6000);
   }
+}
+
+/** Čistý text všech bloků před daným top-level blokem (pro CTA / AI vložení „nad“ blok). */
+function getPlainTextBeforeBlockId(doc: Document | null | undefined, blockId: string | null): string {
+  if (!doc?.body || !blockId) return '';
+  const el = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`);
+  if (!el || !doc.body.contains(el)) {
+    const t = doc.body.innerText || '';
+    return t.replace(/\s+/g, ' ').trim().slice(-6000);
+  }
+  try {
+    const r = doc.createRange();
+    r.selectNodeContents(doc.body);
+    r.setEndBefore(el);
+    const wrap = doc.createElement('div');
+    wrap.appendChild(r.cloneContents());
+    const text = (wrap.innerText || '').replace(/\s+/g, ' ').trim();
+    return text.slice(-6000);
+  } catch {
+    return (doc.body.innerText || '').replace(/\s+/g, ' ').trim().slice(-6000);
+  }
+}
+
+function getBlockOuterHtmlForAiByBlockId(doc: Document | null | undefined, blockId: string | null): string {
+  if (!doc?.body || !blockId) return '';
+  const el = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`);
+  if (!el || !doc.body.contains(el)) return '';
+  let html = (el as HTMLElement).outerHTML;
+  if (html.length > 3500) html = `${html.slice(0, 3500)}…`;
+  return html;
 }
 
 /** HTML bloku za který má AI něco vložit — bez data-vb-insert, omezená délka. */
@@ -197,56 +385,131 @@ function preprocessHtml(html: string): string {
 
 /**
  * Plné „emailové“ HTML v iframe — stejná izolace jako u skutečného klienta (žádné styly z adminu).
+ * Barvy: `outerBackground` = plátno kolem sloupce; `cardBackground` = výplň karet uvnitř skupin s režimem „karta“.
  */
-function buildEmailSrcDoc(bodyInnerHtml: string, bodyBackground = '#ffffff', imageEditMode = false): string {
+function buildEmailSrcDoc(
+  bodyInnerHtml: string,
+  cardBackground = '#ffffff',
+  imageEditMode = false,
+  options?: { outerBackground?: string },
+): string {
   const inner = bodyInnerHtml || '<p style="margin:0;color:#999;">Klikněte a pište…</p>';
-  const bg = (bodyBackground || '#ffffff').replace(/[<>"']+/g, '').slice(0, 32) || '#ffffff';
+  const card =
+    normalizeHexColor(cardBackground, DEFAULT_PREVIEW_COLUMN_BG).replace(/[<>"']+/g, '').slice(0, 32) ||
+    '#ffffff';
+  const outer =
+    normalizeHexColor(options?.outerBackground, DEFAULT_PREVIEW_OUTER_BG).replace(/[<>"']+/g, '').slice(0, 32) ||
+    '#f3f4f6';
+  const htmlClass = ' class="vb-island-layout"';
+  const fontLinks = imageEditMode
+    ? '<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">'
+    : '';
+  /** V režimu úprav necháme změny písma z lišty (Mailchimp styl); v náhledu jen ke čtení držíme jednotný Arial. */
+  const fontLockCss = imageEditMode
+    ? ''
+    : 'body *{font-family:Arial,Helvetica,sans-serif !important;}';
   const imgEditCss = imageEditMode
     ? `body.vb-img-edit img{cursor:grab;transition:outline .12s ease}body.vb-img-edit img:hover{outline:2px solid rgba(124,58,237,0.45);outline-offset:2px}
-body.vb-img-edit .vb-email-root>*:not(style):not(script){cursor:grab}
-body.vb-img-edit .vb-email-root>*:not(style):not(script):hover{outline:1px dashed rgba(124,58,237,0.35);outline-offset:2px}
-body.vb-img-edit .vb-dnd-dragging{opacity:0.55!important;outline:2px solid #7C3AED!important}`
+body.vb-img-edit .vb-email-root [data-vb-block="section"]>[data-vb-block-id]{cursor:grab}
+body.vb-img-edit .vb-email-root [data-vb-block="section"]>[data-vb-block-id]:hover{outline:1px dashed rgba(124,58,237,0.35);outline-offset:2px}
+body.vb-img-edit .vb-email-root>[data-vb-block="section"]{cursor:grab}
+body.vb-img-edit .vb-email-root>[data-vb-block="section"]:hover{outline:1px dashed rgba(124,58,237,0.25);outline-offset:2px}
+body.vb-img-edit .vb-dnd-dragging{opacity:0.55!important;outline:2px solid #7C3AED!important}
+body .vb-email-root [data-vb-block-id]{position:relative}
+body .vb-email-root [data-vb-block-id].vb-block-selected{outline:1px solid rgba(0,17,97,0.14)!important;outline-offset:2px}`
     : '';
   const bodyClass = imageEditMode ? ' class="vb-img-edit"' : '';
-  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><style>
+  const previewLayoutCss = `
+:root{--vb-preview-outer:${outer};--vb-preview-card:${card};}
 html,body{margin:0;padding:0;-webkit-text-size-adjust:100%;}
-html{font-family:Arial,Helvetica,sans-serif;background:${bg};color-scheme:light;}
-body{font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333;background:${bg};color-scheme:light;-webkit-forced-color-adjust:none;forced-color-adjust:none;}
-/* Náhled: jednotný Arial i proti inline fontům z AI / Mailchimp */
-body *{font-family:Arial,Helvetica,sans-serif !important;}
+html{font-family:Arial,Helvetica,sans-serif;background:var(--vb-preview-outer);color-scheme:light;}
+body{font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333;background:var(--vb-preview-outer);color-scheme:light;-webkit-forced-color-adjust:none;forced-color-adjust:none;}
+html.vb-island-layout .vb-email-root{background:transparent!important;min-height:100%;}
+/* Bloky uvnitř skupiny — sjednocený vnitřní padding (užší okraje = širší text) */
+.vb-email-root [data-vb-block="section"]>[data-vb-block-id]:not([data-vb-block="divider"]):not([data-vb-block="flow-break"]){
+  box-sizing:border-box;
+  padding:18px 14px!important;
+}
+.vb-email-root [data-vb-block="section"]>[data-vb-block="divider"]{
+  box-sizing:border-box;
+  padding:10px 14px!important;
+}
+.vb-email-root [data-vb-block="section"]>[data-vb-block="flow-break"]{
+  box-sizing:border-box;
+  padding:0!important;
+  margin:0!important;
+}
+.vb-email-root [data-vb-block="section"]>[data-vb-block="gap-content"]{
+  box-sizing:border-box;
+  padding:12px 14px!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]{
+  background:var(--vb-preview-card)!important;
+  border-radius:16px;
+  box-shadow:0 2px 12px rgba(0,0,0,0.06);
+  border:1px solid rgba(0,17,97,0.06);
+  margin-bottom:32px!important;
+  overflow:hidden;
+  box-sizing:border-box;
+  padding-left:12px!important;
+  padding-right:12px!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]{
+  background:transparent!important;
+  box-shadow:none!important;
+  border:none!important;
+  border-radius:0!important;
+  margin-bottom:0!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]:not(:last-child){
+  border-bottom:1px solid rgba(0,17,97,0.06);
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="plain"]{
+  background:transparent!important;
+  box-shadow:none!important;
+  border:none!important;
+  border-radius:0!important;
+  margin-bottom:32px!important;
+  padding:0!important;
+  overflow:visible;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="plain"]>[data-vb-block-id]{
+  background:transparent!important;
+  box-shadow:none!important;
+  border:none!important;
+  border-radius:0!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]:last-child{margin-bottom:0!important;}
+html.vb-island-layout .vb-email-root [data-vb-block="section"]>[data-vb-block="flow-break"]{
+  background:transparent!important;
+  box-shadow:none!important;
+  border:none!important;
+  border-radius:0!important;
+  height:28px!important;
+  min-height:28px!important;
+  max-height:28px!important;
+  padding:0!important;
+  margin:0!important;
+  overflow:hidden;
+}
+`;
+  return `<!DOCTYPE html><html${htmlClass}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">${fontLinks}<style>
+${previewLayoutCss}
+${fontLockCss}
 pre,code,kbd,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important;}
 a{color:#7C3AED;}
 img{max-width:100%;height:auto;}
 ${imgEditCss}
 @media only screen and (max-width:600px){
   body{font-size:17px!important;line-height:1.65!important;}
-  body p,body li{font-size:17px!important;line-height:1.65!important;}
-  body h1{font-size:26px!important;line-height:1.2!important;}
-  body h2{font-size:22px!important;line-height:1.25!important;}
-  body h3{font-size:19px!important;}
+  body p:not(:is([data-email-webinar="true"] *)),
+  body li:not(:is([data-email-webinar="true"] *)){font-size:17px!important;line-height:1.65!important;}
+  body h1:not(:is([data-email-webinar="true"] *)){font-size:26px!important;line-height:1.2!important;}
+  body h2:not(:is([data-email-webinar="true"] *)){font-size:22px!important;line-height:1.25!important;}
+  body h3:not(:is([data-email-webinar="true"] *)){font-size:19px!important;}
   a.vb-preview-cta{font-size:17px!important;padding:16px 28px!important;line-height:1.2!important;}
 }
 </style></head><body${bodyClass}>${inner}</body></html>`;
-}
-
-function CopyBtn({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold bg-white border border-gray-200 text-[#001161]/50 hover:text-[#7C3AED] hover:border-[#7C3AED]/30 transition-all cursor-pointer"
-      style={F}
-    >
-      {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
-      {copied ? 'Zkopírováno' : 'Kopírovat'}
-    </button>
-  );
 }
 
 function RagBadges({ info }: { info: RagDebug }) {
@@ -417,41 +680,361 @@ function findEditableBlock(start: Element | null, body: HTMLElement): HTMLElemen
   return null;
 }
 
+function findTopLevelEmailBlock(start: Element | null, doc: Document): HTMLElement | null {
+  if (!start) return null;
+  const root = getEmailDndRoot(doc);
+  const hit = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as Element);
+  if (!hit || !root.contains(hit)) return null;
+  const el = hit.closest?.('[data-vb-block-id]') as HTMLElement | null;
+  if (!el || !root.contains(el)) return null;
+  return el;
+}
+
+const BLOCK_PRESET_ICON: Record<EmailBlockType, React.ComponentType<{ className?: string }>> = {
+  text: AlignLeft,
+  highlight: Sparkles,
+  image: ImageIcon,
+  button: RectangleHorizontal,
+  divider: Minus,
+  'flow-break': BetweenVerticalStart,
+  section: SquareStack,
+  'gap-content': AlignCenter,
+  'columns-2': Columns2,
+  'columns-3': Columns3,
+  hero: PanelTop,
+  'product-collage': ShoppingBag,
+  webinar: Video,
+  html: Code,
+};
+
+function BlockPresetIcon({ type, className }: { type: EmailBlockType; className?: string }) {
+  const I = BLOCK_PRESET_ICON[type] ?? LayoutTemplate;
+  return <I className={className} />;
+}
+
+const RICH_TEXT_FONTS = ['Arial', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'DM Sans'] as const;
+const RICH_TEXT_SIZES = ['12', '14', '16', '18', '20', '24'] as const;
+
+function wrapSelectionInStyledSpan(doc: Document, styleKey: string, styleValue: string) {
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  const range = sel.getRangeAt(0);
+  if (range.collapsed) return;
+  const span = doc.createElement('span');
+  span.setAttribute('style', `${styleKey}: ${styleValue}`);
+  try {
+    range.surroundContents(span);
+  } catch {
+    try {
+      const frag = range.extractContents();
+      span.appendChild(frag);
+      range.insertNode(span);
+    } catch { /* ignore */ }
+  }
+  sel.removeAllRanges();
+  const nr = doc.createRange();
+  nr.selectNodeContents(span);
+  nr.collapse(false);
+  sel.addRange(nr);
+}
+
+/** Horní lišta formátování (Mailchimp styl) — příkazy vůči `designMode` dokumentu v iframe. */
+function EmailRichTextToolbar({
+  iframeRef,
+  refreshEpoch,
+  bumpToolbar,
+  embeddedInHeader,
+}: {
+  iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  /** Zvýšit po změně výběru v iframe, aby se přepočet stavu tlačítek. */
+  refreshEpoch: number;
+  bumpToolbar: () => void;
+  /** Kompaktní jednořádková lišta v horním panelu (scroll v rodiči). */
+  embeddedInHeader?: boolean;
+}) {
+  void refreshEpoch;
+  const doc = iframeRef.current?.contentDocument;
+  const compact = !!embeddedInHeader;
+  const run = (cmd: string, val?: string) => {
+    const fr = iframeRef.current;
+    const d = fr?.contentDocument;
+    const w = fr?.contentWindow;
+    if (!fr || !d || !w || d.designMode !== 'on') return;
+    w.focus();
+    try {
+      d.execCommand('styleWithCSS', false, 'true');
+    } catch { /* ignore */ }
+    try {
+      if (val !== undefined) d.execCommand(cmd, false, val);
+      else d.execCommand(cmd, false);
+    } catch { /* ignore */ }
+    try {
+      d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    } catch {
+      d.body.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    bumpToolbar();
+  };
+
+  let blockValue = 'p';
+  try {
+    const raw = (doc?.queryCommandValue('formatBlock') || 'p').toLowerCase().replace(/[<>]/g, '');
+    if (['p', 'h1', 'h2', 'h3', 'h4'].includes(raw)) blockValue = raw;
+  } catch { /* ignore */ }
+
+  let fontValue = 'Arial';
+  try {
+    const fnRaw = (doc?.queryCommandValue('fontName') || 'Arial').replace(/^["']|["']$/g, '');
+    const match = RICH_TEXT_FONTS.find(f => f.toLowerCase() === fnRaw.toLowerCase());
+    fontValue = match ?? 'Arial';
+  } catch { /* ignore */ }
+
+  const cmdState = (name: string): boolean => {
+    try {
+      return !!doc?.queryCommandState(name);
+    } catch {
+      return false;
+    }
+  };
+
+  /** Kompaktní lišta: základ +10 %, pak ještě +5 % kvůli čitelnosti a klikání. */
+  const btnSz = compact ? 'h-[33px] w-[33px] min-h-[33px] min-w-[33px]' : 'h-8 w-8';
+  const iconSz = compact ? 'h-[14px] w-[14px]' : 'h-3.5 w-3.5';
+  const tbBtn = (active: boolean) =>
+    `flex ${btnSz} shrink-0 items-center justify-center rounded-md border text-[#001161]/70 transition-colors cursor-pointer ${
+      active ? 'border-[#7C3AED]/40 bg-[#7C3AED]/10 text-[#7C3AED]' : 'border-gray-200 bg-white hover:bg-gray-50 hover:border-gray-300'
+    }`;
+
+  const selCls = compact
+    ? 'h-[33px] min-h-[33px] rounded-md border border-gray-200 bg-white px-2.5 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20 shrink-0 max-w-[124px]'
+    : 'h-8 rounded-md border border-gray-200 bg-white px-2 text-[11px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20 shrink-0 max-w-[140px]';
+
+  return (
+    <div
+      className={
+        compact
+          ? 'flex w-full min-w-0 flex-wrap items-center gap-1.5 rounded-lg border border-gray-200/80 bg-[#f3f4f6] px-2 py-1.5'
+          : 'mb-2 flex flex-wrap items-center gap-1 rounded-xl border border-gray-200 bg-[#f3f4f6] px-2 py-1.5 shadow-sm'
+      }
+      style={F}
+      onMouseDown={(e) => {
+        const el = e.target as HTMLElement;
+        if (el.closest('select') || el.closest('input[type="color"]')) return;
+        e.preventDefault();
+      }}
+    >
+      <select
+        className={selCls}
+        value={blockValue}
+        title="Formát odstavce"
+        aria-label="Formát odstavce"
+        onChange={e => run('formatBlock', e.target.value)}
+      >
+        <option value="p">Odstavec</option>
+        <option value="h1">Nadpis 1</option>
+        <option value="h2">Nadpis 2</option>
+        <option value="h3">Nadpis 3</option>
+        <option value="h4">Nadpis 4</option>
+      </select>
+      <select
+        className={selCls}
+        value={fontValue}
+        title="Písmo"
+        aria-label="Písmo"
+        onChange={e => run('fontName', e.target.value)}
+      >
+        {RICH_TEXT_FONTS.map(f => (
+          <option key={f} value={f}>{f}</option>
+        ))}
+      </select>
+      <select
+        className={`${selCls} ${compact ? 'max-w-[61px]' : 'max-w-[72px]'}`}
+        title="Velikost (px)"
+        aria-label="Velikost textu"
+        defaultValue=""
+        onChange={e => {
+          const px = e.target.value;
+          if (!px || !doc) return;
+          const fr = iframeRef.current;
+          const d = fr?.contentDocument;
+          const w = fr?.contentWindow;
+          if (!d || !w || d.designMode !== 'on') return;
+          w.focus();
+          wrapSelectionInStyledSpan(d, 'font-size', `${px}px`);
+          try {
+            d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+          } catch {
+            d.body.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          bumpToolbar();
+          e.target.selectedIndex = 0;
+        }}
+      >
+        <option value="" disabled>
+          px
+        </option>
+        {RICH_TEXT_SIZES.map(s => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+      <label
+        className={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+        title="Barva textu"
+      >
+        <span className={`${compact ? 'text-[11px]' : 'text-[10px]'} font-bold underline decoration-2 underline-offset-2 text-[#001161]`}>A</span>
+        <input
+          type="color"
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          aria-label="Barva textu"
+          onChange={e => run('foreColor', e.target.value)}
+        />
+      </label>
+      <label
+        className={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+        title="Zvýraznění pozadím"
+      >
+        <span className={`rounded-sm border border-gray-300 bg-amber-100 px-0.5 ${compact ? 'text-[10px]' : 'text-[9px]'} font-bold text-[#001161]`}>A</span>
+        <input
+          type="color"
+          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          aria-label="Barva zvýraznění"
+          defaultValue="#fff9c4"
+          onChange={e => {
+            try {
+              run('hiliteColor', e.target.value);
+            } catch {
+              run('backColor', e.target.value);
+            }
+          }}
+        />
+      </label>
+      <div className={`mx-0.5 ${compact ? 'h-[19px]' : 'h-5'} w-px shrink-0 bg-gray-300`} aria-hidden />
+      <button type="button" className={tbBtn(cmdState('bold'))} title="Tučné" onClick={() => run('bold')}>
+        <Bold className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button type="button" className={tbBtn(cmdState('italic'))} title="Kurzíva" onClick={() => run('italic')}>
+        <Italic className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button type="button" className={tbBtn(cmdState('underline'))} title="Podtržení" onClick={() => run('underline')}>
+        <Underline className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button type="button" className={tbBtn(cmdState('strikeThrough'))} title="Přeškrtnutí" onClick={() => run('strikeThrough')}>
+        <Strikethrough className={iconSz} strokeWidth={2.2} />
+      </button>
+      <div className={`mx-0.5 ${compact ? 'h-[19px]' : 'h-5'} w-px shrink-0 bg-gray-300`} aria-hidden />
+      <button
+        type="button"
+        className={tbBtn(cmdState('justifyLeft'))}
+        title="Zarovnání vlevo"
+        onClick={() => run('justifyLeft')}
+      >
+        <AlignLeft className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button
+        type="button"
+        className={tbBtn(cmdState('justifyCenter'))}
+        title="Na střed"
+        onClick={() => run('justifyCenter')}
+      >
+        <AlignCenter className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button
+        type="button"
+        className={tbBtn(cmdState('justifyRight'))}
+        title="Vpravo"
+        onClick={() => run('justifyRight')}
+      >
+        <AlignRight className={iconSz} strokeWidth={2.2} />
+      </button>
+      <div className={`mx-0.5 ${compact ? 'h-[19px]' : 'h-5'} w-px shrink-0 bg-gray-300`} aria-hidden />
+      <button type="button" className={tbBtn(cmdState('insertUnorderedList'))} title="Odrážky" onClick={() => run('insertUnorderedList')}>
+        <List className={iconSz} strokeWidth={2.2} />
+      </button>
+      <button type="button" className={tbBtn(cmdState('insertOrderedList'))} title="Číslování" onClick={() => run('insertOrderedList')}>
+        <ListOrdered className={iconSz} strokeWidth={2.2} />
+      </button>
+      <div className={`mx-0.5 ${compact ? 'h-[19px]' : 'h-5'} w-px shrink-0 bg-gray-300`} aria-hidden />
+      <button
+        type="button"
+        className={tbBtn(false)}
+        title="Odkaz"
+        onClick={() => {
+          const fr = iframeRef.current;
+          const d = fr?.contentDocument;
+          const w = fr?.contentWindow;
+          if (!d || !w || d.designMode !== 'on') return;
+          const url = window.prompt('URL odkazu', 'https://');
+          if (!url?.trim()) return;
+          w.focus();
+          try {
+            d.execCommand('createLink', false, url.trim());
+          } catch { /* ignore */ }
+          try {
+            d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+          } catch {
+            d.body.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+          bumpToolbar();
+        }}
+      >
+        <Link2 className={iconSz} strokeWidth={2.2} />
+      </button>
+    </div>
+  );
+}
+
 function EmailIframeEditor({
   draftId,
   bodyEditEpoch,
   bodyHtml,
   columnBackground,
+  outerBackground,
+  builderMode,
+  selectedBlockId,
   onBodyChange,
   onImageClick,
+  onBlockSelect,
   /** Nad iframe je panel předmět/preview (pak spodní rohy iframe zaoblené jinak). */
   hasMailboxStackAbove,
   readOnlyBody,
   iframeRef: parentIframeRef,
   onTextSelect,
   hoverBlockRef,
-  onHoverInsertLine,
+  onHoverBlockChrome,
   onIframeLeave,
   onIframeEnter,
+  onRichTextActivity,
 }: {
   draftId: string;
   bodyEditEpoch: number;
   bodyHtml: string;
-  /** Pozadí dokumentu uvnitř náhledového iframe (sloupec). */
+  /** Pozadí dokumentu uvnitř náhledového iframe (sloupec / výplň karet). */
   columnBackground: string;
+  /** Šedé (nebo jiné) plátno kolem sloupce v náhledu. */
+  outerBackground: string;
+  builderMode: EmailBuilderMode;
+  selectedBlockId: string | null;
   /** Vždy zapisuj pod `draftId` vlastníka iframe — při přepnutí draftu cleanup nesmí použít už nový `selected`. */
   onBodyChange: (draftId: string, html: string) => void;
   onImageClick: (src: string) => void;
+  onBlockSelect?: (block: BlockInspectorState | null) => void;
   hasMailboxStackAbove: boolean;
   /** true = režim „Náhled mailu“ — tělo nejde přepisovat, odkazy jdou klikat. */
   readOnlyBody: boolean;
   iframeRef?: React.MutableRefObject<HTMLIFrameElement | null>;
   onTextSelect?: (text: string | null) => void;
   hoverBlockRef?: React.MutableRefObject<HTMLElement | null>;
-  onHoverInsertLine?: (rect: { top: number; left: number; width: number } | null) => void;
+  /** Obdélník bloku ve viewportu pro plovoucí akční lištu (Mailchimp styl). */
+  onHoverBlockChrome?: (
+    payload: { top: number; left: number; width: number; height: number; blockId: string } | null,
+  ) => void;
   /** Myš opustila iframe — rodič může lištu schovat se zpožděním (aby šlo kliknout na +). */
   onIframeLeave?: () => void;
   onIframeEnter?: () => void;
+  /** Změna výběru / vstupu v těle — pro přepočet horní formátovací lišty. */
+  onRichTextActivity?: () => void;
 }) {
   const innerRef = useRef<HTMLIFrameElement | null>(null);
   const assignIframeRef = (el: HTMLIFrameElement | null) => {
@@ -466,17 +1049,29 @@ function EmailIframeEditor({
   onBodyChangeRef.current = onBodyChange;
   const onImageClickRef = useRef(onImageClick);
   onImageClickRef.current = onImageClick;
+  const onBlockSelectRef = useRef(onBlockSelect);
+  onBlockSelectRef.current = onBlockSelect;
   const onTextSelectRef = useRef(onTextSelect);
   onTextSelectRef.current = onTextSelect;
-  const onHoverInsertLineRef = useRef(onHoverInsertLine);
-  onHoverInsertLineRef.current = onHoverInsertLine;
+  const onHoverBlockChromeRef = useRef(onHoverBlockChrome);
+  onHoverBlockChromeRef.current = onHoverBlockChrome;
   const onIframeLeaveRef = useRef(onIframeLeave);
   onIframeLeaveRef.current = onIframeLeave;
   const onIframeEnterRef = useRef(onIframeEnter);
   onIframeEnterRef.current = onIframeEnter;
+  const onRichTextActivityRef = useRef(onRichTextActivity);
+  onRichTextActivityRef.current = onRichTextActivity;
 
   const columnBgRef = useRef(columnBackground);
   columnBgRef.current = columnBackground;
+  const outerBgRef = useRef(outerBackground);
+  outerBgRef.current = outerBackground;
+
+  const selectedBlockIdRef = useRef(selectedBlockId);
+  selectedBlockIdRef.current = selectedBlockId;
+
+  const builderModeRef = useRef(builderMode);
+  builderModeRef.current = builderMode;
 
   useEffect(() => {
     const ownedDraftId = draftId;
@@ -492,7 +1087,11 @@ function EmailIframeEditor({
 
     const processed = preprocessHtml(bodyPropRef.current);
     doc.open();
-    doc.write(buildEmailSrcDoc(processed, columnBgRef.current, !readOnlyBody));
+    doc.write(
+      buildEmailSrcDoc(processed, columnBgRef.current, !readOnlyBody, {
+        outerBackground: outerBgRef.current,
+      }),
+    );
     doc.close();
 
     const d = fr.contentDocument;
@@ -507,21 +1106,33 @@ function EmailIframeEditor({
         const t = e.target as Node;
         const el =
           t.nodeType === Node.TEXT_NODE ? (t.parentElement as Element | null) : (t as Element);
-        const block = el ? findEditableBlock(el, d.body) : null;
+        const block = !el
+          ? null
+          : builderModeRef.current === 'block'
+            ? findTopLevelEmailBlock(el, d)
+            : findEditableBlock(el, d.body);
         if (hoverBlockRef) hoverBlockRef.current = block;
-        const cb = onHoverInsertLineRef.current;
-        if (!cb) return;
+        const chromeCb = onHoverBlockChromeRef.current;
         if (!block) {
-          cb(null);
+          chromeCb?.(null);
           return;
         }
         const r = block.getBoundingClientRect();
         const ir = fr.getBoundingClientRect();
-        cb({
-          top: ir.top + r.top,
-          left: ir.left + r.left,
-          width: r.width,
-        });
+        if (chromeCb) {
+          if (builderModeRef.current === 'block') {
+            const bid = block.getAttribute('data-vb-block-id');
+            if (bid) {
+              chromeCb({
+                top: ir.top + r.top,
+                left: ir.left + r.left,
+                width: r.width,
+                height: r.height,
+                blockId: bid,
+              });
+            } else chromeCb(null);
+          } else chromeCb(null);
+        }
       }, 45);
     };
 
@@ -587,16 +1198,30 @@ function EmailIframeEditor({
 
     const rootDnd = getEmailDndRoot(d);
 
-    const dndRootChildren = (): HTMLElement[] =>
-      [...rootDnd.children].filter(
+    const dndSiblings = (parent: HTMLElement): HTMLElement[] =>
+      [...parent.children].filter(
         (n): n is HTMLElement =>
           n.nodeType === 1 && !/^(STYLE|SCRIPT)$/i.test(n.tagName),
       );
 
+    const syncSelectedBlockUi = () => {
+      rootDnd.querySelectorAll('.vb-block-selected').forEach((n) => n.classList.remove('vb-block-selected'));
+      const id = selectedBlockIdRef.current;
+      if (builderModeRef.current !== 'block' || !id) return;
+      const mark = rootDnd.querySelector(`[data-vb-block-id="${CSS.escape(id)}"]`);
+      mark?.classList.add('vb-block-selected');
+    };
+
     const applyDraggableAttrs = () => {
-      for (const el of dndRootChildren()) {
-        el.setAttribute('draggable', 'true');
-      }
+      rootDnd.querySelectorAll('[data-vb-block-id]').forEach((raw) => {
+        const el = raw as HTMLElement;
+        const p = el.parentElement;
+        if (p === rootDnd || p?.getAttribute('data-vb-block') === 'section') {
+          el.setAttribute('draggable', 'true');
+        } else {
+          el.removeAttribute('draggable');
+        }
+      });
       rootDnd.querySelectorAll('img').forEach(img => {
         (img as HTMLElement).setAttribute('draggable', 'true');
       });
@@ -612,24 +1237,36 @@ function EmailIframeEditor({
       if (asImg && rootDnd.contains(asImg) && (el === asImg || asImg.contains(el))) {
         return asImg as HTMLImageElement;
       }
-      let n: Node | null = el;
-      while (n && n.parentNode !== rootDnd) {
-        n = n.parentNode;
+      let n: HTMLElement | null = el.closest('[data-vb-block-id]');
+      while (n && rootDnd.contains(n)) {
+        const p = n.parentElement;
+        if (!p) return null;
+        if (p === rootDnd) return n;
+        if (p.getAttribute('data-vb-block') === 'section') return n;
+        n = p.closest('[data-vb-block-id]');
       }
-      if (!n || n.nodeType !== 1) return null;
-      const top = n as HTMLElement;
-      if (/^(STYLE|SCRIPT)$/i.test(top.tagName)) return null;
-      return top;
+      return null;
     };
 
-    const findDropInsertBefore = (clientY: number): Element | null => {
-      for (const child of dndRootChildren()) {
-        if (child === draggedBlock) continue;
+    const findTopLevelBlock = (target: EventTarget | null): HTMLElement | null => {
+      if (!target || typeof (target as Node).nodeType !== 'number') return null;
+      const raw = target as Node;
+      const el = raw.nodeType === Node.TEXT_NODE ? (raw as Text).parentElement : (raw as HTMLElement);
+      if (!el || !rootDnd.contains(el)) return null;
+      return el.closest('[data-vb-block-id]') as HTMLElement | null;
+    };
+
+    const findDropInsertBeforeAtYIn = (clientY: number, skipNode: HTMLElement | null, parent: HTMLElement): Element | null => {
+      for (const child of dndSiblings(parent)) {
+        if (skipNode && child === skipNode) continue;
         const r = child.getBoundingClientRect();
         if (clientY < r.top + r.height / 2) return child;
       }
       return null;
     };
+
+    const findDropInsertBefore = (clientY: number, parent: HTMLElement): Element | null =>
+      findDropInsertBeforeAtYIn(clientY, draggedBlock, parent);
 
     const onDragStartDnd = (e: DragEvent) => {
       const node = findDraggedNode(e.target);
@@ -661,16 +1298,94 @@ function EmailIframeEditor({
     };
 
     const onDragOverDnd = (e: DragEvent) => {
+      const dt = e.dataTransfer;
+      if (dt && [...dt.types].includes(VB_EMAIL_LIBRARY_DRAG_TYPE)) {
+        e.preventDefault();
+        dt.dropEffect = 'copy';
+        return;
+      }
       if (!draggedBlock || !rootDnd.contains(draggedBlock)) return;
       e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      if (dt) dt.dropEffect = 'move';
     };
 
     const onDropDnd = (e: DragEvent) => {
       e.preventDefault();
+      let libRaw = e.dataTransfer?.getData(VB_EMAIL_LIBRARY_DRAG_TYPE) || '';
+      if (!libRaw) {
+        const plain = e.dataTransfer?.getData('text/plain') || '';
+        const m = plain.match(/^vb-email-block:(.+)$/);
+        if (m) libRaw = m[1].trim();
+      }
+      if (libRaw && EMAIL_PRESET_TYPE_SET.has(libRaw as EmailBlockType)) {
+        const presetType = libRaw as EmailBlockType;
+        const html = buildEmailBlockHtml(presetType).trim();
+        const tmp = d.createElement('div');
+        tmp.innerHTML = html;
+        let newEl = tmp.firstElementChild as HTMLElement | null;
+        if (newEl) {
+          if (presetType === 'section') {
+            const insertBeforeRoot = findDropInsertBeforeAtYIn(e.clientY, null, rootDnd);
+            try {
+              if (insertBeforeRoot) rootDnd.insertBefore(newEl, insertBeforeRoot);
+              else rootDnd.appendChild(newEl);
+            } catch {
+              /* ignore */
+            }
+          } else {
+            const hit = d.elementFromPoint(e.clientX, e.clientY);
+            const sec = hit?.closest?.('[data-vb-block="section"]') as HTMLElement | null;
+            if (sec && rootDnd.contains(sec)) {
+              const insertBeforeInner = findDropInsertBeforeAtYIn(e.clientY, null, sec);
+              try {
+                if (insertBeforeInner) sec.insertBefore(newEl, insertBeforeInner);
+                else sec.appendChild(newEl);
+              } catch {
+                /* ignore */
+              }
+            } else {
+              const wrapHtml = wrapRootBlockInSection(tmp.innerHTML);
+              const w = d.createElement('div');
+              w.innerHTML = wrapHtml;
+              newEl = w.firstElementChild as HTMLElement | null;
+              if (newEl) {
+                const insertBeforeRoot = findDropInsertBeforeAtYIn(e.clientY, null, rootDnd);
+                try {
+                  if (insertBeforeRoot) rootDnd.insertBefore(newEl, insertBeforeRoot);
+                  else rootDnd.appendChild(newEl);
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+          }
+          if (newEl) {
+            const st = createBlockInspectorState(newEl);
+            selectedBlockIdRef.current = st.id;
+            onBlockSelectRef.current?.(st);
+            syncSelectedBlockUi();
+          }
+        }
+        applyDraggableAttrs();
+        schedule();
+        requestAnimationFrame(syncHeight);
+        return;
+      }
       if (!draggedBlock || !rootDnd.contains(draggedBlock)) return;
       const y = e.clientY;
-      const insertBefore = findDropInsertBefore(y);
+      const hitMove = d.elementFromPoint(e.clientX, e.clientY);
+      const targetSectionUnder = hitMove?.closest?.('[data-vb-block="section"]') as HTMLElement | null;
+      const dragParent = draggedBlock.parentElement;
+      let destParent: HTMLElement = rootDnd;
+      if (dragParent === rootDnd) {
+        destParent = rootDnd;
+      } else if (dragParent?.getAttribute('data-vb-block') === 'section') {
+        destParent =
+          targetSectionUnder && rootDnd.contains(targetSectionUnder) && targetSectionUnder !== draggedBlock
+            ? targetSectionUnder
+            : dragParent;
+      }
+      const insertBefore = findDropInsertBefore(y, destParent);
       if (insertBefore === draggedBlock) {
         onDragEndDnd();
         return;
@@ -680,8 +1395,8 @@ function EmailIframeEditor({
         return;
       }
       try {
-        if (insertBefore) rootDnd.insertBefore(draggedBlock, insertBefore);
-        else rootDnd.appendChild(draggedBlock);
+        if (insertBefore) destParent.insertBefore(draggedBlock, insertBefore);
+        else destParent.appendChild(draggedBlock);
       } catch {
         /* ignore */
       }
@@ -692,6 +1407,7 @@ function EmailIframeEditor({
     };
 
     const onInput = () => {
+      onRichTextActivityRef.current?.();
       applyDraggableAttrs();
       schedule();
       requestAnimationFrame(syncHeight);
@@ -705,10 +1421,22 @@ function EmailIframeEditor({
       }
     };
 
+    const onBlockClick = (e: Event) => {
+      if (builderModeRef.current !== 'block' || readOnlyBody) return;
+      const block = findTopLevelBlock(e.target);
+      if (!block) return;
+      const next = createBlockInspectorState(block);
+      selectedBlockIdRef.current = next.id;
+      onBlockSelectRef.current?.(next);
+      syncSelectedBlockUi();
+    };
+
     if (!readOnlyBody) {
       applyDraggableAttrs();
+      syncSelectedBlockUi();
       d.body.addEventListener('input', onInput);
       d.addEventListener('click', onImgClick, true);
+      d.addEventListener('click', onBlockClick, true);
       rootDnd.addEventListener('dragstart', onDragStartDnd, true);
       rootDnd.addEventListener('dragend', onDragEndDnd, true);
       d.addEventListener('dragover', onDragOverDnd, true);
@@ -737,6 +1465,7 @@ function EmailIframeEditor({
       selDebounce = setTimeout(() => {
         selDebounce = null;
         reportSelection();
+        onRichTextActivityRef.current?.();
       }, 60);
     };
 
@@ -774,7 +1503,7 @@ function EmailIframeEditor({
         d.removeEventListener('click', onPreviewLinkClick, true);
       }
       if (hoverBlockRef) hoverBlockRef.current = null;
-      onHoverInsertLineRef.current?.(null);
+      onHoverBlockChromeRef.current?.(null);
       if (selDebounce) clearTimeout(selDebounce);
       onTextSelectRef.current?.(null);
       d.removeEventListener('selectionchange', scheduleReportSelection);
@@ -790,6 +1519,7 @@ function EmailIframeEditor({
       if (!readOnlyBody) {
         d.body.removeEventListener('input', onInput);
         d.removeEventListener('click', onImgClick, true);
+        d.removeEventListener('click', onBlockClick, true);
         rootDnd.removeEventListener('dragstart', onDragStartDnd, true);
         rootDnd.removeEventListener('dragend', onDragEndDnd, true);
         d.removeEventListener('dragover', onDragOverDnd, true);
@@ -801,12 +1531,24 @@ function EmailIframeEditor({
   useEffect(() => {
     const d = innerRef.current?.contentDocument;
     if (!d?.body) return;
-    const bg = normalizeHexColor(columnBackground, DEFAULT_PREVIEW_COLUMN_BG);
-    d.documentElement.style.background = bg;
-    d.body.style.background = bg;
+    const root = getEmailDndRoot(d);
+    root.querySelectorAll('.vb-block-selected').forEach((n) => n.classList.remove('vb-block-selected'));
+    if (builderMode === 'block' && selectedBlockId) {
+      root.querySelector(`[data-vb-block-id="${CSS.escape(selectedBlockId)}"]`)?.classList.add('vb-block-selected');
+    }
+  }, [selectedBlockId, builderMode, bodyEditEpoch]);
+
+  useEffect(() => {
+    const d = innerRef.current?.contentDocument;
+    if (!d?.documentElement || !d.body) return;
+    const outer = normalizeHexColor(outerBackground, DEFAULT_PREVIEW_OUTER_BG);
+    const column = normalizeHexColor(columnBackground, DEFAULT_PREVIEW_COLUMN_BG);
+    d.documentElement.classList.add('vb-island-layout');
+    d.documentElement.style.setProperty('--vb-preview-outer', outer);
+    d.documentElement.style.setProperty('--vb-preview-card', column);
     d.documentElement.style.colorScheme = 'light';
     d.body.style.colorScheme = 'light';
-  }, [columnBackground]);
+  }, [columnBackground, outerBackground]);
 
   return (
     <iframe
@@ -818,7 +1560,7 @@ function EmailIframeEditor({
       }
       className={`w-full min-h-[280px] border-0 block ${hasMailboxStackAbove ? 'rounded-b-xl' : 'rounded-xl'} [color-scheme:light]`}
       style={{
-        backgroundColor: normalizeHexColor(columnBackground, DEFAULT_PREVIEW_COLUMN_BG),
+        backgroundColor: 'transparent',
         colorScheme: 'light',
       }}
       sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
@@ -827,15 +1569,22 @@ function EmailIframeEditor({
 }
 
 export default function EmailBuilder() {
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const draftParam = searchParams.get('draft');
+  const createNewFromRoute = location.pathname.startsWith('/mailing/novy-email');
 
   const [drafts, setDrafts] = useState<EmailDraft[]>([]);
   const [selected, setSelected] = useState<EmailDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /** Krátká nápověda po tichém autosave (bez toastu). */
+  const [autoSaveHint, setAutoSaveHint] = useState(false);
   const [pushing, setPushing] = useState(false);
+  const [sendingTestMail, setSendingTestMail] = useState(false);
+  const [testMailRecipient, setTestMailRecipient] = useState<string>(EMAIL_TEST_RECIPIENTS[0]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [toolPanelMode, setToolPanelMode] = useState<'ai' | 'block' | 'settings'>('ai');
 
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -856,16 +1605,35 @@ export default function EmailBuilder() {
   /** Zvýšit po AI / koláži — znovu naplní iframe z props (ne při každém keystroke). */
   const [bodyEditEpoch, setBodyEditEpoch] = useState(0);
   const bumpBodyEpoch = useCallback(() => setBodyEditEpoch(e => e + 1), []);
+  const [richToolbarEpoch, setRichToolbarEpoch] = useState(0);
+  const bumpRichToolbar = useCallback(() => setRichToolbarEpoch(e => e + 1), []);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   /** Aktuální draft — aby dokončený async `loadDrafts` nepřepsal výběr uživatele (stale `selected` v closure). */
   const selectedIdRef = useRef<string | null>(null);
+  const autoCreateDraftRouteRef = useRef<string | null>(null);
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
   const iframeHoverBlockRef = useRef<HTMLElement | null>(null);
+  /** Blok pod kurzorem (`data-vb-block-id`) — pro vložení z postranní lišty / kotvy za blok. */
+  const insertHoverBlockIdRef = useRef<string | null>(null);
   const pendingInsertAnchorRef = useRef<string | null>(null);
   const insertLineHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [insertLineRect, setInsertLineRect] = useState<{ top: number; left: number; width: number } | null>(null);
-  const [insertBlockMenuOpen, setInsertBlockMenuOpen] = useState(false);
+  /** Otevřená nabídka „+“ u postranní lišty bloku. */
+  const [blockChromeAddMenuOpen, setBlockChromeAddMenuOpen] = useState(false);
+  /** Po zkopírování bloku — invalidace náhledu + menu (schránka v `sessionStorage`). */
+  const [emailBlockClipboardTick, setEmailBlockClipboardTick] = useState(0);
+  const pendingInsertBeforeBlockIdRef = useRef<string | null>(null);
+  const ctaInsertBeforeBlockIdRef = useRef<string | null>(null);
+  /** Postranní knihovna: první řádky jako v Mailchimpu, zbytek po „Zobrazit vše“. */
+  const [blockLibraryExpanded, setBlockLibraryExpanded] = useState(false);
+  /** Plovoucí akce u bloku (viewport souřadnice). */
+  const [blockActionChrome, setBlockActionChrome] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    blockId: string;
+  } | null>(null);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   /** Kliknutý <img> v těle — úprava URL / ořez / galerie. */
   const [imageToolSrc, setImageToolSrc] = useState<string | null>(null);
@@ -876,12 +1644,14 @@ export default function EmailBuilder() {
   const [ctaAiHint, setCtaAiHint] = useState('');
   const [ctaAiLoading, setCtaAiLoading] = useState(false);
   const [editingImgSrc, setEditingImgSrc] = useState<string | null>(null);
-  const [htmlDrawerOpen, setHtmlDrawerOpen] = useState(false);
   const [metaExpanded, setMetaExpanded] = useState(false);
   /** true = panel „jako ve schránce“ (předmět, preview, metadata); false = jen hezké okno s tělem (úpravy bez horního bloku). */
   const [showInboxChrome, setShowInboxChrome] = useState(false);
   /** ID kotvy u + — další AI odpověď má vložit obsah hned za tento blok v těle. */
   const [aiInsertAfterAnchorId, setAiInsertAfterAnchorId] = useState<string | null>(null);
+  /** Blok (`data-vb-block-id`), před který má AI vložit nový obsah (tlačítko + u lišty). */
+  const [aiInsertBeforeBlockId, setAiInsertBeforeBlockId] = useState<string | null>(null);
+  const [selectedBlock, setSelectedBlock] = useState<BlockInspectorState | null>(null);
 
   const [selectedCanvasText, setSelectedCanvasText] = useState('');
   const [capturedSelection, setCapturedSelection] = useState<string | null>(null);
@@ -891,15 +1661,38 @@ export default function EmailBuilder() {
   const [historyFuture, setHistoryFuture] = useState<EmailDraft[]>([]);
   const isApplyingHistoryRef = useRef(false);
   const selectedRef = useRef<EmailDraft | null>(null);
+  const chatMsgsRef = useRef<ChatMsg[]>([]);
+  const savingRef = useRef(false);
+  const loadingRef = useRef(true);
+  const generatingRef = useRef(false);
+  /** Poslední úspěšně persistovaný obsah (nebo baseline po `selectDraft`). */
+  const lastPersistedFingerprintRef = useRef('');
   const iframeHistoryBurstRef = useRef(false);
   const iframeHistoryBurstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Debounce historie při úpravě bodyHtml přes `updateField` (např. textarea Zdroj HTML). */
   const bodyFieldHistoryBurstRef = useRef(false);
   const bodyFieldHistoryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeBuilderMode: EmailBuilderMode = selected?.builderMode === 'html' ? 'html' : 'block';
 
   useEffect(() => {
     selectedRef.current = selected;
   }, [selected]);
+
+  useEffect(() => {
+    chatMsgsRef.current = chatMsgs;
+  }, [chatMsgs]);
+
+  useEffect(() => {
+    savingRef.current = saving;
+  }, [saving]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    generatingRef.current = generating;
+  }, [generating]);
 
   useEffect(() => {
     return () => {
@@ -923,6 +1716,15 @@ export default function EmailBuilder() {
   }, [emailGenRagEnabled]);
 
   useEffect(() => {
+    try {
+      const s = window.localStorage.getItem(EMAIL_TEST_TO_STORAGE_KEY);
+      if (s && (EMAIL_TEST_RECIPIENTS as readonly string[]).includes(s)) {
+        setTestMailRecipient(s);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
     setBodyEditEpoch(e => e + 1);
   }, [selected?.id]);
 
@@ -933,7 +1735,6 @@ export default function EmailBuilder() {
           setImageToolSrc(null);
           return;
         }
-        setHtmlDrawerOpen(false);
         setSelectedCanvasText('');
         try {
           previewIframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
@@ -948,7 +1749,8 @@ export default function EmailBuilder() {
   }, [imageToolSrc]);
 
   const selectDraft = useCallback((d: EmailDraft) => {
-    selectedIdRef.current = d.id;
+    const normalized = normalizeDraftForBuilder(d);
+    selectedIdRef.current = normalized.id;
     if (iframeHistoryBurstTimerRef.current) {
       clearTimeout(iframeHistoryBurstTimerRef.current);
       iframeHistoryBurstTimerRef.current = null;
@@ -961,14 +1763,19 @@ export default function EmailBuilder() {
     bodyFieldHistoryBurstRef.current = false;
     setHistoryPast([]);
     setHistoryFuture([]);
-    setSelected(d);
-    setChatMsgs(d.chatHistory || []);
+    setSelected(normalized);
+    setSelectedBlock(null);
+    setChatMsgs(normalized.chatHistory || []);
     setChatInput('');
     setCapturedSelection(null);
     setSelectedCanvasText('');
     try {
       previewIframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
     } catch { /* ignore */ }
+    lastPersistedFingerprintRef.current = emailDraftContentFingerprint(
+      normalized,
+      normalized.chatHistory || [],
+    );
   }, []);
 
   useEffect(() => {
@@ -982,7 +1789,7 @@ export default function EmailBuilder() {
         const data = await r.json();
         if (signal.aborted) return;
         if (data.error) throw new Error(data.error);
-        const loaded = (data.drafts || []).sort((a: EmailDraft, b: EmailDraft) =>
+        const loaded = (data.drafts || []).map((draft: EmailDraft) => normalizeDraftForBuilder(draft)).sort((a: EmailDraft, b: EmailDraft) =>
           new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime(),
         );
         setDrafts(loaded);
@@ -1018,15 +1825,15 @@ export default function EmailBuilder() {
     return () => ac.abort();
   }, [draftParam, selectDraft]);
 
-  const saveDraft = async (draft?: EmailDraft) => {
+  const saveDraft = async (draft?: EmailDraft, options?: { quiet?: boolean }): Promise<EmailDraft | null> => {
     const d = draft || selected;
-    if (!d) return;
+    if (!d) return null;
     setSaving(true);
     try {
       /** Po AI odpovědi se volá `saveDraft(updatedDraft)` dřív, než React stihne `setChatMsgs` — musíme uložit `draft.chatHistory`. */
       const historyToSave =
         draft !== undefined && draft.chatHistory !== undefined ? draft.chatHistory : chatMsgs;
-      const toSave = { ...d, chatHistory: historyToSave, updatedAt: new Date().toISOString() };
+      const toSave = normalizeDraftForBuilder({ ...d, chatHistory: historyToSave, updatedAt: new Date().toISOString() });
       const r = await fetch(`${SERVER}/admin/email-drafts`, {
         method: 'POST',
         headers: AUTH_H,
@@ -1034,24 +1841,80 @@ export default function EmailBuilder() {
       });
       const data = await r.json();
       if (data.error) throw new Error(data.error);
+      const savedDraft = normalizeDraftForBuilder(data.draft || toSave);
       setDrafts(prev => {
         const idx = prev.findIndex(x => x.id === d.id);
         if (idx >= 0) {
           const n = [...prev];
-          n[idx] = toSave;
+          n[idx] = savedDraft;
           return n;
         }
-        return [toSave, ...prev];
+        return [savedDraft, ...prev];
       });
-      setSelected(toSave);
-      toast.success('Uloženo');
+      setSelected(savedDraft);
+      lastPersistedFingerprintRef.current = emailDraftContentFingerprint(
+        savedDraft,
+        savedDraft.chatHistory || [],
+      );
+      if (!options?.quiet) toast.success('Uloženo');
+      return savedDraft;
     } catch (e: unknown) {
       console.error('Save draft error:', e);
       toast.error(`Chyba při ukládání: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
     } finally {
       setSaving(false);
     }
   };
+
+  const saveDraftRef = useRef(saveDraft);
+  saveDraftRef.current = saveDraft;
+
+  const autoSaveHintHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (autoSaveHintHideTimerRef.current) clearTimeout(autoSaveHintHideTimerRef.current);
+    };
+  }, []);
+
+  /** Debounced autosave — tiché uložení; při AI generování neukládáme mezistav. */
+  useEffect(() => {
+    if (loading || !selected || generating) return;
+    const fp = emailDraftContentFingerprint(selected, chatMsgs);
+    if (fp === lastPersistedFingerprintRef.current) return;
+
+    const tid = setTimeout(() => {
+      void (async () => {
+        if (generatingRef.current) return;
+        const cur = selectedRef.current;
+        const msgs = chatMsgsRef.current;
+        if (!cur || loadingRef.current) return;
+        const fpNow = emailDraftContentFingerprint(cur, msgs);
+        if (fpNow === lastPersistedFingerprintRef.current) return;
+
+        for (let i = 0; i < 40; i++) {
+          if (!savingRef.current) break;
+          await new Promise<void>(r => {
+            setTimeout(r, 150);
+          });
+        }
+        if (savingRef.current) return;
+
+        const saved = await saveDraftRef.current({ ...cur, chatHistory: msgs }, { quiet: true });
+        if (saved) {
+          if (autoSaveHintHideTimerRef.current) clearTimeout(autoSaveHintHideTimerRef.current);
+          setAutoSaveHint(true);
+          autoSaveHintHideTimerRef.current = setTimeout(() => {
+            autoSaveHintHideTimerRef.current = null;
+            setAutoSaveHint(false);
+          }, 2200);
+        }
+      })();
+    }, 1600);
+
+    return () => clearTimeout(tid);
+  }, [selected, chatMsgs, loading, generating]);
 
   const deleteDraft = async (id: string) => {
     if (!confirm('Smazat tento draft?')) return;
@@ -1074,7 +1937,8 @@ export default function EmailBuilder() {
           bodyFieldHistoryTimerRef.current = null;
         }
         bodyFieldHistoryBurstRef.current = false;
-        setSelected(next);
+        setSelected(next ? normalizeDraftForBuilder(next) : null);
+        setSelectedBlock(null);
         setChatMsgs(next?.chatHistory || []);
       }
       toast.success('Smazáno');
@@ -1083,22 +1947,31 @@ export default function EmailBuilder() {
     }
   };
 
-  const createNewDraft = () => {
+  const createNewDraft = useCallback(() => {
     const now = new Date().toISOString();
-    const d: EmailDraft = {
+    const d: EmailDraft = normalizeDraftForBuilder({
       ...EMPTY_DRAFT, id: crypto.randomUUID(), createdAt: now, updatedAt: now,
-    };
+    });
     setDrafts(prev => [d, ...prev]);
     selectDraft(d);
     toast.success('Nový draft vytvořen');
-  };
+  }, [selectDraft]);
+
+  useEffect(() => {
+    if (!createNewFromRoute || loading || !!draftParam) return;
+    const routeKey = `${location.pathname}?${location.search}`;
+    if (autoCreateDraftRouteRef.current === routeKey) return;
+    autoCreateDraftRouteRef.current = routeKey;
+    createNewDraft();
+  }, [createNewFromRoute, loading, draftParam, location.pathname, location.search, createNewDraft]);
 
   const applyHistorySnapshot = useCallback(
     (d: EmailDraft) => {
       isApplyingHistoryRef.current = true;
-      const snap = cloneDraftForHistory(d);
+      const snap = normalizeDraftForBuilder(cloneDraftForHistory(d));
       setSelected(snap);
       setDrafts(prev => prev.map(x => (x.id === snap.id ? snap : x)));
+      setSelectedBlock(null);
       setChatMsgs(snap.chatHistory || []);
       bumpBodyEpoch();
       setSelectedCanvasText('');
@@ -1173,7 +2046,11 @@ export default function EmailBuilder() {
 
   const updateField = (field: keyof EmailDraft, value: unknown) => {
     if (!selected || isApplyingHistoryRef.current) return;
-    if (Object.is(selected[field as keyof EmailDraft], value)) return;
+    const nextValue =
+      field === 'bodyHtml' && typeof value === 'string'
+        ? normalizeBodyForBuilder(value)
+        : value;
+    if (Object.is(selected[field as keyof EmailDraft], nextValue)) return;
     if (field === 'bodyHtml') {
       if (!bodyFieldHistoryBurstRef.current) {
         commitHistoryBeforeMutation();
@@ -1187,9 +2064,12 @@ export default function EmailBuilder() {
     } else {
       commitHistoryBeforeMutation();
     }
-    const updated = { ...selected, [field]: value, updatedAt: new Date().toISOString() };
+    const updated = normalizeDraftForBuilder({ ...selected, [field]: nextValue, updatedAt: new Date().toISOString() });
     setSelected(updated);
     setDrafts(prev => prev.map(d => d.id === updated.id ? updated : d));
+    if (field === 'bodyHtml') {
+      setSelectedBlock(null);
+    }
   };
 
   /** Zapis HTML z iframe — cílový draft podle ID, ne podle `selected` (při přepnutí v záloze jinak přepíšeš špatný mail). */
@@ -1207,8 +2087,9 @@ export default function EmailBuilder() {
         }, 850);
       }
       const now = new Date().toISOString();
-      setDrafts(prev => prev.map(d => (d.id === id ? { ...d, bodyHtml: html, updatedAt: now } : d)));
-      setSelected(prev => (prev?.id === id ? { ...prev, bodyHtml: html, updatedAt: now } : prev));
+      const normalizedHtml = normalizeBodyForBuilder(html);
+      setDrafts(prev => prev.map(d => (d.id === id ? normalizeDraftForBuilder({ ...d, bodyHtml: normalizedHtml, updatedAt: now }) : d)));
+      setSelected(prev => (prev?.id === id ? normalizeDraftForBuilder({ ...prev, bodyHtml: normalizedHtml, updatedAt: now }) : prev));
     },
     [commitHistoryBeforeMutation],
   );
@@ -1241,46 +2122,167 @@ export default function EmailBuilder() {
   const clearAiInsertIntent = useCallback(() => {
     clearPendingInsertAnchor();
     setAiInsertAfterAnchorId(null);
+    setAiInsertBeforeBlockId(null);
+    ctaInsertBeforeBlockIdRef.current = null;
+    pendingInsertBeforeBlockIdRef.current = null;
   }, [clearPendingInsertAnchor]);
 
   /** Označí blok pod kurzorem pro vložení nového prvku za něj (data-vb-insert). */
   const prepareInsertAnchor = useCallback((): boolean => {
     clearPendingInsertAnchor();
-    const el = iframeHoverBlockRef.current;
     const doc = previewIframeRef.current?.contentDocument;
+    let el = iframeHoverBlockRef.current;
+    if ((!el || !doc?.body.contains(el)) && insertHoverBlockIdRef.current && doc?.body) {
+      const bid = insertHoverBlockIdRef.current;
+      el = doc.querySelector(`[data-vb-block-id="${CSS.escape(bid)}"]`) as HTMLElement | null;
+    }
     if (!el || !doc?.body.contains(el)) {
-      toast.error('Najeďte myší na odstavec nebo nadpis v náhledu.');
+      toast.error(activeBuilderMode === 'block'
+        ? 'Najeďte myší na existující blok v náhledu.'
+        : 'Najeďte myší na odstavec nebo nadpis v náhledu.');
       return false;
     }
     const id = crypto.randomUUID();
     el.setAttribute('data-vb-insert', id);
     pendingInsertAnchorRef.current = id;
     return true;
-  }, [clearPendingInsertAnchor]);
+  }, [clearPendingInsertAnchor, activeBuilderMode]);
 
   const insertHtmlAfterAnchorOrAppend = useCallback(
     (html: string) => {
       if (!selected) return;
+      const doc = previewIframeRef.current?.contentDocument;
+      if (!pendingInsertAnchorRef.current && doc?.body && insertHoverBlockIdRef.current) {
+        const bid = insertHoverBlockIdRef.current;
+        const blk = doc.querySelector(`[data-vb-block-id="${CSS.escape(bid)}"]`) as HTMLElement | null;
+        if (blk && doc.body.contains(blk)) {
+          const newId = crypto.randomUUID();
+          blk.setAttribute('data-vb-insert', newId);
+          pendingInsertAnchorRef.current = newId;
+        }
+      }
       const id = pendingInsertAnchorRef.current;
       pendingInsertAnchorRef.current = null;
       setAiInsertAfterAnchorId(null);
-      const doc = previewIframeRef.current?.contentDocument;
-      if (id && doc) {
+      const isBlockInsert = /data-vb-block-id=/.test(html) || activeBuilderMode === 'block';
+      if (doc?.body) {
         try {
-          const anchor = doc.querySelector(`[data-vb-insert="${id}"]`);
-          if (anchor) {
-            anchor.removeAttribute('data-vb-insert');
-            anchor.insertAdjacentHTML('afterend', html);
-            updateField('bodyHtml', doc.body.innerHTML);
-            bumpBodyEpoch();
-            return;
+          const root = getEmailDndRoot(doc);
+          let insertedEl: HTMLElement | null = null;
+          if (id) {
+            const anchor = doc.querySelector(`[data-vb-insert="${id}"]`) as HTMLElement | null;
+            if (anchor) {
+              anchor.removeAttribute('data-vb-insert');
+              const tmpAnchor = doc.createElement('div');
+              tmpAnchor.innerHTML = html;
+              const anchorFrag = tmpAnchor.firstElementChild as HTMLElement | null;
+              if (anchorFrag?.getAttribute('data-vb-block') === 'section') {
+                const hostSec = anchor.closest('[data-vb-block="section"]') as HTMLElement | null;
+                if (hostSec && hostSec.parentElement === root) {
+                  hostSec.insertAdjacentElement('afterend', anchorFrag);
+                } else {
+                  root.appendChild(anchorFrag);
+                }
+                insertedEl = anchorFrag;
+              } else {
+                anchor.insertAdjacentHTML('afterend', html);
+                insertedEl = anchor.nextElementSibling as HTMLElement | null;
+              }
+            }
           }
-        } catch { /* fall through */ }
+          if (!insertedEl) {
+            const tmp = doc.createElement('div');
+            tmp.innerHTML = html;
+            const maybe = tmp.firstElementChild as HTMLElement | null;
+            if (maybe) {
+              if (maybe.getAttribute('data-vb-block') === 'section') {
+                root.appendChild(maybe);
+                insertedEl = maybe;
+              } else {
+                const sections = [...root.querySelectorAll(':scope > [data-vb-block="section"]')] as HTMLElement[];
+                const lastSec = sections[sections.length - 1];
+                if (lastSec) {
+                  lastSec.appendChild(maybe);
+                  insertedEl = maybe;
+                } else {
+                  root.insertAdjacentHTML('beforeend', wrapRootBlockInSection(html));
+                  const sec = root.lastElementChild as HTMLElement | null;
+                  insertedEl =
+                    (sec?.lastElementChild as HTMLElement | null) || (sec as HTMLElement | null);
+                }
+              }
+            }
+          }
+
+          if (insertedEl && isBlockInsert) {
+            const topLevel = insertedEl.closest('[data-vb-block-id]') as HTMLElement | null;
+            if (topLevel) {
+              const next = createBlockInspectorState(topLevel);
+              setSelectedBlock(next);
+            }
+          }
+
+          updateField('bodyHtml', normalizeBodyForBuilder(doc.body.innerHTML));
+          bumpBodyEpoch();
+          return;
+        } catch {
+          /* fall through */
+        }
       }
       updateField('bodyHtml', (selected.bodyHtml || '') + '\n' + html);
       bumpBodyEpoch();
     },
-    [selected, updateField, bumpBodyEpoch],
+    [selected, updateField, bumpBodyEpoch, activeBuilderMode],
+  );
+
+  const insertHtmlBeforeBlockById = useCallback(
+    (blockId: string, html: string) => {
+      const currentSelected = selectedRef.current;
+      const doc = previewIframeRef.current?.contentDocument;
+      if (!currentSelected || !doc?.body) return;
+      const escaped = CSS.escape(blockId);
+      const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+      const root = getEmailDndRoot(doc);
+      if (!block || !root.contains(block)) {
+        toast.error('Blok v náhledu už není.');
+        return;
+      }
+      commitHistoryBeforeMutation();
+      const tmpBefore = doc.createElement('div');
+      tmpBefore.innerHTML = html;
+      const beforeFrag = tmpBefore.firstElementChild as HTMLElement | null;
+      let insertedEl: HTMLElement | null = null;
+      if (beforeFrag?.getAttribute('data-vb-block') === 'section') {
+        const hostSec = block.closest('[data-vb-block="section"]') as HTMLElement | null;
+        if (hostSec && hostSec.parentElement === root) {
+          hostSec.insertAdjacentElement('beforebegin', beforeFrag);
+        } else {
+          root.appendChild(beforeFrag);
+        }
+        insertedEl = beforeFrag;
+      } else {
+        block.insertAdjacentHTML('beforebegin', html);
+        insertedEl = block.previousElementSibling as HTMLElement | null;
+      }
+      const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+      const isBlockInsert = /data-vb-block-id=/.test(html) || activeBuilderMode === 'block';
+      let nextInspector: BlockInspectorState | null = null;
+      if (insertedEl && isBlockInsert) {
+        const topLevel = insertedEl.closest('[data-vb-block-id]') as HTMLElement | null;
+        if (topLevel) nextInspector = createBlockInspectorState(topLevel);
+      }
+      const updated = normalizeDraftForBuilder({
+        ...currentSelected,
+        bodyHtml: normalizedBody,
+        updatedAt: new Date().toISOString(),
+        lastSelectedBlockType: nextInspector?.type ?? currentSelected.lastSelectedBlockType ?? null,
+      });
+      setSelected(updated);
+      setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+      setSelectedBlock(nextInspector);
+      bumpBodyEpoch();
+    },
+    [commitHistoryBeforeMutation, bumpBodyEpoch, activeBuilderMode],
   );
 
   const cancelInsertLineHide = useCallback(() => {
@@ -1294,53 +2296,434 @@ export default function EmailBuilder() {
     cancelInsertLineHide();
     insertLineHideTimerRef.current = window.setTimeout(() => {
       insertLineHideTimerRef.current = null;
-      setInsertLineRect(null);
+      clearPendingInsertAnchor();
       iframeHoverBlockRef.current = null;
-      setInsertBlockMenuOpen(false);
+      insertHoverBlockIdRef.current = null;
+      setBlockChromeAddMenuOpen(false);
+      setBlockActionChrome(null);
     }, 380);
-  }, [cancelInsertLineHide]);
+  }, [cancelInsertLineHide, clearPendingInsertAnchor]);
 
-  const handleHoverInsertLine = useCallback(
-    (rect: { top: number; left: number; width: number } | null) => {
-      if (rect) {
-        cancelInsertLineHide();
-        setInsertLineRect(rect);
-      } else {
-        iframeHoverBlockRef.current = null;
-        setInsertLineRect(null);
-        setInsertBlockMenuOpen(false);
+  const handleHoverBlockChrome = useCallback(
+    (payload: { top: number; left: number; width: number; height: number; blockId: string } | null) => {
+      if (activeBuilderMode !== 'block') {
+        insertHoverBlockIdRef.current = null;
+        setBlockActionChrome(null);
+        return;
       }
+      if (payload) {
+        cancelInsertLineHide();
+        insertHoverBlockIdRef.current = payload.blockId;
+      } else {
+        insertHoverBlockIdRef.current = null;
+      }
+      setBlockActionChrome(payload);
     },
-    [cancelInsertLineHide],
+    [activeBuilderMode, cancelInsertLineHide],
   );
 
   useEffect(() => {
+    if (activeBuilderMode !== 'block') setBlockActionChrome(null);
+  }, [activeBuilderMode]);
+
+  useEffect(() => {
     cancelInsertLineHide();
-    setInsertLineRect(null);
     iframeHoverBlockRef.current = null;
-    setInsertBlockMenuOpen(false);
+    insertHoverBlockIdRef.current = null;
+    setBlockChromeAddMenuOpen(false);
+    setBlockLibraryExpanded(false);
+    setBlockActionChrome(null);
     clearAiInsertIntent();
   }, [selected?.id, cancelInsertLineHide, clearAiInsertIntent]);
 
   useEffect(() => {
     if (!showInboxChrome) return;
     cancelInsertLineHide();
-    setInsertLineRect(null);
     iframeHoverBlockRef.current = null;
-    setInsertBlockMenuOpen(false);
+    insertHoverBlockIdRef.current = null;
+    setBlockChromeAddMenuOpen(false);
+    setBlockActionChrome(null);
     clearAiInsertIntent();
   }, [showInboxChrome, cancelInsertLineHide, clearAiInsertIntent]);
 
   useEffect(() => {
-    if (!insertBlockMenuOpen) return;
+    if (!blockChromeAddMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target;
-      if (t instanceof Element && t.closest('[data-email-insert-toolbar]')) return;
-      setInsertBlockMenuOpen(false);
+      if (t instanceof Element && t.closest('[data-email-chrome-add-menu]')) return;
+      setBlockChromeAddMenuOpen(false);
     };
     document.addEventListener('mousedown', onDoc, true);
     return () => document.removeEventListener('mousedown', onDoc, true);
-  }, [insertBlockMenuOpen]);
+  }, [blockChromeAddMenuOpen]);
+
+  useEffect(() => {
+    if (toolPanelMode === 'block' && activeBuilderMode !== 'block') {
+      setToolPanelMode('ai');
+    }
+  }, [toolPanelMode, activeBuilderMode]);
+
+  const handleBlockSelect = useCallback((block: BlockInspectorState | null) => {
+    if (block && activeBuilderMode === 'block') {
+      setToolPanelMode('block');
+    }
+    setSelectedBlock(block);
+    setSelected(prev => {
+      if (!prev) return prev;
+      const updated = normalizeDraftForBuilder({
+        ...prev,
+        lastSelectedBlockType: block?.type ?? null,
+        updatedAt: new Date().toISOString(),
+      });
+      setDrafts((draftsPrev) => draftsPrev.map(d => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
+  }, [activeBuilderMode]);
+
+  const applyStructuredBodyMutation = useCallback((mutate: (block: HTMLElement, root: HTMLElement, doc: Document) => string | null | void) => {
+    const currentSelected = selectedRef.current;
+    const blockInfo = selectedBlock;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!currentSelected || !blockInfo?.id || !doc?.body) return false;
+    const root = getEmailDndRoot(doc);
+    const block = doc.querySelector(`[data-vb-block-id="${blockInfo.id}"]`) as HTMLElement | null;
+    if (!block || !root.contains(block)) {
+      toast.error('Vybraný blok už v náhledu není.');
+      return false;
+    }
+
+    commitHistoryBeforeMutation();
+    const preferredNextId = mutate(block, root, doc);
+
+    const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+    const nextBlockId = preferredNextId === undefined ? blockInfo.id : preferredNextId;
+    const nextBlock =
+      nextBlockId
+        ? (doc.querySelector(`[data-vb-block-id="${nextBlockId}"]`) as HTMLElement | null)
+        : null;
+    const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
+    const updated = normalizeDraftForBuilder({
+      ...currentSelected,
+      bodyHtml: normalizedBody,
+      updatedAt: new Date().toISOString(),
+      lastSelectedBlockType: nextInspector?.type ?? null,
+    });
+
+    setSelected(updated);
+    setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+    setSelectedBlock(nextInspector);
+    bumpBodyEpoch();
+    return true;
+  }, [selectedBlock, commitHistoryBeforeMutation, bumpBodyEpoch]);
+
+  const applyStructuredBodyMutationByBlockId = useCallback((
+    blockId: string,
+    mutate: (block: HTMLElement, root: HTMLElement, doc: Document) => string | null | void,
+  ) => {
+    const currentSelected = selectedRef.current;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!currentSelected || !blockId || !doc?.body) return false;
+    const root = getEmailDndRoot(doc);
+    const escaped = CSS.escape(blockId);
+    const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+    if (!block || !root.contains(block)) {
+      toast.error('Blok v náhledu už není.');
+      return false;
+    }
+
+    commitHistoryBeforeMutation();
+    const preferredNextId = mutate(block, root, doc);
+
+    const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+    const nextBlockId = preferredNextId === undefined ? blockId : preferredNextId;
+    const nextBlock =
+      nextBlockId
+        ? (doc.querySelector(`[data-vb-block-id="${CSS.escape(nextBlockId)}"]`) as HTMLElement | null)
+        : null;
+    const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
+    const updated = normalizeDraftForBuilder({
+      ...currentSelected,
+      bodyHtml: normalizedBody,
+      updatedAt: new Date().toISOString(),
+      lastSelectedBlockType: nextInspector?.type ?? null,
+    });
+
+    setSelected(updated);
+    setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+    setSelectedBlock(nextInspector);
+    bumpBodyEpoch();
+    return true;
+  }, [commitHistoryBeforeMutation, bumpBodyEpoch]);
+
+  const handleProductCollageLive = useCallback(
+    (payload: EmailProductCollageLivePayload) => {
+      const currentSelected = selectedRef.current;
+      const doc = previewIframeRef.current?.contentDocument;
+      if (!currentSelected || !doc?.body) return;
+      const root = getEmailDndRoot(doc);
+      const escaped = CSS.escape(payload.blockId);
+      const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+      if (!block || !root.contains(block)) return;
+
+      const newEnc = encodeProductCollagePayload(payload.layout, payload.items, payload.display);
+      if (block.getAttribute('data-vb-pc-encoded') === newEnc) return;
+
+      commitHistoryBeforeMutation();
+      const html = buildProductCollageBlockHtml(
+        payload.layout,
+        payload.items,
+        payload.blockId,
+        payload.display,
+      );
+      const tmp = doc.createElement('div');
+      tmp.innerHTML = html.trim();
+      const next = tmp.firstElementChild as HTMLElement | null;
+      if (!next) return;
+      block.replaceWith(next);
+
+      const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+      const nextBlock = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+      const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
+      const updated = normalizeDraftForBuilder({
+        ...currentSelected,
+        bodyHtml: normalizedBody,
+        updatedAt: new Date().toISOString(),
+        lastSelectedBlockType: nextInspector?.type ?? null,
+      });
+      setSelected(updated);
+      setDrafts((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setSelectedBlock(nextInspector);
+      bumpBodyEpoch();
+    },
+    [commitHistoryBeforeMutation, bumpBodyEpoch],
+  );
+
+  const handleWebinarLive = useCallback(
+    (payload: EmailWebinarLivePayload) => {
+      const currentSelected = selectedRef.current;
+      const doc = previewIframeRef.current?.contentDocument;
+      if (!currentSelected || !doc?.body) return;
+      const root = getEmailDndRoot(doc);
+      const escaped = CSS.escape(payload.blockId);
+      const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+      if (!block || !root.contains(block)) return;
+
+      const newEnc = encodeWebinarPayload(payload.layout, payload.snapshot);
+      if (block.getAttribute('data-vb-wb-encoded') === newEnc) return;
+
+      commitHistoryBeforeMutation();
+      const html = buildWebinarBlockHtml(payload.layout, payload.snapshot, payload.blockId);
+      const tmp = doc.createElement('div');
+      tmp.innerHTML = html.trim();
+      const next = tmp.firstElementChild as HTMLElement | null;
+      if (!next) return;
+      block.replaceWith(next);
+
+      const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+      const nextBlock = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+      const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
+      const updated = normalizeDraftForBuilder({
+        ...currentSelected,
+        bodyHtml: normalizedBody,
+        updatedAt: new Date().toISOString(),
+        lastSelectedBlockType: nextInspector?.type ?? null,
+      });
+      setSelected(updated);
+      setDrafts((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setSelectedBlock(nextInspector);
+      bumpBodyEpoch();
+    },
+    [commitHistoryBeforeMutation, bumpBodyEpoch],
+  );
+
+  const moveBlockById = useCallback((blockId: string, direction: 'up' | 'down') => {
+    applyStructuredBodyMutationByBlockId(blockId, (block) => {
+      const parent = block.parentElement as HTMLElement | null;
+      if (!parent) return;
+      if (direction === 'up') {
+        const sibling = block.previousElementSibling as HTMLElement | null;
+        if (!sibling || /^(STYLE|SCRIPT)$/i.test(sibling.tagName)) return;
+        parent.insertBefore(block, sibling);
+      } else {
+        const sibling = block.nextElementSibling as HTMLElement | null;
+        if (!sibling || /^(STYLE|SCRIPT)$/i.test(sibling.tagName)) return;
+        parent.insertBefore(sibling, block);
+      }
+    });
+  }, [applyStructuredBodyMutationByBlockId]);
+
+  const duplicateBlockById = useCallback((blockId: string) => {
+    applyStructuredBodyMutationByBlockId(blockId, (block) => {
+      const clone = block.cloneNode(true) as HTMLElement;
+      clone.removeAttribute('data-vb-block-id');
+      clone.removeAttribute('data-vb-block');
+      clone.querySelectorAll('[data-vb-block-id]').forEach((el) => {
+        el.removeAttribute('data-vb-block-id');
+      });
+      block.insertAdjacentElement('afterend', clone);
+      const inserted = clone;
+      const type = inferEmailBlockType(inserted);
+      inserted.setAttribute('data-vb-block', type);
+      return block.getAttribute('data-vb-block-id');
+    });
+  }, [applyStructuredBodyMutationByBlockId]);
+
+  const deleteBlockById = useCallback((blockId: string) => {
+    applyStructuredBodyMutationByBlockId(blockId, (block, root) => {
+      const nextSibling = block.nextElementSibling as HTMLElement | null;
+      const prevSibling = block.previousElementSibling as HTMLElement | null;
+      block.remove();
+      if ([...root.children].filter((el) => !/^(STYLE|SCRIPT)$/i.test((el as HTMLElement).tagName)).length === 0) {
+        root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
+      }
+      const next = nextSibling || prevSibling || (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
+      return next?.getAttribute('data-vb-block-id') || null;
+    });
+  }, [applyStructuredBodyMutationByBlockId]);
+
+  const moveSelectedBlock = useCallback((direction: 'up' | 'down') => {
+    applyStructuredBodyMutation((block) => {
+      const parent = block.parentElement as HTMLElement | null;
+      if (!parent) return;
+      const sibling = direction === 'up'
+        ? block.previousElementSibling
+        : block.nextElementSibling;
+      if (!sibling) return;
+      if (direction === 'up') parent.insertBefore(block, sibling);
+      else parent.insertBefore(sibling, block);
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const duplicateSelectedBlock = useCallback(() => {
+    applyStructuredBodyMutation((block) => {
+      const clone = block.cloneNode(true) as HTMLElement;
+      clone.removeAttribute('data-vb-block-id');
+      clone.removeAttribute('data-vb-block');
+      clone.querySelectorAll('[data-vb-block-id]').forEach((el) => {
+        el.removeAttribute('data-vb-block-id');
+      });
+      block.insertAdjacentElement('afterend', clone);
+      const inserted = clone;
+      const type = inferEmailBlockType(inserted);
+      inserted.setAttribute('data-vb-block', type);
+      return block.getAttribute('data-vb-block-id');
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const deleteSelectedBlock = useCallback(() => {
+    applyStructuredBodyMutation((block, root) => {
+      const nextSibling = block.nextElementSibling as HTMLElement | null;
+      const prevSibling = block.previousElementSibling as HTMLElement | null;
+      block.remove();
+      if ([...root.children].filter((el) => !/^(STYLE|SCRIPT)$/i.test((el as HTMLElement).tagName)).length === 0) {
+        root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
+      }
+      const next = nextSibling || prevSibling || (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
+      return next?.getAttribute('data-vb-block-id') || null;
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const updateSelectedSectionFill = useCallback((fill: EmailSectionFill) => {
+    applyStructuredBodyMutation((block) => {
+      const sec =
+        block.getAttribute('data-vb-block') === 'section'
+          ? block
+          : (block.closest('[data-vb-block="section"]') as HTMLElement | null);
+      if (!sec) {
+        toast.info('Skupinu se nepodařilo najít.');
+        return;
+      }
+      sec.setAttribute('data-vb-section-fill', fill);
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const updateSelectedBlockStyle = useCallback((property: string, value: string) => {
+    applyStructuredBodyMutation((block) => {
+      block.setAttribute('style', setInlineStyleValue(block.getAttribute('style') || '', property, value));
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const updateSelectedBlockLink = useCallback((field: 'text' | 'href', value: string) => {
+    applyStructuredBodyMutation((block) => {
+      const link = extractFirstLink(block);
+      if (!link) return;
+      if (field === 'text') link.textContent = value || 'Vyzkoušet zdarma';
+      else link.setAttribute('href', value || 'https://www.vividbooks.com/vyzkousejte');
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const updateSelectedBlockImage = useCallback((value: string) => {
+    applyStructuredBodyMutation((block) => {
+      const image = extractFirstImage(block);
+      if (!image) return;
+      image.setAttribute('src', value);
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const insertPresetBlock = useCallback((type: EmailBlockType) => {
+    if (activeBuilderMode === 'block') {
+      setToolPanelMode('block');
+    }
+    const html = buildEmailBlockHtml(type);
+    insertHtmlAfterAnchorOrAppend(html);
+    setBlockChromeAddMenuOpen(false);
+  }, [insertHtmlAfterAnchorOrAppend, activeBuilderMode]);
+
+  const insertPresetBlockBeforeById = useCallback(
+    (blockId: string, type: EmailBlockType) => {
+      if (activeBuilderMode === 'block') setToolPanelMode('block');
+      const html = buildEmailBlockHtml(type);
+      insertHtmlBeforeBlockById(blockId, html);
+      setBlockChromeAddMenuOpen(false);
+    },
+    [insertHtmlBeforeBlockById, activeBuilderMode],
+  );
+
+  const copyBlockHtmlToClipboard = useCallback((blockId: string) => {
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!doc?.body) return;
+    const escaped = CSS.escape(blockId);
+    const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
+    const root = getEmailDndRoot(doc);
+    if (!block || !root.contains(block)) {
+      toast.error('Blok v náhledu už není.');
+      return;
+    }
+    const clone = block.cloneNode(true) as HTMLElement;
+    clone.removeAttribute('data-vb-block-id');
+    clone.removeAttribute('data-vb-block');
+    const html = clone.outerHTML.trim();
+    if (!html) {
+      toast.error('Blok je prázdný.');
+      return;
+    }
+    try {
+      sessionStorage.setItem(EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY, html);
+      setEmailBlockClipboardTick((t) => t + 1);
+      toast.success('Blok zkopírován. U jiného bloku otevřete + a zvolte vložení.');
+    } catch {
+      toast.error('Kopii se nepodařilo uložit (např. režim soukromí v prohlížeči).');
+    }
+  }, []);
+
+  const pasteCopiedBlockBeforeById = useCallback(
+    (blockId: string) => {
+      let html = '';
+      try {
+        html = (sessionStorage.getItem(EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY) || '').trim();
+      } catch {
+        /* ignore */
+      }
+      if (!html) {
+        toast.error('Nemáte zkopírovaný blok — použijte ikonu schránky u bloku.');
+        return;
+      }
+      if (activeBuilderMode === 'block') setToolPanelMode('block');
+      insertHtmlBeforeBlockById(blockId, html);
+      setBlockChromeAddMenuOpen(false);
+    },
+    [insertHtmlBeforeBlockById, activeBuilderMode],
+  );
 
   const handleCollageInsert = (url: string) => {
     if (!selected) return;
@@ -1355,7 +2738,13 @@ export default function EmailBuilder() {
       bumpBodyEpoch();
       return;
     }
-    insertHtmlAfterAnchorOrAppend(imgTag);
+    const beforeId = pendingInsertBeforeBlockIdRef.current;
+    if (beforeId) {
+      pendingInsertBeforeBlockIdRef.current = null;
+      insertHtmlBeforeBlockById(beforeId, imgTag);
+    } else {
+      insertHtmlAfterAnchorOrAppend(imgTag);
+    }
     setEditingImgSrc(null);
   };
 
@@ -1370,17 +2759,24 @@ export default function EmailBuilder() {
         setEditingImgSrc(null);
         bumpBodyEpoch();
       } else {
-        insertHtmlAfterAnchorOrAppend(html);
+        const beforeId = pendingInsertBeforeBlockIdRef.current;
+        if (beforeId) {
+          pendingInsertBeforeBlockIdRef.current = null;
+          insertHtmlBeforeBlockById(beforeId, html);
+        } else {
+          insertHtmlAfterAnchorOrAppend(html);
+        }
       }
       setCollageOpen(false);
       setEditingImgSrc(null);
     },
-    [selected, editingImgSrc, clearPendingInsertAnchor, updateField, bumpBodyEpoch, insertHtmlAfterAnchorOrAppend],
+    [selected, editingImgSrc, clearPendingInsertAnchor, updateField, bumpBodyEpoch, insertHtmlAfterAnchorOrAppend, insertHtmlBeforeBlockById],
   );
 
   const closeCtaInsertModal = useCallback(() => {
     setCtaInsertModalOpen(false);
     setCtaAiHint('');
+    ctaInsertBeforeBlockIdRef.current = null;
     clearPendingInsertAnchor();
   }, [clearPendingInsertAnchor]);
 
@@ -1396,13 +2792,22 @@ export default function EmailBuilder() {
     return () => document.removeEventListener('keydown', onKey, true);
   }, [ctaInsertModalOpen, closeCtaInsertModal]);
 
-  const openCtaInsertFlow = useCallback(async () => {
+  const openCtaInsertFlow = useCallback(async (opts?: { insertBeforeBlockId?: string }) => {
     if (!selected) return;
-    if (!prepareInsertAnchor()) return;
-    setInsertBlockMenuOpen(false);
-    const id = pendingInsertAnchorRef.current;
-    const doc = previewIframeRef.current?.contentDocument;
-    const contextText = getPlainTextBeforeInsertAnchor(doc, id);
+    setBlockChromeAddMenuOpen(false);
+    let contextText = '';
+    if (opts?.insertBeforeBlockId) {
+      clearPendingInsertAnchor();
+      ctaInsertBeforeBlockIdRef.current = opts.insertBeforeBlockId;
+      const doc = previewIframeRef.current?.contentDocument;
+      contextText = getPlainTextBeforeBlockId(doc, opts.insertBeforeBlockId);
+    } else {
+      ctaInsertBeforeBlockIdRef.current = null;
+      if (!prepareInsertAnchor()) return;
+      const id = pendingInsertAnchorRef.current;
+      const doc = previewIframeRef.current?.contentDocument;
+      contextText = getPlainTextBeforeInsertAnchor(doc, id);
+    }
     setCtaFormText(selected.ctaText || 'Vyzkoušejte zdarma');
     setCtaFormUrl(selected.ctaUrl || 'https://www.vividbooks.com/vyzkousejte');
     setCtaAiHint('');
@@ -1430,32 +2835,44 @@ export default function EmailBuilder() {
     } finally {
       setCtaAiLoading(false);
     }
-  }, [selected, prepareInsertAnchor]);
+  }, [selected, prepareInsertAnchor, clearPendingInsertAnchor]);
 
-  const startChatInsertFromPlus = useCallback(() => {
-    if (!prepareInsertAnchor()) return;
-    setInsertBlockMenuOpen(false);
+  const startChatInsertFromPlusBeforeBlock = useCallback((blockId: string) => {
+    clearPendingInsertAnchor();
+    setAiInsertAfterAnchorId(null);
+    setAiInsertBeforeBlockId(blockId);
+    setBlockChromeAddMenuOpen(false);
+    setToolPanelMode('ai');
     setCapturedSelection(null);
     setSelectedCanvasText('');
     try {
       previewIframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
     } catch { /* ignore */ }
     window.getSelection()?.removeAllRanges();
-    const id = pendingInsertAnchorRef.current;
-    if (id) setAiInsertAfterAnchorId(id);
     window.setTimeout(() => chatInputRef.current?.focus(), 50);
-  }, [prepareInsertAnchor]);
+  }, [clearPendingInsertAnchor]);
 
   const regenerateCtaSuggestion = useCallback(async () => {
     if (!selected) return;
-    const id = pendingInsertAnchorRef.current;
     const doc = previewIframeRef.current?.contentDocument;
-    const anchorEl = id ? doc.querySelector(`[data-vb-insert="${id}"]`) : null;
-    if (!id || !anchorEl || !doc.body.contains(anchorEl)) {
-      toast.error('Zavřete okno a znovu zvolte CTA u znaku + v náhledu.');
-      return;
+    const beforeId = ctaInsertBeforeBlockIdRef.current;
+    let contextText = '';
+    if (beforeId) {
+      const el = doc?.querySelector(`[data-vb-block-id="${CSS.escape(beforeId)}"]`);
+      if (!el || !doc?.body.contains(el)) {
+        toast.error('Cílový blok v náhledu už není — zavřete okno a zvolte CTA znovu.');
+        return;
+      }
+      contextText = getPlainTextBeforeBlockId(doc, beforeId);
+    } else {
+      const id = pendingInsertAnchorRef.current;
+      const anchorEl = id ? doc?.querySelector(`[data-vb-insert="${id}"]`) : null;
+      if (!id || !anchorEl || !doc?.body.contains(anchorEl)) {
+        toast.error('Zavřete okno a znovu zvolte CTA z náhledu.');
+        return;
+      }
+      contextText = getPlainTextBeforeInsertAnchor(doc, id);
     }
-    const contextText = getPlainTextBeforeInsertAnchor(doc, id);
     setCtaAiLoading(true);
     try {
       const r = await fetch(`${SERVER}/admin/mailchimp/generate-inline-cta`, {
@@ -1483,11 +2900,14 @@ export default function EmailBuilder() {
 
   const applyCtaInsert = useCallback(() => {
     const html = buildInlineCtaHtml(ctaFormText, ctaFormUrl);
-    insertHtmlAfterAnchorOrAppend(html);
+    const beforeId = ctaInsertBeforeBlockIdRef.current;
+    ctaInsertBeforeBlockIdRef.current = null;
+    if (beforeId) insertHtmlBeforeBlockById(beforeId, html);
+    else insertHtmlAfterAnchorOrAppend(html);
     setCtaInsertModalOpen(false);
     setCtaAiHint('');
     toast.success('CTA vloženo');
-  }, [ctaFormText, ctaFormUrl, insertHtmlAfterAnchorOrAppend]);
+  }, [ctaFormText, ctaFormUrl, insertHtmlAfterAnchorOrAppend, insertHtmlBeforeBlockById]);
 
   /** Odeslání zprávy do generate-email; `prompt` jde do API, `chatLabel` volitelně zkrácený text do bubliny. */
   const sendChatMessage = async (prompt: string, options?: { chatLabel?: string }) => {
@@ -1497,8 +2917,10 @@ export default function EmailBuilder() {
     commitHistoryBeforeMutation();
 
     const insertAnchorId = aiInsertAfterAnchorId;
+    const insertBeforeBlockId = aiInsertBeforeBlockId;
     const selectionSlice =
       (!insertAnchorId &&
+        !insertBeforeBlockId &&
         (capturedSelection?.trim() || selectedCanvasText.trim() || '')) ||
       null;
 
@@ -1524,6 +2946,11 @@ export default function EmailBuilder() {
       const docLive = previewIframeRef.current?.contentDocument;
       const anchorStill =
         !!(insertAnchorId && docLive?.body?.querySelector(`[data-vb-insert="${insertAnchorId}"]`));
+      const beforeTargetStill =
+        !!(
+          insertBeforeBlockId &&
+          docLive?.body?.querySelector(`[data-vb-block-id="${CSS.escape(insertBeforeBlockId)}"]`)
+        );
 
       let currentEmailCtx = '';
       if (selected && (selected.subject || selected.bodyHtml)) {
@@ -1545,21 +2972,39 @@ export default function EmailBuilder() {
       }
 
       let insertCtx = '';
-      if (insertAnchorId) {
+      if (insertBeforeBlockId) {
+        if (!beforeTargetStill) {
+          toast.warning('Cílový blok v náhledu už není — zrušte režim vložení nebo zvolte blok znovu.');
+          clearAiInsertIntent();
+        } else {
+          const targetHtml = getBlockOuterHtmlForAiByBlockId(docLive, insertBeforeBlockId);
+          const beforeTxt = getPlainTextBeforeBlockId(docLive, insertBeforeBlockId);
+          if (targetHtml) {
+            insertCtx =
+              '\n\n[DŮLEŽITÉ — režim vložení v náhledu (nad blok): Uživatel zvolil, že se má nový obsah vložit IHNED PŘED následující HTML blok, podle pokynu v poslední zprávě. ' +
+              'V poli bodyHtml vrať CELÉ HTML těla zprávy: tento blok musí zůstat v kódu beze změny a BEZ PROSTŘIHÁNÍ těsně před jeho otevírací tag vložíš nový obsah jako HTML (stylově sladěný s mailem). Nic jinde v mailu neměň ani neodstraňuj. ' +
+              `Blok, před který vložit:\n"""${targetHtml}"""\n` +
+              `Čistý text těla před tímto blokem (orientace):\n"""${beforeTxt.slice(-2000)}"""`;
+          } else {
+            toast.warning('Nepodařilo se přečíst cílový blok — zkuste znovu.');
+            clearAiInsertIntent();
+          }
+        }
+      } else if (insertAnchorId) {
         if (!anchorStill) {
-          toast.warning('Kotva u znaku + už neplatí — upravte znovu z náhledu nebo pokračujte bez vložení.');
+          toast.warning('Kotva vložení už neplatí — upravte znovu z náhledu nebo pokračujte bez vložení.');
           clearAiInsertIntent();
         } else {
           const anchorHtml = getAnchorBlockOuterHtmlForAi(docLive, insertAnchorId);
           const beforeTxt = getPlainTextBeforeInsertAnchor(docLive, insertAnchorId);
           if (anchorHtml) {
             insertCtx =
-              '\n\n[DŮLEŽITÉ — režim vložení u znaku + v náhledu: Uživatel zvolil, že se má nový obsah vložit IHNED ZA následující HTML blok, a to podle jeho pokynu v poslední zprávě. ' +
+              '\n\n[DŮLEŽITÉ — režim vložení v náhledu (za blok): Uživatel zvolil, že se má nový obsah vložit IHNED ZA následující HTML blok, a to podle jeho pokynu v poslední zprávě. ' +
               'V poli bodyHtml vrať CELÉ HTML těla zprávy: tento blok musí zůstat v kódu beze změny a BEZ PROSTŘIHÁNÍ hned za uzavírací tag tohoto bloku vložíš nový obsah jako HTML (stylově sladěný s mailem). Nic jinde v mailu neměň ani neodstraňuj. ' +
               `Blok, za který vložit (najdi přesně tuto strukturu v aktuálním body):\n"""${anchorHtml}"""\n` +
               `Čistý text těla před tímto blokem (orientace):\n"""${beforeTxt.slice(-2000)}"""`;
           } else {
-            toast.warning('Nepodařilo se přečíst blok u + — zkuste znovu.');
+            toast.warning('Nepodařilo se přečíst blok pro vložení — zkuste znovu.');
             clearAiInsertIntent();
           }
         }
@@ -1666,7 +3111,7 @@ export default function EmailBuilder() {
       }
 
       await saveDraft(updatedDraft);
-      if (insertAnchorId) clearAiInsertIntent();
+      if (insertAnchorId || insertBeforeBlockId) clearAiInsertIntent();
     } catch (e: unknown) {
       console.error('Send chat error:', e);
       const errMsg: ChatMsg = {
@@ -1692,8 +3137,8 @@ export default function EmailBuilder() {
   /** Rychlá přeměna označeného úseku podle typologie bloků (stejná jako v system promptu generate-email). */
   const sendSelectionBlockTransform = async (kind: 'text' | 'block' | 'infographic') => {
     if (generating) return;
-    if (aiInsertAfterAnchorId) {
-      toast.info('Zrušte nejdřív vkládání u znaku + (režim +).');
+    if (aiInsertAfterAnchorId || aiInsertBeforeBlockId) {
+      toast.info('Zrušte nejdřív režim vložení z náhledu (+ / uložené místo v chatu).');
       return;
     }
     const sel = (capturedSelection?.trim() || selectedCanvasText.trim());
@@ -1725,36 +3170,39 @@ export default function EmailBuilder() {
   };
 
   const pushToMailchimp = async () => {
-    if (!selected) return;
+    const snap = selectedRef.current;
+    if (!snap) return;
     setPushing(true);
     try {
+      const saved = await saveDraft(snap, { quiet: true });
+      if (!saved) return;
+
       const r = await fetch(`${SERVER}/admin/mailchimp/create-draft`, {
         method: 'POST',
         headers: AUTH_H,
         body: JSON.stringify({
-          subject: selected.subject,
-          previewText: selected.previewText,
-          headline: selected.headline,
-          bodyContent: selected.bodyHtml,
-          ctaText: selected.ctaText,
-          ctaUrl: selected.ctaUrl,
-          audience: selected.audience,
-          htmlBody: selected.fullHtml || undefined,
+          subject: saved.subject,
+          previewText: saved.previewText,
+          headline: saved.headline,
+          bodyContent: saved.bodyHtml,
+          ctaText: saved.ctaText,
+          ctaUrl: saved.ctaUrl,
+          audience: saved.audience,
         }),
       });
       const data = await r.json();
       if (data.error) throw new Error(data.error);
 
-      const updated = {
-        ...selected,
+      const updated = normalizeDraftForBuilder({
+        ...saved,
         status: 'pushed' as const,
         mailchimpCampaignId: data.campaignId,
         mailchimpUrl: data.archiveUrl || data.webUrl,
         updatedAt: new Date().toISOString(),
-      };
+      });
       setSelected(updated);
       setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
-      await saveDraft(updated);
+      await saveDraft(updated, { quiet: true });
       toast.success('Pushnutno do Mailchimpu!');
     } catch (e: unknown) {
       console.error('Push to Mailchimp error:', e);
@@ -1763,6 +3211,277 @@ export default function EmailBuilder() {
       setPushing(false);
     }
   };
+
+  const sendTestMail = async () => {
+    const snap = selectedRef.current;
+    if (!snap || !testMailRecipient) return;
+    if (!snap.subject.trim()) {
+      toast.error('Nejdřív vyplňte předmět.');
+      return;
+    }
+    setSendingTestMail(true);
+    try {
+      const saved = await saveDraft(snap, { quiet: true });
+      if (!saved) return;
+
+      const r = await fetch(`${SERVER}/admin/mailchimp/send-test-email`, {
+        method: 'POST',
+        headers: AUTH_H,
+        body: JSON.stringify({
+          to: testMailRecipient,
+          subject: saved.subject,
+          previewText: saved.previewText,
+          headline: saved.headline,
+          bodyContent: saved.bodyHtml,
+          ctaText: saved.ctaText,
+          ctaUrl: saved.ctaUrl,
+          audience: saved.audience,
+        }),
+      });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      toast.success(typeof data.message === 'string' ? data.message : `Test odeslán na ${testMailRecipient}`);
+    } catch (e: unknown) {
+      console.error('Test mail error:', e);
+      toast.error(`Test mail: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSendingTestMail(false);
+    }
+  };
+
+  const blockPresetGroups = (['Content', 'Media', 'Layout', 'Commerce', 'Brand'] as EmailBlockPreset['category'][])
+    .map((category) => ({
+      category,
+      blocks: EMAIL_BLOCK_PRESETS.filter((preset) => preset.category === category),
+    }))
+    .filter((group) => group.blocks.length > 0);
+
+  const blockPresetsOrdered = blockPresetGroups.flatMap((g) => g.blocks);
+  const selectedSectionFill = useMemo(
+    () =>
+      readSectionFillForSelectedBlock(
+        previewIframeRef.current?.contentDocument ?? null,
+        selectedBlock?.id ?? null,
+      ),
+    [selectedBlock?.id, bodyEditEpoch, selected?.id, selected?.bodyHtml],
+  );
+  const BLOCK_LIB_PREVIEW = 6;
+  const visibleBlockPresets = blockLibraryExpanded
+    ? blockPresetsOrdered
+    : blockPresetsOrdered.slice(0, BLOCK_LIB_PREVIEW);
+  const blockLibraryHasMore = blockPresetsOrdered.length > BLOCK_LIB_PREVIEW;
+
+  const blockChromePortal =
+    selected &&
+    activeBuilderMode === 'block' &&
+    !showInboxChrome &&
+    blockActionChrome &&
+    !assetPickerOpen &&
+    !collageOpen &&
+    !imageToolSrc &&
+    !ctaInsertModalOpen
+      ? (() => {
+          const barW = 40;
+          const gap = 8;
+          const c = blockActionChrome;
+          let left = c.left + c.width + gap;
+          const vw = typeof window !== 'undefined' ? window.innerWidth : 1200;
+          if (left + barW > vw - 10) left = c.left - barW - gap;
+          if (left < 8) left = 8;
+          const chromeOnRight = left >= c.left + c.width;
+          const top = c.top + c.height / 2;
+          const bid = c.blockId;
+          void emailBlockClipboardTick;
+          let hasCopiedBlock = false;
+          try {
+            hasCopiedBlock = !!(
+              typeof window !== 'undefined' &&
+              (sessionStorage.getItem(EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY) || '').trim()
+            );
+          } catch {
+            hasCopiedBlock = false;
+          }
+          const btnClass =
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#001161]/65 hover:bg-[#7C3AED]/12 hover:text-[#7C3AED] cursor-pointer transition-colors';
+          return createPortal(
+            <div
+              data-email-block-chrome
+              className="flex flex-col gap-0.5 rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
+              style={{
+                position: 'fixed',
+                zIndex: 19950,
+                left,
+                top,
+                transform: 'translateY(-50%)',
+              }}
+              onMouseEnter={cancelInsertLineHide}
+              onMouseLeave={scheduleInsertLineHide}
+            >
+              <div
+                className={`relative ${blockChromeAddMenuOpen ? 'z-[1]' : ''}`}
+                data-email-chrome-add-menu
+              >
+                <button
+                  type="button"
+                  className={`${btnClass} ${blockChromeAddMenuOpen ? 'bg-[#7C3AED]/12 text-[#7C3AED]' : ''}`}
+                  title="Přidat nad tento blok"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    cancelInsertLineHide();
+                    setBlockChromeAddMenuOpen(v => !v);
+                  }}
+                >
+                  <Plus className="h-4 w-4" strokeWidth={2} />
+                </button>
+                {blockChromeAddMenuOpen && (
+                  <div
+                    className={`absolute z-20 top-0 w-[min(100vw-24px,320px)] min-w-[280px] rounded-xl border border-gray-200 bg-white px-3 pb-3 pt-2 shadow-xl ${
+                      chromeOnRight ? 'right-full mr-2' : 'left-full ml-2'
+                    }`}
+                    style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
+                  >
+                    <div className="mb-2 px-0.5">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#001161]/35">Knihovna bloků</p>
+                      <p className="mt-0.5 text-[10px] leading-snug text-[#001161]/40">Vložení nad blok, u kterého je lišta</p>
+                    </div>
+                    {hasCopiedBlock && (
+                      <button
+                        type="button"
+                        className="mb-2 flex w-full items-center gap-2 rounded-xl border border-[#7C3AED]/25 bg-[#7C3AED]/6 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/10 transition-colors cursor-pointer"
+                        onClick={() => pasteCopiedBlockBeforeById(bid)}
+                      >
+                        <ClipboardPaste className="h-4 w-4 shrink-0 text-[#7C3AED]" aria-hidden />
+                        Vložit zkopírovaný blok
+                      </button>
+                    )}
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {blockPresetsOrdered.map((block) => (
+                        <button
+                          key={block.type}
+                          type="button"
+                          title={`${block.description} — přetáhněte do náhledu`}
+                          draggable
+                          onDragStart={(ev) => {
+                            ev.dataTransfer?.setData(VB_EMAIL_LIBRARY_DRAG_TYPE, block.type);
+                            ev.dataTransfer?.setData('text/plain', `vb-email-block:${block.type}`);
+                            if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copy';
+                          }}
+                          onClick={() => insertPresetBlockBeforeById(bid, block.type)}
+                          className="flex min-h-[76px] flex-col items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-1.5 py-2.5 text-center shadow-sm transition-all hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/6 hover:shadow cursor-grab active:cursor-grabbing"
+                        >
+                          <BlockPresetIcon type={block.type} className="h-6 w-6 shrink-0 text-[#001161]/50" />
+                          <span className="text-[9px] font-bold leading-tight text-[#001161] line-clamp-2">{block.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mx-0 my-3 h-px bg-gray-100" />
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
+                      onClick={() => {
+                        pendingInsertBeforeBlockIdRef.current = bid;
+                        setBlockChromeAddMenuOpen(false);
+                        setAssetPickerOpen(true);
+                      }}
+                    >
+                      <ImageIcon className="h-4 w-4 shrink-0 text-[#7C3AED]" />
+                      Obrázek z galerie
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
+                      onClick={() => {
+                        pendingInsertBeforeBlockIdRef.current = bid;
+                        setBlockChromeAddMenuOpen(false);
+                        setCollageOpen(true);
+                      }}
+                    >
+                      <Layers className="h-4 w-4 shrink-0 text-[#7C3AED]" />
+                      Koláž
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
+                      onClick={() => {
+                        void openCtaInsertFlow({ insertBeforeBlockId: bid });
+                      }}
+                    >
+                      <MousePointerClick className="h-4 w-4 shrink-0 text-[#7C3AED]" />
+                      CTA přes AI
+                    </button>
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
+                      onClick={() => {
+                        startChatInsertFromPlusBeforeBlock(bid);
+                      }}
+                    >
+                      <Sparkles className="h-4 w-4 shrink-0 text-[#7C3AED]" />
+                      Napsat přes AI (chat)
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className={btnClass}
+                title="Přesunout nahoru"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  moveBlockById(bid, 'up');
+                }}
+              >
+                <ChevronUp className="h-4 w-4" strokeWidth={2} />
+              </button>
+              <button
+                type="button"
+                className={btnClass}
+                title="Přesunout dolů"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  moveBlockById(bid, 'down');
+                }}
+              >
+                <ChevronDown className="h-4 w-4" strokeWidth={2} />
+              </button>
+              <button
+                type="button"
+                className={btnClass}
+                title="Kopírovat blok (vložení přes + zde nebo v jiném mailu)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  copyBlockHtmlToClipboard(bid);
+                }}
+              >
+                <ClipboardCopy className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={btnClass}
+                title="Duplikovat"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  duplicateBlockById(bid);
+                }}
+              >
+                <CopyPlus className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </button>
+              <button
+                type="button"
+                className={`${btnClass} hover:!bg-red-50 hover:!text-red-600`}
+                title="Vymazat"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteBlockById(bid);
+                }}
+              >
+                <Trash2 className="h-4 w-4" strokeWidth={2} />
+              </button>
+            </div>,
+            document.body,
+          );
+        })()
+      : null;
 
   if (loading) {
     return (
@@ -1778,101 +3497,7 @@ export default function EmailBuilder() {
       style={{ minWidth: 1100 }}
     >
 
-      {selected && !showInboxChrome && insertLineRect && !assetPickerOpen && !collageOpen && !imageToolSrc && !ctaInsertModalOpen && (
-        <div
-          data-email-insert-toolbar
-          className="fixed z-[20000]"
-          style={{
-            top: insertLineRect.top - 16,
-            left: insertLineRect.left,
-            width: Math.max(insertLineRect.width, 120),
-          }}
-          onMouseEnter={cancelInsertLineHide}
-          onMouseLeave={scheduleInsertLineHide}
-        >
-          <div className="relative flex min-h-9 items-center justify-center py-1">
-            <div
-              className="pointer-events-none absolute left-1 right-1 top-1/2 h-px -translate-y-1/2 bg-[#7C3AED]/40"
-              aria-hidden
-            />
-            <button
-              type="button"
-              title="Přidat obsah nebo nechat AI doplnit blok přes chat"
-              onClick={e => {
-                e.stopPropagation();
-                cancelInsertLineHide();
-                setInsertBlockMenuOpen(v => !v);
-              }}
-              className="relative z-10 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-[#7C3AED] text-xl font-light leading-none text-white shadow-md transition-colors hover:bg-[#6D28D9]"
-              style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
-            >
-              +
-            </button>
-            {insertBlockMenuOpen && (
-              <div
-                className="absolute top-full left-1/2 z-20 mt-2 min-w-[220px] -translate-x-1/2 rounded-xl border border-gray-200 bg-white py-1 shadow-xl"
-                style={{ fontFamily: 'Arial, Helvetica, sans-serif' }}
-              >
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
-                  onClick={() => {
-                    if (!prepareInsertAnchor()) return;
-                    setInsertBlockMenuOpen(false);
-                    setAssetPickerOpen(true);
-                  }}
-                >
-                  <ImageIcon className="h-4 w-4 shrink-0 text-[#7C3AED]" />
-                  Obrázek z galerie
-                </button>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
-                  onClick={() => {
-                    if (!prepareInsertAnchor()) return;
-                    setInsertBlockMenuOpen(false);
-                    setCollageOpen(true);
-                  }}
-                >
-                  <Layers className="h-4 w-4 shrink-0 text-[#7C3AED]" />
-                  Koláž
-                </button>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
-                  onClick={() => {
-                    void openCtaInsertFlow();
-                  }}
-                >
-                  <MousePointerClick className="h-4 w-4 shrink-0 text-[#7C3AED]" />
-                  CTA (tlačítko)
-                </button>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161] hover:bg-[#7C3AED]/8 transition-colors cursor-pointer"
-                  onClick={() => {
-                    startChatInsertFromPlus();
-                  }}
-                >
-                  <Sparkles className="h-4 w-4 shrink-0 text-[#7C3AED]" />
-                  Napsat přes AI (chat)
-                </button>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-[12px] font-bold text-[#001161]/50 hover:bg-gray-50 transition-colors cursor-pointer"
-                  onClick={() => {
-                    setInsertBlockMenuOpen(false);
-                    toast.info('Vkládání videa přidáme v další verzi.');
-                  }}
-                >
-                  <Video className="h-4 w-4 shrink-0 text-[#001161]/35" />
-                  Video (již brzy)
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {blockChromePortal}
 
       {selected && ctaInsertModalOpen && (
         <div
@@ -1888,7 +3513,7 @@ export default function EmailBuilder() {
             <div className="px-5 pt-4 pb-3 border-b border-gray-100">
               <h2 className="text-[15px] font-bold text-[#001161]">Vložit CTA tlačítko</h2>
               <p className="text-[11px] text-[#001161]/45 mt-1 leading-snug">
-                Text a odkaz navrhl AI z obsahu nad řádkem +. Upravte cílovou URL a text podle potřeby.
+                Text a odkaz navrhl AI z obsahu před místem vložení. Upravte cílovou URL a text podle potřeby.
               </p>
             </div>
             <div className="px-5 py-4 space-y-4">
@@ -2049,19 +3674,56 @@ export default function EmailBuilder() {
 
       <div className="w-[360px] border-r border-gray-100 flex flex-col min-h-0 overflow-hidden bg-white shrink-0">
         <div className="px-3 py-2.5 border-b border-gray-100 flex flex-col gap-1.5 shrink-0 min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Brain className="w-4 h-4 shrink-0 text-[#7C3AED]" aria-hidden />
-            <span
-              style={F}
-              className="text-[11px] font-bold text-[#001161] truncate min-w-0 shrink"
-              title="AI Email Agent"
+          <div className="flex items-center min-w-0">
+            <div className="flex flex-wrap items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd]">
+              <button
+                type="button"
+                onClick={() => setToolPanelMode('ai')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                  toolPanelMode === 'ai'
+                    ? 'bg-[#7C3AED] text-white shadow-sm'
+                    : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
+                }`}
+                style={F}
+              >
+                <Brain className="w-3 h-3 shrink-0" aria-hidden />
+                AI agent
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolPanelMode('block')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                  toolPanelMode === 'block'
+                    ? 'bg-[#001161] text-white shadow-sm'
+                    : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
+                }`}
+                style={F}
+              >
+                <LayoutTemplate className="w-3 h-3 shrink-0" aria-hidden />
+                Block editor
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolPanelMode('settings')}
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                  toolPanelMode === 'settings'
+                    ? 'bg-[#0f766e] text-white shadow-sm'
+                    : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
+                }`}
+                style={F}
+                title="Předmět, audience, čas odeslání a push do Mailchimpu"
+              >
+                <Settings2 className="w-3 h-3 shrink-0" aria-hidden />
+                Nastavení
+              </button>
+            </div>
+          </div>
+          {toolPanelMode === 'ai' && (
+            <div
+              className="flex flex-wrap items-center gap-x-1 gap-y-1"
+              role="group"
+              aria-label="Model a RAG"
             >
-              AI Email Agent
-            </span>
-            <span className="text-[#001161]/22 shrink-0 select-none" aria-hidden>
-              ·
-            </span>
-            <div className="flex items-center gap-0.5 shrink-0 ml-auto">
               <button
                 type="button"
                 onClick={() => setEmailGenTier('lite')}
@@ -2150,300 +3812,821 @@ export default function EmailBuilder() {
                 RAG−
               </button>
             </div>
-          </div>
+          )}
           <p style={F} className="text-[9px] text-[#001161]/38 leading-snug">
-            RAG− přeskočí knihovnu (rychleji). Lite = užší podklady. Při 503 Google až 3 opakování.
+            {toolPanelMode === 'ai'
+              ? 'RAG− přeskočí knihovnu (rychleji). Lite = užší podklady. Při 503 Google až 3 opakování.'
+              : toolPanelMode === 'settings'
+                ? 'Předmět, audience a plán uložíme s draftem. Čas odeslání v Mailchimpu zatím po pushi doplňte v kampani.'
+                : 'Knihovna bloků a nastavení vybraného bloku. Bloky přetáhněte do náhledu nebo vložte kliknutím / řádkem + u bloku.'}
           </p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3">
-          {chatMsgs.length === 0 && (
-            <div className="text-center py-12">
-              <Sparkles className="w-8 h-8 text-[#7C3AED]/20 mx-auto mb-3" />
-              <p style={F} className="text-[12px] text-[#001161]/30 mb-1">Popište email nebo označte text v náhledu</p>
-              <p style={F} className="text-[10px] text-[#001161]/20">
-                Úpravy: u znaku + lze zvolit „Napsat přes AI“ a v chatu popsat, co se má vložit na dané místo
-              </p>
-            </div>
-          )}
+        {toolPanelMode === 'ai' ? (
+          <>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-3">
+              {chatMsgs.length === 0 && (
+                <div className="text-center py-12">
+                  <Sparkles className="w-8 h-8 text-[#7C3AED]/20 mx-auto mb-3" />
+                  <p style={F} className="text-[12px] text-[#001161]/30 mb-1">Popište email nebo označte text v náhledu</p>
+                  <p style={F} className="text-[10px] text-[#001161]/20">
+                    Úpravy: u lišty u bloku (+) lze zvolit „Napsat přes AI“ a v chatu popsat, co se má vložit nad blok
+                  </p>
+                </div>
+              )}
 
-          {chatMsgs.map(m => (
-            <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div
-                className={`max-w-[85%] rounded-xl px-3 py-2 ${
-                  m.role === 'user' ? 'bg-[#7C3AED] text-white' : 'bg-[#f5f6fa] text-[#001161]'
-                }`}
-              >
-                <div
-                  style={F}
-                  className={`text-[12px] leading-relaxed whitespace-pre-wrap [&_strong]:font-bold ${
-                    m.role === 'user' ? '' : '[&_strong]:text-[#7C3AED]'
-                  }`}
-                  dangerouslySetInnerHTML={{
-                    __html: m.content
-                      .replace(/```json[\s\S]*?```/g, '')
-                      .replace(/```[\s\S]*?```/g, '')
-                      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-                      .trim(),
+              {chatMsgs.map(m => (
+                <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[85%] rounded-xl px-3 py-2 ${
+                      m.role === 'user' ? 'bg-[#7C3AED] text-white' : 'bg-[#f5f6fa] text-[#001161]'
+                    }`}
+                  >
+                    <div
+                      style={F}
+                      className={`text-[12px] leading-relaxed whitespace-pre-wrap [&_strong]:font-bold ${
+                        m.role === 'user' ? '' : '[&_strong]:text-[#7C3AED]'
+                      }`}
+                      dangerouslySetInnerHTML={{
+                        __html: m.content
+                          .replace(/```json[\s\S]*?```/g, '')
+                          .replace(/```[\s\S]*?```/g, '')
+                          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                          .trim(),
+                      }}
+                    />
+                    {m.ragDebug && <RagBadges info={m.ragDebug} />}
+                    <p style={F} className={`text-[8px] mt-1.5 ${m.role === 'user' ? 'text-white/40' : 'text-[#001161]/20'}`}>
+                      {fmtDate(m.timestamp)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+
+              {generating && (
+                <div className="flex justify-start">
+                  <div className="bg-[#f5f6fa] rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <Loader2 className="w-3.5 h-3.5 text-[#7C3AED] animate-spin" />
+                      <span style={F} className="text-[11px] text-[#001161]/40">Generuji…</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={chatEndRef} />
+            </div>
+
+            <div className="shrink-0 p-3 border-t border-gray-100 bg-white">
+              {aiInsertAfterAnchorId && (
+                <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100/80 flex items-center gap-2">
+                  <Sparkles className="w-3 h-3 text-amber-700 shrink-0" />
+                  <span style={F} className="text-[9px] text-amber-950/90 leading-snug flex-1">
+                    Místo vložení je uložené — obsah se doplní za zvolený blok v náhledu.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAiInsertIntent}
+                    className="p-0.5 rounded hover:bg-amber-100 cursor-pointer"
+                    title="Zrušit režim vložení"
+                  >
+                    <X className="w-3 h-3 text-amber-800/60" />
+                  </button>
+                </div>
+              )}
+              {aiInsertBeforeBlockId && (
+                <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100/80 flex items-center gap-2">
+                  <Sparkles className="w-3 h-3 text-amber-700 shrink-0" />
+                  <span style={F} className="text-[9px] text-amber-950/90 leading-snug flex-1">
+                    Místo vložení je uložené — obsah se doplní před zvolený blok v náhledu (tlačítko + u lišty).
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAiInsertIntent}
+                    className="p-0.5 rounded hover:bg-amber-100 cursor-pointer"
+                    title="Zrušit režim vložení"
+                  >
+                    <X className="w-3 h-3 text-amber-800/60" />
+                  </button>
+                </div>
+              )}
+              {(capturedSelection?.trim() || selectedCanvasText.trim()) && !aiInsertAfterAnchorId && !aiInsertBeforeBlockId && (
+                <div className="mb-2 space-y-2">
+                  <div className="px-2 py-1.5 rounded-lg bg-[#7C3AED]/5 border border-[#7C3AED]/10 flex items-center gap-2">
+                    <TextCursor className="w-3 h-3 text-[#7C3AED] shrink-0" />
+                    <span style={F} className="text-[9px] text-[#7C3AED] truncate flex-1">
+                      Úprava výběru: „{(capturedSelection?.trim() || selectedCanvasText).substring(0, 40)}
+                      {(capturedSelection?.trim() || selectedCanvasText).length > 40 ? '…' : ''}"
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCapturedSelection(null);
+                        clearCanvasSelection();
+                      }}
+                      className="p-0.5 rounded hover:bg-[#7C3AED]/10 cursor-pointer"
+                    >
+                      <X className="w-3 h-3 text-[#7C3AED]/50" />
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <span style={F} className="w-full text-[8px] font-bold text-[#001161]/40 uppercase tracking-wide">
+                      Rychlé přeměny typu bloku
+                    </span>
+                    <button
+                      type="button"
+                      disabled={generating}
+                      onClick={() => void sendSelectionBlockTransform('text')}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
+                      style={F}
+                      title="Souvislý text, odstavce, bez rámečku"
+                    >
+                      Přeměnit na text
+                    </button>
+                    <button
+                      type="button"
+                      disabled={generating}
+                      onClick={() => void sendSelectionBlockTransform('block')}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
+                      style={F}
+                      title="Barevný zaoblený rámeček, strukturované položky"
+                    >
+                      Přeměnit na blok
+                    </button>
+                    <button
+                      type="button"
+                      disabled={generating}
+                      onClick={() => void sendSelectionBlockTransform('infographic')}
+                      className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
+                      style={F}
+                      title="Tři sloupce s čísly a fakty (vb-inf-col)"
+                    >
+                      Přeměnit na infografiku
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <textarea
+                  ref={chatInputRef}
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
                   }}
+                  placeholder={
+                    aiInsertBeforeBlockId
+                      ? 'Popište, co se má vložit nad zvolený blok v náhledu…'
+                      : aiInsertAfterAnchorId
+                        ? 'Popište, co se má vložit za zvolené místo v náhledu…'
+                        : 'Označte text v náhledu vpravo, napište úpravu…'
+                  }
+                  rows={2}
+                  className="flex-1 bg-[#f7f8fc] border border-gray-200 rounded-lg px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:border-[#7C3AED]/30 focus:ring-2 focus:ring-[#7C3AED]/10 resize-none"
+                  style={F}
                 />
-                {m.ragDebug && <RagBadges info={m.ragDebug} />}
-                <p style={F} className={`text-[8px] mt-1.5 ${m.role === 'user' ? 'text-white/40' : 'text-[#001161]/20'}`}>
-                  {fmtDate(m.timestamp)}
+                <button
+                  type="button"
+                  onClick={sendChat}
+                  disabled={!chatInput.trim() || generating}
+                  className="self-end p-2.5 rounded-lg bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-30 transition-all cursor-pointer shrink-0"
+                >
+                  {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </>
+        ) : toolPanelMode === 'settings' ? (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4 bg-[#fcfcfe]">
+            {!selected ? (
+              <div className="rounded-2xl border border-dashed border-gray-200 bg-[#fafbfd] px-4 py-10 text-center">
+                <Settings2 className="w-8 h-8 text-[#001161]/15 mx-auto mb-2" aria-hidden />
+                <p style={F} className="text-[12px] text-[#001161]/40">
+                  Vyberte e-mail v seznamu vlevo nebo vytvořte nový draft.
                 </p>
               </div>
-            </div>
-          ))}
-
-          {generating && (
-            <div className="flex justify-start">
-              <div className="bg-[#f5f6fa] rounded-xl px-4 py-3">
+            ) : (
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-4">
                 <div className="flex items-center gap-2">
-                  <Loader2 className="w-3.5 h-3.5 text-[#7C3AED] animate-spin" />
-                  <span style={F} className="text-[11px] text-[#001161]/40">Generuji…</span>
+                  <Settings2 className="w-4 h-4 text-[#7C3AED]" aria-hidden />
+                  <p style={F} className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#001161]">
+                    Nastavení mailu
+                  </p>
+                </div>
+
+                <div>
+                  <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                    Předmět
+                  </label>
+                  <input
+                    type="text"
+                    value={selected.subject}
+                    onChange={e => updateField('subject', e.target.value)}
+                    placeholder="Předmět zprávy…"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                    style={F}
+                  />
+                </div>
+
+                <div>
+                  <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                    Náhledový text
+                  </label>
+                  <input
+                    type="text"
+                    value={selected.previewText}
+                    onChange={e => updateField('previewText', e.target.value)}
+                    placeholder="Řádek pod předmětem u příjemce…"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                    style={F}
+                  />
+                </div>
+
+                <div>
+                  <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                    Audience
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {(['newsletter', 'no-newsletter'] as const).map(a => (
+                      <button
+                        key={a}
+                        type="button"
+                        onClick={() => updateField('audience', a)}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                          selected.audience === a ? 'bg-[#7C3AED] text-white' : 'bg-gray-100 text-[#001161]/50 hover:bg-gray-200'
+                        }`}
+                        style={F}
+                      >
+                        {a === 'newsletter' ? 'Newsletter' : 'No-Newsletter'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                    Plánované odeslání
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={isoToDatetimeLocal(selected.scheduledSendAt)}
+                    onChange={e => updateField('scheduledSendAt', datetimeLocalToIso(e.target.value))}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] bg-white focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                    style={F}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => void pushToMailchimp()}
+                  disabled={pushing || !selected.subject.trim()}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-[12px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                  style={F}
+                >
+                  {pushing ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Send className="w-4 h-4" aria-hidden />}
+                  Poslat do Mailchimpu
+                </button>
+
+                <div className="mt-4 rounded-xl border border-gray-200 bg-[#fafbfd] p-4 space-y-3">
+                  <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#7C3AED]/80 mb-0">
+                    Testovací odeslání (Mailchimp)
+                  </label>
+                  <select
+                    value={testMailRecipient}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setTestMailRecipient(v);
+                      try {
+                        window.localStorage.setItem(EMAIL_TEST_TO_STORAGE_KEY, v);
+                      } catch { /* ignore */ }
+                    }}
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] bg-white focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                    style={F}
+                  >
+                    {EMAIL_TEST_RECIPIENTS.map((em) => (
+                      <option key={em} value={em}>
+                        {em}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void sendTestMail()}
+                    disabled={sendingTestMail || pushing || !selected.subject.trim()}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#7C3AED] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                    style={F}
+                  >
+                    {sendingTestMail ? (
+                      <Loader2 className="w-4 h-4 animate-spin text-[#7C3AED]" aria-hidden />
+                    ) : (
+                      <Mail className="w-4 h-4 text-[#7C3AED]" aria-hidden />
+                    )}
+                    Poslat test mail
+                  </button>
                 </div>
               </div>
-            </div>
-          )}
-
-          <div ref={chatEndRef} />
-        </div>
-
-        <div className="shrink-0 p-3 border-t border-gray-100 bg-white">
-          {aiInsertAfterAnchorId && (
-            <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100/80 flex items-center gap-2">
-              <Sparkles className="w-3 h-3 text-amber-700 shrink-0" />
-              <span style={F} className="text-[9px] text-amber-950/90 leading-snug flex-1">
-                Místo u + je uložené — napište níže, jaký obsah se má vložit za tento blok.
-              </span>
-              <button
-                type="button"
-                onClick={clearAiInsertIntent}
-                className="p-0.5 rounded hover:bg-amber-100 cursor-pointer"
-                title="Zrušit vložení z +"
-              >
-                <X className="w-3 h-3 text-amber-800/60" />
-              </button>
-            </div>
-          )}
-          {(capturedSelection?.trim() || selectedCanvasText.trim()) && !aiInsertAfterAnchorId && (
-            <div className="mb-2 space-y-2">
-              <div className="px-2 py-1.5 rounded-lg bg-[#7C3AED]/5 border border-[#7C3AED]/10 flex items-center gap-2">
-                <TextCursor className="w-3 h-3 text-[#7C3AED] shrink-0" />
-                <span style={F} className="text-[9px] text-[#7C3AED] truncate flex-1">
-                  Úprava výběru: „{(capturedSelection?.trim() || selectedCanvasText).substring(0, 40)}
-                  {(capturedSelection?.trim() || selectedCanvasText).length > 40 ? '…' : ''}"
-                </span>
+            )}
+          </div>
+        ) : (
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4 bg-[#fcfcfe]">
+            {selected && (
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 space-y-3">
+                <div>
+                  <p style={F} className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#001161]">
+                    Pozadí náhledu
+                  </p>
+                  <p style={F} className="mt-1 text-[10px] leading-snug text-[#001161]/45">
+                    Šedá plocha kolem náhledu a barva „karet“ uvnitř skupin s režimem Karta. Skupiny s volbou Bez pozadí leží přímo na barvě sloupce.
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">
+                      Plocha za sloupcem
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="color"
+                        aria-label="Barva pozadí okolo mailu"
+                        className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
+                        value={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
+                        onChange={e => updateField('previewOuterBg', e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                        value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
+                        onChange={e => updateField('previewOuterBg', e.target.value)}
+                        placeholder="#f3f4f6"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">
+                      Sloupec / karty
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        type="color"
+                        aria-label="Barva sloupce a výplně karet"
+                        className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
+                        value={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
+                        onChange={e => updateField('previewColumnBg', e.target.value)}
+                      />
+                      <input
+                        type="text"
+                        spellCheck={false}
+                        className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                        value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
+                        onChange={e => updateField('previewColumnBg', e.target.value)}
+                        placeholder="#ffffff"
+                      />
+                    </div>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => {
-                    setCapturedSelection(null);
-                    clearCanvasSelection();
+                    if (!selected) return;
+                    const updated = normalizeDraftForBuilder({
+                      ...selected,
+                      previewOuterBg: DEFAULT_PREVIEW_OUTER_BG,
+                      previewColumnBg: DEFAULT_PREVIEW_COLUMN_BG,
+                      updatedAt: new Date().toISOString(),
+                    });
+                    setSelected(updated);
+                    setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
                   }}
-                  className="p-0.5 rounded hover:bg-[#7C3AED]/10 cursor-pointer"
+                  className="text-[10px] font-bold text-[#7C3AED] hover:underline cursor-pointer"
+                  style={F}
                 >
-                  <X className="w-3 h-3 text-[#7C3AED]/50" />
+                  Obnovit výchozí barvy náhledu
                 </button>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                <span style={F} className="w-full text-[8px] font-bold text-[#001161]/40 uppercase tracking-wide">
-                  Rychlé přeměny typu bloku
-                </span>
-                <button
-                  type="button"
-                  disabled={generating}
-                  onClick={() => void sendSelectionBlockTransform('text')}
-                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
-                  style={F}
-                  title="Souvislý text, odstavce, bez rámečku"
-                >
-                  Přeměnit na text
-                </button>
-                <button
-                  type="button"
-                  disabled={generating}
-                  onClick={() => void sendSelectionBlockTransform('block')}
-                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
-                  style={F}
-                  title="Barevný zaoblený rámeček, strukturované položky"
-                >
-                  Přeměnit na blok
-                </button>
-                <button
-                  type="button"
-                  disabled={generating}
-                  onClick={() => void sendSelectionBlockTransform('infographic')}
-                  className="px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[10px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-40 cursor-pointer transition-colors"
-                  style={F}
-                  title="Tři sloupce s čísly a fakty (vb-inf-col)"
-                >
-                  Přeměnit na infografiku
-                </button>
+            )}
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-4">
+              <div className="mb-3">
+                <div className="flex items-center gap-2">
+                  <LayoutTemplate className="w-4 h-4 text-[#7C3AED]" />
+                  <p style={F} className="text-[11px] font-bold uppercase tracking-[0.08em] text-[#001161]">
+                    Knihovna bloků
+                  </p>
+                </div>
+                <p style={F} className="mt-1.5 text-[11px] leading-snug text-[#001161]/45">
+                  Kliknutím nebo přetažením do náhledu přidáte blok. Přesné místo u kliknutí zvolíte řádkem + u bloku v náhledu.
+                </p>
               </div>
+              <div className="grid grid-cols-3 gap-2">
+                {visibleBlockPresets.map((block) => (
+                  <button
+                    key={block.type}
+                    type="button"
+                    title={`${block.description} — přetáhněte do náhledu`}
+                    draggable
+                    onDragStart={(ev) => {
+                      ev.dataTransfer?.setData(VB_EMAIL_LIBRARY_DRAG_TYPE, block.type);
+                      ev.dataTransfer?.setData('text/plain', `vb-email-block:${block.type}`);
+                      if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'copy';
+                    }}
+                    onClick={() => insertPresetBlock(block.type)}
+                    className="flex min-h-[88px] flex-col items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-2 py-3 text-center shadow-sm transition-all hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/6 hover:shadow-md cursor-grab active:cursor-grabbing"
+                  >
+                    <BlockPresetIcon type={block.type} className="h-7 w-7 shrink-0 text-[#001161]/50" />
+                    <span style={F} className="text-[10px] font-bold leading-tight text-[#001161] line-clamp-2">
+                      {block.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {blockLibraryHasMore && (
+                <button
+                  type="button"
+                  onClick={() => setBlockLibraryExpanded((v) => !v)}
+                  className="mt-3 w-full rounded-xl border border-gray-200 bg-[#fafbfd] py-2.5 text-[11px] font-bold text-[#001161] transition-colors hover:border-[#7C3AED]/25 hover:bg-[#7C3AED]/5 cursor-pointer"
+                  style={F}
+                >
+                  {blockLibraryExpanded ? 'Zobrazit méně' : 'Zobrazit vše'}
+                </button>
+              )}
             </div>
-          )}
-          <div className="flex gap-2">
-            <textarea
-              ref={chatInputRef}
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
-              }}
-              placeholder={
-                aiInsertAfterAnchorId
-                  ? 'Popište, co se má vložit za zvýrazněné místo (odstavec, CTA, odrážky…)…'
-                  : 'Označte text v náhledu vpravo, napište úpravu…'
-              }
-              rows={2}
-              className="flex-1 bg-[#f7f8fc] border border-gray-200 rounded-lg px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:border-[#7C3AED]/30 focus:ring-2 focus:ring-[#7C3AED]/10 resize-none"
-              style={F}
-            />
-            <button
-              type="button"
-              onClick={sendChat}
-              disabled={!chatInput.trim() || generating}
-              className="self-end p-2.5 rounded-lg bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-30 transition-all cursor-pointer shrink-0"
-            >
-              {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowUp className="w-4 h-4" />}
-            </button>
+
+            <div className="rounded-2xl border border-gray-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div>
+                  <p style={F} className="text-[12px] font-bold text-[#001161]">
+                    {selectedBlock ? selectedBlock.label : 'Vybraný blok'}
+                  </p>
+                  <p style={F} className="text-[11px] text-[#001161]/45">
+                    {selectedBlock
+                      ? `Typ: ${selectedBlock.type}`
+                      : 'Klikněte v náhledu na některý blok a zobrazí se jeho nastavení.'}
+                  </p>
+                </div>
+              </div>
+
+              {selectedBlock ? (
+                <div key={selectedBlock.id} className="space-y-4">
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => moveSelectedBlock('up')}
+                      title="Posunout nahoru"
+                      aria-label="Posunout nahoru"
+                      className="rounded-xl border border-gray-200 px-2 py-2 text-[#001161] hover:bg-gray-50 cursor-pointer flex items-center justify-center min-w-0"
+                    >
+                      <ArrowUp className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveSelectedBlock('down')}
+                      title="Posunout dolů"
+                      aria-label="Posunout dolů"
+                      className="rounded-xl border border-gray-200 px-2 py-2 text-[#001161] hover:bg-gray-50 cursor-pointer flex items-center justify-center min-w-0"
+                    >
+                      <ArrowDown className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={duplicateSelectedBlock}
+                      title="Duplikovat"
+                      aria-label="Duplikovat"
+                      className="rounded-xl border border-gray-200 px-2 py-2 text-[#001161] hover:bg-gray-50 cursor-pointer flex items-center justify-center min-w-0"
+                    >
+                      <CopyPlus className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteSelectedBlock}
+                      title="Smazat"
+                      aria-label="Smazat"
+                      className="rounded-xl border border-red-200 bg-red-50 px-2 py-2 text-red-600 hover:bg-red-100 cursor-pointer flex items-center justify-center min-w-0"
+                    >
+                      <Trash2 className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                    </button>
+                  </div>
+
+                  {selectedSectionFill != null && (
+                    <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 min-w-0">
+                      <div className="flex flex-nowrap items-center gap-2 min-w-0">
+                        <p style={F} className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/45 shrink-0">
+                          Skupina (náhled)
+                        </p>
+                        <p
+                          style={F}
+                          className="text-[10px] leading-snug text-[#001161]/45 min-w-0 flex-1 truncate"
+                          title="Platí pro celou skupinu okolo vybraného bloku. Karta = bílý panel, bez pozadí = obsah přímo na barvě sloupce."
+                        >
+                          Platí pro celou skupinu okolo vybraného bloku. Karta = bílý panel, bez pozadí = obsah přímo na barvě sloupce.
+                        </p>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => updateSelectedSectionFill('card')}
+                            title="Karta — bílý panel ve skupině"
+                            aria-label="Skupina jako karta"
+                            className={`rounded-xl border px-2.5 py-2 cursor-pointer transition-colors flex items-center justify-center ${
+                              selectedSectionFill === 'card'
+                                ? 'border-[#7C3AED] bg-[#7C3AED]/10 text-[#001161]'
+                                : 'border-gray-200 bg-white text-[#001161] hover:bg-gray-50'
+                            }`}
+                          >
+                            <SquareStack className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateSelectedSectionFill('plain')}
+                            title="Bez pozadí — obsah přímo na barvě sloupce"
+                            aria-label="Skupina bez pozadí karty"
+                            className={`rounded-xl border px-2.5 py-2 cursor-pointer transition-colors flex items-center justify-center ${
+                              selectedSectionFill === 'plain'
+                                ? 'border-[#7C3AED] bg-[#7C3AED]/10 text-[#001161]'
+                                : 'border-gray-200 bg-white text-[#001161] hover:bg-gray-50'
+                            }`}
+                          >
+                            <SquareDashed className="h-4 w-4 shrink-0" strokeWidth={2.25} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedBlock.type === 'product-collage' && (
+                    <EmailProductCollagePanel
+                      key={selectedBlock.id}
+                      blockId={selectedBlock.id}
+                      getSnapshot={() => {
+                        const doc = previewIframeRef.current?.contentDocument;
+                        const el = doc?.querySelector(
+                          `[data-vb-block-id="${CSS.escape(selectedBlock.id)}"]`,
+                        );
+                        return readProductCollageStateFromElement(el);
+                      }}
+                      onLiveUpdate={handleProductCollageLive}
+                    />
+                  )}
+
+                  {selectedBlock.type === 'webinar' && (
+                    <EmailWebinarPanel
+                      key={selectedBlock.id}
+                      blockId={selectedBlock.id}
+                      getSnapshot={() => {
+                        const doc = previewIframeRef.current?.contentDocument;
+                        const el = doc?.querySelector(
+                          `[data-vb-block-id="${CSS.escape(selectedBlock.id)}"]`,
+                        );
+                        return readWebinarStateFromElement(el);
+                      }}
+                      onLiveUpdate={handleWebinarLive}
+                    />
+                  )}
+
+                  {selectedBlock.type !== 'section' &&
+                    selectedBlock.type !== 'product-collage' &&
+                    selectedBlock.type !== 'webinar' && (
+                    <>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Background</label>
+                        <input
+                          type="color"
+                          defaultValue={selectedBlock.background && selectedBlock.background.startsWith('#') ? selectedBlock.background : '#ffffff'}
+                          onChange={e => updateSelectedBlockStyle('background-color', e.target.value)}
+                          className="h-10 w-full rounded-lg border border-gray-200 bg-white cursor-pointer"
+                        />
+                      </div>
+
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Padding</label>
+                        <input
+                          type="text"
+                          defaultValue={selectedBlock.padding}
+                          onBlur={e => updateSelectedBlockStyle('padding', e.target.value)}
+                          placeholder="např. 18px 0"
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                          style={F}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Zarovnání</label>
+                        <select
+                          defaultValue={selectedBlock.textAlign || ''}
+                          onChange={e => updateSelectedBlockStyle('text-align', e.target.value)}
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] bg-white focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                          style={F}
+                        >
+                          <option value="">Výchozí</option>
+                          <option value="left">Doleva</option>
+                          <option value="center">Na střed</option>
+                          <option value="right">Doprava</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+
+                  {selectedBlock.ctaUrl && (
+                    <>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Text tlačítka</label>
+                        <input
+                          type="text"
+                          defaultValue={selectedBlock.ctaText}
+                          onBlur={e => updateSelectedBlockLink('text', e.target.value)}
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                          style={F}
+                        />
+                      </div>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">URL tlačítka</label>
+                        <input
+                          type="text"
+                          defaultValue={selectedBlock.ctaUrl}
+                          onBlur={e => updateSelectedBlockLink('href', e.target.value)}
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedBlock.imageSrc && (
+                    <>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">URL obrázku</label>
+                        <input
+                          type="text"
+                          defaultValue={selectedBlock.imageSrc}
+                          onBlur={e => updateSelectedBlockImage(e.target.value)}
+                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setImageToolSrc(selectedBlock.imageSrc)}
+                          className="rounded-xl border border-gray-200 px-3 py-2 text-[11px] font-bold text-[#001161] hover:bg-gray-50 cursor-pointer"
+                          style={F}
+                        >
+                          Upravit obrázek
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingImgSrc(selectedBlock.imageSrc);
+                            setCollageOpen(true);
+                          }}
+                          className="rounded-xl border border-gray-200 px-3 py-2 text-[11px] font-bold text-[#001161] hover:bg-gray-50 cursor-pointer"
+                          style={F}
+                        >
+                          Nahradit koláží
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-gray-200 bg-[#fafbfd] px-3 py-4">
+                  <p style={F} className="text-[12px] text-[#001161]/50 leading-5">
+                    Klikněte v náhledu do některého bloku. Potom tady půjde měnit pozadí, padding, CTA nebo obrázek.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <div className="h-12 border-b border-gray-100 flex items-center px-4 gap-2 shrink-0 bg-white">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(v => !v)}
-            className="p-1.5 rounded-lg hover:bg-gray-100 transition-all cursor-pointer"
-            title={sidebarOpen ? 'Skrýt sidebar' : 'Zobrazit sidebar'}
-          >
-            {sidebarOpen ? <PanelLeftClose className="w-4 h-4 text-[#001161]/40" /> : <PanelLeftOpen className="w-4 h-4 text-[#001161]/40" />}
-          </button>
+        <div className="shrink-0 border-b border-gray-100 bg-white flex flex-col">
+          <div className="h-12 flex items-center px-4 gap-2">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(v => !v)}
+              className="p-1.5 rounded-lg hover:bg-gray-100 transition-all cursor-pointer"
+              title={sidebarOpen ? 'Skrýt sidebar' : 'Zobrazit sidebar'}
+            >
+              {sidebarOpen ? <PanelLeftClose className="w-4 h-4 text-[#001161]/40" /> : <PanelLeftOpen className="w-4 h-4 text-[#001161]/40" />}
+            </button>
 
-          {selected && (
-            <>
-              <div
-                className="flex items-center gap-0.5 rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd] shrink-0"
-                role="group"
-                aria-label="Historie úprav"
-              >
-                <button
-                  type="button"
-                  onClick={undoEmailHistory}
-                  disabled={historyPast.length === 0 || generating}
-                  title="Zpět (⌘Z / Ctrl+Z)"
-                  className="p-1.5 rounded-md text-[#001161]/55 hover:text-[#001161] hover:bg-gray-100 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+            {selected && (
+              <>
+                <div
+                  className="flex items-center gap-0.5 rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd] shrink-0"
+                  role="group"
+                  aria-label="Historie úprav"
                 >
-                  <Undo2 className="w-3.5 h-3.5" aria-hidden />
-                </button>
-                <button
-                  type="button"
-                  onClick={redoEmailHistory}
-                  disabled={historyFuture.length === 0 || generating}
-                  title="Vpřed (⇧⌘Z / Ctrl+Y)"
-                  className="p-1.5 rounded-md text-[#001161]/55 hover:text-[#001161] hover:bg-gray-100 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+                  <button
+                    type="button"
+                    onClick={undoEmailHistory}
+                    disabled={historyPast.length === 0 || generating}
+                    title="Zpět (⌘Z / Ctrl+Z)"
+                    className="p-1.5 rounded-md text-[#001161]/55 hover:text-[#001161] hover:bg-gray-100 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={redoEmailHistory}
+                    disabled={historyFuture.length === 0 || generating}
+                    title="Vpřed (⇧⌘Z / Ctrl+Y)"
+                    className="p-1.5 rounded-md text-[#001161]/55 hover:text-[#001161] hover:bg-gray-100 disabled:opacity-25 disabled:pointer-events-none transition-colors cursor-pointer"
+                  >
+                    <Redo2 className="w-3.5 h-3.5" aria-hidden />
+                  </button>
+                </div>
+
+                <div
+                  className="flex rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd] shrink-0"
+                  role="group"
+                  aria-label="Režim náhledu emailu"
                 >
-                  <Redo2 className="w-3.5 h-3.5" aria-hidden />
-                </button>
-              </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowInboxChrome(false)}
+                    className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                      !showInboxChrome
+                        ? 'bg-[#7C3AED] text-white shadow-sm'
+                        : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
+                    }`}
+                    style={F}
+                    title="Jen tělo v pěkném okně — bez předmětu a řádků pod ním (úpravy v náhledu níže)"
+                  >
+                    Úpravy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowInboxChrome(true)}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                      showInboxChrome
+                        ? 'bg-[#7C3AED] text-white shadow-sm'
+                        : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
+                    }`}
+                    style={F}
+                    title="Předmět, preview, audience, CTA a úpravy jako nahoře ve schránce"
+                  >
+                    <Mail className="w-3 h-3 shrink-0 opacity-90" aria-hidden />
+                    Náhled mailu
+                  </button>
+                </div>
 
-              <span style={F} className="hidden md:inline text-[10px] font-bold text-[#001161]/35 uppercase tracking-wider shrink-0">
-                Finální náhled
-              </span>
+                <div className="flex-1 min-w-0" />
 
-              <div
-                className="flex rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd] shrink-0"
-                role="group"
-                aria-label="Režim náhledu emailu"
-              >
+                {autoSaveHint && (
+                  <span className="text-[10px] text-[#001161]/45 shrink-0 hidden sm:inline" style={F}>
+                    Uloženo automaticky
+                  </span>
+                )}
+
                 <button
                   type="button"
-                  onClick={() => setShowInboxChrome(false)}
-                  className={`px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
-                    !showInboxChrome
-                      ? 'bg-[#7C3AED] text-white shadow-sm'
-                      : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
-                  }`}
+                  onClick={() => saveDraft()}
+                  disabled={saving}
+                  title="Ruční uložení — změny se ukládají i automaticky po chvíli nečinnosti"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#001161] text-white hover:bg-[#001161]/90 disabled:opacity-50 transition-all cursor-pointer shrink-0"
                   style={F}
-                  title="Jen tělo v pěkném okně — bez předmětu a řádků pod ním (úpravy v náhledu níže)"
                 >
-                  Úpravy
+                  {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                  Uložit
                 </button>
+
                 <button
                   type="button"
-                  onClick={() => setShowInboxChrome(true)}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
-                    showInboxChrome
-                      ? 'bg-[#7C3AED] text-white shadow-sm'
-                      : 'text-[#001161]/45 hover:text-[#001161]/70 hover:bg-gray-100'
-                  }`}
+                  onClick={pushToMailchimp}
+                  disabled={pushing || !selected.subject}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-50 transition-all cursor-pointer shrink-0"
                   style={F}
-                  title="Předmět, preview, audience, CTA a úpravy jako nahoře ve schránce"
                 >
-                  <Mail className="w-3 h-3 shrink-0 opacity-90" aria-hidden />
-                  Náhled mailu
+                  {pushing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                  Do Mailchimpu
                 </button>
-              </div>
 
-              <div className="flex-1 min-w-0" />
+                {selected.mailchimpUrl && (
+                  <a
+                    href={selected.mailchimpUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-1.5 rounded-lg hover:bg-gray-100 transition-all shrink-0"
+                    title="Otevřít v Mailchimpu"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-[#7C3AED]" />
+                  </a>
+                )}
+              </>
+            )}
+          </div>
 
-              <button
-                type="button"
-                onClick={() => { setEditingImgSrc(null); setCollageOpen(true); }}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold text-[#001161]/50 hover:text-[#7C3AED] hover:bg-[#7C3AED]/5 transition-all cursor-pointer border border-gray-200 hover:border-[#7C3AED]/30 shrink-0"
-                style={F}
-              >
-                <Layers className="w-3 h-3" />
-                Koláž
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setHtmlDrawerOpen(true)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold text-[#001161]/45 hover:bg-gray-50 border border-transparent hover:border-gray-200 shrink-0"
-                style={F}
-                title="HTML / metadata"
-              >
-                <Code className="w-3 h-3" />
-                Zdroj
-              </button>
-
-              <button
-                type="button"
-                onClick={() => saveDraft()}
-                disabled={saving}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#001161] text-white hover:bg-[#001161]/90 disabled:opacity-50 transition-all cursor-pointer shrink-0"
-                style={F}
-              >
-                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
-                Uložit
-              </button>
-
-              <button
-                type="button"
-                onClick={pushToMailchimp}
-                disabled={pushing || !selected.subject}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-50 transition-all cursor-pointer shrink-0"
-                style={F}
-              >
-                {pushing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                Do Mailchimpu
-              </button>
-
-              {selected.mailchimpUrl && (
-                <a
-                  href={selected.mailchimpUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-1.5 rounded-lg hover:bg-gray-100 transition-all shrink-0"
-                  title="Otevřít v Mailchimpu"
-                >
-                  <ExternalLink className="w-3.5 h-3.5 text-[#7C3AED]" />
-                </a>
-              )}
-            </>
+          {selected && activeBuilderMode === 'block' && !showInboxChrome && (
+            <div
+              className="flex flex-wrap items-center gap-x-1.5 gap-y-2 px-4 py-3 border-t border-gray-100 bg-[#fafbfd]/80 overflow-x-auto [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300"
+              title="Formátování textu v náhledu"
+            >
+              <EmailRichTextToolbar
+                embeddedInHeader
+                iframeRef={previewIframeRef}
+                refreshEpoch={richToolbarEpoch}
+                bumpToolbar={bumpRichToolbar}
+              />
+            </div>
           )}
         </div>
 
@@ -2456,248 +4639,219 @@ export default function EmailBuilder() {
               : '#ffffff',
           }}
         >
-          {!selected ? (
-            <div className="flex items-center justify-center h-full min-h-[400px]">
-              <div className="text-center">
-                <Mail className="w-12 h-12 text-[#001161]/10 mx-auto mb-3" />
-                <p style={F} className="text-[14px] text-[#001161]/30 mb-4">Vyberte email nebo vytvořte nový</p>
-                <button
-                  type="button"
-                  onClick={createNewDraft}
-                  className="flex items-center gap-2 px-4 py-2 rounded-[999px] bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all cursor-pointer mx-auto"
-                  style={F}
-                >
-                  <Plus className="w-4 h-4" /> Nový email
-                </button>
+            {!selected ? (
+              <div className="flex items-center justify-center h-full min-h-[400px]">
+                <div className="text-center">
+                  <Mail className="w-12 h-12 text-[#001161]/10 mx-auto mb-3" />
+                  <p style={F} className="text-[14px] text-[#001161]/30 mb-4">Vyberte email nebo vytvořte nový</p>
+                  <button
+                    type="button"
+                    onClick={createNewDraft}
+                    className="flex items-center gap-2 px-4 py-2 rounded-[999px] bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all cursor-pointer mx-auto"
+                    style={F}
+                  >
+                    <Plus className="w-4 h-4" /> Nový email
+                  </button>
+                </div>
               </div>
-            </div>
-          ) : (
-            <div
-              data-email-preview-root
-              className="flex flex-col w-full min-w-0 min-h-full p-3 md:p-5"
-            >
-              <div className="w-[600px] max-w-full mx-auto flex flex-col flex-1 min-h-0">
-                <div
-                  className="w-full overflow-hidden flex flex-col flex-1 min-h-0 shadow-[0_2px_12px_rgba(0,0,0,0.08)] rounded-xl border border-black/[0.06]"
-                  style={{
-                    backgroundColor: normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG),
-                  }}
-                >
-                {showInboxChrome && (
-                  <div className="px-5 py-4 border-b border-gray-100">
-                    <p style={F} className="text-[10px] font-bold text-[#001161]/35 uppercase tracking-wider mb-2">
-                      Jako ve schránce — klikněte do řádků a upravujte
-                    </p>
-                    <div className="space-y-2">
-                      <EditableField
-                        value={selected.subject}
-                        onChange={v => updateField('subject', v)}
-                        placeholder="Předmět zprávy…"
-                        className="text-[17px] font-bold text-[#101010] leading-snug"
-                        tag="Předmět"
-                      />
-                      <EditableField
-                        value={selected.previewText}
-                        onChange={v => updateField('previewText', v)}
-                        placeholder="Preview text (řádek pod předmětem u příjemce)…"
-                        className="text-[13px] text-[#5f6368]"
-                        tag="Preview"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMetaExpanded(e => !e)}
-                      className="mt-3 flex items-center gap-1 text-[10px] font-bold text-[#7C3AED] hover:underline"
-                      style={F}
-                    >
-                      <Settings2 className="w-3 h-3" />
-                      {metaExpanded ? 'Skrýt' : 'Další'} — audience, CTA, nadpis
-                    </button>
-                    {metaExpanded && (
-                      <div className="mt-3 pt-3 border-t border-gray-100 grid gap-3 sm:grid-cols-2">
-                        <div className="sm:col-span-2">
-                          <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Nadpis (když není v HTML těle)</label>
+            ) : (
+              <div
+                data-email-preview-root
+                className="flex flex-col w-full min-w-0 min-h-full p-3 md:p-5"
+              >
+                <div className="w-[600px] max-w-full mx-auto flex flex-col flex-1 min-h-0">
+                  <div
+                    className="w-full overflow-hidden flex flex-col flex-1 min-h-0"
+                    style={{
+                      backgroundColor: 'transparent',
+                    }}
+                  >
+                    {showInboxChrome && (
+                      <div
+                        className="px-5 py-4 border-b border-gray-100 bg-white rounded-t-xl shadow-[0_2px_12px_rgba(0,0,0,0.06)]"
+                      >
+                        <p style={F} className="text-[10px] font-bold text-[#001161]/35 uppercase tracking-wider mb-2">
+                          Jako ve schránce — klikněte do řádků a upravujte
+                        </p>
+                        <div className="space-y-2">
                           <EditableField
-                            value={selected.headline}
-                            onChange={v => updateField('headline', v)}
-                            placeholder="Volitelný nadpis…"
-                            className="text-[14px] font-bold text-[#001161]"
-                            tag="Nadpis"
+                            value={selected.subject}
+                            onChange={v => updateField('subject', v)}
+                            placeholder="Předmět zprávy…"
+                            className="text-[17px] font-bold text-[#101010] leading-snug"
+                            tag="Předmět"
+                          />
+                          <EditableField
+                            value={selected.previewText}
+                            onChange={v => updateField('previewText', v)}
+                            placeholder="Preview text (řádek pod předmětem u příjemce)…"
+                            className="text-[13px] text-[#5f6368]"
+                            tag="Preview"
                           />
                         </div>
-                        <div>
-                          <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">CTA text</label>
-                          <EditableField
-                            value={selected.ctaText}
-                            onChange={v => updateField('ctaText', v)}
-                            placeholder="Tlačítko…"
-                            className="text-[13px]"
-                            tag="CTA"
-                          />
-                        </div>
-                        <div>
-                          <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">CTA URL</label>
-                          <EditableField
-                            value={selected.ctaUrl}
-                            onChange={v => updateField('ctaUrl', v)}
-                            placeholder="https://…"
-                            className="text-[12px] font-mono text-[#001161]/80"
-                            tag="URL"
-                          />
-                        </div>
-                        <div className="sm:col-span-2">
-                          <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Audience</label>
-                          <div className="flex gap-2">
-                            {(['newsletter', 'no-newsletter'] as const).map(a => (
+                        <button
+                          type="button"
+                          onClick={() => setMetaExpanded(e => !e)}
+                          className="mt-3 flex items-center gap-1 text-[10px] font-bold text-[#7C3AED] hover:underline"
+                          style={F}
+                        >
+                          <Settings2 className="w-3 h-3" />
+                          {metaExpanded ? 'Skrýt' : 'Další'} — audience, CTA, nadpis
+                        </button>
+                        {metaExpanded && (
+                          <div className="mt-3 pt-3 border-t border-gray-100 grid gap-3 sm:grid-cols-2">
+                            <div className="sm:col-span-2">
+                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Nadpis (když není v HTML těle)</label>
+                              <EditableField
+                                value={selected.headline}
+                                onChange={v => updateField('headline', v)}
+                                placeholder="Volitelný nadpis…"
+                                className="text-[14px] font-bold text-[#001161]"
+                                tag="Nadpis"
+                              />
+                            </div>
+                            <div>
+                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">CTA text</label>
+                              <EditableField
+                                value={selected.ctaText}
+                                onChange={v => updateField('ctaText', v)}
+                                placeholder="Tlačítko…"
+                                className="text-[13px]"
+                                tag="CTA"
+                              />
+                            </div>
+                            <div>
+                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">CTA URL</label>
+                              <EditableField
+                                value={selected.ctaUrl}
+                                onChange={v => updateField('ctaUrl', v)}
+                                placeholder="https://…"
+                                className="text-[12px] font-mono text-[#001161]/80"
+                                tag="URL"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Audience</label>
+                              <div className="flex gap-2">
+                                {(['newsletter', 'no-newsletter'] as const).map(a => (
+                                  <button
+                                    key={a}
+                                    type="button"
+                                    onClick={() => updateField('audience', a)}
+                                    className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                                      selected.audience === a ? 'bg-[#7C3AED] text-white' : 'bg-gray-100 text-[#001161]/50 hover:bg-gray-200'
+                                    }`}
+                                    style={F}
+                                  >
+                                    {a === 'newsletter' ? 'Newsletter' : 'No-Newsletter'}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="sm:col-span-2 pt-2 border-t border-gray-100">
+                              <p style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase tracking-wide mb-2">
+                                Pozadí náhledu (jen editor)
+                              </p>
+                              <p style={F} className="text-[10px] text-[#001161]/45 mb-3 leading-snug">
+                                Nastaví šedivou plochu kolem mailu a barvu 600px sloupce včetně těla zprávy v náhledu. Ovlivní to neposílané HTML do Mailchimpu, dokud barvy nevložíte do obsahu.
+                              </p>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <div>
+                                  <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Plocha za sloupcem</label>
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      type="color"
+                                      aria-label="Barva pozadí okolo mailu"
+                                      className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
+                                      value={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
+                                      onChange={e => updateField('previewOuterBg', e.target.value)}
+                                    />
+                                    <input
+                                      type="text"
+                                      spellCheck={false}
+                                      className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                                      value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
+                                      onChange={e => updateField('previewOuterBg', e.target.value)}
+                                      placeholder="#f3f4f6"
+                                    />
+                                  </div>
+                                </div>
+                                <div>
+                                  <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">600px sloupec + tělo</label>
+                                  <div className="flex gap-2 items-center">
+                                    <input
+                                      type="color"
+                                      aria-label="Barva sloupce a iframe"
+                                      className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
+                                      value={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
+                                      onChange={e => updateField('previewColumnBg', e.target.value)}
+                                    />
+                                    <input
+                                      type="text"
+                                      spellCheck={false}
+                                      className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
+                                      value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
+                                      onChange={e => updateField('previewColumnBg', e.target.value)}
+                                      placeholder="#ffffff"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
                               <button
-                                key={a}
                                 type="button"
-                                onClick={() => updateField('audience', a)}
-                                className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
-                                  selected.audience === a ? 'bg-[#7C3AED] text-white' : 'bg-gray-100 text-[#001161]/50 hover:bg-gray-200'
-                                }`}
+                                onClick={() => {
+                                  if (!selected) return;
+                                  const updated = normalizeDraftForBuilder({
+                                    ...selected,
+                                    previewOuterBg: DEFAULT_PREVIEW_OUTER_BG,
+                                    previewColumnBg: DEFAULT_PREVIEW_COLUMN_BG,
+                                    updatedAt: new Date().toISOString(),
+                                  });
+                                  setSelected(updated);
+                                  setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+                                }}
+                                className="mt-2 text-[10px] font-bold text-[#7C3AED] hover:underline cursor-pointer"
                                 style={F}
                               >
-                                {a === 'newsletter' ? 'Newsletter' : 'No-Newsletter'}
+                                Obnovit výchozí barvy náhledu
                               </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="sm:col-span-2 pt-2 border-t border-gray-100">
-                          <p style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase tracking-wide mb-2">
-                            Pozadí náhledu (jen editor)
-                          </p>
-                          <p style={F} className="text-[10px] text-[#001161]/45 mb-3 leading-snug">
-                            Nastaví šedivou plochu kolem mailu a barvu 600px sloupce včetně těla zprávy v náhledu. Ovlivní to neposílané HTML do Mailchimpu, dokud barvy nevložíte do obsahu.
-                          </p>
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Plocha za sloupcem</label>
-                              <div className="flex gap-2 items-center">
-                                <input
-                                  type="color"
-                                  aria-label="Barva pozadí okolo mailu"
-                                  className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                                  value={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
-                                  onChange={e => updateField('previewOuterBg', e.target.value)}
-                                />
-                                <input
-                                  type="text"
-                                  spellCheck={false}
-                                  className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                                  value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
-                                  onChange={e => updateField('previewOuterBg', e.target.value)}
-                                  placeholder="#f3f4f6"
-                                />
-                              </div>
-                            </div>
-                            <div>
-                              <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">600px sloupec + tělo</label>
-                              <div className="flex gap-2 items-center">
-                                <input
-                                  type="color"
-                                  aria-label="Barva sloupce a iframe"
-                                  className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                                  value={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
-                                  onChange={e => updateField('previewColumnBg', e.target.value)}
-                                />
-                                <input
-                                  type="text"
-                                  spellCheck={false}
-                                  className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                                  value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
-                                  onChange={e => updateField('previewColumnBg', e.target.value)}
-                                  placeholder="#ffffff"
-                                />
-                              </div>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (!selected) return;
-                              const updated = {
-                                ...selected,
-                                previewOuterBg: DEFAULT_PREVIEW_OUTER_BG,
-                                previewColumnBg: DEFAULT_PREVIEW_COLUMN_BG,
-                                updatedAt: new Date().toISOString(),
-                              };
-                              setSelected(updated);
-                              setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
-                            }}
-                            className="mt-2 text-[10px] font-bold text-[#7C3AED] hover:underline cursor-pointer"
-                            style={F}
-                          >
-                            Obnovit výchozí barvy náhledu
-                          </button>
-                        </div>
+                        )}
                       </div>
                     )}
-                  </div>
-                )}
 
-                <div
-                  className={`flex flex-col flex-1 min-h-0 px-3 py-4 md:px-6 ${showInboxChrome ? 'rounded-b-xl' : 'rounded-xl'}`}
-                >
-                  <EmailIframeEditor
-                    draftId={selected.id}
-                    bodyEditEpoch={bodyEditEpoch}
-                    bodyHtml={selected.bodyHtml}
-                    columnBackground={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
-                    onBodyChange={applyIframeBodyHtml}
-                    onImageClick={setImageToolSrc}
-                    hasMailboxStackAbove={showInboxChrome}
-                    readOnlyBody={showInboxChrome}
-                    iframeRef={previewIframeRef}
-                    onTextSelect={handleIframeTextSelect}
-                    hoverBlockRef={iframeHoverBlockRef}
-                    onHoverInsertLine={handleHoverInsertLine}
-                    onIframeLeave={scheduleInsertLineHide}
-                    onIframeEnter={cancelInsertLineHide}
-                  />
-                </div>
+                    <div
+                      className={`flex flex-col flex-1 min-h-0 px-3 py-4 md:px-6 ${showInboxChrome ? 'rounded-b-xl' : 'rounded-xl'}`}
+                    >
+                      <EmailIframeEditor
+                        draftId={selected.id}
+                        bodyEditEpoch={bodyEditEpoch}
+                        bodyHtml={selected.bodyHtml}
+                        columnBackground={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
+                        outerBackground={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
+                        builderMode={activeBuilderMode}
+                        selectedBlockId={selectedBlock?.id || null}
+                        onBodyChange={applyIframeBodyHtml}
+                        onImageClick={setImageToolSrc}
+                        onBlockSelect={handleBlockSelect}
+                        hasMailboxStackAbove={showInboxChrome}
+                        readOnlyBody={showInboxChrome}
+                        iframeRef={previewIframeRef}
+                        onTextSelect={handleIframeTextSelect}
+                        hoverBlockRef={iframeHoverBlockRef}
+                        onHoverBlockChrome={handleHoverBlockChrome}
+                        onIframeLeave={scheduleInsertLineHide}
+                        onIframeEnter={cancelInsertLineHide}
+                        onRichTextActivity={bumpRichToolbar}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       </div>
-
-      {htmlDrawerOpen && selected && (
-        <div
-          className="fixed inset-0 z-[12000] bg-black/40 flex justify-end"
-          onClick={() => setHtmlDrawerOpen(false)}
-        >
-          <div
-            className="w-full max-w-lg h-full bg-white shadow-2xl flex flex-col"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="p-4 border-b border-gray-100 flex items-center gap-2 shrink-0">
-              <FileText className="w-4 h-4 text-[#7C3AED]" />
-              <span style={F} className="text-[13px] font-bold text-[#001161]">Zdroj HTML</span>
-              <div className="flex-1" />
-              <CopyBtn text={selected.fullHtml || selected.bodyHtml || ''} />
-              <button type="button" onClick={() => setHtmlDrawerOpen(false)} className="p-2 rounded-lg hover:bg-gray-100">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4">
-              <p style={F} className="text-[10px] text-[#001161]/40 mb-2">
-                Úprava zde obnoví náhled po uložení změny (nebo zavřete a použijte AI).
-              </p>
-              <textarea
-                value={selected.bodyHtml}
-                onChange={e => {
-                  updateField('bodyHtml', e.target.value);
-                }}
-                onBlur={() => bumpBodyEpoch()}
-                className="w-full min-h-[60vh] bg-[#f7f8fc] border border-gray-200 rounded-lg px-3 py-2 text-[11px] font-mono text-[#001161]/80 focus:outline-none focus:border-[#7C3AED]/30 resize-y"
-                spellCheck={false}
-              />
-            </div>
-          </div>
-        </div>
-      )}
 
       <EmailImageEditModal
         open={!!imageToolSrc}
@@ -2723,6 +4877,7 @@ export default function EmailBuilder() {
         open={assetPickerOpen}
         onClose={() => {
           clearPendingInsertAnchor();
+          pendingInsertBeforeBlockIdRef.current = null;
           setAssetPickerOpen(false);
         }}
         onPick={url => {
@@ -2735,7 +4890,13 @@ export default function EmailBuilder() {
             return;
           }
           const imgTag = `<img src="${url}" alt="" style="max-width:100%;height:auto;border-radius:8px;margin:16px 0;" />`;
-          insertHtmlAfterAnchorOrAppend(imgTag);
+          const beforeId = pendingInsertBeforeBlockIdRef.current;
+          if (beforeId) {
+            pendingInsertBeforeBlockIdRef.current = null;
+            insertHtmlBeforeBlockById(beforeId, imgTag);
+          } else {
+            insertHtmlAfterAnchorOrAppend(imgTag);
+          }
           setAssetPickerOpen(false);
         }}
       />
@@ -2744,6 +4905,7 @@ export default function EmailBuilder() {
         open={collageOpen}
         onClose={() => {
           clearPendingInsertAnchor();
+          pendingInsertBeforeBlockIdRef.current = null;
           setCollageOpen(false);
           setEditingImgSrc(null);
         }}

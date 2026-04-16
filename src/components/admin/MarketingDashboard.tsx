@@ -41,7 +41,7 @@ export default function MarketingDashboard() {
         setStats([
           { label: 'Webináře', icon: Radio, count: webinare.length, path: '/marketing/webinare', color: '#10b981', bgColor: '#ecfdf5' },
           { label: 'Kontakty', icon: Users, count: '\u2192', path: '/marketing/kontakty', color: '#6366f1', bgColor: '#eef2ff' },
-          { label: 'E-maily', icon: Mail, count: '\u2192', path: '/marketing/emaily', color: '#7C3AED', bgColor: '#f5f3ff' },
+          { label: 'E-maily', icon: Mail, count: '\u2192', path: '/mailing/emaily', color: '#7C3AED', bgColor: '#f5f3ff' },
           { label: 'Galerie', icon: Image, count: '\u2192', path: '/marketing/galerie', color: '#f97316', bgColor: '#fff7ed' },
           { label: 'Popup Manager', icon: Megaphone, count: '\u2192', path: '/marketing/popupy', color: '#f59e0b', bgColor: '#fffbeb' },
           { label: 'Mailchimp', icon: Mail, count: mcCount || '\u2014', path: '/marketing/marketing-agent', color: '#ec4899', bgColor: '#fdf2f8' },

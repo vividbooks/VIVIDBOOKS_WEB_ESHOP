@@ -5,6 +5,9 @@ import { logger } from 'npm:hono/logger';
 import * as kv from './kv_store.tsx';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
+import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
+import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
+import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
 import {
@@ -7465,6 +7468,162 @@ function isExternalUrl(url: string, supabaseUrl: string): boolean {
   if (!url || !url.startsWith('http')) return false;
   return !url.includes('supabase.co') && !url.includes(supabaseUrl);
 }
+
+/** Admin: Mailchimp audience → Postgres (subscribers, email_events, …). Secrets z Edge. */
+app.post('/make-server-93a20b6f/admin/migrate-mailchimp-contacts', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const includeActivity = Boolean(body?.includeActivity);
+    let maxMembers: number | undefined;
+    const rawMax = body?.maxMembers;
+    if (rawMax != null && rawMax !== '') {
+      const n = Number(rawMax);
+      if (Number.isFinite(n) && n >= 1 && n <= 50_000) maxMembers = Math.floor(n);
+    }
+    let membersPerRun: number | undefined;
+    const rawBatch = body?.membersPerRun;
+    if (rawBatch != null && rawBatch !== '') {
+      const n = Number(rawBatch);
+      if (Number.isFinite(n) && n >= 1 && n <= 10_000) membersPerRun = Math.floor(n);
+    }
+    let resumeFrom: { offset: number; skipInPage: number } | undefined;
+    const rf = body?.resumeFrom;
+    if (rf && typeof rf === 'object' && rf !== null) {
+      const o = Number((rf as Record<string, unknown>).offset);
+      const s = Number((rf as Record<string, unknown>).skipInPage);
+      if (Number.isFinite(o) && o >= 0 && Number.isFinite(s) && s >= 0) {
+        resumeFrom = { offset: Math.floor(o), skipInPage: Math.floor(s) };
+      }
+    }
+    let listIdMc = typeof body?.listId === 'string' ? body.listId.trim() : '';
+    if (!listIdMc) {
+      const aud = typeof body?.audience === 'string' ? body.audience.trim() : 'newsletter';
+      if (aud === 'no_newsletter') {
+        listIdMc = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER')?.trim() || '';
+      } else if (aud === 'primary') {
+        listIdMc = getMailchimpAdminListId() || '';
+      } else {
+        listIdMc =
+          Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER')?.trim() || getMailchimpAdminListId() || '';
+      }
+    }
+    const apiKey = Deno.env.get('MAILCHIMP_API_KEY')?.trim();
+    if (!apiKey || !listIdMc) {
+      return c.json({
+        ok: false,
+        error:
+          'Chybí MAILCHIMP_API_KEY nebo ID listu. Nastav audience v Edge secrets nebo pošli listId v JSON.',
+      });
+    }
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' });
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const prefix = Deno.env.get('MAILCHIMP_SERVER_PREFIX')?.trim();
+    const fromKey = (() => {
+      const i = apiKey.lastIndexOf('-');
+      return i >= 0 ? apiKey.slice(i + 1).trim() : '';
+    })();
+    const server = prefix || fromKey;
+    const result = await runMailchimpContactsMigrate(supabase, {
+      mailchimpApiKey: apiKey,
+      mailchimpServer: server || undefined,
+      listIdMc,
+      includeActivity,
+      ...(maxMembers != null ? { maxMembers } : {}),
+      ...(membersPerRun != null ? { membersPerRun } : {}),
+      ...(resumeFrom != null ? { resumeFrom } : {}),
+    });
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+/** Admin: všechny tagy + počty kontaktů (mailing). */
+app.get('/make-server-93a20b6f/admin/mailing/tags', async (c) => {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const tags = await mailingTagsList(supabase);
+    return c.json({ ok: true, tags });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: vytvoř / uprav tag podle názvu (slug z názvu). */
+app.post('/make-server-93a20b6f/admin/mailing/tags', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const name = typeof body?.name === 'string' ? body.name : '';
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const tag = await mailingTagCreate(supabase, name);
+    return c.json({ ok: true, tag });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 400);
+  }
+});
+
+/** Admin: přidej / odeber tagy u kontaktu (jako Mailchimp); volitelně sync do Mailchimp API. */
+app.post('/make-server-93a20b6f/admin/mailing/subscribers/:subscriberId/tags', async (c) => {
+  try {
+    const subscriberId = c.req.param('subscriberId')?.trim();
+    if (!subscriberId) return c.json({ ok: false, error: 'Chybí subscriberId.' }, 400);
+    const body = await c.req.json().catch(() => ({}));
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const result = await mailingSubscriberTagsPatch(supabase, subscriberId, {
+      addNames: Array.isArray(body?.addNames) ? body.addNames : undefined,
+      removeTagIds: Array.isArray(body?.removeTagIds) ? body.removeTagIds : undefined,
+      syncMailchimp: Boolean(body?.syncMailchimp),
+    });
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 400);
+  }
+});
+
+/**
+ * Admin: přepočti subject_interest_scores pro dávku kontaktů (tagy + pozice + merge_fields).
+ * Body: `{ "limit": 1000, "offset": 0 }` — default limit 1000, řazeno podle updated_at desc.
+ */
+app.post('/make-server-93a20b6f/admin/mailing/recompute-subject-interests', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const limit = body?.limit != null ? Number(body.limit) : 1000;
+    const offset = body?.offset != null ? Number(body.offset) : 0;
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const result = await runSubjectInterestRecompute(supabase, {
+      limit: Number.isFinite(limit) ? limit : 1000,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+    if (!result.ok) return c.json(result, 500);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
 
 app.post('/make-server-93a20b6f/migrate-images', async (c) => {
   try {
@@ -15320,6 +15479,29 @@ function vividbooksEmailTemplate(params: {
   return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
+/**
+ * Testovací odeslání z editoru — odpovídá náhledu (jen obsah `bodyHtml` v bílé kartě),
+ * bez horního loga, modrého hero a bez automatického CTA z produkční šablony.
+ */
+function vividbooksEmailTestMatchEditorTemplate(params: { body: string; preheader?: string }): string {
+  const { body, preheader } = params;
+  const mcResponsiveStyle = `<style type="text/css">
+@media only screen and (max-width: 600px) {
+  .vb-shell-pad { padding: 12px 8px !important; }
+  .vb-card-outer { width: 100% !important; max-width: 100% !important; }
+  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 17px !important; line-height: 1.65 !important; }
+  .vb-foot { padding: 22px 18px !important; }
+  .vb-foot p { font-size: 13px !important; }
+  .vb-foot a { font-size: 13px !important; }
+}
+</style>`;
+  const vbCanvas = '#E8EAED';
+  const pre = preheader
+    ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>`
+    : '';
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+}
+
 /* GET /admin/mailchimp/campaigns */
 app.get('/make-server-93a20b6f/admin/mailchimp/campaigns', async (c) => {
   try {
@@ -15474,6 +15656,111 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
   } catch (e: any) {
     console.log(`[MC Draft] Error: ${e.message}`);
     return c.json({ error: `MC draft: ${e.message}` }, 500);
+  }
+});
+
+/** Povolené adresy pro Mailchimp „Send test“ z editoru kampaní (EmailBuilder → Nastavení). */
+const MAILCHIMP_TEST_EMAIL_ALLOWLIST = new Set([
+  'vitekskop@gmail.com',
+  'frantisek@vividbooks.com',
+  'gabriela@vividbooks.com',
+  'dan@vividbooks.com',
+]);
+
+/* POST /admin/mailchimp/send-test-email — dočasná kampaň, Mailchimp test send, pak smazání */
+app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
+  let campaignId: string | null = null;
+  try {
+    const { mcBase, mcAuth } = getMailchimpAuth();
+    const body = await c.req.json();
+    const toRaw = String(body.to || '').trim().toLowerCase();
+    if (!MAILCHIMP_TEST_EMAIL_ALLOWLIST.has(toRaw)) {
+      return c.json({ error: 'Tento e-mail není v seznamu povolených adres pro test.' }, 400);
+    }
+    const subjectRaw = String(body.subject || '').trim();
+    if (!subjectRaw) return c.json({ error: 'Chybi subject' }, 400);
+    const subject = `/TEST/ ${subjectRaw}`;
+
+    const { previewText, htmlBody, bodyContent, audience, fromName } = body;
+
+    const newsletterAud = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
+    const noNewsletterAud = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
+    const listId = audience === 'no-newsletter' ? noNewsletterAud : newsletterAud;
+    if (!listId) return c.json({ error: `Audience ID pro "${audience}" neni nastaven` }, 500);
+
+    console.log(`[MC Test] Create temp campaign → test to ${toRaw}, subject "${subject}" (šablona = jen tělo editoru)`);
+    const createRes = await fetch(`${mcBase}/campaigns`, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'regular',
+        recipients: { list_id: listId },
+        settings: {
+          subject_line: subject,
+          preview_text: String(previewText || ''),
+          from_name: fromName || 'Vividbooks',
+          reply_to: 'hello@vividbooks.com',
+          title: `[Test] ${subjectRaw}`.slice(0, 100),
+        },
+      }),
+    });
+    if (!createRes.ok) {
+      const t = await createRes.text();
+      throw new Error(`MC create ${createRes.status}: ${t.slice(0, 300)}`);
+    }
+    const campaign = await createRes.json();
+    campaignId = campaign.id;
+
+    const finalHtml =
+      htmlBody ||
+      vividbooksEmailTestMatchEditorTemplate({
+        body: bodyContent || '<p>Obsah emailu</p>',
+        preheader: previewText,
+      });
+
+    const putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: finalHtml }),
+    });
+    if (!putRes.ok) {
+      const t = await putRes.text();
+      throw new Error(`MC content ${putRes.status}: ${t.slice(0, 300)}`);
+    }
+
+    const testRes = await fetch(`${mcBase}/campaigns/${campaignId}/actions/test`, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ send_type: 'html', test_emails: [toRaw] }),
+    });
+    if (!testRes.ok) {
+      const t = await testRes.text();
+      throw new Error(`MC test ${testRes.status}: ${t.slice(0, 300)}`);
+    }
+
+    console.log(`[MC Test] OK → ${toRaw}`);
+    return c.json({ success: true, message: `Test odeslán na ${toRaw}` });
+  } catch (e: any) {
+    console.log(`[MC Test] Error: ${e.message}`);
+    return c.json({ error: `MC test: ${e.message}` }, 500);
+  } finally {
+    if (campaignId) {
+      try {
+        const { mcBase, mcAuth } = getMailchimpAuth();
+        const del = await fetch(`${mcBase}/campaigns/${campaignId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Basic ${mcAuth}` },
+        });
+        if (!del.ok) {
+          const dt = await del.text();
+          console.log(`[MC Test] Delete ${campaignId}: ${del.status} ${dt.slice(0, 120)}`);
+        } else {
+          console.log(`[MC Test] Deleted temp campaign ${campaignId}`);
+        }
+      } catch (delErr: any) {
+        console.log(`[MC Test] Delete failed: ${delErr.message}`);
+      }
+    }
   }
 });
 

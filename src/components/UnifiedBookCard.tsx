@@ -116,8 +116,6 @@ export function UnifiedBookCard({
 
   const isRelated = variant === 'related';
   const isDigitalTile = book.type === 'online' || book.type === 'license';
-  /** Homepage — horizontální řada: sešity o kousek níž než první dlaždice (digitální licence). */
-  const relatedPrintNudgeDown = isRelated && !isDigitalTile;
   const rawTitle = String(subject ? titleRest : (book.name || ''));
   const titleText = formatTypography(rawTitle);
   const titleClass =
@@ -129,60 +127,53 @@ export function UnifiedBookCard({
 
   return (
     <motion.div
-      className={`flex flex-col cursor-pointer group ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'} ${relatedPrintNudgeDown ? 'mt-8 max-[1050px]:mt-6' : ''}`}
+      className={`flex h-full min-h-0 flex-col cursor-pointer group overflow-visible ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'}`}
       whileHover={{ y: -6 }}
       transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
       onClick={onClick}
     >
-      {/* ── image area (tiskoviny: výšku určuje obálka — bez aspect boxu by nad úzkou obálkou vznikalo prázdné pole; digitály:3/4 + podklad) ── */}
-      <div
-        className={`relative w-full mb-1 overflow-visible ${
-          isDigitalTile
-            ? 'aspect-[3/4] flex items-end'
-                       : book.image
-              ? 'flex justify-center pt-[4.5rem]'
-              : 'aspect-[5/6] flex items-end'
-        }`}
-      >
-        {/* Coloured background only for digital / license tiles — starts lower */}
-        {isDigitalTile && (
-          <div
-            className="absolute inset-x-0 bottom-0 rounded-[20px] pointer-events-none"
-            style={{ top: '28%', background: catBg }}
-          />
-        )}
+      {/*
+        Pevná výška pásu obrázku (aspect 3/4 u všech) → bobánek a název začínají ve stejné
+        výšce bez ohledu na počet řádků pod nimi. flex-1 jen dole vyplní buňku mřížky.
+      */}
+      <div className="relative mb-1 aspect-[3/4] w-full shrink-0 overflow-visible">
         {book.image ? (
-          book.type === 'online' || book.type === 'license' ? (
-            <ImageWithFallback
-              src={book.image}
-              alt={book.name}
-              className="w-[95%] h-[95%] mx-auto object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
-            />
-          ) : (
-            <div className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}>
+          isDigitalTile ? (
+            <div className="relative flex h-full w-full items-end justify-center">
+              <div
+                className="pointer-events-none absolute inset-x-0 bottom-0 rounded-[20px]"
+                style={{ top: '28%', background: catBg }}
+              />
               <ImageWithFallback
                 src={book.image}
                 alt={book.name}
-                className="block w-full h-auto object-contain transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
-                style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
-                onLoad={(e) => {
-                  const img = e.currentTarget;
-                  setIsLandscape(img.naturalWidth >= img.naturalHeight);
-                }}
+                className="mx-auto h-[95%] w-[95%] max-h-full object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
               />
+            </div>
+          ) : (
+            <div className="flex h-full w-full items-end justify-center">
+              <div className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}>
+                <ImageWithFallback
+                  src={book.image}
+                  alt={book.name}
+                  className="block h-auto w-full object-contain transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
+                  style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
+                  onLoad={(e) => {
+                    const img = e.currentTarget;
+                    setIsLandscape(img.naturalWidth >= img.naturalHeight);
+                  }}
+                />
+              </div>
             </div>
           )
         ) : (
-          <div className="w-full h-full rounded-2xl bg-[#eef2fb] flex items-center justify-center">
-            <BookOpen className="w-10 h-10 text-[#001161]/20" />
+          <div className="flex h-full w-full items-center justify-center rounded-2xl bg-[#eef2fb]">
+            <BookOpen className="h-10 w-10 text-[#001161]/20" />
           </div>
         )}
-
-
       </div>
 
-      {/* ── text below ── */}
-      <div className="flex flex-col px-0.5 relative z-10">
+      <div className="relative z-10 flex shrink-0 flex-col px-0.5">
         {/* Bobánek jen předmětu — ročník filtrujte na stránce předmětu (Dostupné tituly). */}
         {badgeSubject && (
           <span
@@ -237,6 +228,8 @@ export function UnifiedBookCard({
           </div>
         )}
       </div>
+
+      <div className="min-h-0 flex-1" aria-hidden />
     </motion.div>
   );
 }

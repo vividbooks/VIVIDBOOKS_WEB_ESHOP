@@ -1896,7 +1896,7 @@ export default function CatalogGrid() {
                       {subGroup !== '_all' && (
                         <p className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[22px] xl:text-[26px] text-center mb-1.5">{subGroup}</p>
                       )}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-0 justify-items-center items-end">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-0 justify-items-stretch items-stretch">
                         {[...(index === 0 ? [getDigitalLicenseForGroup(mainGroup)] : []), ...(books as any[])].map(b => renderCard(b, false))}
                       </div>
                     </div>
@@ -1913,7 +1913,7 @@ export default function CatalogGrid() {
                 <div
                   ref={el => { scrollRefs.current[mainGroup] = el; }}
                   onScroll={() => handleGroupScroll(mainGroup)}
-                  className="flex gap-2.5 items-start pb-5 overflow-x-auto -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
+                  className="flex gap-2.5 items-stretch pb-5 overflow-x-auto overflow-y-visible -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
                   style={{ scrollbarWidth: 'none' }}
                 >
                   {allRowBooks.map(b => renderCard(b, true))}

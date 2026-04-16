@@ -34,6 +34,7 @@ import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
+import { buildThankYouUrlAfterPayment } from '../../utils/checkoutThankYouRedirect';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -355,9 +356,8 @@ export function CheckoutPage() {
         }
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const pi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
           return;
         }
         if (data.status === 'payment_cancelled') {
@@ -770,9 +770,9 @@ export function CheckoutPage() {
         if (cancelled) return;
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const piFromApi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const pi = (piFromApi || paymentIntentId || '').trim();
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
         }
       } catch {
         /* ignore */
@@ -784,7 +784,7 @@ export function CheckoutPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [desktopWalletQrActive, paymentResumeToken]);
+  }, [desktopWalletQrActive, paymentResumeToken, paymentIntentId]);
 
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
