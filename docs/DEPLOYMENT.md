@@ -95,7 +95,10 @@ Volitelné číselné ID podle vašeho účtu iDoklad (když výchozí hodnoty n
 | `IDOKLAD_CURRENCY_ID` | `1` | Měna CZK. |
 | `IDOKLAD_PRICE_TYPE_WITH_VAT` | `1` | Ceny včetně DPH. |
 | `IDOKLAD_VAT_RATE_REDUCED` | `2` | Snížená sazba (sešity / knihy). |
-| `IDOKLAD_VAT_RATE_STANDARD` | `1` | Základní sazba (např. doprava). |
+| `IDOKLAD_VAT_RATE_STANDARD` | `1` | Základní sazba (např. doprava u převodu / bez Stripe). |
+| `IDOKLAD_VAT_RATE_ZERO` | `2` | Sazba 0 % DPH (`VatRateType.Zero` v API) — **řádek dopravy u e‑shopu** (karta / Apple Pay / Google Pay nebo objednávka se `stripe_payment_intent_id`). |
+| `IDOKLAD_SEND_INVOICE_EMAIL` | — | `true` / `1`: po `POST IssuedInvoices` a uhrazených i po `FullyPay` zavolat `POST …/IssuedInvoices/{id}/Send` (PDF e‑mailem z iDokladu na kontakt dokladu). |
+| `IDOKLAD_SEND_INVOICE_SEND_AS` | `1` | Volitelně přepsat typ odeslání dle číselníku iDoklad (`SendAs` v těle Send). |
 
 Nasazení: `supabase functions deploy process-export-queue --no-verify-jwt` (nebo celý skript v sekci výše). Frontu je potřeba pravidelně spouštět (cron / Supabase schedule), pokud ji už nemáte napojenou.
 

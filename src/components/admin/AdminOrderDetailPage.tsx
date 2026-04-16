@@ -755,7 +755,7 @@ export function AdminOrderDetailPage() {
                       className="inline-flex items-center gap-2 rounded-xl border border-[#001161]/20 bg-white px-3 py-2 text-[12px] font-bold text-[#001161] hover:bg-[#001161]/5 disabled:opacity-50"
                     >
                       <Download className={`w-4 h-4 ${actionLoading === 'idoklad_pdf' ? 'animate-pulse' : ''}`} />
-                      {'Stáhnout PDF faktury'}
+                      {'Doklad o úhradě (iDoklad) — stáhnout PDF'}
                     </button>
                   ) : (
                     <p className="text-[11px] text-amber-800">
@@ -763,9 +763,13 @@ export function AdminOrderDetailPage() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-600 leading-snug">
-                    {'Odeslání faktury e-mailem zákazníkovi zajišťuje iDoklad (automatizace / odeslání dokladu). Obvykle na '}
+                    {
+                      'Úhradu zákazníkovi potvrzuje doklad z iDokladu (PDF). Po vystavení ho systém odešle e-mailem z iDokladu na '
+                    }
                     <span className="font-semibold text-[#001161]">{order.customer_email}</span>
-                    {'. Příjem v poště nevidíme z webu — zkontrolujte v iDokladu, zda je akce zapnutá.'}
+                    {
+                      ' (pokud je v Supabase zapnuto IDOKLAD_SEND_INVOICE_EMAIL a API Send v účtu funguje).'
+                    }
                   </p>
                 </div>
               )}
@@ -849,16 +853,33 @@ export function AdminOrderDetailPage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
-              {order.stripe_receipt_url && (
+              {order.stripe_receipt_url
+                && !(order.invoice_status === 'done' && order.idoklad_invoice_id?.trim()) && (
                 <a
                   href={order.stripe_receipt_url}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]"
                 >
-                  {'Stripe účtenka (receipt)'}
+                  {'Stripe účtenka (záloha, dokud není iDoklad)'}
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
+              )}
+              {order.stripe_receipt_url
+                && order.invoice_status === 'done'
+                && order.idoklad_invoice_id?.trim() && (
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  <span className="text-gray-400">{'Technicky: '}</span>
+                  <a
+                    href={order.stripe_receipt_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-[#001161] hover:text-[#ff6a35] inline-flex items-center gap-0.5"
+                  >
+                    {'Stripe receipt'}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </p>
               )}
               {basecomHref && (
                 <a href={basecomHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">
