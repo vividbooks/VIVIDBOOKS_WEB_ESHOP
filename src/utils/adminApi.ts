@@ -836,6 +836,7 @@ export interface AdminSchoolOrderSummary {
     orderCount: number;
   }>;
   digitalLicenses: string[];
+  /** Všechny e-shop objednávky dané školy (IČO / název), nejen posledních N */
   recentOrders: Array<{
     id: string;
     orderNumber: string;

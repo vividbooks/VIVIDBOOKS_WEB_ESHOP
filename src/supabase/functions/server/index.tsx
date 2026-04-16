@@ -11211,39 +11211,52 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
 
   const ico = String(params.ico || '').trim();
   const schoolName = String(params.schoolName || '').trim();
-  let query = supabase
-    .from('orders')
-    .select('id, order_number, created_at, status, total, school_name, ico, order_items(product_name, quantity, total_price)')
-    .order('created_at', { ascending: false })
-    .limit(20);
+  const empty = {
+    orderCount: 0,
+    totalRevenue: 0,
+    purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
+    digitalLicenses: [] as string[],
+    recentOrders: [] as Array<{
+      id: string;
+      orderNumber: string;
+      createdAt: string;
+      status: string;
+      total: number;
+      items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+    }>,
+  };
 
-  if (ico) {
-    query = query.eq('ico', ico);
-  } else if (schoolName) {
-    query = query.ilike('school_name', `%${schoolName}%`);
-  } else {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
+  if (!ico && !schoolName) {
+    return empty;
   }
 
-  const { data, error } = await query;
-  if (error) {
-    console.log(`[Schools] Order summary fetch error: ${error.message}`);
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
+  /** Načíst všechny objednávky po stránkách (dříve limit 20 kazil počty i historii). */
+  const PAGE = 150;
+  const MAX_PAGES = 80;
+  const orders: any[] = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const from = page * PAGE;
+    const to = from + PAGE - 1;
+    let q = supabase
+      .from('orders')
+      .select('id, order_number, created_at, status, total, school_name, ico, order_items(product_name, quantity, total_price)')
+      .order('created_at', { ascending: false })
+      .range(from, to);
+    if (ico) {
+      q = q.eq('ico', ico);
+    } else {
+      q = q.ilike('school_name', `%${schoolName}%`);
+    }
+    const { data, error } = await q;
+    if (error) {
+      console.log(`[Schools] Order summary fetch error: ${error.message}`);
+      return empty;
+    }
+    const batch = Array.isArray(data) ? data : [];
+    orders.push(...batch);
+    if (batch.length < PAGE) break;
   }
 
-  const orders = Array.isArray(data) ? data : [];
   const productMap = new Map<string, { name: string; quantity: number; orderIds: Set<string> }>();
   const digitalLicenses = new Set<string>();
 

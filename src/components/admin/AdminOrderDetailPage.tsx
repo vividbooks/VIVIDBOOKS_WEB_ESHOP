@@ -11,8 +11,9 @@ import {
   Download,
   CheckCircle2,
   Circle,
+  GraduationCap,
 } from 'lucide-react';
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   fetchAdminOrderDetail,
@@ -201,6 +202,17 @@ export function AdminOrderDetailPage() {
   const stripeHref = useMemo(() => stripeUrl(order?.stripe_payment_intent_id), [order?.stripe_payment_intent_id]);
   const basecomHref = useMemo(() => basecomUrl(order?.basecom_order_id), [order?.basecom_order_id]);
   const pipedriveDealHref = useMemo(() => pipedriveDealUrl(order?.pipedrive_deal_id), [order?.pipedrive_deal_id]);
+
+  const schoolAdminHref = useMemo(() => {
+    if (!order) return null;
+    const ico = order.ico?.trim();
+    const name = order.school_name?.trim();
+    if (!ico && !name) return null;
+    const q = new URLSearchParams();
+    if (ico) q.set('ico', ico);
+    if (name) q.set('name', name);
+    return `../skoly?${q.toString()}`;
+  }, [order]);
 
   const loadOrder = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -443,6 +455,18 @@ export function AdminOrderDetailPage() {
               <div><span className="text-gray-400">{'Škola: '}</span><span className="font-semibold text-[#001161]">{order.school_name || '—'}</span></div>
               <div><span className="text-gray-400">{'IČO: '}</span><span className="font-semibold text-[#001161]">{order.ico || '—'}</span></div>
             </div>
+            {schoolAdminHref ? (
+              <div className="mt-4 pt-3 border-t border-gray-100">
+                <Link
+                  to={schoolAdminHref}
+                  relative="path"
+                  className="inline-flex items-center gap-2 text-[13px] font-bold text-[#001161] hover:text-[#ff8c66] transition-colors"
+                >
+                  <GraduationCap className="w-4 h-4 shrink-0" />
+                  {'Detail školy v databázi a historie objednávek'}
+                </Link>
+              </div>
+            ) : null}
           </section>
 
           <section className="bg-white rounded-2xl border border-gray-100 p-4">
