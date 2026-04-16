@@ -13532,12 +13532,27 @@ const PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT = 488;
 /** Vlastní pole „product category“ / e-shop tiskoviny — hodnota `print` (obchodní spec). */
 const PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT = '3f0c870ac132eec72589da1313e2388977c4a74f';
 
+/** Won deal z zaplacené kartové objednávky e‑shopu — enum „Zaplaceno“ (field id 12585 v Pipedrive UI). */
+const PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT = '0e41017f4d0a3aa58177d7727844f98a6569d630';
+const PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT = 489;
+
 function getEshopProductCategoryPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY') || '').trim()
     || PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT;
   const value = (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_VALUE') || '').trim() || 'print';
   return { [key]: value };
+}
+
+/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
+function getEshopCardPaidStatusPayload(): Record<string, unknown> {
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY') || '').trim()
+    || PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT;
+  const optId =
+    parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID'))
+    ?? PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT;
+  return { [key]: optId };
 }
 
 function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
@@ -13928,6 +13943,9 @@ async function refreshEshopPipedriveDealFromDb(
   }
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
+  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+    Object.assign(patchBody, getEshopCardPaidStatusPayload());
+  }
 
   if (!Object.keys(patchBody).length) {
     console.log('[Pipedrive eshop] refresh: žádná pole k aktualizaci');
@@ -14066,6 +14084,10 @@ async function syncEshopOrderToPipedriveFromDb(
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
   const extraPayload: Record<string, unknown> = { ...printPayload, ...productCategoryPayload };
+  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+    Object.assign(extraPayload, getEshopCardPaidStatusPayload());
+    console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
+  }
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
