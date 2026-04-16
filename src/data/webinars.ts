@@ -16,6 +16,11 @@ export interface Webinar {
   lecturer: string;
   lecturerAvatar: string;
   coverImage?: string;
+  /**
+   * Volitelná barva pozadí za náhledem v kompaktním bloku e-mailu (#rrggbb).
+   * Bez vyplnění se v mailu použije bílá — lze doplnit v adminu / API.
+   */
+  coverImageBgColor?: string;
   description: string;
   perks: string;
   targetAudience: string;

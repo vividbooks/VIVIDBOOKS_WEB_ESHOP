@@ -98,6 +98,7 @@ Deno.serve(async (req) => {
         return jsonResponse({
           status: 'already_paid',
           orderNumber: order.order_number,
+          ...(order.stripe_payment_intent_id ? { paymentIntentId: order.stripe_payment_intent_id } : {}),
         });
       }
       return jsonResponse({
@@ -117,6 +118,7 @@ Deno.serve(async (req) => {
       return jsonResponse({
         status: 'already_paid',
         orderNumber: order.order_number,
+        paymentIntentId: pi.id,
       });
     }
 

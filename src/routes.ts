@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react';
 import React from 'react';
 import type { RouteObject } from 'react-router';
-import { createBrowserRouter, Outlet } from 'react-router';
+import { createBrowserRouter, Navigate, Outlet } from 'react-router';
 import { ChunkLoadErrorFallback } from './components/ChunkLoadErrorFallback';
 import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { RouteHydrateFallback } from './components/RouteHydrateFallback';
@@ -240,8 +240,22 @@ export const router = createBrowserRouter(
         { path: 'rag', lazy: lazyDefault(() => import('./components/admin/RagPage')) },
       ],
     },
+    {
+      path: '/mailing',
+      lazy: lazyDefault(() => import('./components/admin/AdminLayout')),
+      children: [
+        {
+          index: true,
+          Component: () => React.createElement(Navigate, { to: '/mailing/emaily', replace: true }),
+        },
+        { path: 'novy-email', lazy: lazyDefault(() => import('./components/admin/EmailBuilder')) },
+        { path: 'emaily', lazy: lazyDefault(() => import('./components/admin/EmailBuilder')) },
+        { path: 'audience', lazy: lazyDefault(() => import('./components/admin/MailingAudiencePage')) },
+        { path: 'automatizace', lazy: lazyDefault(() => import('./components/admin/MailingPlaceholderPage')) },
       ],
     },
+    ],
+  },
   ]),
   { basename: import.meta.env.BASE_URL },
 );

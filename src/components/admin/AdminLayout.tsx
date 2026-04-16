@@ -5,7 +5,7 @@ import {
   Home, ChevronRight, Settings, Sparkles, Eye, LogOut,
   Database, FileText, Newspaper, Radio, Package, LayoutGrid,
   BookOpen, Layers, Bot, Brain, Trash2, Upload, Image, GraduationCap, Bell, Megaphone, Users, School,
-  Monitor, BarChart3, Mail, Contact,
+  Monitor, BarChart3, Mail, Contact, Plus,
   Calendar, Menu, X, ChevronDown, Palette, Loader2,
 } from 'lucide-react';
 import { useApp } from '@/app/contexts/AppContext';
@@ -72,7 +72,7 @@ const ASSISTANT_SIDEBAR = [
   },
 ];
 
-type AdminModeId = 'web' | 'marketing' | 'eshop' | 'assistant';
+type AdminModeId = 'web' | 'marketing' | 'mailing' | 'eshop' | 'assistant';
 
 const ESHOP_PATHS = [
   '/admin/objednavky',
@@ -84,13 +84,13 @@ const ESHOP_PATHS = [
   '/admin/plakaty',
 ];
 const ASSISTANT_PATHS = ['/admin/agent'];
+const MAILING_PATHS = ['/mailing'];
 
 const MARKETING_SIDEBAR = [
   {
     section: 'Kampaně',
     items: [
       { label: 'Kalendář', icon: Calendar, path: '/marketing/kalendar' },
-      { label: 'E-maily', icon: Mail, path: '/marketing/emaily' },
       { label: 'Webináře', icon: Radio, path: '/marketing/webinare' },
       { label: 'Popup Manager', icon: Megaphone, path: '/marketing/popupy' },
     ],
@@ -121,6 +121,18 @@ const MARKETING_SIDEBAR = [
   },
 ];
 
+const MAILING_SIDEBAR = [
+  {
+    section: 'Mailing',
+    items: [
+      { label: 'Nový email', icon: Plus, path: '/mailing/novy-email' },
+      { label: 'Emaily', icon: Mail, path: '/mailing/emaily' },
+      { label: 'Audience', icon: Users, path: '/mailing/audience' },
+      { label: 'Automatizace', icon: Sparkles, path: '/mailing/automatizace' },
+    ],
+  },
+];
+
 const MODE_CONFIG: Record<AdminModeId, {
   label: string;
   icon: any;
@@ -144,6 +156,14 @@ const MODE_CONFIG: Record<AdminModeId, {
     sidebar: MARKETING_SIDEBAR,
     accent: 'text-[#7C3AED]',
     title: 'Marketing Admin',
+  },
+  mailing: {
+    label: 'E-maily',
+    icon: Mail,
+    homePath: '/mailing/emaily',
+    sidebar: MAILING_SIDEBAR,
+    accent: 'text-fuchsia-700',
+    title: 'Email Admin',
   },
   eshop: {
     label: 'Eshop',
@@ -208,7 +228,9 @@ export default function AdminLayout() {
     void signOut();
   }, [authReady, user, signOut]);
 
-  const mode: AdminModeId = location.pathname.startsWith('/marketing')
+  const mode: AdminModeId = MAILING_PATHS.some((path) => location.pathname.startsWith(path))
+    ? 'mailing'
+    : location.pathname.startsWith('/marketing')
     ? 'marketing'
     : ASSISTANT_PATHS.some((path) => location.pathname.startsWith(path))
       ? 'assistant'
@@ -217,11 +239,14 @@ export default function AdminLayout() {
         : 'web';
   const activeMode = MODE_CONFIG[mode];
   const sidebarItems = activeMode.sidebar;
-  const basePath = mode === 'marketing' ? '/marketing' : '/admin';
+  const basePath = mode === 'marketing' ? '/marketing' : mode === 'mailing' ? '/mailing' : '/admin';
   const hideSidebar = false;
   /** Plátno bez postranního admin panelu — vlastní UI editoru. */
   const isVisualEditor = location.pathname === '/admin/visual-editor';
-  const isEmailBuilder = location.pathname.startsWith('/marketing/emaily');
+  const isEmailBuilder =
+    location.pathname.startsWith('/marketing/emaily') ||
+    location.pathname.startsWith('/mailing/novy-email') ||
+    location.pathname.startsWith('/mailing/emaily');
   const showAgentChatHistory = mode === 'assistant' && location.pathname === '/admin/agent';
 
   const isAgentWorkspace =
@@ -325,6 +350,9 @@ export default function AdminLayout() {
     balicky: 'Balíčky',
     plakaty: 'Objednávky plakátů',
     emaily: 'E-maily',
+    'novy-email': 'Nový email',
+    audience: 'Audience',
+    automatizace: 'Automatizace',
     galerie: 'Galerie obrázků',
     kalendar: 'Kalendář',
     'growth-agent': 'Growth Agent',
@@ -406,7 +434,13 @@ export default function AdminLayout() {
                   <button
                     key={item.path}
                     type="button"
-                    onClick={() => { navigate(item.path); setMobileSidebarOpen(false); }}
+                    onClick={() => {
+                      const target = item.path === '/mailing/novy-email'
+                        ? `${item.path}?new=${Date.now()}`
+                        : item.path;
+                      navigate(target);
+                      setMobileSidebarOpen(false);
+                    }}
                     className={`w-full text-left px-4 py-2 text-[13px] flex items-center gap-2.5 transition-all ${
                       isActive
                         ? 'bg-[#001161] text-white font-bold'
