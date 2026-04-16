@@ -471,6 +471,7 @@ export function OrderPage() {
   const [schoolPaymentResumeToken, setSchoolPaymentResumeToken] = useState<string | null>(null);
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const lastSchoolPaymentKeyRef = useRef<string | null>(null);
+  const schoolPaymentIntentFetchRef = useRef<AbortController | null>(null);
 
   /* ── cart state for workbook upsell ── */
   const [upsellDismissed, setUpsellDismissed] = useState(false);
@@ -1234,6 +1235,8 @@ export function OrderPage() {
 
   useEffect(() => {
     if (step !== 5 || !schoolWantsOnlinePayment) {
+      schoolPaymentIntentFetchRef.current?.abort();
+      schoolPaymentIntentFetchRef.current = null;
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
@@ -1242,6 +1245,8 @@ export function OrderPage() {
       return;
     }
     if (!canPrepareSchoolCardPayment) {
+      schoolPaymentIntentFetchRef.current?.abort();
+      schoolPaymentIntentFetchRef.current = null;
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
@@ -1334,6 +1339,9 @@ export function OrderPage() {
     if (lastSchoolPaymentKeyRef.current === paymentKey && clientSecret) return;
 
     lastSchoolPaymentKeyRef.current = paymentKey;
+    schoolPaymentIntentFetchRef.current?.abort();
+    const ac = new AbortController();
+    schoolPaymentIntentFetchRef.current = ac;
     setSchoolPaymentIntentLoading(true);
     setSchoolPaymentIntentError('');
 
@@ -1344,6 +1352,7 @@ export function OrderPage() {
         Authorization: `Bearer ${publicAnonKey}`,
       },
       body: JSON.stringify(payload),
+      signal: ac.signal,
     })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
@@ -1355,12 +1364,19 @@ export function OrderPage() {
         setSchoolPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
       })
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
         setClientSecret(null);
         setPaymentIntentId(null);
         setSchoolPaymentResumeToken(null);
         setSchoolPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
-      .finally(() => setSchoolPaymentIntentLoading(false));
+      .finally(() => {
+        if (schoolPaymentIntentFetchRef.current === ac) schoolPaymentIntentFetchRef.current = null;
+        setSchoolPaymentIntentLoading(false);
+      });
+    return () => {
+      ac.abort();
+    };
   }, [
     step,
     paymentMethod,

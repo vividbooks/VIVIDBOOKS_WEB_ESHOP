@@ -151,6 +151,105 @@ function generateResumeToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function sortKeysDeep(obj: unknown): unknown {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(obj as object).sort()) {
+    sorted[k] = sortKeysDeep((obj as Record<string, unknown>)[k]);
+  }
+  return sorted;
+}
+
+function buildPaymentIntentIdempotencyPayload(
+  items: CheckoutItem[],
+  shipping: CheckoutShipping,
+  customer: CheckoutCustomer,
+  checkoutPaymentMethod: string,
+  schoolInquiryJson: string | null,
+) {
+  const sortedItems = [...items]
+    .map((it) => ({
+      productId: String(it.productId).trim(),
+      productName: String(it.productName).trim(),
+      quantity: it.quantity,
+      unitPrice: it.unitPrice,
+      ...(typeof it.variant === 'string' && it.variant.trim() ? { variant: it.variant.trim() } : {}),
+      ...(typeof it.bundleId === 'string' && it.bundleId.trim() ? { bundleId: it.bundleId.trim() } : {}),
+      ...(typeof it.bundleTitle === 'string' && it.bundleTitle.trim()
+        ? { bundleTitle: it.bundleTitle.trim() }
+        : {}),
+      ...(it.posterMerch === true ? { posterMerch: true } : {}),
+    }))
+    .sort((a, b) => {
+      const c = a.productId.localeCompare(b.productId);
+      if (c !== 0) return c;
+      return JSON.stringify(a).localeCompare(JSON.stringify(b));
+    });
+
+  const ship: Record<string, unknown> = {
+    method: String(shipping.method).trim(),
+    price: shipping.price,
+  };
+  if (typeof shipping.pickupPointId === 'string' && shipping.pickupPointId.trim()) {
+    ship.pickupPointId = shipping.pickupPointId.trim();
+  }
+  if (typeof shipping.pickupPointName === 'string' && shipping.pickupPointName.trim()) {
+    ship.pickupPointName = shipping.pickupPointName.trim();
+  }
+  if (shipping.differentAddress) {
+    ship.differentAddress = true;
+    const da = shipping.deliveryAddress;
+    ship.deliveryAddress = da && typeof da === 'object'
+      ? {
+        recipientName: typeof da.recipientName === 'string' ? da.recipientName.trim() : '',
+        street: typeof da.street === 'string' ? da.street.trim() : '',
+        city: typeof da.city === 'string' ? da.city.trim() : '',
+        zip: typeof da.zip === 'string' ? da.zip.trim() : '',
+      }
+      : {};
+  } else {
+    ship.differentAddress = false;
+  }
+
+  const cust = {
+    email: normalizeEmail(String(customer.email).trim()),
+    name: String(customer.name).trim(),
+    phone: String(customer.phone).trim(),
+    schoolName: typeof customer.schoolName === 'string' ? customer.schoolName.trim() : '',
+    ico: String(customer.ico ?? '').trim().replace(/\s/g, ''),
+    street: String(customer.street).trim(),
+    city: String(customer.city).trim(),
+    zip: String(customer.zip).trim(),
+  };
+
+  let schoolInquiry: unknown = null;
+  if (schoolInquiryJson) {
+    try {
+      schoolInquiry = sortKeysDeep(JSON.parse(schoolInquiryJson));
+    } catch {
+      schoolInquiry = schoolInquiryJson;
+    }
+  }
+
+  return {
+    v: 1,
+    checkoutPaymentMethod,
+    items: sortedItems,
+    shipping: ship,
+    customer: cust,
+    schoolInquiry,
+  };
+}
+
+async function sha256HexOfString(s: string): Promise<string> {
+  const data = new TextEncoder().encode(s);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -234,6 +333,15 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
   }
 
+  const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
+    items,
+    shipping,
+    customer,
+    checkoutPaymentMethod,
+    schoolInquiryJson,
+  );
+  const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));
+
   const stripe = new Stripe(stripeSecretKey, {
     apiVersion: '2024-06-20',
   });
@@ -244,27 +352,93 @@ Deno.serve(async (req) => {
     connect_timeout: 10,
     ssl: 'require',
   });
-  const checkoutSessionId = crypto.randomUUID();
-  const resumeToken = generateResumeToken();
+
+  let checkoutSessionId = '';
+  let resumeToken = '';
+  let paymentIntent: Stripe.PaymentIntent;
 
   try {
+    await sql`select pg_advisory_lock(hashtext(${idempotencyKey}::text))`;
+
+    const existingRows = await sql<{ id: string; stripe_payment_intent_id: string | null }[]>`
+      select id, stripe_payment_intent_id
+      from public.checkout_sessions
+      where idempotency_key = ${idempotencyKey}
+      limit 1
+      for update
+    `;
+    const existing = existingRows[0];
+
+    if (existing?.stripe_payment_intent_id) {
+      paymentIntent = await stripe.paymentIntents.retrieve(existing.stripe_payment_intent_id, {
+        expand: ['latest_charge'],
+      });
+      if (paymentIntent.currency !== 'czk' || paymentIntent.amount !== total) {
+        console.warn('[create-payment-intent] Idempotent reuse: amount/currency mismatch, refusing reuse.');
+        return jsonResponse({
+          error: 'Košík se změnil — obnovte stránku a zkuste platbu znovu.',
+        }, 409);
+      }
+      if (paymentIntent.status === 'succeeded') {
+        return jsonResponse({
+          error: 'Tato platba je již dokončená.',
+          alreadyPaid: true,
+        }, 409);
+      }
+      if (paymentIntent.status === 'canceled') {
+        return jsonResponse({
+          error: 'Platba byla zrušena. Vytvořte prosím novou objednávku z košíku.',
+        }, 409);
+      }
+
+      const ordRows = await sql<{ payment_resume_token: string | null }[]>`
+        select payment_resume_token
+        from public.orders
+        where stripe_payment_intent_id = ${paymentIntent.id}
+        limit 1
+      `;
+      const resume = ordRows[0]?.payment_resume_token;
+      if (!resume || !paymentIntent.client_secret) {
+        console.error('[create-payment-intent] Reuse path: missing resume token or client_secret.');
+        return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+      }
+
+      return jsonResponse({
+        clientSecret: paymentIntent.client_secret,
+        paymentIntentId: paymentIntent.id,
+        resumeToken: resume,
+      });
+    }
+
+    if (existing?.id && !existing.stripe_payment_intent_id) {
+      await sql`
+        delete from public.checkout_sessions
+        where id = ${existing.id}::uuid
+      `;
+    }
+
+    checkoutSessionId = crypto.randomUUID();
+    resumeToken = generateResumeToken();
+
     await sql`
       insert into public.checkout_sessions (
         id,
         cart_data,
         customer_data,
         shipping_data,
-        school_inquiry
+        school_inquiry,
+        idempotency_key
       ) values (
         ${checkoutSessionId}::uuid,
         ${JSON.stringify(items)}::jsonb,
         ${JSON.stringify(customer)}::jsonb,
         ${JSON.stringify(shipping)}::jsonb,
-        ${schoolInquiryJson}::jsonb
+        ${schoolInquiryJson}::jsonb,
+        ${idempotencyKey}
       )
     `;
 
-    const paymentIntent = await stripe.paymentIntents.create({
+    paymentIntent = await stripe.paymentIntents.create({
       amount: total,
       currency: 'czk',
       automatic_payment_methods: {
@@ -400,11 +574,13 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     try {
-      await sql`
-        delete from public.checkout_sessions
-        where id = ${checkoutSessionId}::uuid
-          and stripe_payment_intent_id is null
-      `;
+      if (checkoutSessionId) {
+        await sql`
+          delete from public.checkout_sessions
+          where id = ${checkoutSessionId}::uuid
+            and stripe_payment_intent_id is null
+        `;
+      }
     } catch {
       // Cleanup is best-effort only.
     }
@@ -412,6 +588,11 @@ Deno.serve(async (req) => {
     const message = error instanceof Error ? error.message : 'Stripe PaymentIntent creation failed.';
     return jsonResponse({ error: message }, 500);
   } finally {
+    try {
+      await sql`select pg_advisory_unlock(hashtext(${idempotencyKey}::text))`;
+    } catch {
+      /* ignore */
+    }
     await sql.end({ timeout: 5 });
   }
 });

@@ -33,6 +33,7 @@ Migrace a Edge funkce se **nenasadí samy** z GitHubu.
 
 - Přihlášení: `supabase login`, link projektu: `supabase link --project-ref <REF>`.
 - Migrace: `supabase db push` (nebo váš schválený postup na produkci).
+  - Migrace `20260414120000_checkout_sessions_idempotency.sql` přidává `checkout_sessions.idempotency_key` — bez ní může `create-payment-intent` při paralelních požadavcích založit víc `pending_payment` objednávek se stejným košíkem.
 - Funkce kritické pro platby a objednávky (minimální sada):
   - `create-payment-intent`
   - `stripe-webhook`

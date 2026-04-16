@@ -220,6 +220,8 @@ export function CheckoutPage() {
   const [schoolLookupLoading, setSchoolLookupLoading] = useState(false);
   const [isSchoolResultsOpen, setIsSchoolResultsOpen] = useState(false);
   const lastPaymentKeyRef = useRef<string | null>(null);
+  /** Zruší paralelní POST create-payment-intent (React Strict Mode / rychlé změny kroku). */
+  const paymentIntentFetchRef = useRef<AbortController | null>(null);
   const schoolSearchRef = useRef<HTMLDivElement | null>(null);
   /** Aby starší odpověď ARES/CSV nepřepsala novější požadavek (dvojí fetch při výběru školy). */
   const schoolAddressFetchSeq = useRef(0);
@@ -623,6 +625,8 @@ export function CheckoutPage() {
   useEffect(() => {
     if (currentStep !== 4) return;
     if (!wantsCardLikePayment) {
+      paymentIntentFetchRef.current?.abort();
+      paymentIntentFetchRef.current = null;
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
@@ -632,6 +636,8 @@ export function CheckoutPage() {
     }
     if (resumeFlowActive) return;
     if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) {
+      paymentIntentFetchRef.current?.abort();
+      paymentIntentFetchRef.current = null;
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
@@ -680,6 +686,9 @@ export function CheckoutPage() {
     if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
     lastPaymentKeyRef.current = paymentKey;
+    paymentIntentFetchRef.current?.abort();
+    const ac = new AbortController();
+    paymentIntentFetchRef.current = ac;
     setPaymentIntentLoading(true);
     setPaymentIntentError('');
 
@@ -690,6 +699,7 @@ export function CheckoutPage() {
         Authorization: `Bearer ${publicAnonKey}`,
       },
       body: JSON.stringify(payload),
+      signal: ac.signal,
     })
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
@@ -701,12 +711,19 @@ export function CheckoutPage() {
         setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
       })
       .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
         setClientSecret(null);
         setPaymentIntentId(null);
         setPaymentResumeToken(null);
         setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
-      .finally(() => setPaymentIntentLoading(false));
+      .finally(() => {
+        if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
+        setPaymentIntentLoading(false);
+      });
+    return () => {
+      ac.abort();
+    };
   }, [
     currentStep,
     items,
