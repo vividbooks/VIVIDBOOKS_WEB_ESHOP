@@ -37,6 +37,7 @@ type OrderRow = {
   invoice_status: string | null;
   pipedrive_deal_id: string | null;
   school_inquiry: unknown | null;
+  stripe_payment_intent_id: string | null;
 };
 
 type OrderItemRow = {
@@ -276,9 +277,66 @@ function getIdokladNumericSettings() {
     priceTypeWithVat: idokladEnvInt('IDOKLAD_PRICE_TYPE_WITH_VAT', 1),
     vatRateReduced: idokladEnvInt('IDOKLAD_VAT_RATE_REDUCED', 2),
     vatRateStandard: idokladEnvInt('IDOKLAD_VAT_RATE_STANDARD', 1),
+    /** VatRateType Zero (0 % DPH) — viz enum iDoklad API (typicky 2). Doprava u e‑shop objednávek. */
+    vatRateZero: idokladEnvInt('IDOKLAD_VAT_RATE_ZERO', 2),
     /** „Zahrnout do DP“ — u faktury je povinné `IsIncomeTax`. */
     isIncomeTax: idokladEnvBool('IDOKLAD_IS_INCOME_TAX', true),
   };
+}
+
+/** E‑shop (karta / PI): u dopravy 0 % DPH; převod / inbound bez PI ponechá standardní sazbu na dopravě. */
+function isEshopOrderForIdokladZeroShippingVat(order: Pick<OrderRow, 'payment_method' | 'stripe_payment_intent_id'>): boolean {
+  const cardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+  const hasPi = Boolean(String(order.stripe_payment_intent_id || '').trim());
+  return cardLike || hasPi;
+}
+
+function idokladSendInvoiceEmailEnabled(): boolean {
+  const v = (Deno.env.get('IDOKLAD_SEND_INVOICE_EMAIL') || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+/**
+ * Odeslání vydané faktury odberateli e‑mailem z iDokladu (API v3).
+ * Neháže — faktura už existuje; při chybě jen log.
+ */
+async function idokladSendIssuedInvoiceToPurchaser(
+  tokenIn: string,
+  invoiceNumericId: string,
+): Promise<string> {
+  if (!idokladSendInvoiceEmailEnabled()) return tokenIn;
+  let token = tokenIn;
+  const id = invoiceNumericId.trim();
+  if (!id) return token;
+
+  const url = new URL(`https://api.idoklad.cz/v3/IssuedInvoices/${encodeURIComponent(id)}/Send`);
+  /** SendAs: typicky e‑mail s přílohou PDF (hodnota dle číselníku iDoklad). */
+  const body = JSON.stringify({
+    SendAs: idokladEnvInt('IDOKLAD_SEND_INVOICE_SEND_AS', 1),
+  });
+
+  let res = await fetch(url.toString(), {
+    method: 'POST',
+    headers: idokladSdkPostJsonHeaders(token),
+    body,
+  });
+  if (res.status === 401) {
+    token = await getIdokladAccessToken(true);
+    res = await fetch(url.toString(), {
+      method: 'POST',
+      headers: idokladSdkPostJsonHeaders(token),
+      body,
+    });
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    console.error(
+      `[iDoklad] IssuedInvoices/Send failed HTTP ${res.status} id=${id}: ${text.slice(0, 500)}`,
+    );
+    return token;
+  }
+  console.log(`[iDoklad] IssuedInvoices/Send OK id=${id}`);
+  return token;
 }
 
 let idokladAccessTokenCache: { token: string; expiresAt: number } | null = null;
@@ -902,7 +960,8 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
       payment_method,
       note,
       created_at,
-      invoice_status
+      invoice_status,
+      stripe_payment_intent_id
     from public.orders
     where id = ${orderId}::uuid
     limit 1
@@ -956,6 +1015,15 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
   const { partnerId, token: tokenAfterContact } = await createIdokladPartnerContact(order, idok, token);
   token = tokenAfterContact;
 
+  const eshopShippingZeroVat = isEshopOrderForIdokladZeroShippingVat(order);
+  const shippingVatRateType = eshopShippingZeroVat ? idok.vatRateZero : idok.vatRateStandard;
+
+  const PAID_NOTE_LINE = 'NEPLAŤTE, faktura je již uhrazená!';
+  const noteParts: string[] = [];
+  if (order.note?.trim()) noteParts.push(order.note.trim());
+  if (isPaid) noteParts.push(PAID_NOTE_LINE);
+  const combinedNote = noteParts.join('\n\n').trim();
+
   /** PascalCase jako oficiální IdokladSdk (Newtonsoft default) — viz IssuedInvoicePostModel. */
   const payload: Record<string, unknown> = {
     Description: `Objednávka ${order.order_number}`,
@@ -989,15 +1057,15 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
             Amount: 1,
             UnitPrice: amountInCzk(order.shipping_price),
             PriceType: idok.priceTypeWithVat,
-            VatRateType: idok.vatRateStandard,
+            VatRateType: shippingVatRateType,
             DiscountPercentage: 0,
             IsTaxMovement: true,
           }]
         : []),
     ],
   };
-  if (order.note?.trim()) {
-    payload.Note = order.note.trim().slice(0, 2000);
+  if (combinedNote) {
+    payload.Note = combinedNote.slice(0, 2000);
   }
 
   let response = await fetch('https://api.idoklad.cz/v3/IssuedInvoices', {
@@ -1024,6 +1092,7 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
   if (isPaid) {
     token = await idokladFullyPayInvoice(token, parsed.invoiceId, issueIso);
   }
+  token = await idokladSendIssuedInvoiceToPurchaser(token, parsed.invoiceId);
   return {
     invoiceId: parsed.invoiceId,
     documentNumber: parsed.documentNumber,

@@ -151,41 +151,103 @@ function generateResumeToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-/** B2C: stabilní hash (email + seřazené řádky + doprava) — bez cen a časů. */
-async function buildB2CIdempotencyKey(
+function sortKeysDeep(obj: unknown): unknown {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(obj as object).sort()) {
+    sorted[k] = sortKeysDeep((obj as Record<string, unknown>)[k]);
+  }
+  return sorted;
+}
+
+function buildPaymentIntentIdempotencyPayload(
   items: CheckoutItem[],
   shipping: CheckoutShipping,
-  email: string,
-): Promise<string> {
-  const lines = items
+  customer: CheckoutCustomer,
+  checkoutPaymentMethod: string,
+  schoolInquiryJson: string | null,
+) {
+  const sortedItems = [...items]
     .map((it) => ({
-      productId: String(it.productId),
+      productId: String(it.productId).trim(),
+      productName: String(it.productName).trim(),
       quantity: it.quantity,
-      variant: typeof it.variant === 'string' ? it.variant.trim() : '',
-      bundleId: typeof it.bundleId === 'string' ? it.bundleId.trim() : '',
-      posterMerch: it.posterMerch === true,
+      unitPrice: it.unitPrice,
+      ...(typeof it.variant === 'string' && it.variant.trim() ? { variant: it.variant.trim() } : {}),
+      ...(typeof it.bundleId === 'string' && it.bundleId.trim() ? { bundleId: it.bundleId.trim() } : {}),
+      ...(typeof it.bundleTitle === 'string' && it.bundleTitle.trim()
+        ? { bundleTitle: it.bundleTitle.trim() }
+        : {}),
+      ...(it.posterMerch === true ? { posterMerch: true } : {}),
     }))
     .sort((a, b) => {
       const c = a.productId.localeCompare(b.productId);
       if (c !== 0) return c;
-      const v = a.variant.localeCompare(b.variant);
-      if (v !== 0) return v;
-      return a.bundleId.localeCompare(b.bundleId);
+      return JSON.stringify(a).localeCompare(JSON.stringify(b));
     });
-  const payload = JSON.stringify({
-    email: normalizeEmail(email),
-    items: lines.map((l) => ({
-      productId: l.productId,
-      quantity: l.quantity,
-      ...(l.variant ? { variant: l.variant } : {}),
-      ...(l.bundleId ? { bundleId: l.bundleId } : {}),
-      ...(l.posterMerch ? { posterMerch: true } : {}),
-    })),
-    shippingMethod: shipping.method,
-  });
-  const enc = new TextEncoder().encode(payload);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
+
+  const ship: Record<string, unknown> = {
+    method: String(shipping.method).trim(),
+    price: shipping.price,
+  };
+  if (typeof shipping.pickupPointId === 'string' && shipping.pickupPointId.trim()) {
+    ship.pickupPointId = shipping.pickupPointId.trim();
+  }
+  if (typeof shipping.pickupPointName === 'string' && shipping.pickupPointName.trim()) {
+    ship.pickupPointName = shipping.pickupPointName.trim();
+  }
+  if (shipping.differentAddress) {
+    ship.differentAddress = true;
+    const da = shipping.deliveryAddress;
+    ship.deliveryAddress = da && typeof da === 'object'
+      ? {
+        recipientName: typeof da.recipientName === 'string' ? da.recipientName.trim() : '',
+        street: typeof da.street === 'string' ? da.street.trim() : '',
+        city: typeof da.city === 'string' ? da.city.trim() : '',
+        zip: typeof da.zip === 'string' ? da.zip.trim() : '',
+      }
+      : {};
+  } else {
+    ship.differentAddress = false;
+  }
+
+  const cust = {
+    email: normalizeEmail(String(customer.email).trim()),
+    name: String(customer.name).trim(),
+    phone: String(customer.phone).trim(),
+    schoolName: typeof customer.schoolName === 'string' ? customer.schoolName.trim() : '',
+    ico: String(customer.ico ?? '').trim().replace(/\s/g, ''),
+    street: String(customer.street).trim(),
+    city: String(customer.city).trim(),
+    zip: String(customer.zip).trim(),
+  };
+
+  let schoolInquiry: unknown = null;
+  if (schoolInquiryJson) {
+    try {
+      schoolInquiry = sortKeysDeep(JSON.parse(schoolInquiryJson));
+    } catch {
+      schoolInquiry = schoolInquiryJson;
+    }
+  }
+
+  return {
+    v: 1,
+    checkoutPaymentMethod,
+    items: sortedItems,
+    shipping: ship,
+    customer: cust,
+    schoolInquiry,
+  };
+}
+
+async function sha256HexOfString(s: string): Promise<string> {
+  const data = new TextEncoder().encode(s);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 Deno.serve(async (req) => {
@@ -256,7 +318,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
   }
   const custDomain = custEmail.split('@')[1];
-    if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
+  if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
     return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
   }
 
@@ -271,6 +333,15 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
   }
 
+  const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
+    items,
+    shipping,
+    customer,
+    checkoutPaymentMethod,
+    schoolInquiryJson,
+  );
+  const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));
+
   const stripe = new Stripe(stripeSecretKey, {
     apiVersion: '2024-06-20',
   });
@@ -282,256 +353,246 @@ Deno.serve(async (req) => {
     ssl: 'require',
   });
 
-  const icoHas = Boolean((customer as CheckoutCustomer).ico?.trim());
-  let idempotencyKeyB2c: string | null = null;
-  if (!schoolInquiryJson && !icoHas) {
-    idempotencyKeyB2c = await buildB2CIdempotencyKey(items, shipping, custEmail);
-  }
-
-  const idemLog = (key: string | null) => (key && key.length >= 8 ? key.slice(0, 8) : key ?? '—');
-
-  async function insertOrderItems(tx: typeof sql, orderId: string) {
-    for (const item of items) {
-      const variant = typeof item.variant === 'string' && item.variant.trim()
-        ? item.variant.trim()
-        : null;
-      const bundleId = typeof item.bundleId === 'string' && item.bundleId.trim()
-        ? item.bundleId.trim()
-        : null;
-      const bundleTitle = typeof item.bundleTitle === 'string' && item.bundleTitle.trim()
-        ? item.bundleTitle.trim()
-        : null;
-      await tx`
-        insert into public.order_items (
-          order_id,
-          product_id,
-          product_name,
-          variant,
-          quantity,
-          unit_price,
-          total_price,
-          bundle_id,
-          bundle_title
-        ) values (
-          ${orderId}::uuid,
-          ${item.productId},
-          ${item.productName},
-          ${variant},
-          ${item.quantity},
-          ${item.unitPrice},
-          ${item.unitPrice * item.quantity},
-          ${bundleId},
-          ${bundleTitle}
-        )
-      `;
-    }
-  }
-
-  let lastCreatedPaymentIntentId: string | null = null;
+  let checkoutSessionId = '';
+  let resumeToken = '';
+  let paymentIntent: Stripe.PaymentIntent;
 
   try {
-    const responseBody = await sql.begin(async (tx) => {
-      const lockKey = idempotencyKeyB2c ?? crypto.randomUUID();
-      await tx`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    await sql`select pg_advisory_lock(hashtext(${idempotencyKey}::text))`;
 
-      if (idempotencyKeyB2c) {
-        const existingRows = await tx<Array<{
-          id: string;
-          stripe_payment_intent_id: string;
-          payment_resume_token: string | null;
-          checkout_session_id: string | null;
-        }>>`
-          select o.id, o.stripe_payment_intent_id, o.payment_resume_token, o.checkout_session_id
-          from public.orders o
-          where lower(trim(o.customer_email)) = lower(trim(${customer.email.trim()}))
-            and o.idempotency_key = ${idempotencyKeyB2c}
-            and o.status = 'pending_payment'
-            and o.created_at > now() - interval '60 minutes'
-          order by o.created_at desc
-          limit 1
-        `;
-        const existing = existingRows[0];
-        if (existing?.stripe_payment_intent_id) {
-          const paymentIntent = await stripe.paymentIntents.retrieve(existing.stripe_payment_intent_id);
-          if (paymentIntent.amount !== total) {
-            await stripe.paymentIntents.update(paymentIntent.id, { amount: total });
-          }
-          const resumeOut = existing.payment_resume_token?.trim() || generateResumeToken();
-          if (!existing.payment_resume_token?.trim()) {
-            await tx`
-              update public.orders
-              set payment_resume_token = ${resumeOut}, updated_at = now()
-              where id = ${existing.id}::uuid
-            `;
-          }
-          if (existing.checkout_session_id) {
-            await tx`
-              update public.checkout_sessions
-              set
-                cart_data = ${JSON.stringify(items)}::jsonb,
-                customer_data = ${JSON.stringify(customer)}::jsonb,
-                shipping_data = ${JSON.stringify(shipping)}::jsonb,
-                school_inquiry = ${schoolInquiryJson}::jsonb
-              where id = ${existing.checkout_session_id}::uuid
-            `;
-          }
-          await tx`
-            update public.orders
-            set
-              customer_name = ${customer.name.trim()},
-              customer_phone = ${customer.phone.trim()},
-              school_name = ${customer.schoolName?.trim() || null},
-              ico = ${customer.ico?.trim() || null},
-              street = ${customer.street.trim()},
-              city = ${customer.city.trim()},
-              zip = ${customer.zip.trim()},
-              shipping_method = ${shipping.method},
-              shipping_price = ${shipping.price ?? 0},
-              pickup_point_id = ${shipping.pickupPointId ?? null},
-              pickup_point_name = ${shipping.pickupPointName ?? null},
-              payment_method = ${checkoutPaymentMethod},
-              subtotal = ${subtotal},
-              total = ${total},
-              updated_at = now()
-            where id = ${existing.id}::uuid
-          `;
-          await tx`delete from public.order_items where order_id = ${existing.id}::uuid`;
-          await insertOrderItems(tx, existing.id);
+    const existingRows = await sql<{ id: string; stripe_payment_intent_id: string | null }[]>`
+      select id, stripe_payment_intent_id
+      from public.checkout_sessions
+      where idempotency_key = ${idempotencyKey}
+      limit 1
+      for update
+    `;
+    const existing = existingRows[0];
 
-          console.log(
-            `[create-payment-intent] email=${custEmail} idem=${idemLog(idempotencyKeyB2c)} reused=true`,
-          );
-
-          return {
-            clientSecret: paymentIntent.client_secret,
-            paymentIntentId: paymentIntent.id,
-            resumeToken: resumeOut,
-            reused: true,
-          };
-        }
-      }
-
-      const checkoutSessionId = crypto.randomUUID();
-      const resumeToken = generateResumeToken();
-
-      await tx`
-        insert into public.checkout_sessions (
-          id,
-          cart_data,
-          customer_data,
-          shipping_data,
-          school_inquiry
-        ) values (
-          ${checkoutSessionId}::uuid,
-          ${JSON.stringify(items)}::jsonb,
-          ${JSON.stringify(customer)}::jsonb,
-          ${JSON.stringify(shipping)}::jsonb,
-          ${schoolInquiryJson}::jsonb
-        )
-      `;
-
-      const paymentIntent = await stripe.paymentIntents.create({
-        amount: total,
-        currency: 'czk',
-        automatic_payment_methods: {
-          enabled: true,
-        },
-        metadata: {
-          checkout_session_id: checkoutSessionId,
-          payment_method: checkoutPaymentMethod,
-          ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
-        },
+    if (existing?.stripe_payment_intent_id) {
+      paymentIntent = await stripe.paymentIntents.retrieve(existing.stripe_payment_intent_id, {
+        expand: ['latest_charge'],
       });
-      lastCreatedPaymentIntentId = paymentIntent.id;
-
-      await tx`
-        update public.checkout_sessions
-        set stripe_payment_intent_id = ${paymentIntent.id}
-        where id = ${checkoutSessionId}::uuid
-      `;
-
-      const inserted = await tx<{ id: string }[]>`
-        insert into public.orders (
-          status,
-          customer_email,
-          customer_name,
-          customer_phone,
-          school_name,
-          ico,
-          street,
-          city,
-          zip,
-          country,
-          shipping_method,
-          shipping_price,
-          pickup_point_id,
-          pickup_point_name,
-          payment_method,
-          payment_status,
-          stripe_payment_intent_id,
-          subtotal,
-          total,
-          checkout_session_id,
-          payment_resume_token,
-          idempotency_key
-        ) values (
-          'pending_payment',
-          ${customer.email.trim()},
-          ${customer.name.trim()},
-          ${customer.phone.trim()},
-          ${customer.schoolName?.trim() || null},
-          ${customer.ico?.trim() || null},
-          ${customer.street.trim()},
-          ${customer.city.trim()},
-          ${customer.zip.trim()},
-          'CZ',
-          ${shipping.method},
-          ${shipping.price ?? 0},
-          ${shipping.pickupPointId ?? null},
-          ${shipping.pickupPointName ?? null},
-          ${checkoutPaymentMethod},
-          'pending',
-          ${paymentIntent.id},
-          ${subtotal},
-          ${total},
-          ${checkoutSessionId}::uuid,
-          ${resumeToken},
-          ${idempotencyKeyB2c}
-        )
-        returning id
-      `;
-
-      const orderId = inserted[0]?.id;
-      if (!orderId) {
-        throw new Error('Order insert returned no id.');
+      if (paymentIntent.currency !== 'czk' || paymentIntent.amount !== total) {
+        console.warn('[create-payment-intent] Idempotent reuse: amount/currency mismatch, refusing reuse.');
+        return jsonResponse({
+          error: 'Košík se změnil — obnovte stránku a zkuste platbu znovu.',
+        }, 409);
+      }
+      if (paymentIntent.status === 'succeeded') {
+        return jsonResponse({
+          error: 'Tato platba je již dokončená.',
+          alreadyPaid: true,
+        }, 409);
+      }
+      if (paymentIntent.status === 'canceled') {
+        return jsonResponse({
+          error: 'Platba byla zrušena. Vytvořte prosím novou objednávku z košíku.',
+        }, 409);
       }
 
-      await insertOrderItems(tx, orderId);
+      const ordRows = await sql<{ payment_resume_token: string | null }[]>`
+        select payment_resume_token
+        from public.orders
+        where stripe_payment_intent_id = ${paymentIntent.id}
+        limit 1
+      `;
+      const resume = ordRows[0]?.payment_resume_token;
+      if (!resume || !paymentIntent.client_secret) {
+        console.error('[create-payment-intent] Reuse path: missing resume token or client_secret.');
+        return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+      }
 
-      console.log(
-        `[create-payment-intent] email=${custEmail} idem=${idemLog(idempotencyKeyB2c)} reused=false`,
-      );
-
-      return {
+      return jsonResponse({
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
-        resumeToken,
-        reused: false,
-      };
+        resumeToken: resume,
+      });
+    }
+
+    if (existing?.id && !existing.stripe_payment_intent_id) {
+      await sql`
+        delete from public.checkout_sessions
+        where id = ${existing.id}::uuid
+      `;
+    }
+
+    checkoutSessionId = crypto.randomUUID();
+    resumeToken = generateResumeToken();
+
+    await sql`
+      insert into public.checkout_sessions (
+        id,
+        cart_data,
+        customer_data,
+        shipping_data,
+        school_inquiry,
+        idempotency_key
+      ) values (
+        ${checkoutSessionId}::uuid,
+        ${JSON.stringify(items)}::jsonb,
+        ${JSON.stringify(customer)}::jsonb,
+        ${JSON.stringify(shipping)}::jsonb,
+        ${schoolInquiryJson}::jsonb,
+        ${idempotencyKey}
+      )
+    `;
+
+    paymentIntent = await stripe.paymentIntents.create({
+      amount: total,
+      currency: 'czk',
+      automatic_payment_methods: {
+        enabled: true,
+      },
+      metadata: {
+        checkout_session_id: checkoutSessionId,
+        payment_method: checkoutPaymentMethod,
+        ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
+      },
     });
 
-    return jsonResponse(responseBody);
-  } catch (error) {
-    if (lastCreatedPaymentIntentId) {
+    await sql`
+      update public.checkout_sessions
+      set stripe_payment_intent_id = ${paymentIntent.id}
+      where id = ${checkoutSessionId}::uuid
+    `;
+
+    try {
+      await sql.begin(async (tx) => {
+        const inserted = await tx<{ id: string }[]>`
+          insert into public.orders (
+            status,
+            customer_email,
+            customer_name,
+            customer_phone,
+            school_name,
+            ico,
+            street,
+            city,
+            zip,
+            country,
+            shipping_method,
+            shipping_price,
+            pickup_point_id,
+            pickup_point_name,
+            payment_method,
+            payment_status,
+            stripe_payment_intent_id,
+            subtotal,
+            total,
+            checkout_session_id,
+            payment_resume_token
+          ) values (
+            'pending_payment',
+            ${customer.email.trim()},
+            ${customer.name.trim()},
+            ${customer.phone.trim()},
+            ${customer.schoolName?.trim() || null},
+            ${customer.ico?.trim() || null},
+            ${customer.street.trim()},
+            ${customer.city.trim()},
+            ${customer.zip.trim()},
+            'CZ',
+            ${shipping.method},
+            ${shipping.price ?? 0},
+            ${shipping.pickupPointId ?? null},
+            ${shipping.pickupPointName ?? null},
+            ${checkoutPaymentMethod},
+            'pending',
+            ${paymentIntent.id},
+            ${subtotal},
+            ${total},
+            ${checkoutSessionId}::uuid,
+            ${resumeToken}
+          )
+          returning id
+        `;
+
+        const orderId = inserted[0]?.id;
+        if (!orderId) {
+          throw new Error('Order insert returned no id.');
+        }
+
+        for (const item of items) {
+          const variant = typeof item.variant === 'string' && item.variant.trim()
+            ? item.variant.trim()
+            : null;
+          const bundleId = typeof item.bundleId === 'string' && item.bundleId.trim()
+            ? item.bundleId.trim()
+            : null;
+          const bundleTitle = typeof item.bundleTitle === 'string' && item.bundleTitle.trim()
+            ? item.bundleTitle.trim()
+            : null;
+          await tx`
+            insert into public.order_items (
+              order_id,
+              product_id,
+              product_name,
+              variant,
+              quantity,
+              unit_price,
+              total_price,
+              bundle_id,
+              bundle_title
+            ) values (
+              ${orderId}::uuid,
+              ${item.productId},
+              ${item.productName},
+              ${variant},
+              ${item.quantity},
+              ${item.unitPrice},
+              ${item.unitPrice * item.quantity},
+              ${bundleId},
+              ${bundleTitle}
+            )
+          `;
+        }
+      });
+    } catch (orderErr) {
+      console.error('[create-payment-intent] Pending order persist failed:', orderErr);
       try {
-        await stripe.paymentIntents.cancel(lastCreatedPaymentIntentId);
+        await stripe.paymentIntents.cancel(paymentIntent.id);
       } catch (cancelErr) {
-        console.error('[create-payment-intent] PI cancel after failed tx:', cancelErr);
+        console.error('[create-payment-intent] PI cancel failed:', cancelErr);
       }
+      try {
+        await sql`
+          delete from public.checkout_sessions
+          where id = ${checkoutSessionId}::uuid
+        `;
+      } catch {
+        /* best-effort */
+      }
+      const message = orderErr instanceof Error ? orderErr.message : 'Uložení objednávky selhalo.';
+      return jsonResponse({ error: message }, 500);
     }
+
+    return jsonResponse({
+      clientSecret: paymentIntent.client_secret,
+      paymentIntentId: paymentIntent.id,
+      resumeToken,
+    });
+  } catch (error) {
+    try {
+      if (checkoutSessionId) {
+        await sql`
+          delete from public.checkout_sessions
+          where id = ${checkoutSessionId}::uuid
+            and stripe_payment_intent_id is null
+        `;
+      }
+    } catch {
+      // Cleanup is best-effort only.
+    }
+
     const message = error instanceof Error ? error.message : 'Stripe PaymentIntent creation failed.';
     return jsonResponse({ error: message }, 500);
   } finally {
+    try {
+      await sql`select pg_advisory_unlock(hashtext(${idempotencyKey}::text))`;
+    } catch {
+      /* ignore */
+    }
     await sql.end({ timeout: 5 });
   }
 });

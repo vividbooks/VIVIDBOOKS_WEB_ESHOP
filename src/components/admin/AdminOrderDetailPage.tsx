@@ -11,8 +11,10 @@ import {
   Download,
   CheckCircle2,
   Circle,
+  GraduationCap,
+  School,
 } from 'lucide-react';
-import { useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   fetchAdminOrderDetail,
@@ -101,6 +103,17 @@ function pipedriveDealUrl(id?: string | number | null) {
   if (id == null || id === '') return null;
   const s = String(id).trim();
   return s ? `https://app.pipedrive.com/deal/${s}` : null;
+}
+
+/** Odkaz do adminu Školy — párování přes IČO v CSV / Pipedrive. */
+function adminSchoolDetailHref(ico?: string | null, schoolName?: string | null): string | null {
+  const icoDigits = String(ico ?? '').replace(/\D/g, '');
+  const name = String(schoolName ?? '').trim();
+  if (icoDigits.length < 6 && !name) return null;
+  const q = new URLSearchParams();
+  if (icoDigits.length >= 6) q.set('ico', icoDigits);
+  if (name) q.set('name', name);
+  return `/admin/skoly?${q.toString()}`;
 }
 
 function shippingLabel(method: string) {
@@ -201,6 +214,21 @@ export function AdminOrderDetailPage() {
   const stripeHref = useMemo(() => stripeUrl(order?.stripe_payment_intent_id), [order?.stripe_payment_intent_id]);
   const basecomHref = useMemo(() => basecomUrl(order?.basecom_order_id), [order?.basecom_order_id]);
   const pipedriveDealHref = useMemo(() => pipedriveDealUrl(order?.pipedrive_deal_id), [order?.pipedrive_deal_id]);
+  const schoolAdminHref = useMemo(
+    () => adminSchoolDetailHref(order?.ico, order?.school_name),
+    [order?.ico, order?.school_name],
+  );
+
+  const schoolAdminHref = useMemo(() => {
+    if (!order) return null;
+    const ico = order.ico?.trim();
+    const name = order.school_name?.trim();
+    if (!ico && !name) return null;
+    const q = new URLSearchParams();
+    if (ico) q.set('ico', ico);
+    if (name) q.set('name', name);
+    return `../skoly?${q.toString()}`;
+  }, [order]);
 
   const loadOrder = async (opts?: { silent?: boolean }) => {
     if (!id) return;
@@ -440,9 +468,33 @@ export function AdminOrderDetailPage() {
               <div><span className="text-gray-400">{'Jméno: '}</span><span className="font-semibold text-[#001161]">{order.customer_name}</span></div>
               <div><span className="text-gray-400">{'E-mail: '}</span><span className="font-semibold text-[#001161]">{order.customer_email}</span></div>
               <div><span className="text-gray-400">{'Telefon: '}</span><span className="font-semibold text-[#001161]">{order.customer_phone || '—'}</span></div>
-              <div><span className="text-gray-400">{'Škola: '}</span><span className="font-semibold text-[#001161]">{order.school_name || '—'}</span></div>
+              <div className="md:col-span-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-gray-400">{'Škola: '}</span>
+                <span className="font-semibold text-[#001161]">{order.school_name || '—'}</span>
+                {schoolAdminHref ? (
+                  <Link
+                    to={schoolAdminHref}
+                    className="inline-flex items-center gap-1 rounded-lg bg-[#001161]/8 px-2 py-1 text-[11px] font-bold text-[#001161] hover:bg-[#001161]/15"
+                  >
+                    <School className="w-3.5 h-3.5" />
+                    {'Detail školy a historie objednávek'}
+                  </Link>
+                ) : null}
+              </div>
               <div><span className="text-gray-400">{'IČO: '}</span><span className="font-semibold text-[#001161]">{order.ico || '—'}</span></div>
             </div>
+            {schoolAdminHref ? (
+              <div className="mt-4 pt-3 border-t border-gray-100">
+                <Link
+                  to={schoolAdminHref}
+                  relative="path"
+                  className="inline-flex items-center gap-2 text-[13px] font-bold text-[#001161] hover:text-[#ff8c66] transition-colors"
+                >
+                  <GraduationCap className="w-4 h-4 shrink-0" />
+                  {'Detail školy v databázi a historie objednávek'}
+                </Link>
+              </div>
+            ) : null}
           </section>
 
           <section className="bg-white rounded-2xl border border-gray-100 p-4">
@@ -755,7 +807,7 @@ export function AdminOrderDetailPage() {
                       className="inline-flex items-center gap-2 rounded-xl border border-[#001161]/20 bg-white px-3 py-2 text-[12px] font-bold text-[#001161] hover:bg-[#001161]/5 disabled:opacity-50"
                     >
                       <Download className={`w-4 h-4 ${actionLoading === 'idoklad_pdf' ? 'animate-pulse' : ''}`} />
-                      {'Stáhnout PDF faktury'}
+                      {'Doklad o úhradě (iDoklad) — stáhnout PDF'}
                     </button>
                   ) : (
                     <p className="text-[11px] text-amber-800">
@@ -763,9 +815,13 @@ export function AdminOrderDetailPage() {
                     </p>
                   )}
                   <p className="text-[11px] text-gray-600 leading-snug">
-                    {'Odeslání faktury e-mailem zákazníkovi zajišťuje iDoklad (automatizace / odeslání dokladu). Obvykle na '}
+                    {
+                      'Úhradu zákazníkovi potvrzuje doklad z iDokladu (PDF). Po vystavení ho systém odešle e-mailem z iDokladu na '
+                    }
                     <span className="font-semibold text-[#001161]">{order.customer_email}</span>
-                    {'. Příjem v poště nevidíme z webu — zkontrolujte v iDokladu, zda je akce zapnutá.'}
+                    {
+                      ' (pokud je v Supabase zapnuto IDOKLAD_SEND_INVOICE_EMAIL a API Send v účtu funguje).'
+                    }
                   </p>
                 </div>
               )}
@@ -849,16 +905,33 @@ export function AdminOrderDetailPage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
-              {order.stripe_receipt_url && (
+              {order.stripe_receipt_url
+                && !(order.invoice_status === 'done' && order.idoklad_invoice_id?.trim()) && (
                 <a
                   href={order.stripe_receipt_url}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]"
                 >
-                  {'Stripe účtenka (receipt)'}
+                  {'Stripe účtenka (záloha, dokud není iDoklad)'}
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
+              )}
+              {order.stripe_receipt_url
+                && order.invoice_status === 'done'
+                && order.idoklad_invoice_id?.trim() && (
+                <p className="text-[11px] text-gray-500 leading-snug">
+                  <span className="text-gray-400">{'Technicky: '}</span>
+                  <a
+                    href={order.stripe_receipt_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold text-[#001161] hover:text-[#ff6a35] inline-flex items-center gap-0.5"
+                  >
+                    {'Stripe receipt'}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </p>
               )}
               {basecomHref && (
                 <a href={basecomHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">

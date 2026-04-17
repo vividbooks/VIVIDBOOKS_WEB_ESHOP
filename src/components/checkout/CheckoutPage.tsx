@@ -34,6 +34,7 @@ import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
+import { buildThankYouUrlAfterPayment } from '../../utils/checkoutThankYouRedirect';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -198,8 +199,6 @@ export function CheckoutPage() {
   const [packetaLoading, setPacketaLoading] = useState(false);
   const [packetaError, setPacketaError] = useState('');
   const [paymentIntentLoading, setPaymentIntentLoading] = useState(false);
-  /** Zabrání paralelním voláním create-payment-intent (race při rychlé změně dat). */
-  const [isCreatingPaymentIntent, setIsCreatingPaymentIntent] = useState(false);
   const [paymentIntentError, setPaymentIntentError] = useState('');
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
@@ -221,13 +220,9 @@ export function CheckoutPage() {
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
   const [schoolLookupLoading, setSchoolLookupLoading] = useState(false);
   const [isSchoolResultsOpen, setIsSchoolResultsOpen] = useState(false);
-  /** Poslední klíč, pro který máme platný clientSecret (po úspěchu fetch). */
-  const lastSuccessfulPaymentKeyRef = useRef<string | null>(null);
-  /** Aktuální paymentKey pro kontrolu zastaralých odpovědí ve fetchi. */
-  const paymentKeyRef = useRef('');
-  /** Pořadí fetchů create-payment-intent — starší odpověď nepřepíše novější stav. */
-  const paymentIntentFetchSeqRef = useRef(0);
-  const paymentIntentAbortRef = useRef<AbortController | null>(null);
+  const lastPaymentKeyRef = useRef<string | null>(null);
+  /** Zruší paralelní POST create-payment-intent (React Strict Mode / rychlé změny kroku). */
+  const paymentIntentFetchRef = useRef<AbortController | null>(null);
   const schoolSearchRef = useRef<HTMLDivElement | null>(null);
   /** Aby starší odpověď ARES/CSV nepřepsala novější požadavek (dvojí fetch při výběru školy). */
   const schoolAddressFetchSeq = useRef(0);
@@ -361,9 +356,8 @@ export function CheckoutPage() {
         }
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const pi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
           return;
         }
         if (data.status === 'payment_cancelled') {
@@ -628,10 +622,30 @@ export function CheckoutPage() {
     paymentMethod === 'apple_pay' ||
     paymentMethod === 'google_pay';
 
-  const paymentIntentPayload = useMemo(() => {
-    if (currentStep !== 4 || !wantsCardLikePayment || resumeFlowActive) return null;
-    if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) return null;
-    return {
+  useEffect(() => {
+    if (currentStep !== 4) return;
+    if (!wantsCardLikePayment) {
+      paymentIntentFetchRef.current?.abort();
+      paymentIntentFetchRef.current = null;
+      setClientSecret(null);
+      setPaymentIntentId(null);
+      setPaymentResumeToken(null);
+      setPaymentIntentError('');
+      lastPaymentKeyRef.current = null;
+      return;
+    }
+    if (resumeFlowActive) return;
+    if (!isCustomerStepValid || !isShippingStepValid || items.length === 0) {
+      paymentIntentFetchRef.current?.abort();
+      paymentIntentFetchRef.current = null;
+      setClientSecret(null);
+      setPaymentIntentId(null);
+      setPaymentResumeToken(null);
+      lastPaymentKeyRef.current = null;
+      return;
+    }
+
+    const payload = {
       items: items.map((item) => ({
         productId: item.productId,
         productName: item.productName,
@@ -667,121 +681,62 @@ export function CheckoutPage() {
       },
       checkoutPaymentMethod: paymentMethod,
     };
-  }, [
-    currentStep,
-    wantsCardLikePayment,
-    resumeFlowActive,
-    isCustomerStepValid,
-    isShippingStepValid,
-    items,
-    shipping.method,
-    shipping.price,
-    shipping.pickupPointId,
-    shipping.pickupPointName,
-    hasSeparateDeliveryAddress,
-    deliveryAddress.recipientName,
-    deliveryAddress.deliveryStreet,
-    deliveryAddress.deliveryCity,
-    deliveryAddress.deliveryZip,
-    customer.email,
-    customer.name,
-    customer.phone,
-    customer.schoolName,
-    customer.ico,
-    customer.street,
-    customer.city,
-    customer.zip,
-    paymentMethod,
-  ]);
 
-  const paymentKey = paymentIntentPayload ? JSON.stringify(paymentIntentPayload) : '';
-  paymentKeyRef.current = paymentKey;
+    const paymentKey = JSON.stringify(payload);
+    if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
-  useEffect(() => {
-    if (currentStep !== 4) return;
-    if (!wantsCardLikePayment) {
-      setClientSecret(null);
-      setPaymentIntentId(null);
-      setPaymentResumeToken(null);
-      setPaymentIntentError('');
-      lastSuccessfulPaymentKeyRef.current = null;
-      return;
-    }
-    if (resumeFlowActive) return;
-    if (!paymentIntentPayload || !paymentKey) {
-      setClientSecret(null);
-      setPaymentIntentId(null);
-      setPaymentResumeToken(null);
-      lastSuccessfulPaymentKeyRef.current = null;
-      return;
-    }
+    lastPaymentKeyRef.current = paymentKey;
+    paymentIntentFetchRef.current?.abort();
+    const ac = new AbortController();
+    paymentIntentFetchRef.current = ac;
+    setPaymentIntentLoading(true);
+    setPaymentIntentError('');
 
-    if (lastSuccessfulPaymentKeyRef.current === paymentKey && clientSecret) return;
-
-    const debounceMs = 300;
-    const keyAtSchedule = paymentKey;
-    const timer = window.setTimeout(() => {
-      if (paymentKeyRef.current !== keyAtSchedule) return;
-
-      const seq = ++paymentIntentFetchSeqRef.current;
-      paymentIntentAbortRef.current?.abort();
-      const ac = new AbortController();
-      paymentIntentAbortRef.current = ac;
-
-      setIsCreatingPaymentIntent(true);
-      setPaymentIntentLoading(true);
-      setPaymentIntentError('');
-
-      const ts = new Date().toISOString();
-      console.log('[checkout] create-payment-intent', { ts, paymentKey: keyAtSchedule });
-
-      fetch(CREATE_PAYMENT_INTENT_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${publicAnonKey}`,
-        },
-        body: JSON.stringify(paymentIntentPayload),
-        signal: ac.signal,
+    fetch(CREATE_PAYMENT_INTENT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${publicAnonKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || 'Nepodařilo se připravit platbu.');
+        }
+        setClientSecret(data.clientSecret ?? null);
+        setPaymentIntentId(data.paymentIntentId ?? null);
+        setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
       })
-        .then(async (response) => {
-          const data = await response.json().catch(() => ({}));
-          if (keyAtSchedule !== paymentKeyRef.current) return;
-          if (!response.ok) {
-            throw new Error(data.error || 'Nepodařilo se připravit platbu.');
-          }
-          setClientSecret(data.clientSecret ?? null);
-          setPaymentIntentId(data.paymentIntentId ?? null);
-          setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
-          lastSuccessfulPaymentKeyRef.current = keyAtSchedule;
-        })
-        .catch((error: unknown) => {
-          if (keyAtSchedule !== paymentKeyRef.current) return;
-          if (error instanceof Error && error.name === 'AbortError') return;
-          setClientSecret(null);
-          setPaymentIntentId(null);
-          setPaymentResumeToken(null);
-          lastSuccessfulPaymentKeyRef.current = null;
-          setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
-        })
-        .finally(() => {
-          if (seq !== paymentIntentFetchSeqRef.current) return;
-          setIsCreatingPaymentIntent(false);
-          setPaymentIntentLoading(false);
-        });
-    }, debounceMs);
-
+      .catch((error: unknown) => {
+        if (error instanceof Error && error.name === 'AbortError') return;
+        setClientSecret(null);
+        setPaymentIntentId(null);
+        setPaymentResumeToken(null);
+        setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
+      })
+      .finally(() => {
+        if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
+        setPaymentIntentLoading(false);
+      });
     return () => {
-      window.clearTimeout(timer);
-      paymentIntentAbortRef.current?.abort();
+      ac.abort();
     };
   }, [
     currentStep,
-    paymentKey,
-    paymentIntentPayload,
-    wantsCardLikePayment,
-    resumeFlowActive,
+    items,
+    shipping,
+    customer,
+    hasSeparateDeliveryAddress,
+    deliveryAddress,
+    isCustomerStepValid,
+    isShippingStepValid,
     clientSecret,
+    resumeFlowActive,
+    paymentMethod,
+    wantsCardLikePayment,
   ]);
 
   const desktopWalletQrActive =
@@ -815,9 +770,9 @@ export function CheckoutPage() {
         if (cancelled) return;
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
-          const thankYou = new URL(appPath('/objednavka/dekujeme'), window.location.origin);
-          if (num) thankYou.searchParams.set('order', num);
-          window.location.replace(thankYou.toString());
+          const piFromApi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const pi = (piFromApi || paymentIntentId || '').trim();
+          window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
         }
       } catch {
         /* ignore */
@@ -829,7 +784,7 @@ export function CheckoutPage() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [desktopWalletQrActive, paymentResumeToken]);
+  }, [desktopWalletQrActive, paymentResumeToken, paymentIntentId]);
 
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
@@ -1907,7 +1862,7 @@ export function CheckoutPage() {
                     <Elements
                       stripe={stripePromise}
                       options={{
-                        clientSecret,
+                        clientSecret: clientSecret ?? undefined,
                         loader: 'auto',
                         appearance: {
                           theme: 'stripe',
@@ -1921,12 +1876,6 @@ export function CheckoutPage() {
                       <StripePaymentSubmitForm
                         total={summaryTotal}
                         onError={setPaymentIntentError}
-                        submitDisabled={
-                          isCreatingPaymentIntent ||
-                          paymentIntentLoading ||
-                          stripePkLoading ||
-                          !clientSecret
-                        }
                       />
                     </Elements>
                   )}

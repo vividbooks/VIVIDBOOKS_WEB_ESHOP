@@ -5,6 +5,9 @@ import { logger } from 'npm:hono/logger';
 import * as kv from './kv_store.tsx';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
+import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
+import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
+import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
 import {
@@ -7466,6 +7469,162 @@ function isExternalUrl(url: string, supabaseUrl: string): boolean {
   return !url.includes('supabase.co') && !url.includes(supabaseUrl);
 }
 
+/** Admin: Mailchimp audience → Postgres (subscribers, email_events, …). Secrets z Edge. */
+app.post('/make-server-93a20b6f/admin/migrate-mailchimp-contacts', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const includeActivity = Boolean(body?.includeActivity);
+    let maxMembers: number | undefined;
+    const rawMax = body?.maxMembers;
+    if (rawMax != null && rawMax !== '') {
+      const n = Number(rawMax);
+      if (Number.isFinite(n) && n >= 1 && n <= 50_000) maxMembers = Math.floor(n);
+    }
+    let membersPerRun: number | undefined;
+    const rawBatch = body?.membersPerRun;
+    if (rawBatch != null && rawBatch !== '') {
+      const n = Number(rawBatch);
+      if (Number.isFinite(n) && n >= 1 && n <= 10_000) membersPerRun = Math.floor(n);
+    }
+    let resumeFrom: { offset: number; skipInPage: number } | undefined;
+    const rf = body?.resumeFrom;
+    if (rf && typeof rf === 'object' && rf !== null) {
+      const o = Number((rf as Record<string, unknown>).offset);
+      const s = Number((rf as Record<string, unknown>).skipInPage);
+      if (Number.isFinite(o) && o >= 0 && Number.isFinite(s) && s >= 0) {
+        resumeFrom = { offset: Math.floor(o), skipInPage: Math.floor(s) };
+      }
+    }
+    let listIdMc = typeof body?.listId === 'string' ? body.listId.trim() : '';
+    if (!listIdMc) {
+      const aud = typeof body?.audience === 'string' ? body.audience.trim() : 'newsletter';
+      if (aud === 'no_newsletter') {
+        listIdMc = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER')?.trim() || '';
+      } else if (aud === 'primary') {
+        listIdMc = getMailchimpAdminListId() || '';
+      } else {
+        listIdMc =
+          Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER')?.trim() || getMailchimpAdminListId() || '';
+      }
+    }
+    const apiKey = Deno.env.get('MAILCHIMP_API_KEY')?.trim();
+    if (!apiKey || !listIdMc) {
+      return c.json({
+        ok: false,
+        error:
+          'Chybí MAILCHIMP_API_KEY nebo ID listu. Nastav audience v Edge secrets nebo pošli listId v JSON.',
+      });
+    }
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' });
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const prefix = Deno.env.get('MAILCHIMP_SERVER_PREFIX')?.trim();
+    const fromKey = (() => {
+      const i = apiKey.lastIndexOf('-');
+      return i >= 0 ? apiKey.slice(i + 1).trim() : '';
+    })();
+    const server = prefix || fromKey;
+    const result = await runMailchimpContactsMigrate(supabase, {
+      mailchimpApiKey: apiKey,
+      mailchimpServer: server || undefined,
+      listIdMc,
+      includeActivity,
+      ...(maxMembers != null ? { maxMembers } : {}),
+      ...(membersPerRun != null ? { membersPerRun } : {}),
+      ...(resumeFrom != null ? { resumeFrom } : {}),
+    });
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) });
+  }
+});
+
+/** Admin: všechny tagy + počty kontaktů (mailing). */
+app.get('/make-server-93a20b6f/admin/mailing/tags', async (c) => {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const tags = await mailingTagsList(supabase);
+    return c.json({ ok: true, tags });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: vytvoř / uprav tag podle názvu (slug z názvu). */
+app.post('/make-server-93a20b6f/admin/mailing/tags', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const name = typeof body?.name === 'string' ? body.name : '';
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const tag = await mailingTagCreate(supabase, name);
+    return c.json({ ok: true, tag });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 400);
+  }
+});
+
+/** Admin: přidej / odeber tagy u kontaktu (jako Mailchimp); volitelně sync do Mailchimp API. */
+app.post('/make-server-93a20b6f/admin/mailing/subscribers/:subscriberId/tags', async (c) => {
+  try {
+    const subscriberId = c.req.param('subscriberId')?.trim();
+    if (!subscriberId) return c.json({ ok: false, error: 'Chybí subscriberId.' }, 400);
+    const body = await c.req.json().catch(() => ({}));
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const result = await mailingSubscriberTagsPatch(supabase, subscriberId, {
+      addNames: Array.isArray(body?.addNames) ? body.addNames : undefined,
+      removeTagIds: Array.isArray(body?.removeTagIds) ? body.removeTagIds : undefined,
+      syncMailchimp: Boolean(body?.syncMailchimp),
+    });
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 400);
+  }
+});
+
+/**
+ * Admin: přepočti subject_interest_scores pro dávku kontaktů (tagy + pozice + merge_fields).
+ * Body: `{ "limit": 1000, "offset": 0 }` — default limit 1000, řazeno podle updated_at desc.
+ */
+app.post('/make-server-93a20b6f/admin/mailing/recompute-subject-interests', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const limit = body?.limit != null ? Number(body.limit) : 1000;
+    const offset = body?.offset != null ? Number(body.offset) : 0;
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const result = await runSubjectInterestRecompute(supabase, {
+      limit: Number.isFinite(limit) ? limit : 1000,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+    if (!result.ok) return c.json(result, 500);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
 app.post('/make-server-93a20b6f/migrate-images', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
@@ -10415,8 +10574,21 @@ type PipedriveSchoolLookup = {
 };
 
 const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
+/** API v2 (products/search, …) — stejný host, jiný prefix než v1. */
+const PIPEDRIVE_V2_BASE_URL = 'https://api.pipedrive.com/api/v2';
 let pipedriveOrgIcoFieldKeyCache: string | null | undefined;
+/** Cache: organization field id → { key, field_type } for school-order customer label detection */
+let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
+/** Cache: deal field id → { key, field_type } (order form label) */
+let pipedriveDealFieldMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 const PIPEDRIVE_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function pipedriveEnvInt(name: string, defaultVal: number): number {
+  const raw = (Deno.env.get(name) || '').trim();
+  if (!raw) return defaultVal;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : defaultVal;
+}
 const pipedriveSchoolLookupCache = new Map<string, { expiresAt: number; value: PipedriveSchoolLookup }>();
 
 function getPipedriveApiToken() {
@@ -10737,6 +10909,139 @@ async function pipedriveRequest<T = any>(
   return json as T;
 }
 
+async function pipedriveV2Request<T = any>(
+  apiToken: string,
+  path: string,
+  query: Record<string, string | number | boolean | null | undefined> = {},
+): Promise<T> {
+  const url = new URL(`${PIPEDRIVE_V2_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`);
+  url.searchParams.set('api_token', apiToken);
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === '') continue;
+    url.searchParams.set(key, String(value));
+  }
+  const res = await fetch(url.toString());
+  const text = await res.text();
+  const json = text ? JSON.parse(text) : {};
+  if (!res.ok || json?.success === false) {
+    throw new Error(
+      `Pipedrive v2 ${res.status} ${path}: ${String(json?.error || json?.message || text || 'Unknown error').slice(0, 300)}`,
+    );
+  }
+  return json as T;
+}
+
+function pickFirstNonEmptyTrimmedString(...candidates: unknown[]): string {
+  for (const c of candidates) {
+    const s = String(c ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+/** Jednoduchá cesta v KV produktu, např. `shoptetId` nebo `metadata.pipedrive_product_code`. */
+function getCatalogStringByKeyPath(obj: Record<string, unknown> | null | undefined, keyPath: string): string {
+  const parts = keyPath
+    .split('.')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object') return '';
+    cur = (cur as Record<string, unknown>)[p];
+  }
+  return String(cur ?? '').trim();
+}
+
+/**
+ * Kód produktu pro párování na Pipedrive pole `code`.
+ * Volitelně `PIPEDRIVE_PRODUCT_CODE_FIELD` = klíč v KV (nebo tečková cesta).
+ */
+function getPipedriveProductCodeFromCatalog(catalogItem: Record<string, unknown> | null | undefined): string {
+  if (!catalogItem) return '';
+  const envField = (Deno.env.get('PIPEDRIVE_PRODUCT_CODE_FIELD') || '').trim();
+  if (envField) {
+    const fromEnv = getCatalogStringByKeyPath(catalogItem, envField);
+    if (fromEnv) return fromEnv;
+  }
+  const md = (catalogItem.metadata && typeof catalogItem.metadata === 'object'
+    ? (catalogItem.metadata as Record<string, unknown>)
+    : {}) as Record<string, unknown>;
+  return pickFirstNonEmptyTrimmedString(
+    catalogItem.pipedriveProductCode,
+    md.pipedrive_product_code,
+    md.pipedriveProductCode,
+    catalogItem.code,
+    catalogItem.productCode,
+    md.code,
+    catalogItem.shoptetId,
+    catalogItem.isbn,
+    catalogItem.shopifyVariantId,
+  );
+}
+
+function normalizePipedriveProductCodeForMatch(code: string): string {
+  return String(code ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Vyhledá numerické product_id v Pipedrive podle přesné shody kódu (API v2 products/search).
+ * Výsledky cachujeme v rámci jedné synchronizace dealu (včetně negativních).
+ */
+async function resolvePipedriveProductIdByCode(
+  apiToken: string,
+  code: string,
+  cache: Map<string, number | null>,
+): Promise<number | null> {
+  const term = String(code ?? '').trim();
+  if (!term) return null;
+  const cacheKey = normalizePipedriveProductCodeForMatch(term);
+  if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
+
+  try {
+    const json = await pipedriveV2Request<any>(apiToken, '/products/search', {
+      term,
+      fields: 'code',
+      exact_match: true,
+      limit: 50,
+    });
+    const raw = json?.data;
+    const rows: any[] = Array.isArray(raw?.items)
+      ? raw.items
+      : Array.isArray(raw)
+        ? raw
+        : [];
+    const want = normalizePipedriveProductCodeForMatch(term);
+
+    const exactHits: number[] = [];
+    for (const row of rows) {
+      const item = row?.item && typeof row.item === 'object' ? row.item : row;
+      const itemCode = item?.code != null ? String(item.code).trim() : '';
+      const id = parsePipedriveNumericId(item?.id);
+      if (id && itemCode && normalizePipedriveProductCodeForMatch(itemCode) === want) {
+        exactHits.push(id);
+      }
+    }
+    if (exactHits.length === 1) {
+      cache.set(cacheKey, exactHits[0]);
+      return exactHits[0];
+    }
+    if (exactHits.length > 1) {
+      console.log(
+        `[Pipedrive eshop] product code ambiguous: code=${term} ids=${exactHits.slice(0, 5).join(',')}${exactHits.length > 5 ? '…' : ''}`,
+      );
+      cache.set(cacheKey, null);
+      return null;
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive eshop] product code lookup failed code=${term}: ${e.message}`);
+  }
+  cache.set(cacheKey, null);
+  return null;
+}
+
 async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   if (pipedriveOrgIcoFieldKeyCache !== undefined) return pipedriveOrgIcoFieldKeyCache;
   try {
@@ -10752,6 +11057,131 @@ async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
     pipedriveOrgIcoFieldKeyCache = null;
   }
   return pipedriveOrgIcoFieldKeyCache;
+}
+
+async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
+  if (pipedriveOrgFieldsMetaByIdCache) return pipedriveOrgFieldsMetaByIdCache;
+  const map = new Map<number, { key: string; fieldType: string }>();
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/organizationFields', {}, { limit: 500 });
+    const fields: any[] = data?.data || [];
+    for (const f of fields) {
+      const id = parsePipedriveNumericId(f?.id);
+      const key = String(f?.key || '').trim();
+      if (!id || !key) continue;
+      const rawFt = f?.field_type ?? f?.type;
+      const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
+      map.set(id, { key, fieldType });
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] organizationFields meta: ${e.message}`);
+  }
+  pipedriveOrgFieldsMetaByIdCache = map;
+  return map;
+}
+
+function orgRecordHasCustomerLabel(
+  org: Record<string, unknown> | null | undefined,
+  metaById: Map<number, { key: string; fieldType: string }>,
+  labelEnumFieldId: number,
+  labelSetFieldId: number,
+  customerOptionId: number,
+): boolean {
+  if (!org) return false;
+  const enumMeta = metaById.get(labelEnumFieldId);
+  if (enumMeta?.key) {
+    const v = (org as any)[enumMeta.key];
+    const n = parsePipedriveNumericId(v);
+    if (n === customerOptionId) return true;
+  }
+  const setMeta = metaById.get(labelSetFieldId);
+  if (setMeta?.key) {
+    const v = (org as any)[setMeta.key];
+    const arr = Array.isArray(v) ? v : (v != null && v !== '' ? [v] : []);
+    for (const item of arr) {
+      const n = parsePipedriveNumericId(typeof item === 'object' && item && 'id' in item ? (item as any).id : item);
+      if (n === customerOptionId) return true;
+    }
+  }
+  return false;
+}
+
+async function organizationHasCustomerLabel(apiToken: string, orgId: number): Promise<boolean> {
+  const labelEnumFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_FIELD_ID', 4003);
+  const labelSetFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_IDS_FIELD_ID', 4101);
+  const customerOptionId = pipedriveEnvInt('PIPEDRIVE_ORG_CUSTOMER_LABEL_OPTION_ID', 5);
+  const metaById = await loadPipedriveOrganizationFieldsMetaById(apiToken);
+  try {
+    const data = await pipedriveRequest<any>(apiToken, `/organizations/${orgId}`);
+    const org = data?.data;
+    return orgRecordHasCustomerLabel(org, metaById, labelEnumFieldId, labelSetFieldId, customerOptionId);
+  } catch (e: any) {
+    console.log(`[Pipedrive] organizationHasCustomerLabel: ${e.message}`);
+    return false;
+  }
+}
+
+async function loadPipedriveDealFieldMetaById(apiToken: string, fieldId: number): Promise<{ key: string; fieldType: string } | null> {
+  if (pipedriveDealFieldMetaByIdCache?.has(fieldId)) {
+    return pipedriveDealFieldMetaByIdCache.get(fieldId) || null;
+  }
+  if (!pipedriveDealFieldMetaByIdCache) pipedriveDealFieldMetaByIdCache = new Map();
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/dealFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    for (const f of fields) {
+      const id = parsePipedriveNumericId(f?.id);
+      const key = String(f?.key || '').trim();
+      if (!id || !key) continue;
+      const rawFt = f?.field_type ?? f?.type;
+      const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
+      pipedriveDealFieldMetaByIdCache.set(id, { key, fieldType });
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] dealFields meta: ${e.message}`);
+  }
+  return pipedriveDealFieldMetaByIdCache.get(fieldId) || null;
+}
+
+async function resolveSchoolOrderDealFieldPayloadValue(
+  apiToken: string,
+  dealFieldId: number,
+  optionIds: number[],
+): Promise<Record<string, unknown> | null> {
+  if (!optionIds.length) return null;
+  const meta = await loadPipedriveDealFieldMetaById(apiToken, dealFieldId);
+  if (!meta?.key) {
+    console.log(`[Pipedrive school order] deal field id=${dealFieldId} not found in dealFields`);
+    return null;
+  }
+  const key = meta.key;
+  const ft = meta.fieldType.toLowerCase();
+  if (ft === 'set') {
+    return { [key]: optionIds };
+  }
+  if (ft === 'enum') {
+    return { [key]: optionIds[0] };
+  }
+  const fallback = optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',');
+  return { [key]: fallback };
+}
+
+async function searchPipedrivePersonByEmailGlobal(apiToken: string, email: string): Promise<any | null> {
+  const term = String(email || '').trim().toLowerCase();
+  if (!term || !term.includes('@')) return null;
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/persons/search', {}, { term, fields: 'email', limit: 10 });
+    const items: any[] = Array.isArray(data?.data?.items) ? data.data.items : [];
+    for (const entry of items) {
+      const person = entry?.item;
+      if (!person?.id) continue;
+      const emails = readPipedrivePersonEmails(person);
+      if (emails.includes(term)) return person;
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] persons/search: ${e.message}`);
+  }
+  return null;
 }
 
 async function searchPipedriveOrganizations(
@@ -11014,6 +11444,31 @@ async function findOrCreatePipedrivePerson(
   const name = String(params.name || '').trim();
   const email = String(params.email || '').trim().toLowerCase();
   const phone = String(params.phone || '').trim();
+
+  if (email) {
+    const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
+    if (globalHit?.id) {
+      const existingOrgId = parsePipedriveNumericId(globalHit.org_id?.id ?? globalHit.org_id?.value ?? globalHit.org_id);
+      const patch: Record<string, any> = {};
+      if (existingOrgId !== orgId) patch.org_id = orgId;
+      if (name && String(globalHit.name || '').trim() !== name) patch.name = name;
+      if (phone) patch.phone = phone;
+      if (Object.keys(patch).length > 0) {
+        try {
+          await pipedriveRequest(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(patch),
+          });
+          const refreshed = await pipedriveRequest<any>(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`);
+          return refreshed?.data || globalHit;
+        } catch (e: any) {
+          console.log(`[Pipedrive] Person PUT (link org): ${e.message}`);
+        }
+      }
+      return globalHit;
+    }
+  }
+
   const persons = await getPipedriveOrganizationPersons(apiToken, orgId).catch(() => []);
 
   const existing =
@@ -11190,60 +11645,7 @@ function isUsableSchoolRecordForAdmin(school: SchoolRecord) {
   return Boolean(name) && !name.startsWith(';') && ico.length >= 6;
 }
 
-async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: string }) {
-  const supabase = getServiceSupabaseClient();
-  if (!supabase) {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
-      digitalLicenses: [] as string[],
-      recentOrders: [] as Array<{
-        id: string;
-        orderNumber: string;
-        createdAt: string;
-        status: string;
-        total: number;
-        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
-      }>,
-    };
-  }
-
-  const ico = String(params.ico || '').trim();
-  const schoolName = String(params.schoolName || '').trim();
-  let query = supabase
-    .from('orders')
-    .select('id, order_number, created_at, status, total, school_name, ico, order_items(product_name, quantity, total_price)')
-    .order('created_at', { ascending: false })
-    .limit(20);
-
-  if (ico) {
-    query = query.eq('ico', ico);
-  } else if (schoolName) {
-    query = query.ilike('school_name', `%${schoolName}%`);
-  } else {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
-  }
-
-  const { data, error } = await query;
-  if (error) {
-    console.log(`[Schools] Order summary fetch error: ${error.message}`);
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [],
-      digitalLicenses: [],
-      recentOrders: [],
-    };
-  }
-
-  const orders = Array.isArray(data) ? data : [];
+function buildSchoolOrderSummaryFromRows(orders: any[]) {
   const productMap = new Map<string, { name: string; quantity: number; orderIds: Set<string> }>();
   const digitalLicenses = new Set<string>();
 
@@ -11274,6 +11676,9 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
       orderNumber: String(order?.order_number || ''),
       createdAt: String(order?.created_at || ''),
       status: String(order?.status || ''),
+      paymentStatus: order?.payment_status != null && order?.payment_status !== ''
+        ? String(order.payment_status)
+        : null,
       total: Number(order?.total) || 0,
       items: (Array.isArray(order?.order_items) ? order.order_items : []).map((item: any) => ({
         productName: String(item?.product_name || ''),
@@ -11281,6 +11686,82 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
         totalPrice: Number(item?.total_price) || 0,
       })),
     })),
+  };
+}
+
+async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: string }) {
+  const supabase = getServiceSupabaseClient();
+  const empty = {
+    orderCount: 0,
+    totalRevenue: 0,
+    purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
+    digitalLicenses: [] as string[],
+    recentOrders: [] as Array<{
+      id: string;
+      orderNumber: string;
+      createdAt: string;
+      status: string;
+      paymentStatus: string | null;
+      total: number;
+      items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+    }>,
+    allOrders: [] as Array<{
+      id: string;
+      orderNumber: string;
+      createdAt: string;
+      status: string;
+      paymentStatus: string | null;
+      total: number;
+      items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+    }>,
+  };
+
+  if (!supabase) {
+    return empty;
+  }
+
+  const ico = String(params.ico || '').trim();
+  const schoolName = String(params.schoolName || '').trim();
+  const selectCols =
+    'id, order_number, created_at, status, payment_status, total, school_name, ico, order_items(product_name, quantity, total_price)';
+
+  if (!ico && !schoolName) {
+    return empty;
+  }
+
+  /** Stránkování — bez horního limitu 500 řádků (dřívý main); max ~12k řádků na dotaz. */
+  const PAGE = 150;
+  const MAX_PAGES = 80;
+  const orders: any[] = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const from = page * PAGE;
+    const to = from + PAGE - 1;
+    let q = supabase
+      .from('orders')
+      .select(selectCols)
+      .order('created_at', { ascending: false })
+      .range(from, to);
+    if (ico) {
+      q = q.eq('ico', ico);
+    } else {
+      q = q.ilike('school_name', `%${schoolName}%`);
+    }
+    const { data, error } = await q;
+    if (error) {
+      console.log(`[Schools] Order summary fetch error: ${error.message}`);
+      return empty;
+    }
+    const batch = Array.isArray(data) ? data : [];
+    orders.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+
+  const base = buildSchoolOrderSummaryFromRows(orders);
+  return {
+    ...base,
+    orderCount: orders.length,
+    recentOrders: base.recentOrders.slice(0, 20),
+    allOrders: base.recentOrders,
   };
 }
 
@@ -13371,12 +13852,27 @@ const PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT = 488;
 /** Vlastní pole „product category“ / e-shop tiskoviny — hodnota `print` (obchodní spec). */
 const PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT = '3f0c870ac132eec72589da1313e2388977c4a74f';
 
+/** Won deal z zaplacené kartové objednávky e‑shopu — enum „Zaplaceno“ (field id 12585 v Pipedrive UI). */
+const PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT = '0e41017f4d0a3aa58177d7727844f98a6569d630';
+const PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT = 489;
+
 function getEshopProductCategoryPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY') || '').trim()
     || PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT;
   const value = (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_VALUE') || '').trim() || 'print';
   return { [key]: value };
+}
+
+/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
+function getEshopCardPaidStatusPayload(): Record<string, unknown> {
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY') || '').trim()
+    || PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT;
+  const optId =
+    parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID'))
+    ?? PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT;
+  return { [key]: optId };
 }
 
 function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
@@ -13661,18 +14157,37 @@ async function addPipedriveDealLineItemsFromOrder(
   orderItems: any[],
   catalogById: Map<string, any>,
 ) {
+  /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
+  const codeToPdId = new Map<string, number | null>();
   let ord = 0;
   for (const oi of orderItems) {
     ord += 1;
     const pid = String(oi?.product_id ?? '').trim();
-    if (!pid || pid.startsWith('bundle:')) continue;
+    if (!pid) {
+      console.log('[Pipedrive eshop] skip line: empty product_id');
+      continue;
+    }
+    if (pid.startsWith('bundle:')) {
+      /* Balíčky: zatím nepřidáváme dílčí řádky — v Pipedrivu musí být produkty s kódem; rozvinutí bundle vyžaduje definici v KV. */
+      console.log(`[Pipedrive eshop] skip line: bundle rows not expanded product_id=${pid}`);
+      continue;
+    }
     const catalog = catalogById.get(pid);
     const rawPd = catalog?.pipedriveProductId ?? catalog?.metadata?.pipedrive_product_id ?? catalog?.metadata?.pipedriveProductId;
     let pipedriveProductId = parsePipedriveNumericId(rawPd);
     if (!pipedriveProductId) {
       pipedriveProductId = parsePipedriveNumericId(pid);
     }
-    if (!pipedriveProductId) continue;
+    const pdCode = getPipedriveProductCodeFromCatalog(catalog);
+    if (!pipedriveProductId && pdCode) {
+      pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, pdCode, codeToPdId);
+    }
+    if (!pipedriveProductId) {
+      console.log(
+        `[Pipedrive eshop] skip line: no product id for product_id=${pid} code=${pdCode || '(none)'}`,
+      );
+      continue;
+    }
     const qty = Number(oi.quantity) || 1;
     const unitHaler = Number(oi.unit_price) || 0;
     const itemPrice = Math.max(0, Math.round(unitHaler / 100));
@@ -13767,6 +14282,9 @@ async function refreshEshopPipedriveDealFromDb(
   }
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
+  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+    Object.assign(patchBody, getEshopCardPaidStatusPayload());
+  }
 
   if (!Object.keys(patchBody).length) {
     console.log('[Pipedrive eshop] refresh: žádná pole k aktualizaci');
@@ -13905,6 +14423,10 @@ async function syncEshopOrderToPipedriveFromDb(
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
   const extraPayload: Record<string, unknown> = { ...printPayload, ...productCategoryPayload };
+  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+    Object.assign(extraPayload, getEshopCardPaidStatusPayload());
+    console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
+  }
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
@@ -13954,23 +14476,186 @@ function buildSchoolOrderDealTitle(schoolName: string, orderId: string) {
   return `Školní objednávka ${schoolName} (${orderId.slice(-8)})`;
 }
 
-function buildSchoolOrderNoteContent(order: {
-  id: string;
-  schoolName: string;
-  contactName: string;
-  email: string;
-  phone: string;
-  address: string;
-  items: { name: string; qty: number; price: string }[];
-  totalPrice: string | number;
-  note: string;
-}) {
+function normalizeSchoolInquiryStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((x) => String(x ?? '').trim())
+    .filter(Boolean);
+}
+
+function schoolInquiryTypeLabel(raw: string): string {
+  const key = raw.trim().toLowerCase();
+  const map: Record<string, string> = {
+    digital: 'Digitální licence',
+    print: 'Tiskoviny',
+    tisk: 'Tiskoviny',
+    tiskoviny: 'Tiskoviny',
+    interactive: 'Interaktivní licence',
+    combined: 'Kombinace (tisk + digitál)',
+    mixed: 'Kombinace',
+    workbook: 'Pracovní sešity',
+    workbooks: 'Pracovní sešity',
+    bundle: 'Balíček',
+    school: 'Školní licence',
+    parent: 'Rodičovská licence',
+  };
+  return map[key] || raw;
+}
+
+function formatCzechLicenceYears(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n === 1) return '1 rok';
+  if (n >= 2 && n <= 4) return `${n} roky`;
+  return `${n} let`;
+}
+
+/**
+ * Čitelné shrnutí z těla school_inquiry (subjects, types, digital, workbooks, …) pro poznámku v Pipedrivu.
+ */
+function formatSchoolInquiryMetadataHtml(body: Record<string, unknown> | null | undefined): string {
+  if (!body || typeof body !== 'object') return '';
+
+  const customer = body.customer && typeof body.customer === 'object'
+    ? (body.customer as Record<string, unknown>)
+    : null;
+  const ico = String(body.ico ?? customer?.ico ?? customer?.vat ?? '').trim();
+  const position = String(body.position ?? customer?.position ?? '').trim();
+
+  const subjectsTop = normalizeSchoolInquiryStringArray(body.subjects);
+  const typesRaw = normalizeSchoolInquiryStringArray(body.types);
+  const typesHuman = typesRaw.map(schoolInquiryTypeLabel);
+
+  const digital = body.digital && typeof body.digital === 'object' && body.digital !== null
+    ? (body.digital as Record<string, unknown>)
+    : null;
+  const digitalSubjects = digital ? normalizeSchoolInquiryStringArray(digital.subjects) : [];
+  const allSubjects = [...new Set([...subjectsTop, ...digitalSubjects])];
+
+  const rows: Array<{ label: string; value: string }> = [];
+
+  if (typesHuman.length) {
+    rows.push({ label: 'Typ licence / objednávky', value: typesHuman.join(', ') });
+  }
+  if (allSubjects.length) {
+    rows.push({ label: 'Předměty', value: allSubjects.join(', ') });
+  }
+
+  if (digital) {
+    const s2 = Number(digital.students2);
+    const s1 = Number(digital.students1);
+    const pupilParts: string[] = [];
+    if (Number.isFinite(s2) && s2 > 0) pupilParts.push(`2. stupeň: ${s2} žáků`);
+    if (Number.isFinite(s1) && s1 > 0) pupilParts.push(`1. stupeň: ${s1} žáků`);
+    if (pupilParts.length) {
+      rows.push({ label: 'Počet žáků', value: pupilParts.join(' · ') });
+    }
+    const years = Number(digital.licYears);
+    const yearsStr = formatCzechLicenceYears(years);
+    if (yearsStr) {
+      rows.push({ label: 'Délka licence', value: yearsStr });
+    }
+    const scopeNote = String(digital.scopeNote ?? '').trim();
+    if (scopeNote) {
+      rows.push({ label: 'Poznámka k rozsahu (digitál)', value: scopeNote });
+    }
+  }
+
+  const wb = body.workbooks;
+  if (wb && typeof wb === 'object' && wb !== null) {
+    const w = wb as Record<string, unknown>;
+    const items = Array.isArray(w.items) ? w.items : [];
+    if (items.length) {
+      const lines = items.map((it: unknown) => {
+        const o = it && typeof it === 'object' ? (it as Record<string, unknown>) : {};
+        const name = String(o.name ?? 'Položka').trim() || 'Položka';
+        const qty = Number(o.quantity ?? o.qty) || 0;
+        const price = o.price != null ? String(o.price).trim() : '';
+        const bits = [`${qty} ks`];
+        if (price) bits.push(price);
+        return `• ${name} (${bits.join(', ')})`;
+      });
+      rows.push({ label: 'Pracovní sešity (workbooks)', value: lines.join('\n') });
+    }
+    const wbTotal = w.total != null ? String(w.total).trim() : '';
+    if (wbTotal && !items.length) {
+      rows.push({ label: 'Workbooks — celkem', value: wbTotal });
+    }
+  }
+
+  const vb = body.vividboard;
+  if (vb && typeof vb === 'object' && vb !== null) {
+    const count = (vb as Record<string, unknown>).count;
+    if (count != null && String(count).trim() !== '') {
+      rows.push({ label: 'Vividboard', value: `${String(count).trim()} licencí` });
+    }
+  }
+
+  if (ico) {
+    rows.push({ label: 'IČO', value: ico });
+  }
+  if (position) {
+    rows.push({ label: 'Pozice kontaktu', value: position });
+  }
+
+  if (!rows.length) return '';
+
+  const summaryParts: string[] = [];
+  if (typesHuman.length) summaryParts.push(typesHuman.join(', '));
+  if (allSubjects.length) summaryParts.push(`předměty: ${allSubjects.join(', ')}`);
+  if (digital) {
+    const s2 = Number(digital.students2);
+    const s1 = Number(digital.students1);
+    const y = Number(digital.licYears);
+    if (Number.isFinite(s2) && s2 > 0) summaryParts.push(`${s2} žáků (2. st.)`);
+    if (Number.isFinite(s1) && s1 > 0) summaryParts.push(`${s1} žáků (1. st.)`);
+    const ys = formatCzechLicenceYears(y);
+    if (ys) summaryParts.push(ys);
+  }
+
+  const summaryLine = summaryParts.length
+    ? `<p style="margin:0 0 12px;padding:10px 12px;background:#f1f5f9;border-radius:8px;font-size:14px;line-height:1.45;"><strong>Shrnutí:</strong> ${escapePipedriveHtml(summaryParts.join(' · '))}</p>`
+    : '';
+
+  const dl = rows
+    .map(
+      (r) =>
+        `<div style="display:grid;grid-template-columns:minmax(120px,200px) 1fr;gap:6px 16px;margin:6px 0;align-items:start;"><dt style="margin:0;font-weight:700;color:#334155;">${escapePipedriveHtml(r.label)}</dt><dd style="margin:0;white-space:pre-wrap;color:#0f172a;">${escapePipedriveHtml(r.value)}</dd></div>`,
+    )
+    .join('');
+
+  return [
+    `<h4 style="margin:16px 0 8px;">Co si škola objednala</h4>`,
+    summaryLine,
+    `<dl style="margin:0;padding:0;">${dl}</dl>`,
+  ].join('');
+}
+
+function buildSchoolOrderNoteContent(
+  order: {
+    id: string;
+    schoolName: string;
+    contactName: string;
+    email: string;
+    phone: string;
+    address: string;
+    items: { name: string; qty: number; price: string }[];
+    totalPrice: string | number;
+    note: string;
+  },
+  inquiryBody?: Record<string, unknown> | null,
+) {
   const itemLines = order.items.length
     ? `<ul>${order.items
         .filter((item) => item.qty > 0 || item.name)
         .map((item) => `<li><strong>${escapePipedriveHtml(String(item.name || '').trim() || 'Položka')}</strong>: ${item.qty} ks, ${escapePipedriveHtml(String(item.price || '').trim() || 'cena neuvedena')}</li>`)
         .join('')}</ul>`
     : '<p>Bez položek.</p>';
+
+  const formattedMeta = formatSchoolInquiryMetadataHtml(inquiryBody ?? null);
+  const rawMetaFallback =
+    !formattedMeta && order.note
+      ? `<h4>Metadata (raw)</h4><pre style="font-size:12px;white-space:pre-wrap;">${escapePipedriveHtml(String(order.note).slice(0, 12000))}</pre>`
+      : '';
 
   return [
     `<h3>Školní objednávka z webu</h3>`,
@@ -13980,13 +14665,50 @@ function buildSchoolOrderNoteContent(order: {
     `<p><strong>Email:</strong> ${escapePipedriveHtml(order.email)}</p>`,
     `<p><strong>Telefon:</strong> ${escapePipedriveHtml(order.phone || 'neuveden')}</p>`,
     `<p><strong>Adresa:</strong> ${escapePipedriveHtml(order.address || 'neuvedena')}</p>`,
+    formattedMeta || '',
     `<p><strong>Celkem:</strong> ${escapePipedriveHtml(String(order.totalPrice || 'neuvedeno'))}</p>`,
     `<h4>Položky</h4>`,
     itemLines,
-    order.note ? `<h4>Metadata</h4><pre>${escapePipedriveHtml(String(order.note).slice(0, 12000))}</pre>` : '',
+    rawMetaFallback,
   ]
     .filter(Boolean)
     .join('');
+}
+
+async function createPipedriveSchoolOrderDeal(
+  apiToken: string,
+  params: {
+    title: string;
+    orgId: number;
+    personId?: number | null;
+    ownerUserId: number | null;
+    value?: number | null;
+    currency?: string;
+    pipelineId: number;
+    stageId: number;
+    orderFormExtra: Record<string, unknown> | null;
+  },
+) {
+  const payload: Record<string, any> = {
+    title: params.title,
+    org_id: params.orgId,
+    pipeline_id: params.pipelineId,
+    stage_id: params.stageId,
+  };
+  if (params.ownerUserId != null && params.ownerUserId > 0) {
+    payload.user_id = params.ownerUserId;
+  }
+  if (params.personId) payload.person_id = params.personId;
+  if (params.value != null && Number.isFinite(params.value)) payload.value = params.value;
+  if (params.currency) payload.currency = params.currency;
+  if (params.orderFormExtra && Object.keys(params.orderFormExtra).length) {
+    Object.assign(payload, params.orderFormExtra);
+  }
+  const data = await pipedriveRequest<any>(apiToken, '/deals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return data?.data || null;
 }
 
 async function syncSchoolOrderToPipedrive(
@@ -14014,6 +14736,27 @@ async function syncSchoolOrderToPipedrive(
   });
   if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' as const };
 
+  const isCustomerOrg = await organizationHasCustomerLabel(apiToken, orgLookup.orgId);
+  const pipelineUpsell = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_PIPELINE_UPSELL_ID', 7);
+  const stageUpsell = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_STAGE_UPSELL_ID', 42);
+  const pipelineAkvizice = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_PIPELINE_AKVIZICE_ID', 6);
+  const stageAkvizice = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_STAGE_AKVIZICE_ID', 38);
+  const pipelineId = isCustomerOrg ? pipelineUpsell : pipelineAkvizice;
+  const stageId = isCustomerOrg ? stageUpsell : stageAkvizice;
+
+  const fallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
+  const ownerFromLookup = orgLookup.ownerUserId != null && orgLookup.ownerUserId > 0
+    ? orgLookup.ownerUserId
+    : null;
+  const ownerUserId = ownerFromLookup ?? (fallbackOwnerId > 0 ? fallbackOwnerId : null);
+  if (!ownerFromLookup && (!fallbackOwnerId || fallbackOwnerId <= 0)) {
+    console.log('[Pipedrive school order] Žádný owner z CRM a PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID není nastaveno — deal bez user_id.');
+  }
+
+  const orderFormFieldId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_FIELD_ID', 12463);
+  const orderFormOptionId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_OPTION_ID', 48);
+  const orderFormExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, orderFormFieldId, [orderFormOptionId]);
+
   const person = await findOrCreatePipedrivePerson(apiToken, {
     orgId: orgLookup.orgId,
     name: order.contactName,
@@ -14027,25 +14770,29 @@ async function syncSchoolOrderToPipedrive(
   const value = parsePriceNumber(order.totalPrice);
   const currency = body?.workbooks?.currency || 'CZK';
 
-  const deal = await createPipedriveDeal(apiToken, {
+  const deal = await createPipedriveSchoolOrderDeal(apiToken, {
     title: buildSchoolOrderDealTitle(order.schoolName, order.id),
     orgId: orgLookup.orgId,
     personId: parsePipedriveNumericId(person?.id),
+    ownerUserId,
     value,
     currency,
+    pipelineId,
+    stageId,
+    orderFormExtra,
   });
 
   const dealId = parsePipedriveNumericId(deal?.id);
   const personId = parsePipedriveNumericId(person?.id);
   const note = await createPipedriveNote(apiToken, {
-    content: buildSchoolOrderNoteContent(order),
+    content: buildSchoolOrderNoteContent(order, body),
     dealId,
     orgId: orgLookup.orgId,
     personId,
   });
 
   let activity: any = null;
-  const activityAssigneeId = orgLookup.ownerUserId ?? null;
+  const activityAssigneeId = ownerUserId;
   if (activityAssigneeId) {
     const { todayISO } = buildTodayContextBlock();
     activity = await createPipedriveActivity(apiToken, {
@@ -14068,6 +14815,10 @@ async function syncSchoolOrderToPipedrive(
     noteId: parsePipedriveNumericId(note?.id),
     activityId: parsePipedriveNumericId(activity?.id),
     matchedBy: orgLookup.matchedBy,
+    isCustomerOrg,
+    pipelineId,
+    stageId,
+    ownerUserId,
   };
 }
 
@@ -14700,6 +15451,29 @@ function vividbooksEmailTemplate(params: {
   return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
+/**
+ * Testovací odeslání z editoru — odpovídá náhledu (jen obsah `bodyHtml` v bílé kartě),
+ * bez horního loga, modrého hero a bez automatického CTA z produkční šablony.
+ */
+function vividbooksEmailTestMatchEditorTemplate(params: { body: string; preheader?: string }): string {
+  const { body, preheader } = params;
+  const mcResponsiveStyle = `<style type="text/css">
+@media only screen and (max-width: 600px) {
+  .vb-shell-pad { padding: 12px 8px !important; }
+  .vb-card-outer { width: 100% !important; max-width: 100% !important; }
+  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 17px !important; line-height: 1.65 !important; }
+  .vb-foot { padding: 22px 18px !important; }
+  .vb-foot p { font-size: 13px !important; }
+  .vb-foot a { font-size: 13px !important; }
+}
+</style>`;
+  const vbCanvas = '#E8EAED';
+  const pre = preheader
+    ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>`
+    : '';
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+}
+
 /* GET /admin/mailchimp/campaigns */
 app.get('/make-server-93a20b6f/admin/mailchimp/campaigns', async (c) => {
   try {
@@ -14854,6 +15628,111 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
   } catch (e: any) {
     console.log(`[MC Draft] Error: ${e.message}`);
     return c.json({ error: `MC draft: ${e.message}` }, 500);
+  }
+});
+
+/** Povolené adresy pro Mailchimp „Send test“ z editoru kampaní (EmailBuilder → Nastavení). */
+const MAILCHIMP_TEST_EMAIL_ALLOWLIST = new Set([
+  'vitekskop@gmail.com',
+  'frantisek@vividbooks.com',
+  'gabriela@vividbooks.com',
+  'dan@vividbooks.com',
+]);
+
+/* POST /admin/mailchimp/send-test-email — dočasná kampaň, Mailchimp test send, pak smazání */
+app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
+  let campaignId: string | null = null;
+  try {
+    const { mcBase, mcAuth } = getMailchimpAuth();
+    const body = await c.req.json();
+    const toRaw = String(body.to || '').trim().toLowerCase();
+    if (!MAILCHIMP_TEST_EMAIL_ALLOWLIST.has(toRaw)) {
+      return c.json({ error: 'Tento e-mail není v seznamu povolených adres pro test.' }, 400);
+    }
+    const subjectRaw = String(body.subject || '').trim();
+    if (!subjectRaw) return c.json({ error: 'Chybi subject' }, 400);
+    const subject = `/TEST/ ${subjectRaw}`;
+
+    const { previewText, htmlBody, bodyContent, audience, fromName } = body;
+
+    const newsletterAud = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
+    const noNewsletterAud = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
+    const listId = audience === 'no-newsletter' ? noNewsletterAud : newsletterAud;
+    if (!listId) return c.json({ error: `Audience ID pro "${audience}" neni nastaven` }, 500);
+
+    console.log(`[MC Test] Create temp campaign → test to ${toRaw}, subject "${subject}" (šablona = jen tělo editoru)`);
+    const createRes = await fetch(`${mcBase}/campaigns`, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'regular',
+        recipients: { list_id: listId },
+        settings: {
+          subject_line: subject,
+          preview_text: String(previewText || ''),
+          from_name: fromName || 'Vividbooks',
+          reply_to: 'hello@vividbooks.com',
+          title: `[Test] ${subjectRaw}`.slice(0, 100),
+        },
+      }),
+    });
+    if (!createRes.ok) {
+      const t = await createRes.text();
+      throw new Error(`MC create ${createRes.status}: ${t.slice(0, 300)}`);
+    }
+    const campaign = await createRes.json();
+    campaignId = campaign.id;
+
+    const finalHtml =
+      htmlBody ||
+      vividbooksEmailTestMatchEditorTemplate({
+        body: bodyContent || '<p>Obsah emailu</p>',
+        preheader: previewText,
+      });
+
+    const putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
+      method: 'PUT',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: finalHtml }),
+    });
+    if (!putRes.ok) {
+      const t = await putRes.text();
+      throw new Error(`MC content ${putRes.status}: ${t.slice(0, 300)}`);
+    }
+
+    const testRes = await fetch(`${mcBase}/campaigns/${campaignId}/actions/test`, {
+      method: 'POST',
+      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ send_type: 'html', test_emails: [toRaw] }),
+    });
+    if (!testRes.ok) {
+      const t = await testRes.text();
+      throw new Error(`MC test ${testRes.status}: ${t.slice(0, 300)}`);
+    }
+
+    console.log(`[MC Test] OK → ${toRaw}`);
+    return c.json({ success: true, message: `Test odeslán na ${toRaw}` });
+  } catch (e: any) {
+    console.log(`[MC Test] Error: ${e.message}`);
+    return c.json({ error: `MC test: ${e.message}` }, 500);
+  } finally {
+    if (campaignId) {
+      try {
+        const { mcBase, mcAuth } = getMailchimpAuth();
+        const del = await fetch(`${mcBase}/campaigns/${campaignId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Basic ${mcAuth}` },
+        });
+        if (!del.ok) {
+          const dt = await del.text();
+          console.log(`[MC Test] Delete ${campaignId}: ${del.status} ${dt.slice(0, 120)}`);
+        } else {
+          console.log(`[MC Test] Deleted temp campaign ${campaignId}`);
+        }
+      } catch (delErr: any) {
+        console.log(`[MC Test] Delete failed: ${delErr.message}`);
+      }
+    }
   }
 });
 

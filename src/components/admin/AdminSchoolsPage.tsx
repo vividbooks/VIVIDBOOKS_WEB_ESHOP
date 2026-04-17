@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 import {
   Activity,
   Building2,
@@ -40,6 +41,33 @@ function formatDate(value?: string | null) {
   } catch {
     return '';
   }
+}
+
+function normalizeIco(value: string) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function buildSyntheticSchoolListItem(ico?: string, name?: string): AdminSchoolListItem {
+  const i = ico?.trim() || '';
+  const n = name?.trim() || '';
+  return {
+    name: n || 'Škola',
+    ico: i,
+    address: '',
+    kraj: '',
+    typ: undefined,
+    redIzo: undefined,
+    orgId: null,
+    orgName: null,
+    status: 'known',
+    matchedBy: i ? 'ico' : 'name',
+    ownerName: null,
+    products: [],
+    wonDeals: 0,
+    openDeals: 0,
+    totalDeals: 0,
+    source: 'csv',
+  };
 }
 
 function pickPrimaryContactValue(value: unknown) {
@@ -328,6 +356,10 @@ function AdminSchoolDetailBody({
 }
 
 export function AdminSchoolsPage() {
+  const [searchParams] = useSearchParams();
+  const icoFromUrl = (searchParams.get('ico') || '').replace(/\D/g, '');
+  const nameFromUrl = (searchParams.get('name') || '').trim();
+
   const [searchInput, setSearchInput] = useState('');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
   const [subjectOptions, setSubjectOptions] = useState<string[]>([]);
@@ -338,20 +370,28 @@ export function AdminSchoolsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [listError, setListError] = useState('');
   const [detailError, setDetailError] = useState('');
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
   const ownerContact = detail?.owner
     ? findContactRepresentative({ email: detail.owner.email, name: detail.owner.name })
     : null;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const urlSchoolSelectKeyRef = useRef<string>('');
 
-  const loadSchools = async (q: string, subject: string) => {
+  const loadSchools = useCallback(async (q: string, subject: string) => {
     setSchoolsLoading(true);
     setListError('');
     try {
       const data = await fetchAdminSchools({ q, subject, limit: 24 });
-      setSchools(data.items || []);
+      const items = data.items || [];
+      setSchools(items);
       setSelectedSchool((current) => {
-        if (!current) return data.items?.[0] || null;
-        return data.items?.find((item) => item.ico === current.ico) || data.items?.[0] || null;
+        if (!current) return items[0] || null;
+        const match = items.find((item) => item.ico === current.ico);
+        if (match) return match;
+        if (items.length > 0) return items[0];
+        /** Seznam prázdný (např. škola jen v objednávkách) — nechat výběr z deep linku */
+        if (current.ico?.trim() || current.name?.trim()) return current;
+        return null;
       });
     } catch (error: any) {
       setListError(error.message || 'Nepodařilo se načíst školy.');
@@ -360,11 +400,20 @@ export function AdminSchoolsPage() {
     } finally {
       setSchoolsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadSchools('', '');
   }, []);
+
+  /** Počáteční načtení + odkaz z detailu objednávky (?ico=&name=). */
+  useEffect(() => {
+    const icoParam = normalizeIco(searchParams.get('ico') || '');
+    const nameParam = (searchParams.get('name') || '').trim();
+    if (icoParam || nameParam) {
+      setSearchInput(icoParam || nameParam);
+      setSelectedSchool(buildSyntheticSchoolListItem(icoParam || undefined, nameParam || undefined));
+      void loadSchools(icoParam || nameParam, '');
+    } else {
+      void loadSchools('', '');
+    }
+  }, [searchParams, loadSchools]);
 
   useEffect(() => {
     let cancelled = false;
@@ -400,20 +449,62 @@ export function AdminSchoolsPage() {
   }, [searchInput, subjectFilter]);
 
   useEffect(() => {
-    if (!selectedSchool) {
-      setDetail(null);
-      setDetailError('');
+    const key = `${icoFromUrl}|${nameFromUrl}`;
+    if (!icoFromUrl && !nameFromUrl) {
+      urlSchoolSelectKeyRef.current = '';
       return;
     }
+    if (schoolsLoading || schools.length === 0) return;
 
+    const byIco =
+      icoFromUrl.length >= 6 ? schools.find((s) => s.ico.replace(/\D/g, '') === icoFromUrl) : null;
+    const byName =
+      !byIco && nameFromUrl
+        ? schools.find((s) => s.name.toLowerCase().includes(nameFromUrl.toLowerCase()))
+        : null;
+    const picked = byIco || byName || null;
+    if (picked && urlSchoolSelectKeyRef.current !== key) {
+      setSelectedSchool(picked);
+      urlSchoolSelectKeyRef.current = key;
+    }
+  }, [schools, schoolsLoading, icoFromUrl, nameFromUrl]);
+
+  useEffect(() => {
     let cancelled = false;
+
+    const fromList = selectedSchool
+      ? {
+          orgId: selectedSchool.orgId,
+          ico: selectedSchool.ico,
+          name: selectedSchool.name,
+        }
+      : null;
+    const fromUrl =
+      !fromList && (icoFromUrl.length >= 6 || nameFromUrl)
+        ? {
+            orgId: null as number | null,
+            ico: icoFromUrl.length >= 6 ? icoFromUrl : undefined,
+            name: nameFromUrl || undefined,
+          }
+        : null;
+    const params = fromList || fromUrl;
+
+    if (!params) {
+      setDetail(null);
+      setDetailError('');
+      setDetailLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setDetailLoading(true);
     setDetailError('');
 
     fetchAdminSchoolDetail({
-      orgId: selectedSchool.orgId,
-      ico: selectedSchool.ico,
-      name: selectedSchool.name,
+      orgId: params.orgId ?? undefined,
+      ico: params.ico,
+      name: params.name,
     })
       .then((data) => {
         if (!cancelled) setDetail(data);
@@ -431,17 +522,31 @@ export function AdminSchoolsPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSchool]);
+  }, [selectedSchool, icoFromUrl, nameFromUrl]);
+
+  useEffect(() => {
+    setOrdersExpanded(false);
+  }, [selectedSchool?.ico]);
 
   const selectedOrganization = useMemo(() => {
-    if (!selectedSchool) return null;
-    return detail?.organization
-      ? detail.organization
-      : {
-          id: selectedSchool.orgId || 0,
-          name: selectedSchool.orgName || selectedSchool.name,
-          address: selectedSchool.address,
-        };
+    if (selectedSchool) {
+      return detail?.organization
+        ? detail.organization
+        : {
+            id: selectedSchool.orgId || 0,
+            name: selectedSchool.orgName || selectedSchool.name,
+            address: selectedSchool.address,
+          };
+    }
+    if (detail?.organization) return detail.organization;
+    if (detail?.school?.name) {
+      return {
+        id: 0,
+        name: detail.school.name,
+        address: detail.school.address,
+      };
+    }
+    return null;
   }, [detail, selectedSchool]);
 
   const summaryProductNames = useMemo(
@@ -451,6 +556,24 @@ export function AdminSchoolsPage() {
     ])),
     [detail],
   );
+
+  const eshopOrdersList = useMemo(
+    () => detail?.orderSummary?.allOrders?.length
+      ? detail.orderSummary.allOrders
+      : detail?.orderSummary?.recentOrders || [],
+    [detail?.orderSummary?.allOrders, detail?.orderSummary?.recentOrders],
+  );
+  const ORDERS_PREVIEW = 8;
+  const visibleShopOrders =
+    ordersExpanded || eshopOrdersList.length <= ORDERS_PREVIEW
+      ? eshopOrdersList
+      : eshopOrdersList.slice(0, ORDERS_PREVIEW);
+  /** Max. počet řádků z DB při stránkování v make-server (150×80). */
+  const eshopOrdersCapped = eshopOrdersList.length >= 12000;
+
+  const urlOnlySchoolContext =
+    !selectedSchool && (icoFromUrl.length >= 6 || Boolean(nameFromUrl));
+  const showSchoolDetailPanel = Boolean(selectedSchool || urlOnlySchoolContext);
 
   return (
     <div className="h-full min-h-0 flex overflow-hidden">
@@ -608,19 +731,28 @@ export function AdminSchoolsPage() {
       </div>
 
       <div className="flex-1 min-w-0 min-h-0 bg-[#f7f8fc] overflow-y-auto">
-        {!selectedSchool ? (
+        {!showSchoolDetailPanel ? (
           <EmptySelection />
         ) : (
           <div className="min-h-full flex flex-col">
+            {urlOnlySchoolContext ? (
+              <div className="shrink-0 px-6 pt-4">
+                <p style={FF} className="text-[11px] text-[#001161]/45">
+                  Otevřeno z objednávky — škola nemusí být v levém seznamu CSV. Vyhledejte ji vlevo pro úplný záznam v databázi škol.
+                </p>
+              </div>
+            ) : null}
             <div className="shrink-0 p-6 pb-4 space-y-4 border-b border-[#001161]/6">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0">
                   <h2 style={FF} className="text-[28px] font-bold text-[#001161] leading-tight">
-                    {detail?.school.name || selectedSchool.name}
+                    {detail?.school.name || selectedSchool?.name || nameFromUrl || 'Škola'}
                   </h2>
                   <p style={FF} className="text-[13px] text-[#001161]/45 mt-1">
-                    IČO: {detail?.school.ico || selectedSchool.ico}
-                    {(detail?.school.address || selectedSchool.address) ? ` · ${detail?.school.address || selectedSchool.address}` : ''}
+                    IČO: {detail?.school.ico || selectedSchool?.ico || (icoFromUrl.length >= 6 ? icoFromUrl : '—')}
+                    {(detail?.school.address || selectedSchool?.address)
+                      ? ` · ${detail?.school.address || selectedSchool?.address}`
+                      : ''}
                   </p>
                 </div>
                 {detail?.owner && (
@@ -667,18 +799,47 @@ export function AdminSchoolsPage() {
                       <p style={FF} className="text-[11px] text-[#001161]/40">celkový obrat</p>
                     </div>
                   </div>
-                  {detail?.orderSummary.recentOrders?.length ? (
+                  {eshopOrdersList.length > 0 ? (
                     <div className="mt-4 space-y-2">
-                      {detail.orderSummary.recentOrders.slice(0, 3).map((order) => (
-                        <div key={order.id} className="rounded-xl bg-[#f7f8fc] px-3 py-2">
-                          <p style={FF} className="text-[12px] font-bold text-[#001161]">
-                            {order.orderNumber} · {order.status}
-                          </p>
-                          <p style={FF} className="text-[11px] text-[#001161]/45 mt-0.5">
-                            {new Date(order.createdAt).toLocaleDateString('cs-CZ')} · {formatCurrency(order.total)}
-                          </p>
+                      <p style={FF} className="text-[11px] text-[#001161]/45 mb-2">
+                        {`Celkem ${eshopOrdersList.length} objednávek v e-shopu (podle IČO / názvu).`}
+                      </p>
+                      {visibleShopOrders.map((order) => (
+                        <div
+                          key={order.id}
+                          className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-[#f7f8fc] px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p style={FF} className="text-[12px] font-bold text-[#001161]">
+                              {order.orderNumber} · {order.status}
+                            </p>
+                            <p style={FF} className="text-[11px] text-[#001161]/45 mt-0.5">
+                              {new Date(order.createdAt).toLocaleString('cs-CZ')} · {formatCurrency(order.total)}
+                            </p>
+                          </div>
+                          {order.id ? (
+                            <Link
+                              to={`../objednavky/${encodeURIComponent(order.id)}`}
+                              relative="path"
+                              className="shrink-0 text-[11px] font-bold text-[#001161] hover:text-[#ff8c66] underline"
+                            >
+                              {'Detail objednávky'}
+                            </Link>
+                          ) : null}
                         </div>
                       ))}
+                      {eshopOrdersList.length > ORDERS_PREVIEW ? (
+                        <button
+                          type="button"
+                          onClick={() => setOrdersExpanded((v) => !v)}
+                          style={FF}
+                          className="w-full text-left text-[12px] font-bold text-[#001161]/70 hover:text-[#001161] pt-1"
+                        >
+                          {ordersExpanded
+                            ? 'Sbalit seznam'
+                            : `Zobrazit všech ${eshopOrdersList.length} objednávek`}
+                        </button>
+                      ) : null}
                     </div>
                   ) : (
                     <p style={FF} className="text-[12px] text-[#001161]/35 mt-3">Zatím bez e-shop objednávek.</p>
@@ -743,13 +904,77 @@ export function AdminSchoolsPage() {
               </div>
             </div>
 
-            <div className="p-6 pt-4">
+            <div className="p-6 pt-4 space-y-4">
+              {eshopOrdersList.length > 0 && (
+                <div className="rounded-2xl border border-[#001161]/8 bg-white overflow-hidden shadow-sm">
+                  <div className="px-5 py-4 border-b border-[#001161]/8 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <ShoppingBag className="w-4 h-4 text-[#001161]/45" />
+                      <h3 style={FF} className="text-[14px] font-bold text-[#001161]">
+                        Historie objednávek (e-shop)
+                      </h3>
+                    </div>
+                    <p style={FF} className="text-[11px] text-[#001161]/45">
+                      {detail?.orderSummary.orderCount ?? eshopOrdersList.length} objednávek
+                      {eshopOrdersCapped ? ' · zobrazeno max. 12 000 záznamů (další v DB mohou být navíc)' : ''}
+                    </p>
+                  </div>
+                  <div className="overflow-x-auto max-h-[min(480px,55vh)] overflow-y-auto">
+                    <table className="min-w-full text-left text-[12px]">
+                      <thead className="sticky top-0 bg-[#f7f8fc] border-b border-[#001161]/8 text-[10px] uppercase tracking-wide text-[#001161]/45">
+                        <tr>
+                          <th className="py-2.5 px-4 font-bold">Číslo</th>
+                          <th className="py-2.5 px-3 font-bold">Datum</th>
+                          <th className="py-2.5 px-3 font-bold">Stav</th>
+                          <th className="py-2.5 px-3 font-bold">Platba</th>
+                          <th className="py-2.5 px-3 font-bold text-right">Částka</th>
+                          <th className="py-2.5 px-4 font-bold">Akce</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {eshopOrdersList.map((row) => (
+                          <tr key={row.id} className="border-b border-[#001161]/6 last:border-0 hover:bg-[#001161]/[0.03]">
+                            <td className="py-2.5 px-4 font-bold text-[#001161] whitespace-nowrap">
+                              {row.orderNumber || row.id.slice(0, 8)}
+                            </td>
+                            <td className="py-2.5 px-3 text-[#001161]/70 whitespace-nowrap">
+                              {row.createdAt ? new Date(row.createdAt).toLocaleString('cs-CZ') : '—'}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="rounded-full bg-[#001161]/8 px-2 py-0.5 text-[10px] font-bold text-[#001161]/80">
+                                {row.status}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-[#001161]/60">
+                              {row.paymentStatus ?? '—'}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-semibold text-[#001161] whitespace-nowrap">
+                              {formatCurrency(row.total)}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <Link
+                                to={`/admin/objednavky/${row.id}`}
+                                className="text-[11px] font-bold text-[#ff8c66] hover:underline"
+                              >
+                                Detail
+                              </Link>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-hidden rounded-2xl border border-black/5 shadow-sm">
                 <AdminSchoolDetailBody
                   detail={detail}
                   loading={detailLoading}
                   onClose={() => setSelectedSchool(null)}
-                  fallbackName={selectedOrganization?.name || selectedSchool.name}
+                  fallbackName={
+                    selectedOrganization?.name || selectedSchool?.name || nameFromUrl || ''
+                  }
                 />
               </div>
             </div>
