@@ -1,0 +1,16 @@
+---
+description: Always consult project docs and env tables before debugging integrations
+alwaysApply: true
+---
+
+# Web Vividbooks — kontext pro agenta
+
+1. **Primární dokumentace:** před závěry o konfiguraci nebo architektuře si přečti [`docs/PROJECT.md`](mdc:docs/PROJECT.md) (struktura repo, Edge funkce, tabulky proměnných). U nasazení a Stripe viz [`docs/DEPLOYMENT.md`](mdc:docs/DEPLOYMENT.md).
+
+2. **Přístup k produkci:** nemáš přihlášení do Supabase Dashboardu ani k živým logům, pokud je uživatel explicitně nenahraje. **Neusuzuj**, že „chybí secrets“, když něco na produkci nefunguje — může jít o deploy, regresi v kódu, chybu externího API nebo konkrétní data (e‑mail, audience).
+
+3. **Kde co žije:** hlavní monolitová Edge logika je v [`src/supabase/functions/server/index.tsx`](mdc:src/supabase/functions/server/index.tsx), deploy wrapper v [`supabase/functions/make-server-93a20b6f/index.ts`](mdc:supabase/functions/make-server-93a20b6f/index.ts). Frontend klíče jen `VITE_*` (build); serverové tajemství jen **Supabase Edge Secrets**.
+
+4. **Deploy Edge po změnách handleru:** Po úpravách (nebo merge) souborů, které se bundlují do `make-server-93a20b6f` (zejména `src/supabase/functions/server/index.tsx` a sdílené importy), **agent automaticky spustí** z kořene repa: `supabase functions deploy make-server-93a20b6f --no-verify-jwt` (vyžaduje `supabase link` a přihlášení na stejný projekt jako uživatel). Nečekat na výslovnou žádost; pokud deploy selže (CLI, síť), napsat krátký výstup + co uživatel může zkusit. Jiné Edge funkce nasazovat jen když je úkol výslovně o nich.
+
+5. **Při chybách integrací:** hledej uložené `detail` v KV / odpovědi API (např. webinář `sync`, admin badge tooltips), navrhni uživateli **Edge Function Logs**, ne obecné „doplň .env“, pokud už má produkci nastavenou.
