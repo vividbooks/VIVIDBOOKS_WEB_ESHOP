@@ -1,4 +1,5 @@
-# Nasazení na GitHub Pages (project site: /VIVIDBOOKS_WEB_ESHOP/)
+# Nasazení na GitHub Pages. Vlastní doména (např. new.vividbooks.com) = kořen webu → Vite base musí být /.
+# GITHUB_PAGES_ROOT_BASE vypíná /VIVIDBOOKS_WEB_ESHOP/ z publicPath (jinak 404 na custom domain).
 # V repozitáři: Settings → Pages → Build and deployment → Source: GitHub Actions
 
 name: Deploy GitHub Pages
@@ -25,6 +26,7 @@ jobs:
     # VITE_* musí být dostupné celému jobu (vite build je citlivý na process.env při startu).
     env:
       GITHUB_ACTIONS: 'true'
+      GITHUB_PAGES_ROOT_BASE: 'true'
       NODE_OPTIONS: --max-old-space-size=6144
       VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
       VITE_PACKETA_API_KEY: ${{ secrets.VITE_PACKETA_API_KEY }}
