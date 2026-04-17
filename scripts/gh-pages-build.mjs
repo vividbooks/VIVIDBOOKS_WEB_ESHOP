@@ -3,7 +3,7 @@
  * Nesmaže *.md v docs/ — odstraní jen předchozí výstup Vite (assets, index.html).
  */
 import { execSync } from 'node:child_process';
-import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,3 +34,9 @@ execSync('vite build', {
     GH_PAGES: 'true',
   },
 });
+
+// GitHub Pages ze složky /docs čte CNAME jen z docs/, ne z kořene repozitáře
+const cnameRoot = path.join(root, 'CNAME');
+if (existsSync(cnameRoot)) {
+  writeFileSync(path.join(docs, 'CNAME'), readFileSync(cnameRoot, 'utf8').trimEnd() + '\n');
+}

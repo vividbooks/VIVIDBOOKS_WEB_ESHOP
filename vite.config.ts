@@ -4,15 +4,16 @@
   import tailwindcss from '@tailwindcss/vite';
   import path from 'path';
 
-  /** GitHub project Pages: /REPO_NAME/ — při buildu v Actions nebo npm run build:github-pages */
+  /** GitHub project Pages: /REPO_NAME/ — Actions (`npm run build`) nebo GH_PAGES bez výstupu do docs */
   const GH_PAGES_BASE = '/VIVIDBOOKS_WEB_ESHOP/';
-  const isGhPagesBase =
-    process.env.GITHUB_ACTIONS === 'true' || process.env.GH_PAGES === 'true';
-  /** Výstup do `docs/` pro hosting z kořene složky docs na GitHubu (nezahodit PROJECT.md atd.) */
+  /** Výstup do `docs/` — nasazení z větve; vlastní doména je v kořeni → `base` musí být `/` */
   const isDocsOut = process.env.DOCS_BUILD === '1';
+  const useGhPagesProjectBase =
+    (process.env.GITHUB_ACTIONS === 'true' || process.env.GH_PAGES === 'true') &&
+    !isDocsOut;
 
   export default defineConfig({
-    base: isGhPagesBase ? GH_PAGES_BASE : '/',
+    base: useGhPagesProjectBase ? GH_PAGES_BASE : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
