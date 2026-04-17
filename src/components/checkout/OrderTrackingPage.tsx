@@ -5,6 +5,7 @@ import { SEOHead } from '../SEOHead';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 import { CartItem } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getPaymentIntentTrackingFromStorage } from '../../utils/checkoutThankYouRedirect';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
 const INVOICE_FN = `https://${projectId}.supabase.co/functions/v1/idoklad-invoice-pdf`;
@@ -128,7 +129,11 @@ export function OrderTrackingPage() {
 
   const lookupUrl = useMemo(() => {
     if (paymentIntentTrimmed) {
-      return `${GET_ORDER_FN}?payment_intent_id=${encodeURIComponent(paymentIntentTrimmed)}`;
+      const u = new URL(GET_ORDER_FN);
+      u.searchParams.set('payment_intent_id', paymentIntentTrimmed);
+      const t = tokenTrimmed || getPaymentIntentTrackingFromStorage(paymentIntentTrimmed);
+      if (t) u.searchParams.set('t', t);
+      return u.toString();
     }
     if (orderTrimmed && tokenTrimmed) {
       const u = new URL(GET_ORDER_FN);

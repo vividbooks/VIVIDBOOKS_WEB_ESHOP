@@ -312,7 +312,14 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Order not found.' }, 404);
     }
 
-    if (orderNumber && !paymentIntentId && !transferThankYou) {
+    /**
+     * Stejné ověření jako u čísla objednávky — PI z URL nesmí stačit samo (uniká např. z přesměrování Stripe).
+     * Děkovná stránka u převodu (`transfer=1`) zůstává bez e-mailu/tokenu (jako dřív u order_number).
+     */
+    const needProof =
+      (orderNumber && !paymentIntentId && !transferThankYou)
+      || (paymentIntentId && !orderNumber && !transferThankYou);
+    if (needProof) {
       const secret = getTrackingSecret();
       const tokenOk =
         Boolean(secret && trackingTokenParam)

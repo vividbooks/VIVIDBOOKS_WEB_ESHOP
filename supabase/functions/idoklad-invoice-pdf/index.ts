@@ -5,10 +5,12 @@
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { verifyOrderTrackingToken } from '../_shared/order-tracking-token.ts';
+import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
@@ -174,6 +176,19 @@ Deno.serve(async (req) => {
   }
   if (req.method !== 'GET') {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+
+  const urlEarly = new URL(req.url);
+  let orderIdEarly = (urlEarly.searchParams.get('orderId') || '').trim();
+  const orderNumberEarly = (urlEarly.searchParams.get('orderNumber') || '').trim();
+  const trackingEarly = (urlEarly.searchParams.get('t') || '').trim();
+  const customerInvoiceTracking = !orderIdEarly && orderNumberEarly && trackingEarly;
+
+  if (!customerInvoiceTracking) {
+    const adminGate = await requireAdminJwt(req);
+    if (adminGate instanceof Response) {
+      return adminGate;
+    }
   }
 
   const databaseUrl = getDatabaseUrl();

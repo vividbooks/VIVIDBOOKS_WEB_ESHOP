@@ -13,6 +13,41 @@ const HEADERS_AUTH_ONLY: Record<string, string> = {
   Accept: 'application/pdf',
 };
 
+/** Edge funkce s `requireAdminJwt` — anon + JWT uživatele (viz supabase/functions/_shared/admin-auth.ts). */
+async function edgeAdminHeaders(): Promise<Record<string, string>> {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${publicAnonKey}`,
+    'Content-Type': 'application/json',
+  };
+  try {
+    const { getSupabaseBrowser } = await import('../lib/supabaseBrowser');
+    const { data: { session } } = await getSupabaseBrowser().auth.getSession();
+    if (session?.access_token) {
+      h['X-User-Access-Token'] = session.access_token;
+    }
+  } catch {
+    /* ignore */
+  }
+  return h;
+}
+
+async function edgeAdminHeadersPdf(): Promise<Record<string, string>> {
+  const h: Record<string, string> = {
+    Authorization: `Bearer ${publicAnonKey}`,
+    Accept: 'application/pdf',
+  };
+  try {
+    const { getSupabaseBrowser } = await import('../lib/supabaseBrowser');
+    const { data: { session } } = await getSupabaseBrowser().auth.getSession();
+    if (session?.access_token) {
+      h['X-User-Access-Token'] = session.access_token;
+    }
+  } catch {
+    /* ignore */
+  }
+  return h;
+}
+
 export type CollectionName = 'blog' | 'novinky' | 'webinare' | 'fixed-pages' | 'hero-slidy' | 'predmety' | 'notifikace' | 'tabs';
 
 export async function fetchCollection(name: CollectionName): Promise<any[]> {
@@ -537,7 +572,7 @@ export async function fetchAdminOrders(params: {
   url.searchParams.set('pageSize', String(params.pageSize || 20));
   if (params.posterOnly) url.searchParams.set('poster', '1');
 
-  const res = await fetch(url.toString(), { headers: HEADERS });
+  const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin orders failed: ${err}`);
@@ -552,7 +587,7 @@ export async function fetchAdminOrders(params: {
 }
 
 export async function fetchAdminOrderDetail(id: string) {
-  const res = await fetch(`${ADMIN_ORDERS_BASE}/${id}`, { headers: HEADERS });
+  const res = await fetch(`${ADMIN_ORDERS_BASE}/${id}`, { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin order detail failed: ${err}`);
@@ -573,7 +608,7 @@ export async function fetchAdminOrderDetail(id: string) {
 export async function downloadIdokladInvoicePdf(orderId: string, filenameBase: string): Promise<void> {
   const res = await fetch(
     `${IDOKLAD_INVOICE_PDF_BASE}?orderId=${encodeURIComponent(orderId)}`,
-    { headers: HEADERS_AUTH_ONLY },
+    { headers: await edgeAdminHeadersPdf() },
   );
   if (!res.ok) {
     const raw = await res.text();
@@ -620,7 +655,7 @@ export async function runAdminOrderAction(payload: {
 }) {
   const res = await fetch(ADMIN_ORDER_ACTION_BASE, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -636,7 +671,7 @@ export async function fetchAdminAlertSummary() {
   const url = new URL(ADMIN_ORDER_ALERTS_BASE);
   url.searchParams.set('mode', 'summary');
 
-  const res = await fetch(url.toString(), { headers: HEADERS });
+  const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin alert summary failed: ${err}`);
@@ -666,7 +701,7 @@ export async function fetchAdminOrderAlerts(params?: {
   if (at) url.searchParams.set('alertType', at);
   url.searchParams.set('scope', params?.scope || 'all');
 
-  const res = await fetch(url.toString(), { headers: HEADERS });
+  const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin order alerts failed: ${err}`);
@@ -689,7 +724,7 @@ export async function runAdminOrderAlertAction(payload: {
 }) {
   const res = await fetch(ADMIN_ORDER_ALERTS_BASE, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(payload),
   });
 
@@ -715,7 +750,7 @@ export async function fetchAdminProductCommerce(params: {
   if (params.isbn) url.searchParams.set('isbn', params.isbn);
   if (params.ean) url.searchParams.set('ean', params.ean);
 
-  const res = await fetch(url.toString(), { headers: HEADERS });
+  const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin product commerce failed: ${err}`);
@@ -739,7 +774,7 @@ export async function fetchAdminProductCommerce(params: {
 export async function runAdminProductBaseSync(product: any) {
   const res = await fetch(ADMIN_PRODUCT_BASE_SYNC_BASE, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify({ product }),
   });
 
@@ -757,7 +792,7 @@ export async function fetchAdminAnalytics(params?: { days?: number | 'all' }) {
     url.searchParams.set('days', String(params.days));
   }
 
-  const res = await fetch(url.toString(), { headers: HEADERS });
+  const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Fetch admin analytics failed: ${err}`);

@@ -1,5 +1,6 @@
 import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
+import { computeOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -23,6 +24,12 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
       'Content-Type': 'application/json',
     },
   });
+}
+
+async function trackingTokenForOrder(orderId: string): Promise<string | null> {
+  const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
+  if (!secret || !orderId) return null;
+  return await computeOrderTrackingToken(orderId, secret);
 }
 
 Deno.serve(async (req) => {
@@ -95,10 +102,12 @@ Deno.serve(async (req) => {
 
     if (order.status !== 'pending_payment' || order.payment_status !== 'pending') {
       if (order.status === 'paid' || order.payment_status === 'paid') {
+        const tt = await trackingTokenForOrder(order.id);
         return jsonResponse({
           status: 'already_paid',
           orderNumber: order.order_number,
           ...(order.stripe_payment_intent_id ? { paymentIntentId: order.stripe_payment_intent_id } : {}),
+          ...(tt ? { trackingToken: tt } : {}),
         });
       }
       return jsonResponse({
@@ -115,10 +124,12 @@ Deno.serve(async (req) => {
     const pi = await stripe.paymentIntents.retrieve(order.stripe_payment_intent_id);
 
     if (pi.status === 'succeeded') {
+      const tt = await trackingTokenForOrder(order.id);
       return jsonResponse({
         status: 'already_paid',
         orderNumber: order.order_number,
         paymentIntentId: pi.id,
+        ...(tt ? { trackingToken: tt } : {}),
       });
     }
 
@@ -134,6 +145,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Nepodařilo se načíst platební relaci.' }, 500);
     }
 
+    const ttReq = await trackingTokenForOrder(order.id);
     return jsonResponse({
       status: 'requires_payment',
       clientSecret: pi.client_secret,
@@ -142,6 +154,7 @@ Deno.serve(async (req) => {
       subtotal: order.subtotal,
       shippingPrice: order.shipping_price,
       total: order.total,
+      ...(ttReq ? { trackingToken: ttReq } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Resume checkout failed.';

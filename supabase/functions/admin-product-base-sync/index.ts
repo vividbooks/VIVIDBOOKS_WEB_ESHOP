@@ -1,3 +1,5 @@
+import { requireAdminJwt } from '../_shared/admin-auth.ts';
+
 type SyncProductPayload = {
   id?: string | null;
   name?: string | null;
@@ -18,7 +20,8 @@ type SyncProductPayload = {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -172,6 +175,11 @@ Deno.serve(async (req) => {
 
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+
+  const adminGate = await requireAdminJwt(req);
+  if (adminGate instanceof Response) {
+    return adminGate;
   }
 
   try {

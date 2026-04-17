@@ -70,7 +70,12 @@ Minimálně pro platby:
 | `STRIPE_WEBHOOK_SECRET` | Podpis webhooku (viz níže) |
 | `DATABASE_URL` nebo `SUPABASE_DB_URL` | Postgres pro zápis objednávek |
 | `SUPABASE_URL` | Volání dalších funkcí z webhooku |
+| `SUPABASE_ANON_KEY` | `create-payment-intent` / `submit-transfer-order` ověřují ceny proti katalogu (`/functions/v1/make-server-93a20b6f/products`). |
+| `ORDER_TRACKING_HMAC_SECRET` | HMAC pro parametr `t` u sledování objednávky a u `get-order-by-payment-intent` — bez něj API nevrátí `trackingToken` v odpovědi create-payment-intent. |
+| `ADMIN_ALLOWED_EMAILS` | E-maily oddělené čárkou — kdo smí volat Edge funkce `admin-orders`, `admin-order-action`, `admin-analytics`, … (kromě `ADMIN_ALLOWLIST_OFF=true`). |
 | `SUPABASE_SERVICE_ROLE_KEY` (nebo anon pro interní volání dle kódu) | `stripe-webhook` volá `send-order-email`, `process-export-queue`, … |
+
+Migrace `20260417210000_marketing_rls_admin_only.sql` omezuje čtení marketingových tabulek v DB na e-maily v `public.admin_staff_emails` (výchozí řádky odpovídají allowlistu v kódu). Další administrátory přidejte v SQL (`insert … on conflict do nothing`) nebo přes Dashboard.
 
 Další proměnné podle zapnutých integrací (Basecom, iDoklad, e‑mail SMTP, …).
 

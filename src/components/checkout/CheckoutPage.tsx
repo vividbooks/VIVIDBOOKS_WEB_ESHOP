@@ -34,7 +34,7 @@ import { parseSchoolAddress } from '../../utils/parseSchoolAddress';
 import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
-import { buildThankYouUrlAfterPayment } from '../../utils/checkoutThankYouRedirect';
+import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../../utils/checkoutThankYouRedirect';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -357,6 +357,8 @@ export function CheckoutPage() {
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
           const pi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const tt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (pi && tt) storePaymentIntentTrackingToken(pi, tt);
           window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
           return;
         }
@@ -373,6 +375,11 @@ export function CheckoutPage() {
         setResumeFlowActive(true);
         setClientSecret(data.clientSecret);
         setPaymentIntentId(typeof data.paymentIntentId === 'string' ? data.paymentIntentId : null);
+        {
+          const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
+        }
         setResumedOrderNumber(typeof data.orderNumber === 'string' ? data.orderNumber : null);
         setResumedTotals({
           subtotal: Number(data.subtotal) || 0,
@@ -709,6 +716,11 @@ export function CheckoutPage() {
         setClientSecret(data.clientSecret ?? null);
         setPaymentIntentId(data.paymentIntentId ?? null);
         setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
+        {
+          const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
+        }
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -772,6 +784,8 @@ export function CheckoutPage() {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
           const piFromApi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
           const pi = (piFromApi || paymentIntentId || '').trim();
+          const tt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (pi && tt) storePaymentIntentTrackingToken(pi, tt);
           window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
         }
       } catch {

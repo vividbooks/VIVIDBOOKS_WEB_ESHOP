@@ -68,7 +68,7 @@ import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../utils/postalCodeC
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/streetHouseNumberCZ';
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
 import { appPath } from '../utils/appBaseUrl';
-import { buildThankYouUrlAfterPayment } from '../utils/checkoutThankYouRedirect';
+import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -1368,6 +1368,11 @@ export function OrderPage() {
         setClientSecret(data.clientSecret ?? null);
         setPaymentIntentId(data.paymentIntentId ?? null);
         setSchoolPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
+        {
+          const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
+        }
       })
       .catch((error: unknown) => {
         if (error instanceof Error && error.name === 'AbortError') return;
@@ -1449,6 +1454,8 @@ export function OrderPage() {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
           const piFromApi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
           const pi = (piFromApi || paymentIntentId || '').trim();
+          const tt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (pi && tt) storePaymentIntentTrackingToken(pi, tt);
           window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
         }
       } catch {

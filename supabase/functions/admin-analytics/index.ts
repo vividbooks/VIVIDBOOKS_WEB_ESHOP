@@ -1,4 +1,5 @@
 import postgres from 'npm:postgres';
+import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
 type OrderRow = {
   id: string;
@@ -47,7 +48,8 @@ type CatalogProduct = {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers':
+    'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
 };
 
@@ -217,6 +219,11 @@ Deno.serve(async (req) => {
 
   if (req.method !== 'GET') {
     return jsonResponse({ error: 'Method not allowed.' }, 405);
+  }
+
+  const adminGate = await requireAdminJwt(req);
+  if (adminGate instanceof Response) {
+    return adminGate;
   }
 
   const databaseUrl = getDatabaseUrl();

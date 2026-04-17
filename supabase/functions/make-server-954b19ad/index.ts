@@ -153,6 +153,13 @@ app.post("/make-server-954b19ad/storage", async (c) => {
 // TRANSCRIPTION using Gemini 2.0 Flash
 app.post("/make-server-954b19ad/transcribe", async (c) => {
   try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const userId = await getUserIdFromRequestAuth(c);
+    if (!userId) {
+      return c.json({ error: "auth_required" }, 401);
+    }
+
     const geminiKey = Deno.env.get("GEMINI_API_KEY_RAG");
     
     if (!geminiKey) {
@@ -209,6 +216,13 @@ app.post("/make-server-954b19ad/transcribe", async (c) => {
 /** Dlouhý přepis z diktování → název úkolu, konkrétní kroky, přesný přepis (pro poznámku). */
 app.post("/make-server-954b19ad/task-breakdown", async (c) => {
   try {
+    const forbidden = await assistantEmailForbiddenIfConfigured(c);
+    if (forbidden) return forbidden;
+    const userId = await getUserIdFromRequestAuth(c);
+    if (!userId) {
+      return c.json({ error: "auth_required" }, 401);
+    }
+
     const geminiKey = Deno.env.get("GEMINI_API_KEY_RAG");
     if (!geminiKey) return c.json({ error: "Missing API Key" }, 500);
 

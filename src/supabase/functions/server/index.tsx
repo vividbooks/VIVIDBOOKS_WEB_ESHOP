@@ -10,6 +10,7 @@ import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from '.
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
+import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import {
   normalizeEmail,
   isValidEmailFormat,
@@ -3239,6 +3240,10 @@ Tento email byl odeslan automaticky po registraci ke sledovani zaznamu DVPP.<br>
 
 app.get('/make-server-93a20b6f/dvpp-video-registrace/:videoId', async (c) => {
   try {
+    const gate = await requireAdminJwt(c.req.raw);
+    if (gate instanceof Response) {
+      return gate;
+    }
     const videoId = c.req.param('videoId');
     const prefix = `dvpp_video_reg_${videoId}_`;
     const registrations = await kv.getByPrefix(prefix);

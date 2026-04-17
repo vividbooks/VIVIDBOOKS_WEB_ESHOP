@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { Elements } from '@stripe/react-stripe-js';
 import { Loader2 } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { buildThankYouUrlAfterPayment } from '../../utils/checkoutThankYouRedirect';
+import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../../utils/checkoutThankYouRedirect';
 import { useStripePublishableKey } from '../../utils/stripe/useStripePublishableKey';
 import { SEOHead } from '../SEOHead';
 import { StripePaymentSubmitForm } from './StripePaymentSubmitForm';
@@ -56,6 +56,8 @@ export function ResumePaymentPage() {
         if (data.status === 'already_paid') {
           const num = typeof data.orderNumber === 'string' ? data.orderNumber : '';
           const pi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const tt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (pi && tt) storePaymentIntentTrackingToken(pi, tt);
           window.location.replace(buildThankYouUrlAfterPayment(num || undefined, pi || undefined));
           return;
         }
@@ -72,6 +74,11 @@ export function ResumePaymentPage() {
         setClientSecret(data.clientSecret);
         setOrderNumber(typeof data.orderNumber === 'string' ? data.orderNumber : null);
         setTotalHalers(Number(data.total) || 0);
+        {
+          const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
+        }
         window.history.replaceState({}, '', window.location.pathname);
       })
       .catch((error: unknown) => {

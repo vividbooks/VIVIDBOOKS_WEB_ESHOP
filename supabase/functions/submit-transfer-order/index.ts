@@ -12,6 +12,12 @@ import {
 import { domainAcceptsMailForForms } from '../_shared/email-mx.ts';
 import { isValidCZSKPostalCode } from '../_shared/postal-code-czsk.ts';
 import { hasStreetWithHouseNumber } from '../_shared/street-house-number.ts';
+import {
+  loadCheckoutCatalog,
+  validateCheckoutPricing,
+  validateShippingPriceHalers,
+  type CheckoutItemInput,
+} from '../_shared/checkout-pricing.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -21,6 +27,7 @@ type CheckoutItem = {
   variant?: string;
   bundleId?: string;
   bundleTitle?: string;
+  posterMerch?: boolean;
 };
 
 type CheckoutShipping = {
@@ -127,12 +134,14 @@ function validateItems(items: unknown): items is CheckoutItem[] {
     if (!item || typeof item !== 'object') return false;
     const candidate = item as Record<string, unknown>;
     const variantOk = candidate.variant === undefined || typeof candidate.variant === 'string';
+    const posterOk = candidate.posterMerch === undefined || candidate.posterMerch === true;
     return (
       typeof candidate.productId === 'string' &&
       typeof candidate.productName === 'string' &&
       isPositiveInteger(candidate.quantity) &&
       isNonNegativeInteger(candidate.unitPrice) &&
-      variantOk
+      variantOk &&
+      posterOk
     );
   });
 }
@@ -246,6 +255,32 @@ Deno.serve(async (req) => {
 
   if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {
     return jsonResponse({ error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
+  }
+
+  const shipPriceErr = validateShippingPriceHalers(shipping.method, shipping.price);
+  if (shipPriceErr) {
+    return jsonResponse({ error: shipPriceErr }, 400);
+  }
+
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
+  const supabaseAnon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
+  if (!supabaseUrl || !supabaseAnon) {
+    return jsonResponse({ error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
+  }
+  try {
+    const { products, bundles } = await loadCheckoutCatalog(supabaseUrl, {
+      Authorization: `Bearer ${supabaseAnon}`,
+      apikey: supabaseAnon,
+    });
+    const priceErr = validateCheckoutPricing(items as CheckoutItemInput[], products, bundles);
+    if (priceErr) {
+      return jsonResponse({ error: priceErr }, 400);
+    }
+  } catch (e) {
+    console.error('[submit-transfer-order] catalog validation:', e);
+    return jsonResponse({
+      error: 'Nepodařilo se ověřit košík vůči ceníku. Zkuste to prosím znovu.',
+    }, 503);
   }
 
   const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);

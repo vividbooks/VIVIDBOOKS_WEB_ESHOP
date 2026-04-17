@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router';
 import { SEOHead } from '../SEOHead';
 import { CartItem, useCart } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getPaymentIntentTrackingFromStorage } from '../../utils/checkoutThankYouRedirect';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
@@ -48,6 +49,7 @@ function formatPrice(amountInHaler: number): string {
 export function OrderConfirmationPage() {
   const [searchParams] = useSearchParams();
   const paymentIntent = searchParams.get('payment_intent');
+  const trackingFromUrl = searchParams.get('t');
   const orderFromUrl = searchParams.get('order');
   const transferThankYou = searchParams.get('transfer') === '1';
   const { clearCart } = useCart();
@@ -63,7 +65,12 @@ export function OrderConfirmationPage() {
 
   const lookupUrl = useMemo(() => {
     if (paymentIntentTrimmed) {
-      return `${GET_ORDER_FN}?payment_intent_id=${encodeURIComponent(paymentIntentTrimmed)}`;
+      const u = new URL(GET_ORDER_FN);
+      u.searchParams.set('payment_intent_id', paymentIntentTrimmed);
+      const t =
+        (trackingFromUrl?.trim() || getPaymentIntentTrackingFromStorage(paymentIntentTrimmed)) || '';
+      if (t) u.searchParams.set('t', t);
+      return u.toString();
     }
     if (orderTrimmed) {
       const u = new URL(GET_ORDER_FN);
@@ -72,7 +79,7 @@ export function OrderConfirmationPage() {
       return u.toString();
     }
     return null;
-  }, [paymentIntentTrimmed, orderTrimmed, transferThankYou]);
+  }, [paymentIntentTrimmed, orderTrimmed, transferThankYou, trackingFromUrl]);
 
   const isPaymentIntentMode = Boolean(paymentIntentTrimmed);
 

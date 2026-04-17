@@ -9,6 +9,13 @@ import {
 import { domainAcceptsMailForForms } from '../_shared/email-mx.ts';
 import { isValidCZSKPostalCode } from '../_shared/postal-code-czsk.ts';
 import { hasStreetWithHouseNumber } from '../_shared/street-house-number.ts';
+import {
+  loadCheckoutCatalog,
+  validateCheckoutPricing,
+  validateShippingPriceHalers,
+  type CheckoutItemInput,
+} from '../_shared/checkout-pricing.ts';
+import { computeOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -68,6 +75,12 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
       'Content-Type': 'application/json',
     },
   });
+}
+
+async function trackingTokenForOrder(orderId: string): Promise<string | null> {
+  const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
+  if (!secret || !orderId) return null;
+  return await computeOrderTrackingToken(orderId, secret);
 }
 
 function isPositiveInteger(value: unknown) {
@@ -326,6 +339,32 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
   }
 
+  const shipPriceErr = validateShippingPriceHalers(shipping.method, shipping.price);
+  if (shipPriceErr) {
+    return jsonResponse({ error: shipPriceErr }, 400);
+  }
+
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
+  const supabaseAnon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
+  if (!supabaseUrl || !supabaseAnon) {
+    return jsonResponse({ error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
+  }
+  try {
+    const { products, bundles } = await loadCheckoutCatalog(supabaseUrl, {
+      Authorization: `Bearer ${supabaseAnon}`,
+      apikey: supabaseAnon,
+    });
+    const priceErr = validateCheckoutPricing(items as CheckoutItemInput[], products, bundles);
+    if (priceErr) {
+      return jsonResponse({ error: priceErr }, 400);
+    }
+  } catch (e) {
+    console.error('[create-payment-intent] catalog validation:', e);
+    return jsonResponse({
+      error: 'Nepodařilo se ověřit košík vůči ceníku. Zkuste to prosím znovu.',
+    }, 503);
+  }
+
   const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
   const total = subtotal + shipping.price;
 
@@ -391,22 +430,25 @@ Deno.serve(async (req) => {
         }, 409);
       }
 
-      const ordRows = await sql<{ payment_resume_token: string | null }[]>`
-        select payment_resume_token
+      const ordRows = await sql<{ id: string; payment_resume_token: string | null }[]>`
+        select id, payment_resume_token
         from public.orders
         where stripe_payment_intent_id = ${paymentIntent.id}
         limit 1
       `;
       const resume = ordRows[0]?.payment_resume_token;
+      const reuseOrderId = ordRows[0]?.id;
       if (!resume || !paymentIntent.client_secret) {
         console.error('[create-payment-intent] Reuse path: missing resume token or client_secret.');
         return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
       }
 
+      const reuseTracking = reuseOrderId ? await trackingTokenForOrder(reuseOrderId) : null;
       return jsonResponse({
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
         resumeToken: resume,
+        ...(reuseTracking ? { trackingToken: reuseTracking } : {}),
       });
     }
 
@@ -457,6 +499,7 @@ Deno.serve(async (req) => {
       where id = ${checkoutSessionId}::uuid
     `;
 
+    let persistedOrderId: string | null = null;
     try {
       await sql.begin(async (tx) => {
         const inserted = await tx<{ id: string }[]>`
@@ -512,6 +555,7 @@ Deno.serve(async (req) => {
         if (!orderId) {
           throw new Error('Order insert returned no id.');
         }
+        persistedOrderId = orderId;
 
         for (const item of items) {
           const variant = typeof item.variant === 'string' && item.variant.trim()
@@ -567,10 +611,12 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: message }, 500);
     }
 
+    const thankYouTracking = persistedOrderId ? await trackingTokenForOrder(persistedOrderId) : null;
     return jsonResponse({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
       resumeToken,
+      ...(thankYouTracking ? { trackingToken: thankYouTracking } : {}),
     });
   } catch (error) {
     try {
