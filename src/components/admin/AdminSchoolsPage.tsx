@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import {
   Activity,
@@ -41,6 +41,33 @@ function formatDate(value?: string | null) {
   } catch {
     return '';
   }
+}
+
+function normalizeIco(value: string) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function buildSyntheticSchoolListItem(ico?: string, name?: string): AdminSchoolListItem {
+  const i = ico?.trim() || '';
+  const n = name?.trim() || '';
+  return {
+    name: n || 'Škola',
+    ico: i,
+    address: '',
+    kraj: '',
+    typ: undefined,
+    redIzo: undefined,
+    orgId: null,
+    orgName: null,
+    status: 'known',
+    matchedBy: i ? 'ico' : 'name',
+    ownerName: null,
+    products: [],
+    wonDeals: 0,
+    openDeals: 0,
+    totalDeals: 0,
+    source: 'csv',
+  };
 }
 
 function pickPrimaryContactValue(value: unknown) {
@@ -343,29 +370,28 @@ export function AdminSchoolsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [listError, setListError] = useState('');
   const [detailError, setDetailError] = useState('');
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
   const ownerContact = detail?.owner
     ? findContactRepresentative({ email: detail.owner.email, name: detail.owner.name })
     : null;
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const urlSchoolSelectKeyRef = useRef<string>('');
 
-  useEffect(() => {
-    if (icoFromUrl.length >= 6) {
-      setSearchInput(icoFromUrl);
-    } else if (nameFromUrl) {
-      setSearchInput(nameFromUrl);
-    }
-  }, [icoFromUrl, nameFromUrl]);
-
-  const loadSchools = async (q: string, subject: string) => {
+  const loadSchools = useCallback(async (q: string, subject: string) => {
     setSchoolsLoading(true);
     setListError('');
     try {
       const data = await fetchAdminSchools({ q, subject, limit: 24 });
-      setSchools(data.items || []);
+      const items = data.items || [];
+      setSchools(items);
       setSelectedSchool((current) => {
-        if (!current) return data.items?.[0] || null;
-        return data.items?.find((item) => item.ico === current.ico) || data.items?.[0] || null;
+        if (!current) return items[0] || null;
+        const match = items.find((item) => item.ico === current.ico);
+        if (match) return match;
+        if (items.length > 0) return items[0];
+        /** Seznam prázdný (např. škola jen v objednávkách) — nechat výběr z deep linku */
+        if (current.ico?.trim() || current.name?.trim()) return current;
+        return null;
       });
     } catch (error: any) {
       setListError(error.message || 'Nepodařilo se načíst školy.');
@@ -374,11 +400,20 @@ export function AdminSchoolsPage() {
     } finally {
       setSchoolsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadSchools('', '');
   }, []);
+
+  /** Počáteční načtení + odkaz z detailu objednávky (?ico=&name=). */
+  useEffect(() => {
+    const icoParam = normalizeIco(searchParams.get('ico') || '');
+    const nameParam = (searchParams.get('name') || '').trim();
+    if (icoParam || nameParam) {
+      setSearchInput(icoParam || nameParam);
+      setSelectedSchool(buildSyntheticSchoolListItem(icoParam || undefined, nameParam || undefined));
+      void loadSchools(icoParam || nameParam, '');
+    } else {
+      void loadSchools('', '');
+    }
+  }, [searchParams, loadSchools]);
 
   useEffect(() => {
     let cancelled = false;
@@ -489,6 +524,10 @@ export function AdminSchoolsPage() {
     };
   }, [selectedSchool, icoFromUrl, nameFromUrl]);
 
+  useEffect(() => {
+    setOrdersExpanded(false);
+  }, [selectedSchool?.ico]);
+
   const selectedOrganization = useMemo(() => {
     if (selectedSchool) {
       return detail?.organization
@@ -524,7 +563,13 @@ export function AdminSchoolsPage() {
       : detail?.orderSummary?.recentOrders || [],
     [detail?.orderSummary?.allOrders, detail?.orderSummary?.recentOrders],
   );
-  const eshopOrdersCapped = (detail?.orderSummary?.allOrders?.length || 0) >= 500;
+  const ORDERS_PREVIEW = 8;
+  const visibleShopOrders =
+    ordersExpanded || eshopOrdersList.length <= ORDERS_PREVIEW
+      ? eshopOrdersList
+      : eshopOrdersList.slice(0, ORDERS_PREVIEW);
+  /** Max. počet řádků z DB při stránkování v make-server (150×80). */
+  const eshopOrdersCapped = eshopOrdersList.length >= 12000;
 
   const urlOnlySchoolContext =
     !selectedSchool && (icoFromUrl.length >= 6 || Boolean(nameFromUrl));
@@ -754,18 +799,47 @@ export function AdminSchoolsPage() {
                       <p style={FF} className="text-[11px] text-[#001161]/40">celkový obrat</p>
                     </div>
                   </div>
-                  {detail?.orderSummary.recentOrders?.length ? (
+                  {eshopOrdersList.length > 0 ? (
                     <div className="mt-4 space-y-2">
-                      {detail.orderSummary.recentOrders.slice(0, 3).map((order) => (
-                        <div key={order.id} className="rounded-xl bg-[#f7f8fc] px-3 py-2">
-                          <p style={FF} className="text-[12px] font-bold text-[#001161]">
-                            {order.orderNumber} · {order.status}
-                          </p>
-                          <p style={FF} className="text-[11px] text-[#001161]/45 mt-0.5">
-                            {new Date(order.createdAt).toLocaleDateString('cs-CZ')} · {formatCurrency(order.total)}
-                          </p>
+                      <p style={FF} className="text-[11px] text-[#001161]/45 mb-2">
+                        {`Celkem ${eshopOrdersList.length} objednávek v e-shopu (podle IČO / názvu).`}
+                      </p>
+                      {visibleShopOrders.map((order) => (
+                        <div
+                          key={order.id}
+                          className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-[#f7f8fc] px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p style={FF} className="text-[12px] font-bold text-[#001161]">
+                              {order.orderNumber} · {order.status}
+                            </p>
+                            <p style={FF} className="text-[11px] text-[#001161]/45 mt-0.5">
+                              {new Date(order.createdAt).toLocaleString('cs-CZ')} · {formatCurrency(order.total)}
+                            </p>
+                          </div>
+                          {order.id ? (
+                            <Link
+                              to={`../objednavky/${encodeURIComponent(order.id)}`}
+                              relative="path"
+                              className="shrink-0 text-[11px] font-bold text-[#001161] hover:text-[#ff8c66] underline"
+                            >
+                              {'Detail objednávky'}
+                            </Link>
+                          ) : null}
                         </div>
                       ))}
+                      {eshopOrdersList.length > ORDERS_PREVIEW ? (
+                        <button
+                          type="button"
+                          onClick={() => setOrdersExpanded((v) => !v)}
+                          style={FF}
+                          className="w-full text-left text-[12px] font-bold text-[#001161]/70 hover:text-[#001161] pt-1"
+                        >
+                          {ordersExpanded
+                            ? 'Sbalit seznam'
+                            : `Zobrazit všech ${eshopOrdersList.length} objednávek`}
+                        </button>
+                      ) : null}
                     </div>
                   ) : (
                     <p style={FF} className="text-[12px] text-[#001161]/35 mt-3">Zatím bez e-shop objednávek.</p>
@@ -842,7 +916,7 @@ export function AdminSchoolsPage() {
                     </div>
                     <p style={FF} className="text-[11px] text-[#001161]/45">
                       {detail?.orderSummary.orderCount ?? eshopOrdersList.length} objednávek
-                      {eshopOrdersCapped ? ' · zobrazeno max. 500 záznamů z databáze' : ''}
+                      {eshopOrdersCapped ? ' · zobrazeno max. 12 000 záznamů (další v DB mohou být navíc)' : ''}
                     </p>
                   </div>
                   <div className="overflow-x-auto max-h-[min(480px,55vh)] overflow-y-auto">

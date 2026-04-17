@@ -11691,31 +11691,33 @@ function buildSchoolOrderSummaryFromRows(orders: any[]) {
 
 async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: string }) {
   const supabase = getServiceSupabaseClient();
+  const empty = {
+    orderCount: 0,
+    totalRevenue: 0,
+    purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
+    digitalLicenses: [] as string[],
+    recentOrders: [] as Array<{
+      id: string;
+      orderNumber: string;
+      createdAt: string;
+      status: string;
+      paymentStatus: string | null;
+      total: number;
+      items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+    }>,
+    allOrders: [] as Array<{
+      id: string;
+      orderNumber: string;
+      createdAt: string;
+      status: string;
+      paymentStatus: string | null;
+      total: number;
+      items: Array<{ productName: string; quantity: number; totalPrice: number }>;
+    }>,
+  };
+
   if (!supabase) {
-    return {
-      orderCount: 0,
-      totalRevenue: 0,
-      purchasedProducts: [] as Array<{ name: string; quantity: number; orderCount: number }>,
-      digitalLicenses: [] as string[],
-      recentOrders: [] as Array<{
-        id: string;
-        orderNumber: string;
-        createdAt: string;
-        status: string;
-        paymentStatus: string | null;
-        total: number;
-        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
-      }>,
-      allOrders: [] as Array<{
-        id: string;
-        orderNumber: string;
-        createdAt: string;
-        status: string;
-        paymentStatus: string | null;
-        total: number;
-        items: Array<{ productName: string; quantity: number; totalPrice: number }>;
-      }>,
-    };
+    return empty;
   }
 
   const ico = String(params.ico || '').trim();
@@ -11723,73 +11725,43 @@ async function fetchSchoolOrderSummary(params: { schoolName?: string; ico?: stri
   const selectCols =
     'id, order_number, created_at, status, payment_status, total, school_name, ico, order_items(product_name, quantity, total_price)';
 
-  if (ico) {
-    const { data, error } = await supabase
-      .from('orders')
-      .select(selectCols)
-      .eq('ico', ico)
-      .order('created_at', { ascending: false })
-      .limit(500);
-
-    if (error) {
-      console.log(`[Schools] Order summary fetch error: ${error.message}`);
-      return {
-        orderCount: 0,
-        totalRevenue: 0,
-        purchasedProducts: [],
-        digitalLicenses: [],
-        recentOrders: [],
-        allOrders: [],
-      };
-    }
-
-    const orders = Array.isArray(data) ? data : [];
-    const base = buildSchoolOrderSummaryFromRows(orders);
-    return {
-      ...base,
-      recentOrders: base.recentOrders.slice(0, 20),
-      allOrders: base.recentOrders,
-    };
+  if (!ico && !schoolName) {
+    return empty;
   }
 
-  if (schoolName) {
-    const query = supabase
+  /** Stránkování — bez horního limitu 500 řádků (dřívý main); max ~12k řádků na dotaz. */
+  const PAGE = 150;
+  const MAX_PAGES = 80;
+  const orders: any[] = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const from = page * PAGE;
+    const to = from + PAGE - 1;
+    let q = supabase
       .from('orders')
       .select(selectCols)
-      .ilike('school_name', `%${schoolName}%`)
       .order('created_at', { ascending: false })
-      .limit(500);
-
-    const { data, error } = await query;
+      .range(from, to);
+    if (ico) {
+      q = q.eq('ico', ico);
+    } else {
+      q = q.ilike('school_name', `%${schoolName}%`);
+    }
+    const { data, error } = await q;
     if (error) {
       console.log(`[Schools] Order summary fetch error: ${error.message}`);
-      return {
-        orderCount: 0,
-        totalRevenue: 0,
-        purchasedProducts: [],
-        digitalLicenses: [],
-        recentOrders: [],
-        allOrders: [],
-      };
+      return empty;
     }
-
-    const orders = Array.isArray(data) ? data : [];
-    const base = buildSchoolOrderSummaryFromRows(orders);
-    return {
-      ...base,
-      orderCount: orders.length,
-      recentOrders: base.recentOrders.slice(0, 20),
-      allOrders: base.recentOrders,
-    };
+    const batch = Array.isArray(data) ? data : [];
+    orders.push(...batch);
+    if (batch.length < PAGE) break;
   }
 
+  const base = buildSchoolOrderSummaryFromRows(orders);
   return {
-    orderCount: 0,
-    totalRevenue: 0,
-    purchasedProducts: [],
-    digitalLicenses: [],
-    recentOrders: [],
-    allOrders: [],
+    ...base,
+    orderCount: orders.length,
+    recentOrders: base.recentOrders.slice(0, 20),
+    allOrders: base.recentOrders,
   };
 }
 

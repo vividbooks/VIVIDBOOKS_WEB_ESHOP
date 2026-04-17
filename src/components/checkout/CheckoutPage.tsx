@@ -1862,7 +1862,7 @@ export function CheckoutPage() {
                     <Elements
                       stripe={stripePromise}
                       options={{
-                        clientSecret,
+                        clientSecret: clientSecret ?? undefined,
                         loader: 'auto',
                         appearance: {
                           theme: 'stripe',
