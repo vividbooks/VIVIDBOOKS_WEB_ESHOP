@@ -83,6 +83,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:github-pages": "node scripts/gh-pages-build.mjs",
     "og-assets": "python3 scripts/generate_og_assets.py",
     "import-shoptet": "node scripts/import-shoptet-products.mjs",
     "mailchimp-export": "tsx scripts/mailchimp-export.ts"

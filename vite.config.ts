@@ -4,11 +4,15 @@
   import tailwindcss from '@tailwindcss/vite';
   import path from 'path';
 
-  /** GitHub project Pages: /REPO_NAME/ — při buildu v Actions je GITHUB_ACTIONS=true */
+  /** GitHub project Pages: /REPO_NAME/ — při buildu v Actions nebo npm run build:github-pages */
   const GH_PAGES_BASE = '/VIVIDBOOKS_WEB_ESHOP/';
+  const isGhPagesBase =
+    process.env.GITHUB_ACTIONS === 'true' || process.env.GH_PAGES === 'true';
+  /** Výstup do `docs/` pro hosting z kořene složky docs na GitHubu (nezahodit PROJECT.md atd.) */
+  const isDocsOut = process.env.DOCS_BUILD === '1';
 
   export default defineConfig({
-    base: process.env.GITHUB_ACTIONS === 'true' ? GH_PAGES_BASE : '/',
+    base: isGhPagesBase ? GH_PAGES_BASE : '/',
     plugins: [react(), tailwindcss()],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
@@ -74,7 +78,9 @@
     },
     build: {
       target: 'esnext',
-      outDir: 'build',
+      outDir: isDocsOut ? 'docs' : 'build',
+      /** Při `docs/` tam jsou i .md soubory — nesmazat je. Staré `docs/assets` čistí npm skript. */
+      emptyOutDir: !isDocsOut,
     },
     server: {
       port: Number(process.env.PORT) || 3000,

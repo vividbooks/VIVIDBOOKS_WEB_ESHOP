@@ -219,17 +219,6 @@ export function AdminOrderDetailPage() {
     [order?.ico, order?.school_name],
   );
 
-  const schoolAdminHref = useMemo(() => {
-    if (!order) return null;
-    const ico = order.ico?.trim();
-    const name = order.school_name?.trim();
-    if (!ico && !name) return null;
-    const q = new URLSearchParams();
-    if (ico) q.set('ico', ico);
-    if (name) q.set('name', name);
-    return `../skoly?${q.toString()}`;
-  }, [order]);
-
   const loadOrder = async (opts?: { silent?: boolean }) => {
     if (!id) return;
     if (!opts?.silent) {
