@@ -61,7 +61,7 @@ export const EMAIL_BLOCK_PRESETS: EmailBlockPreset[] = [
   },
 ];
 
-function randomBlockId() {
+export function randomBlockId() {
   return `vb-block-${Math.random().toString(36).slice(2, 10)}`;
 }
 
@@ -211,6 +211,107 @@ export function inferEmailBlockType(el: Element): EmailBlockType {
   return 'html';
 }
 
+/** Přímé elementové děti textového bloku (bez style/script) — stejná mřížka jako u výpočtu splitu. */
+export function getTextBlockElementChildren(host: HTMLElement): HTMLElement[] {
+  return [...host.children].filter(
+    (c): c is HTMLElement => c.nodeType === Node.ELEMENT_NODE && !/^(STYLE|SCRIPT)$/i.test(c.tagName),
+  );
+}
+
+/**
+ * Textový blok vložený přímo pod kořen DnD nebo do sekce — lze ho při dropu z knihovny rozdělit.
+ */
+export function findTopLevelTextBlockHostForDrop(
+  start: Element | null,
+  rootDnd: HTMLElement,
+): HTMLElement | null {
+  if (!start || !rootDnd.contains(start)) return null;
+  const t = start.closest('[data-vb-block="text"]') as HTMLElement | null;
+  if (!t || !rootDnd.contains(t)) return null;
+  const p = t.parentElement;
+  if (p !== rootDnd && p?.getAttribute('data-vb-block') !== 'section') return null;
+  return t;
+}
+
+/**
+ * Kam rozdělit textový blok při dropu z knihovny: index prvního odstavce v pravé části (1..n-1).
+ * Vyžaduje alespoň dva elementové potomky (typicky dva <p>).
+ */
+export function findTextBlockLibraryDropSplitIndex(host: HTMLElement, clientY: number): number | null {
+  const children = getTextBlockElementChildren(host);
+  const n = children.length;
+  if (n < 2) return null;
+
+  const rects = children.map((c) => c.getBoundingClientRect());
+
+  const gapSlackPx = 8;
+  for (let i = 1; i < n; i++) {
+    const a = rects[i - 1].bottom;
+    const b = rects[i].top;
+    const lo = Math.min(a, b) - gapSlackPx;
+    const hi = Math.max(a, b) + gapSlackPx;
+    if (clientY >= lo && clientY <= hi) {
+      return i;
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (clientY >= rects[i].top && clientY <= rects[i].bottom) {
+      const mid = rects[i].top + rects[i].height / 2;
+      if (clientY < mid) {
+        if (i >= 1) return i;
+        return null;
+      }
+      if (i < n - 1) return i + 1;
+      return null;
+    }
+  }
+
+  if (clientY < rects[0].top) return null;
+  if (clientY > rects[n - 1].bottom) return null;
+
+  return null;
+}
+
+/**
+ * Uzel vhodný k přeuspořádání DnD: top-level `section` jen pod kořenem; ostatní bloky s id uvnitř
+ * sekce tak, že na cestě k `section` není jiný `data-vb-block-id` (řeší obalové divy z importu).
+ */
+export function isDndReorderableEmailBlock(el: HTMLElement, rootDnd: HTMLElement): boolean {
+  if (!el.hasAttribute('data-vb-block-id') || !rootDnd.contains(el)) return false;
+  if (el.getAttribute('data-vb-block') === 'section') {
+    return el.parentElement === rootDnd;
+  }
+  const sec = el.closest('[data-vb-block="section"]');
+  if (!sec || !rootDnd.contains(sec)) {
+    return el.parentElement === rootDnd;
+  }
+  let x: HTMLElement | null = el.parentElement;
+  while (x && x !== sec) {
+    if (x.hasAttribute('data-vb-block-id')) return false;
+    x = x.parentElement;
+  }
+  return x === sec;
+}
+
+/** Nejvnitřnější přetahovatelný blok z místa kliknutí (ne celá sekce kvůli obalům). */
+export function findDndBlockFromDragTarget(target: EventTarget | null, rootDnd: HTMLElement): HTMLElement | null {
+  if (!target || typeof (target as Node).nodeType !== 'number') return null;
+  const raw = target as Node;
+  const el =
+    raw.nodeType === Node.TEXT_NODE ? (raw as Text).parentElement : (raw as HTMLElement);
+  if (!el || !rootDnd.contains(el)) return null;
+
+  let n: HTMLElement | null = el.closest('[data-vb-block-id]');
+  while (n) {
+    if (isDndReorderableEmailBlock(n, rootDnd)) return n;
+    const par = n.parentElement;
+    if (!par || !rootDnd.contains(par)) return null;
+    n = par.closest('[data-vb-block-id]');
+  }
+  return null;
+}
+
 function migrateCardGroupToSection(root: HTMLElement) {
   root.querySelectorAll('[data-vb-block="card-group"]').forEach((raw) => {
     const h = raw as HTMLElement;
@@ -261,6 +362,29 @@ function repairEmptySections(root: HTMLElement) {
   });
 }
 
+/**
+ * Unikátní `data-vb-block-id` v celém stromě. Bez toho `querySelector` vždy trefí jen první blok
+ * a nahrazení obrázku / inspektor působí „nahradil se jiný blok“ (časté po copy/paste nebo AI).
+ * První výskyt daného id v pořadí dokumentu zůstane; další dostanou nové ID.
+ */
+function dedupeDataVbBlockIds(root: HTMLElement) {
+  const seen = new Set<string>();
+  for (const el of root.querySelectorAll('[data-vb-block-id]')) {
+    let id = el.getAttribute('data-vb-block-id');
+    if (!id) continue;
+    if (!seen.has(id)) {
+      seen.add(id);
+      continue;
+    }
+    let newId: string;
+    do {
+      newId = randomBlockId();
+    } while (seen.has(newId));
+    el.setAttribute('data-vb-block-id', newId);
+    seen.add(newId);
+  }
+}
+
 export function normalizeEmailBodyHtml(html: string): string {
   const normalized = (html || '').trim();
   if (!normalized) return `<div class="vb-email-root">${buildEmailSectionHtml('card')}</div>`;
@@ -286,6 +410,7 @@ export function normalizeEmailBodyHtml(html: string): string {
     normalizeEmailBlockContainer(root);
   }
   repairEmptySections(root);
+  dedupeDataVbBlockIds(root);
   return root.outerHTML;
 }
 

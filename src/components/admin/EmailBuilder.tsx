@@ -11,6 +11,8 @@ import {
   AlignLeft, AlignCenter, AlignRight, Minus, RectangleHorizontal, Columns2, Columns3, PanelTop, ShoppingBag,
   ArrowDown, SquareDashed,
   SquareStack,
+  Upload,
+  GripVertical,
   BetweenVerticalStart,
   Bold, Italic, Underline, Strikethrough, Link2, List, ListOrdered,
 } from 'lucide-react';
@@ -36,6 +38,7 @@ import {
   EMAIL_BUILDER_AI_TIER_KEY,
   type EmailAiTier,
   fetchGenerateEmailWithRetry,
+  geminiErrorLooksOverloaded,
   getStoredEmailAiTier,
 } from '../../utils/emailAiTier';
 import {
@@ -48,9 +51,15 @@ import {
   buildEmailSectionHtml,
   extractFirstImage,
   extractFirstLink,
+  findDndBlockFromDragTarget,
+  findTextBlockLibraryDropSplitIndex,
+  findTopLevelTextBlockHostForDrop,
   getEmailBlockLabel,
+  getTextBlockElementChildren,
   inferEmailBlockType,
+  isDndReorderableEmailBlock,
   normalizeEmailBodyHtml,
+  randomBlockId,
   readElementBackground,
   readElementPadding,
   setInlineStyleValue,
@@ -59,10 +68,17 @@ import {
 
 /** Přetahování typu bloku z knihovny do iframe náhledu (HTML5 DnD). */
 const VB_EMAIL_LIBRARY_DRAG_TYPE = 'application/x-vb-email-block-type';
+/** Přesun existujícího bloku z úchytu v postranní liště (parent → iframe). */
+const VB_EMAIL_BLOCK_MOVE_DRAG_TYPE = 'application/x-vb-email-block-move-id';
+/** Některé prohlížeče neukážou vlastní MIME v dragover uvnitř iframe — držíme id během gesta. */
+let vbEmailActiveBlockMoveId: string | null = null;
+/** Rozšířená „magnetická“ zóna kolem bloku pro plovoucí lištu (iframe + most k panelu v parent okně). */
+const EMAIL_BLOCK_CHROME_HIT_PADDING_PX = 100;
 const EMAIL_PRESET_TYPE_SET = new Set<EmailBlockType>(EMAIL_BLOCK_PRESETS.map((p) => p.type));
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
+const AUTH_H_NO_CT = { Authorization: `Bearer ${publicAnonKey}` } as const;
 const F = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 /** HTML jednoho bloku (bez `data-vb-block-id`) pro vložení v jiném mailu přes + v postranní liště. */
 const EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY = 'vb-email-block-clipboard-html';
@@ -344,13 +360,110 @@ function escapeHtmlAttr(s: string): string {
     .replace(/>/g, '&gt;');
 }
 
-/** Nahradí `src` u všech <img>, které mají přesně dané URL (např. po kliknutí v editoru). */
-function replaceImgSrcInHtml(html: string, oldSrc: string, newSrc: string): string {
+/** Kanonická URL pro porovnání (řeší & vs &amp; v serializovaném HTML vs DOM .src). */
+function canonicalImageHrefForReplace(u: string): string {
+  const s = (u || '').trim();
+  if (!s) return '';
+  try {
+    return new URL(s).href;
+  } catch {
+    return s;
+  }
+}
+
+function imgAttributeSrcMatchesRef(htmlSrcAttr: string, oldRef: string): boolean {
+  if (!htmlSrcAttr || !oldRef) return false;
+  if (htmlSrcAttr === oldRef) return true;
+  if (canonicalImageHrefForReplace(htmlSrcAttr) === canonicalImageHrefForReplace(oldRef)) return true;
+  const decAmp = (x: string) => x.replace(/&amp;/gi, '&');
+  if (decAmp(htmlSrcAttr) === decAmp(oldRef)) return true;
+  return false;
+}
+
+/** Regex: první <img> s danou `src` — varianty & v URL (uložené HTML vs prohlížeč). */
+function replaceFirstImgSrcInHtmlRegex(html: string, oldSrc: string, newSrc: string): string {
   if (!html || !oldSrc || !newSrc) return html;
-  const esc = oldSrc.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(<img[^>]*\\bsrc=["'])${esc}(["'])`, 'gi');
   const safe = escapeHtmlAttr(newSrc);
-  return html.replace(re, (_m, a, q) => `${a}${safe}${q}`);
+  const variants = new Set<string>();
+  const add = (s: string) => {
+    const t = (s || '').trim();
+    if (!t) return;
+    variants.add(t);
+    variants.add(t.replace(/&/g, '&amp;'));
+    variants.add(t.replace(/&amp;/g, '&'));
+  };
+  add(oldSrc);
+  let out = html;
+  for (const v of variants) {
+    const esc = v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(<img[^>]*\\bsrc=["'])${esc}(["'])`, 'i');
+    const next = out.replace(re, (_m, a, q) => `${a}${safe}${q}`);
+    if (next !== out) return next;
+  }
+  return out;
+}
+
+/**
+ * Nahradí `src` jen u prvního <img>, které sedí na `oldRef` (pořadí v HTML).
+ * Pro blokový editor preferuj `replaceFirstImgSrcInVbImageBlockById`, pokud znáš `data-vb-block-id`.
+ */
+function replaceFirstImgSrcInHtml(html: string, oldSrc: string, newSrc: string): string {
+  if (!html || !oldSrc || !newSrc) return html;
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
+    return replaceFirstImgSrcInHtmlRegex(html, oldSrc, newSrc);
+  }
+  try {
+    const doc = new DOMParser().parseFromString(`<div id="vb-img-repl-first">${html}</div>`, 'text/html');
+    const root = doc.querySelector('#vb-img-repl-first');
+    if (!root) return replaceFirstImgSrcInHtmlRegex(html, oldSrc, newSrc);
+    for (const img of root.querySelectorAll('img')) {
+      const attr = img.getAttribute('src') || '';
+      if (!attr) continue;
+      let hit = imgAttributeSrcMatchesRef(attr, oldSrc);
+      if (!hit) {
+        try {
+          hit = imgAttributeSrcMatchesRef(img.src || '', oldSrc);
+        } catch {
+          hit = false;
+        }
+      }
+      if (hit) {
+        img.setAttribute('src', newSrc);
+        return root.innerHTML;
+      }
+    }
+  } catch {
+    /* regex fallback */
+  }
+  return replaceFirstImgSrcInHtmlRegex(html, oldSrc, newSrc);
+}
+
+/**
+ * Spolehlivá náhrada při dropu — pod ID bloku (preferuj `data-vb-block="image"`, jinak jakýkoli blok s id a `<img>`).
+ */
+function replaceFirstImgSrcInVbImageBlockById(html: string, imageBlockId: string, newSrc: string): string {
+  if (!html || !imageBlockId || !newSrc) return html;
+  if (typeof window === 'undefined' || typeof DOMParser === 'undefined') return html;
+  try {
+    const doc = new DOMParser().parseFromString(`<div id="vb-img-block-repl">${html}</div>`, 'text/html');
+    const wrap = doc.getElementById('vb-img-block-repl');
+    if (!wrap) return html;
+    const esc = CSS.escape(imageBlockId);
+    let block = wrap.querySelector(
+      `[data-vb-block="image"][data-vb-block-id="${esc}"]`,
+    ) as HTMLElement | null;
+    if (!block) {
+      const byId = wrap.querySelector(`[data-vb-block-id="${esc}"]`) as HTMLElement | null;
+      if (byId?.querySelector('img')) block = byId;
+    }
+    if (!block) return html;
+    const img = block.querySelector('img');
+    if (!img) return html;
+    img.setAttribute('src', newSrc);
+    return wrap.innerHTML;
+  } catch {
+    return html;
+  }
 }
 
 function escapeHtmlTextContent(s: string): string {
@@ -651,6 +764,212 @@ function getEmailDndRoot(doc: Document): HTMLElement {
   return (doc.querySelector('.vb-email-root') as HTMLElement) || doc.body;
 }
 
+/** Potomci kromě style/script (stejná logika jako při kontrole prázdné sekce). */
+function emailStructuralChildElements(host: HTMLElement): HTMLElement[] {
+  return [...host.children].filter(
+    (c): c is HTMLElement =>
+      c.nodeType === Node.ELEMENT_NODE && !/^(STYLE|SCRIPT)$/i.test(c.tagName),
+  );
+}
+
+/**
+ * Smaže blok v náhledu. Když to byl poslední blok ve `data-vb-block="section"`, smaže i prázdnou sekci —
+ * jinak `repairEmptySections` v normalize okamžitě doplní výchozí text a mazání vypadá jako neúspěch.
+ * Vrací `data-vb-block-id` pro nový výběr, nebo null.
+ */
+const VB_AI_REPLACE_ATTR = 'data-vb-ai-replace';
+
+/** Obalí aktuální výběr ve spanu s id — po odpovědi AI se nahradí čistým textem a obal odstraní. */
+function tryWrapIframeSelectionForPlainAiReplace(doc: Document): string | null {
+  const sel = doc.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  const raw = sel.toString().replace(/\u00a0/g, ' ').trim();
+  if (!raw) return null;
+  const id = `vb-sel-${crypto.randomUUID().slice(0, 10)}`;
+  try {
+    const span = doc.createElement('span');
+    span.setAttribute(VB_AI_REPLACE_ATTR, id);
+    range.surroundContents(span);
+    return id;
+  } catch {
+    return null;
+  }
+}
+
+/** Odstraní dočasné obaly bez změny textu (při chybě API). */
+function unwrapVbAiReplaceMarkers(doc: Document) {
+  doc.querySelectorAll(`[${VB_AI_REPLACE_ATTR}]`).forEach((el) => {
+    const span = el as HTMLElement;
+    const parent = span.parentNode;
+    if (!parent) return;
+    while (span.firstChild) parent.insertBefore(span.firstChild, span);
+    parent.removeChild(span);
+  });
+}
+
+/** Vloží nahradní čistý text a odstraní span. */
+function applyPlainTextInVbAiReplaceMarker(doc: Document, markerId: string, plain: string): boolean {
+  const span = doc.querySelector(
+    `[${VB_AI_REPLACE_ATTR}="${CSS.escape(markerId)}"]`,
+  ) as HTMLElement | null;
+  if (!span) return false;
+  span.textContent = plain;
+  const parent = span.parentNode;
+  if (!parent) return false;
+  while (span.firstChild) parent.insertBefore(span.firstChild, span);
+  parent.removeChild(span);
+  return true;
+}
+
+function deleteEmailBlockNode(block: HTMLElement, root: HTMLElement): string | null {
+  const parent = block.parentElement as HTMLElement | null;
+  const nextSibling = block.nextElementSibling as HTMLElement | null;
+  const prevSibling = block.previousElementSibling as HTMLElement | null;
+  block.remove();
+
+  const rootNonMetaKids = () =>
+    [...root.children].filter((el) => !/^(STYLE|SCRIPT)$/i.test((el as HTMLElement).tagName));
+
+  if (parent?.getAttribute('data-vb-block') === 'section' && root.contains(parent)) {
+    if (emailStructuralChildElements(parent).length === 0) {
+      const secNext = parent.nextElementSibling as HTMLElement | null;
+      const secPrev = parent.previousElementSibling as HTMLElement | null;
+      parent.remove();
+      if (rootNonMetaKids().length === 0) {
+        root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
+      }
+      const next =
+        (secNext?.querySelector('[data-vb-block-id]') as HTMLElement | null) ||
+        (() => {
+          const nodes = secPrev?.querySelectorAll('[data-vb-block-id]');
+          return nodes?.length ? (nodes[nodes.length - 1] as HTMLElement) : null;
+        })() ||
+        (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
+      return next?.getAttribute('data-vb-block-id') || null;
+    }
+  }
+
+  if (rootNonMetaKids().length === 0) {
+    root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
+  }
+  const next =
+    nextSibling ||
+    prevSibling ||
+    (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
+  return next?.getAttribute('data-vb-block-id') || null;
+}
+
+/** Safari/Firefox někdy v dragover nehlásí přesně řetězec `Files` — kontrola items a moz typu. */
+function dataTransferMayContainFiles(dt: DataTransfer | null | undefined): boolean {
+  if (!dt) return false;
+  try {
+    for (let i = 0; i < dt.types.length; i++) {
+      const t = dt.types[i];
+      if (t === 'Files' || t === 'application/x-moz-file') return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    const { items } = dt;
+    if (items) {
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].kind === 'file') return true;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Soubor z OS vypadá jako obrázek (MIME nebo přípona). */
+function fileDropLooksLikeImage(f: File): boolean {
+  return (
+    (!!f.type && /^image\//i.test(f.type)) ||
+    /\.(png|jpe?g|gif|webp|svg|avif|heic|heif|bmp|tif|tiff)(\?[#]?.+)?$/i.test(f.name || '')
+  );
+}
+
+/**
+ * Stejná logika jako uvnitř iframe — použije se při dropu na rodičovském obalu (kvůli konfliktu designMode / iframe).
+ * `clientX`/`clientY` = souřadnice vůči viewportu dokumentu iframe (jako `elementFromPoint` uvnitř iframe).
+ */
+function resolveEmailImageFileDropTargetInDoc(
+  doc: Document,
+  clientX: number,
+  clientY: number,
+): { img: HTMLImageElement; imageBlockId: string | null } | null {
+  const rootDnd = getEmailDndRoot(doc);
+  const hit = doc.elementFromPoint(clientX, clientY);
+  if (!hit || !rootDnd.contains(hit)) return null;
+  const block = hit.closest?.('[data-vb-block="image"]') as HTMLElement | null;
+  if (block && rootDnd.contains(block) && isDndReorderableEmailBlock(block, rootDnd)) {
+    const img = block.querySelector('img') as HTMLImageElement | null;
+    if (img && block.contains(img)) {
+      return { img, imageBlockId: block.getAttribute('data-vb-block-id') };
+    }
+  }
+  const imgLoose = hit.closest?.('img') as HTMLImageElement | null;
+  if (imgLoose && rootDnd.contains(imgLoose)) {
+    const host = imgLoose.closest('[data-vb-block="image"]') as HTMLElement | null;
+    if (host && rootDnd.contains(host) && isDndReorderableEmailBlock(host, rootDnd)) {
+      return { img: imgLoose, imageBlockId: host.getAttribute('data-vb-block-id') };
+    }
+    return { img: imgLoose, imageBlockId: null };
+  }
+  return null;
+}
+
+/**
+ * Najdi nejbližší image blok pod kurzorem podle bounding rectů (ne `elementFromPoint`,
+ * který může vracet vnitřní `<p>`/text mimo `<img>` a tichá selhání jsou horší než přesné error).
+ *
+ * `clientX`/`clientY` jsou souřadnice ve viewport iframu (jako kdyby `elementFromPoint` v iframu).
+ */
+function resolveEmailImageBlockByPoint(
+  doc: Document,
+  clientX: number,
+  clientY: number,
+): { img: HTMLImageElement; imageBlockId: string } | null {
+  const rootDnd = getEmailDndRoot(doc);
+  const blocks = [...rootDnd.querySelectorAll('[data-vb-block="image"]')] as HTMLElement[];
+  for (const block of blocks) {
+    if (!isDndReorderableEmailBlock(block, rootDnd)) continue;
+    const id = block.getAttribute('data-vb-block-id');
+    if (!id) continue;
+    const img = block.querySelector('img') as HTMLImageElement | null;
+    if (!img || !block.contains(img)) continue;
+    const r = block.getBoundingClientRect();
+    if (
+      clientX >= r.left &&
+      clientX <= r.right &&
+      clientY >= r.top &&
+      clientY <= r.bottom
+    ) {
+      return { img, imageBlockId: id };
+    }
+  }
+  return null;
+}
+
+/** Najdi konkrétní image blok podle ID (kontroluje, že je v DnD kořeni a má `<img>`). */
+function resolveEmailImageBlockById(
+  doc: Document,
+  imageBlockId: string,
+): { img: HTMLImageElement; imageBlockId: string } | null {
+  const rootDnd = getEmailDndRoot(doc);
+  const block = doc.querySelector(
+    `[data-vb-block="image"][data-vb-block-id="${CSS.escape(imageBlockId)}"]`,
+  ) as HTMLElement | null;
+  if (!block || !rootDnd.contains(block)) return null;
+  if (!isDndReorderableEmailBlock(block, rootDnd)) return null;
+  const img = block.querySelector('img') as HTMLImageElement | null;
+  if (!img || !block.contains(img)) return null;
+  return { img, imageBlockId };
+}
+
 /** Blok pro vložení „+“: odstavec, nadpis, buňka tabulky, sekční DIV (běžné u HTML mailů). */
 function findEditableBlock(start: Element | null, body: HTMLElement): HTMLElement | null {
   if (!start) return null;
@@ -688,6 +1007,52 @@ function findTopLevelEmailBlock(start: Element | null, doc: Document): HTMLEleme
   const el = hit.closest?.('[data-vb-block-id]') as HTMLElement | null;
   if (!el || !root.contains(el)) return null;
   return el;
+}
+
+function getEmailBlockRectInParentViewport(block: HTMLElement, iframeEl: HTMLIFrameElement) {
+  const r = block.getBoundingClientRect();
+  const ir = iframeEl.getBoundingClientRect();
+  return {
+    left: ir.left + r.left,
+    top: ir.top + r.top,
+    width: r.width,
+    height: r.height,
+  };
+}
+
+/**
+ * Blok pro plovoucí lištu: nejdřív z cíle události, jinak rozšířený hit-test (kurzor u okraje / nad prázdným místem).
+ */
+function findEmailBlockForChromeAtPoint(
+  doc: Document,
+  iframeEl: HTMLIFrameElement,
+  clientX: number,
+  clientY: number,
+  targetEl: Element | null,
+  pad: number,
+): HTMLElement | null {
+  const fromTarget = targetEl ? findTopLevelEmailBlock(targetEl, doc) : null;
+  if (fromTarget) return fromTarget;
+  const root = getEmailDndRoot(doc);
+  let best: HTMLElement | null = null;
+  let bestArea = Infinity;
+  for (const raw of root.querySelectorAll('[data-vb-block-id]')) {
+    const h = raw as HTMLElement;
+    const b = getEmailBlockRectInParentViewport(h, iframeEl);
+    if (
+      clientX >= b.left - pad &&
+      clientX <= b.left + b.width + pad &&
+      clientY >= b.top - pad &&
+      clientY <= b.top + b.height + pad
+    ) {
+      const area = b.width * b.height;
+      if (area < bestArea) {
+        bestArea = area;
+        best = h;
+      }
+    }
+  }
+  return best;
 }
 
 const BLOCK_PRESET_ICON: Record<EmailBlockType, React.ComponentType<{ className?: string }>> = {
@@ -1006,6 +1371,7 @@ function EmailIframeEditor({
   onIframeLeave,
   onIframeEnter,
   onRichTextActivity,
+  onImageFileDrop,
 }: {
   draftId: string;
   bodyEditEpoch: number;
@@ -1035,6 +1401,8 @@ function EmailIframeEditor({
   onIframeEnter?: () => void;
   /** Změna výběru / vstupu v těle — pro přepočet horní formátovací lišty. */
   onRichTextActivity?: () => void;
+  /** Přetažení souboru na blok obrázku — nahrazení přes server (stejně jako galerie). */
+  onImageFileDrop?: (file: File, attrSrc: string, resolvedSrc: string, imageBlockId: string | null) => void;
 }) {
   const innerRef = useRef<HTMLIFrameElement | null>(null);
   const assignIframeRef = (el: HTMLIFrameElement | null) => {
@@ -1061,6 +1429,8 @@ function EmailIframeEditor({
   onIframeEnterRef.current = onIframeEnter;
   const onRichTextActivityRef = useRef(onRichTextActivity);
   onRichTextActivityRef.current = onRichTextActivity;
+  const onImageFileDropRef = useRef(onImageFileDrop);
+  onImageFileDropRef.current = onImageFileDrop;
 
   const columnBgRef = useRef(columnBackground);
   columnBgRef.current = columnBackground;
@@ -1072,6 +1442,9 @@ function EmailIframeEditor({
 
   const builderModeRef = useRef(builderMode);
   builderModeRef.current = builderMode;
+
+  /** Aby šlo po změně výběru bloku znovu přepnout draggable bez přerenderu iframe. */
+  const applyDraggableAttrsRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const ownedDraftId = draftId;
@@ -1109,7 +1482,14 @@ function EmailIframeEditor({
         const block = !el
           ? null
           : builderModeRef.current === 'block'
-            ? findTopLevelEmailBlock(el, d)
+            ? findEmailBlockForChromeAtPoint(
+                d,
+                fr,
+                e.clientX,
+                e.clientY,
+                el,
+                EMAIL_BLOCK_CHROME_HIT_PADDING_PX,
+              )
             : findEditableBlock(el, d.body);
         if (hoverBlockRef) hoverBlockRef.current = block;
         const chromeCb = onHoverBlockChromeRef.current;
@@ -1212,20 +1592,17 @@ function EmailIframeEditor({
       mark?.classList.add('vb-block-selected');
     };
 
+    /** Bloky se nepřetahují z těla mailu (konflikt s výběrem textu) — jen z úchytu v liště. */
     const applyDraggableAttrs = () => {
       rootDnd.querySelectorAll('[data-vb-block-id]').forEach((raw) => {
-        const el = raw as HTMLElement;
-        const p = el.parentElement;
-        if (p === rootDnd || p?.getAttribute('data-vb-block') === 'section') {
-          el.setAttribute('draggable', 'true');
-        } else {
-          el.removeAttribute('draggable');
-        }
+        (raw as HTMLElement).removeAttribute('draggable');
       });
-      rootDnd.querySelectorAll('img').forEach(img => {
-        (img as HTMLElement).setAttribute('draggable', 'true');
+      rootDnd.querySelectorAll('img').forEach((img) => {
+        (img as HTMLElement).setAttribute('draggable', 'false');
       });
     };
+
+    applyDraggableAttrsRef.current = applyDraggableAttrs;
 
     const findDraggedNode = (target: EventTarget | null): HTMLElement | null => {
       if (!target || typeof (target as Node).nodeType !== 'number') return null;
@@ -1235,25 +1612,11 @@ function EmailIframeEditor({
       if (!el || !rootDnd.contains(el)) return null;
       const asImg = el.closest('img');
       if (asImg && rootDnd.contains(asImg) && (el === asImg || asImg.contains(el))) {
+        const imgBlock = findDndBlockFromDragTarget(asImg, rootDnd);
+        if (imgBlock?.getAttribute('data-vb-block') === 'image') return imgBlock;
         return asImg as HTMLImageElement;
       }
-      let n: HTMLElement | null = el.closest('[data-vb-block-id]');
-      while (n && rootDnd.contains(n)) {
-        const p = n.parentElement;
-        if (!p) return null;
-        if (p === rootDnd) return n;
-        if (p.getAttribute('data-vb-block') === 'section') return n;
-        n = p.closest('[data-vb-block-id]');
-      }
-      return null;
-    };
-
-    const findTopLevelBlock = (target: EventTarget | null): HTMLElement | null => {
-      if (!target || typeof (target as Node).nodeType !== 'number') return null;
-      const raw = target as Node;
-      const el = raw.nodeType === Node.TEXT_NODE ? (raw as Text).parentElement : (raw as HTMLElement);
-      if (!el || !rootDnd.contains(el)) return null;
-      return el.closest('[data-vb-block-id]') as HTMLElement | null;
+      return findDndBlockFromDragTarget(target, rootDnd);
     };
 
     const findDropInsertBeforeAtYIn = (clientY: number, skipNode: HTMLElement | null, parent: HTMLElement): Element | null => {
@@ -1297,11 +1660,72 @@ function EmailIframeEditor({
       }
     };
 
+    const onDragEnterDnd = (e: DragEvent) => {
+      const dt = e.dataTransfer;
+      if (vbEmailActiveBlockMoveId) {
+        e.preventDefault();
+        return;
+      }
+      if (dt && [...dt.types].includes(VB_EMAIL_LIBRARY_DRAG_TYPE)) {
+        e.preventDefault();
+        return;
+      }
+      if (dt && [...dt.types].includes(VB_EMAIL_BLOCK_MOVE_DRAG_TYPE)) {
+        e.preventDefault();
+      }
+      if (dataTransferMayContainFiles(dt) && onImageFileDropRef.current) {
+        e.preventDefault();
+        if (!readOnlyBody) {
+          try {
+            d.designMode = 'off';
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    };
+
+    const onDragLeaveFileFromDoc = (e: DragEvent) => {
+      if (!dataTransferMayContainFiles(e.dataTransfer) || !onImageFileDropRef.current) return;
+      const rel = e.relatedTarget as Node | null;
+      if (rel && d.contains(rel)) return;
+      if (!readOnlyBody) {
+        try {
+          d.designMode = 'on';
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
     const onDragOverDnd = (e: DragEvent) => {
       const dt = e.dataTransfer;
+      if (vbEmailActiveBlockMoveId) {
+        e.preventDefault();
+        if (dt) dt.dropEffect = 'move';
+        return;
+      }
       if (dt && [...dt.types].includes(VB_EMAIL_LIBRARY_DRAG_TYPE)) {
         e.preventDefault();
         dt.dropEffect = 'copy';
+        return;
+      }
+      if (dt && [...dt.types].includes(VB_EMAIL_BLOCK_MOVE_DRAG_TYPE)) {
+        e.preventDefault();
+        dt.dropEffect = 'move';
+        return;
+      }
+      /* Soubor z disku: bez průběžného preventDefault na dragover prohlížeč drop vůbec nespustí (designMode to často blokuje). */
+      if (dataTransferMayContainFiles(dt) && onImageFileDropRef.current) {
+        if (!readOnlyBody) {
+          try {
+            d.designMode = 'off';
+          } catch {
+            /* ignore */
+          }
+        }
+        e.preventDefault();
+        if (dt) dt.dropEffect = 'copy';
         return;
       }
       if (!draggedBlock || !rootDnd.contains(draggedBlock)) return;
@@ -1311,6 +1735,31 @@ function EmailIframeEditor({
 
     const onDropDnd = (e: DragEvent) => {
       e.preventDefault();
+      const blockMoveFromHandle = vbEmailActiveBlockMoveId;
+      vbEmailActiveBlockMoveId = null;
+      try {
+      const fileDropCb = onImageFileDropRef.current;
+      if (fileDropCb) {
+        const files = e.dataTransfer?.files;
+        if (files && files.length > 0) {
+          const f = files[0];
+          if (fileDropLooksLikeImage(f)) {
+            const resolved =
+              resolveEmailImageBlockByPoint(d, e.clientX, e.clientY) ||
+              resolveEmailImageFileDropTargetInDoc(d, e.clientX, e.clientY);
+            if (resolved) {
+              const { img: imgEl, imageBlockId } = resolved;
+              const attrSrc = imgEl.getAttribute('src') || '';
+              const resolvedSrc = imgEl.currentSrc || imgEl.src || attrSrc;
+              fileDropCb(f, attrSrc, resolvedSrc, imageBlockId);
+              requestAnimationFrame(syncHeight);
+              onDragEndDnd();
+              return;
+            }
+          }
+        }
+      }
+
       let libRaw = e.dataTransfer?.getData(VB_EMAIL_LIBRARY_DRAG_TYPE) || '';
       if (!libRaw) {
         const plain = e.dataTransfer?.getData('text/plain') || '';
@@ -1319,6 +1768,59 @@ function EmailIframeEditor({
       }
       if (libRaw && EMAIL_PRESET_TYPE_SET.has(libRaw as EmailBlockType)) {
         const presetType = libRaw as EmailBlockType;
+
+        // Drop z knihovny dovnitř dlouhého textu: rozdělit na dva textové bloky a mezi ně vložit preset.
+        if (presetType !== 'section' && presetType !== 'text') {
+          const hitSplit = d.elementFromPoint(e.clientX, e.clientY);
+          const textHost = findTopLevelTextBlockHostForDrop(hitSplit, rootDnd);
+          if (textHost) {
+            const splitIdx = findTextBlockLibraryDropSplitIndex(textHost, e.clientY);
+            const kids = getTextBlockElementChildren(textHost);
+            if (
+              splitIdx != null &&
+              splitIdx >= 1 &&
+              splitIdx < kids.length &&
+              textHost.parentElement
+            ) {
+              const parent = textHost.parentElement;
+              const ref = textHost.nextSibling;
+              const styleAttr = textHost.getAttribute('style');
+              const leftBlock = d.createElement('div');
+              leftBlock.setAttribute('data-vb-block', 'text');
+              leftBlock.setAttribute('data-vb-block-id', randomBlockId());
+              if (styleAttr) leftBlock.setAttribute('style', styleAttr);
+              const rightBlock = d.createElement('div');
+              rightBlock.setAttribute('data-vb-block', 'text');
+              rightBlock.setAttribute('data-vb-block-id', randomBlockId());
+              if (styleAttr) rightBlock.setAttribute('style', styleAttr);
+              const presetHtml = buildEmailBlockHtml(presetType).trim();
+              const tmpSplit = d.createElement('div');
+              tmpSplit.innerHTML = presetHtml;
+              const inserted = tmpSplit.firstElementChild as HTMLElement | null;
+              if (inserted) {
+                for (let i = 0; i < splitIdx; i++) {
+                  leftBlock.appendChild(kids[i]);
+                }
+                for (let i = splitIdx; i < kids.length; i++) {
+                  rightBlock.appendChild(kids[i]);
+                }
+                parent.removeChild(textHost);
+                parent.insertBefore(leftBlock, ref);
+                parent.insertBefore(inserted, ref);
+                parent.insertBefore(rightBlock, ref);
+                const st = createBlockInspectorState(inserted);
+                selectedBlockIdRef.current = st.id;
+                onBlockSelectRef.current?.(st);
+                syncSelectedBlockUi();
+                applyDraggableAttrs();
+                schedule();
+                requestAnimationFrame(syncHeight);
+                return;
+              }
+            }
+          }
+        }
+
         const html = buildEmailBlockHtml(presetType).trim();
         const tmp = d.createElement('div');
         tmp.innerHTML = html;
@@ -1371,11 +1873,28 @@ function EmailIframeEditor({
         requestAnimationFrame(syncHeight);
         return;
       }
+      if (!draggedBlock || !rootDnd.contains(draggedBlock)) {
+        let moveId = e.dataTransfer?.getData(VB_EMAIL_BLOCK_MOVE_DRAG_TYPE) || '';
+        if (!moveId) {
+          const plainMove = e.dataTransfer?.getData('text/plain') || '';
+          const mm = plainMove.match(/^vb-move-block:(.+)$/);
+          if (mm) moveId = mm[1].trim();
+        }
+        if (!moveId && blockMoveFromHandle) moveId = blockMoveFromHandle;
+        if (moveId) {
+          const el = d.querySelector(`[data-vb-block-id="${CSS.escape(moveId)}"]`) as HTMLElement | null;
+          if (el && rootDnd.contains(el) && isDndReorderableEmailBlock(el, rootDnd)) {
+            draggedBlock = el;
+            draggedBlock.classList.add('vb-dnd-dragging');
+          }
+        }
+      }
       if (!draggedBlock || !rootDnd.contains(draggedBlock)) return;
       const y = e.clientY;
       const hitMove = d.elementFromPoint(e.clientX, e.clientY);
       const targetSectionUnder = hitMove?.closest?.('[data-vb-block="section"]') as HTMLElement | null;
       const dragParent = draggedBlock.parentElement;
+      const owningSection = draggedBlock.closest('[data-vb-block="section"]') as HTMLElement | null;
       let destParent: HTMLElement = rootDnd;
       if (dragParent === rootDnd) {
         destParent = rootDnd;
@@ -1384,6 +1903,11 @@ function EmailIframeEditor({
           targetSectionUnder && rootDnd.contains(targetSectionUnder) && targetSectionUnder !== draggedBlock
             ? targetSectionUnder
             : dragParent;
+      } else if (owningSection && rootDnd.contains(owningSection)) {
+        destParent =
+          targetSectionUnder && rootDnd.contains(targetSectionUnder) && targetSectionUnder !== draggedBlock
+            ? targetSectionUnder
+            : owningSection;
       }
       const insertBefore = findDropInsertBefore(y, destParent);
       if (insertBefore === draggedBlock) {
@@ -1404,6 +1928,15 @@ function EmailIframeEditor({
       schedule();
       requestAnimationFrame(syncHeight);
       onDragEndDnd();
+      } finally {
+        if (!readOnlyBody) {
+          try {
+            d.designMode = 'on';
+          } catch {
+            /* ignore */
+          }
+        }
+      }
     };
 
     const onInput = () => {
@@ -1417,13 +1950,15 @@ function EmailIframeEditor({
       const t = e.target as HTMLElement;
       if (t.tagName === 'IMG') {
         e.preventDefault();
-        onImageClickRef.current((t as HTMLImageElement).src);
+        const im = t as HTMLImageElement;
+        const key = im.getAttribute('src')?.trim() || im.src;
+        onImageClickRef.current(key);
       }
     };
 
     const onBlockClick = (e: Event) => {
       if (builderModeRef.current !== 'block' || readOnlyBody) return;
-      const block = findTopLevelBlock(e.target);
+      const block = findDndBlockFromDragTarget(e.target, rootDnd);
       if (!block) return;
       const next = createBlockInspectorState(block);
       selectedBlockIdRef.current = next.id;
@@ -1431,6 +1966,8 @@ function EmailIframeEditor({
       syncSelectedBlockUi();
     };
 
+    /** Souborový DnD u designMode spolehlivěji na `defaultView` než jen na `document`. */
+    const dragEvtRoot: Document | Window = d.defaultView ?? d;
     if (!readOnlyBody) {
       applyDraggableAttrs();
       syncSelectedBlockUi();
@@ -1439,8 +1976,10 @@ function EmailIframeEditor({
       d.addEventListener('click', onBlockClick, true);
       rootDnd.addEventListener('dragstart', onDragStartDnd, true);
       rootDnd.addEventListener('dragend', onDragEndDnd, true);
-      d.addEventListener('dragover', onDragOverDnd, true);
-      d.addEventListener('drop', onDropDnd, true);
+      dragEvtRoot.addEventListener('dragenter', onDragEnterDnd, true);
+      dragEvtRoot.addEventListener('dragleave', onDragLeaveFileFromDoc, true);
+      dragEvtRoot.addEventListener('dragover', onDragOverDnd, true);
+      dragEvtRoot.addEventListener('drop', onDropDnd, true);
     }
 
     let selDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -1522,11 +2061,20 @@ function EmailIframeEditor({
         d.removeEventListener('click', onBlockClick, true);
         rootDnd.removeEventListener('dragstart', onDragStartDnd, true);
         rootDnd.removeEventListener('dragend', onDragEndDnd, true);
-        d.removeEventListener('dragover', onDragOverDnd, true);
-        d.removeEventListener('drop', onDropDnd, true);
+        const dragEvtRootCleanup: Document | Window = d.defaultView ?? d;
+        dragEvtRootCleanup.removeEventListener('dragenter', onDragEnterDnd, true);
+        dragEvtRootCleanup.removeEventListener('dragleave', onDragLeaveFileFromDoc, true);
+        dragEvtRootCleanup.removeEventListener('dragover', onDragOverDnd, true);
+        dragEvtRootCleanup.removeEventListener('drop', onDropDnd, true);
       }
+      applyDraggableAttrsRef.current = null;
     };
   }, [draftId, bodyEditEpoch, readOnlyBody]);
+
+  useEffect(() => {
+    if (readOnlyBody) return;
+    applyDraggableAttrsRef.current?.();
+  }, [selectedBlockId, builderMode, bodyEditEpoch, readOnlyBody]);
 
   useEffect(() => {
     const d = innerRef.current?.contentDocument;
@@ -1563,7 +2111,7 @@ function EmailIframeEditor({
         backgroundColor: 'transparent',
         colorScheme: 'light',
       }}
-      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
+      sandbox="allow-same-origin allow-scripts allow-downloads allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation"
     />
   );
 }
@@ -1578,6 +2126,8 @@ export default function EmailBuilder() {
   const [selected, setSelected] = useState<EmailDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  /** Nahrání obrázku do těla mailu (upload-image + vložení URL). */
+  const [emailImageUploading, setEmailImageUploading] = useState(false);
   /** Krátká nápověda po tichém autosave (bez toastu). */
   const [autoSaveHint, setAutoSaveHint] = useState(false);
   const [pushing, setPushing] = useState(false);
@@ -1613,7 +2163,28 @@ export default function EmailBuilder() {
   const selectedIdRef = useRef<string | null>(null);
   const autoCreateDraftRouteRef = useRef<string | null>(null);
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
+  /** Obal náhledu — drop souboru z OS se zpracuje zde (iframe má s designMode často konflikt). */
+  const emailPreviewDropShellRef = useRef<HTMLDivElement | null>(null);
+  /** Plná „drop vrstva“ nad iframe během přetahování souboru z OS. */
+  const [previewImageFileDragActive, setPreviewImageFileDragActive] = useState(false);
+  /** Bounding rect cílového image bloku během drag (v shell souřadnicích) — pro vizuální highlight. */
+  const [previewImageDropTarget, setPreviewImageDropTarget] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+    blockId: string;
+  } | null>(null);
+  const emailImageBlockFileInputRef = useRef<HTMLInputElement | null>(null);
   const iframeHoverBlockRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const clearBlockMove = () => {
+      vbEmailActiveBlockMoveId = null;
+    };
+    window.addEventListener('dragend', clearBlockMove, true);
+    return () => window.removeEventListener('dragend', clearBlockMove, true);
+  }, []);
   /** Blok pod kurzorem (`data-vb-block-id`) — pro vložení z postranní lišty / kotvy za blok. */
   const insertHoverBlockIdRef = useRef<string | null>(null);
   const pendingInsertAnchorRef = useRef<string | null>(null);
@@ -2094,6 +2665,213 @@ export default function EmailBuilder() {
     [commitHistoryBeforeMutation],
   );
 
+  const handleImageFileDrop = useCallback(
+    async (file: File, attrSrc: string, resolvedSrc: string, imageBlockId: string | null) => {
+      const draftId = selectedIdRef.current;
+      const snap = selectedRef.current;
+      if (!draftId || !snap || snap.id !== draftId) return;
+      commitHistoryBeforeMutation();
+      setEmailImageUploading(true);
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch(`${SERVER}/upload-image`, { method: 'POST', headers: AUTH_H_NO_CT, body: fd });
+        const data = await res.json();
+        const newUrl = (data && (data.url as string)) || '';
+        if (!newUrl) {
+          toast.error(data.error || 'Nahrání obrázku selhalo');
+          return;
+        }
+        if (selectedIdRef.current !== draftId) {
+          toast.message('Draft se mezitím změnil.');
+          return;
+        }
+        /** Po await může být iframe novější než `snap.bodyHtml` (debounced commit z designMode). */
+        const liveInner =
+          previewIframeRef.current?.contentDocument?.body?.innerHTML?.trim() ?? '';
+        const htmlBefore =
+          liveInner && previewIframeRef.current
+            ? normalizeBodyForBuilder(liveInner)
+            : snap.bodyHtml;
+        let next = htmlBefore;
+        if (imageBlockId) {
+          next = replaceFirstImgSrcInVbImageBlockById(htmlBefore, imageBlockId, newUrl);
+          if (next === htmlBefore) {
+            toast.error('Nepodařilo se v HTML najít blok obrázku k nahrazení.');
+            return;
+          }
+        } else {
+          next = replaceFirstImgSrcInHtml(htmlBefore, attrSrc, newUrl);
+          if (next === htmlBefore && resolvedSrc && resolvedSrc !== attrSrc) {
+            next = replaceFirstImgSrcInHtml(htmlBefore, resolvedSrc, newUrl);
+          }
+          if (next === htmlBefore) {
+            toast.error('Nepodařilo se najít tento obrázek v HTML.');
+            return;
+          }
+        }
+        const normalized = normalizeBodyForBuilder(next);
+        const now = new Date().toISOString();
+        setDrafts(prev =>
+          prev.map(d => (d.id === draftId ? normalizeDraftForBuilder({ ...d, bodyHtml: normalized, updatedAt: now }) : d)),
+        );
+        setSelected(prev =>
+          prev?.id === draftId
+            ? normalizeDraftForBuilder({ ...prev, bodyHtml: normalized, updatedAt: now })
+            : prev,
+        );
+        setSelectedBlock(null);
+        bumpBodyEpoch();
+        toast.success('Obrázek nahrazen');
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Nahrání obrázku selhalo');
+      } finally {
+        setEmailImageUploading(false);
+      }
+    },
+    [commitHistoryBeforeMutation, bumpBodyEpoch],
+  );
+
+  const handleImageFileDropRef = useRef(handleImageFileDrop);
+  handleImageFileDropRef.current = handleImageFileDrop;
+
+  const restoreEmailPreviewIframePointer = useCallback(() => {
+    previewIframeRef.current?.style.removeProperty('pointer-events');
+  }, []);
+
+  /**
+   * Najdi image blok pod kurzorem (souřadnice v parent okně) a vrať jeho rect převedený
+   * do souřadnic shellu (kde je `previewImageDropTarget` zobrazen).
+   */
+  const computeEmailPreviewDropTargetForCursor = useCallback(
+    (clientX: number, clientY: number): typeof previewImageDropTarget => {
+      const fr = previewIframeRef.current;
+      const sh = emailPreviewDropShellRef.current;
+      const d = fr?.contentDocument;
+      if (!fr || !sh || !d?.body) return null;
+      const fRect = fr.getBoundingClientRect();
+      const x = clientX - fRect.left;
+      const y = clientY - fRect.top;
+      const hit =
+        resolveEmailImageBlockByPoint(d, x, y) ||
+        resolveEmailImageFileDropTargetInDoc(d, x, y);
+      if (!hit || !hit.imageBlockId) return null;
+      const block = d.querySelector(
+        `[data-vb-block="image"][data-vb-block-id="${CSS.escape(hit.imageBlockId)}"]`,
+      ) as HTMLElement | null;
+      if (!block) return null;
+      const bRect = block.getBoundingClientRect();
+      const sRect = sh.getBoundingClientRect();
+      return {
+        top: fRect.top + bRect.top - sRect.top,
+        left: fRect.left + bRect.left - sRect.left,
+        width: bRect.width,
+        height: bRect.height,
+        blockId: hit.imageBlockId,
+      };
+    },
+    [],
+  );
+
+  /**
+   * Drop z obalu náhledu / překryvu — souřadnice z okna přepočtené do dokumentu iframe.
+   * Bez tichých fallbacků: soubor musí padnout do konkrétního image bloku, jinak nic.
+   */
+  const runEmailPreviewShellImageDrop = useCallback(
+    (file: File, clientX: number, clientY: number) => {
+      const fr = previewIframeRef.current;
+      const d = fr?.contentDocument;
+      if (!fr || !d?.body || !handleImageFileDropRef.current) return;
+      const rect = fr.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      const resolved =
+        resolveEmailImageBlockByPoint(d, x, y) ||
+        resolveEmailImageFileDropTargetInDoc(d, x, y);
+      if (!resolved || !resolved.imageBlockId) {
+        toast.error('Pusťte soubor přímo na blok obrázku v náhledu.');
+        return;
+      }
+      const { img, imageBlockId } = resolved;
+      void handleImageFileDropRef.current(
+        file,
+        img.getAttribute('src') || '',
+        img.currentSrc || img.src || '',
+        imageBlockId,
+      );
+    },
+    [],
+  );
+
+  const onEmailImageBlockFileInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      restoreEmailPreviewIframePointer();
+      setPreviewImageFileDragActive(false);
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      if (!fileDropLooksLikeImage(file)) {
+        toast.error('Vyberte obrázek (PNG, JPG, GIF, …)');
+        return;
+      }
+      if (selectedBlock?.type !== 'image' || !selectedBlock.id) {
+        toast.error('Vyberte v náhledu blok obrázku.');
+        return;
+      }
+      const doc = previewIframeRef.current?.contentDocument;
+      if (!doc?.body) {
+        toast.error('Náhled není připravený.');
+        return;
+      }
+      const resolved = resolveEmailImageBlockById(doc, selectedBlock.id);
+      if (!resolved) {
+        toast.error('Blok obrázku v náhledu nešlo najít.');
+        return;
+      }
+      const { img, imageBlockId } = resolved;
+      void handleImageFileDrop(
+        file,
+        img.getAttribute('src') || '',
+        img.currentSrc || img.src || '',
+        imageBlockId,
+      );
+    },
+    [handleImageFileDrop, restoreEmailPreviewIframePointer, selectedBlock?.id, selectedBlock?.type],
+  );
+
+  /**
+   * Nad oblastí náhledu dočasně vypnout pointer-events na iframe, ať OS file drop dopadne na rodiče
+   * a nepřichytí se na designMode dokument uvnitř iframe (Safari/Chrome).
+   */
+  useEffect(() => {
+    if (showInboxChrome) return;
+    const onDragOverWindow = (e: DragEvent) => {
+      if (!dataTransferMayContainFiles(e.dataTransfer)) return;
+      if (!handleImageFileDropRef.current) return;
+      const sh = emailPreviewDropShellRef.current;
+      const fr = previewIframeRef.current;
+      if (!sh || !fr) return;
+      const r = sh.getBoundingClientRect();
+      const inside =
+        e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      fr.style.pointerEvents = inside ? 'none' : '';
+    };
+    const restore = () => {
+      restoreEmailPreviewIframePointer();
+      setPreviewImageFileDragActive(false);
+      setPreviewImageDropTarget(null);
+    };
+    window.addEventListener('dragover', onDragOverWindow, true);
+    window.addEventListener('drop', restore, true);
+    window.addEventListener('dragend', restore, true);
+    return () => {
+      window.removeEventListener('dragover', onDragOverWindow, true);
+      window.removeEventListener('drop', restore, true);
+      window.removeEventListener('dragend', restore, true);
+      restore();
+    };
+  }, [showInboxChrome, restoreEmailPreviewIframePointer]);
+
   const clearCanvasSelection = () => {
     setSelectedCanvasText('');
     window.getSelection()?.removeAllRanges();
@@ -2364,7 +3142,8 @@ export default function EmailBuilder() {
   }, [toolPanelMode, activeBuilderMode]);
 
   const handleBlockSelect = useCallback((block: BlockInspectorState | null) => {
-    if (block && activeBuilderMode === 'block') {
+    // Na záložce AI nechat panel u chatu — výběr bloku slouží jen jako kontext (přepsat přes AI atd.).
+    if (block && activeBuilderMode === 'block' && toolPanelMode !== 'ai') {
       setToolPanelMode('block');
     }
     setSelectedBlock(block);
@@ -2378,7 +3157,7 @@ export default function EmailBuilder() {
       setDrafts((draftsPrev) => draftsPrev.map(d => (d.id === updated.id ? updated : d)));
       return updated;
     });
-  }, [activeBuilderMode]);
+  }, [activeBuilderMode, toolPanelMode]);
 
   const applyStructuredBodyMutation = useCallback((mutate: (block: HTMLElement, root: HTMLElement, doc: Document) => string | null | void) => {
     const currentSelected = selectedRef.current;
@@ -2569,16 +3348,7 @@ export default function EmailBuilder() {
   }, [applyStructuredBodyMutationByBlockId]);
 
   const deleteBlockById = useCallback((blockId: string) => {
-    applyStructuredBodyMutationByBlockId(blockId, (block, root) => {
-      const nextSibling = block.nextElementSibling as HTMLElement | null;
-      const prevSibling = block.previousElementSibling as HTMLElement | null;
-      block.remove();
-      if ([...root.children].filter((el) => !/^(STYLE|SCRIPT)$/i.test((el as HTMLElement).tagName)).length === 0) {
-        root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
-      }
-      const next = nextSibling || prevSibling || (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
-      return next?.getAttribute('data-vb-block-id') || null;
-    });
+    applyStructuredBodyMutationByBlockId(blockId, (block, root) => deleteEmailBlockNode(block, root));
   }, [applyStructuredBodyMutationByBlockId]);
 
   const moveSelectedBlock = useCallback((direction: 'up' | 'down') => {
@@ -2611,16 +3381,7 @@ export default function EmailBuilder() {
   }, [applyStructuredBodyMutation]);
 
   const deleteSelectedBlock = useCallback(() => {
-    applyStructuredBodyMutation((block, root) => {
-      const nextSibling = block.nextElementSibling as HTMLElement | null;
-      const prevSibling = block.previousElementSibling as HTMLElement | null;
-      block.remove();
-      if ([...root.children].filter((el) => !/^(STYLE|SCRIPT)$/i.test((el as HTMLElement).tagName)).length === 0) {
-        root.insertAdjacentHTML('beforeend', buildEmailSectionHtml('card'));
-      }
-      const next = nextSibling || prevSibling || (root.querySelector('[data-vb-block-id]') as HTMLElement | null);
-      return next?.getAttribute('data-vb-block-id') || null;
-    });
+    applyStructuredBodyMutation((block, root) => deleteEmailBlockNode(block, root));
   }, [applyStructuredBodyMutation]);
 
   const updateSelectedSectionFill = useCallback((fill: EmailSectionFill) => {
@@ -2910,7 +3671,10 @@ export default function EmailBuilder() {
   }, [ctaFormText, ctaFormUrl, insertHtmlAfterAnchorOrAppend, insertHtmlBeforeBlockById]);
 
   /** Odeslání zprávy do generate-email; `prompt` jde do API, `chatLabel` volitelně zkrácený text do bubliny. */
-  const sendChatMessage = async (prompt: string, options?: { chatLabel?: string }) => {
+  const sendChatMessage = async (
+    prompt: string,
+    options?: { chatLabel?: string; fullBodyHtmlReplace?: boolean },
+  ) => {
     const msg = prompt.trim();
     if (!msg || generating) return;
 
@@ -2923,6 +3687,26 @@ export default function EmailBuilder() {
         !insertBeforeBlockId &&
         (capturedSelection?.trim() || selectedCanvasText.trim() || '')) ||
       null;
+
+    const usePlainSelectionPath =
+      Boolean(selectionSlice) &&
+      !insertAnchorId &&
+      !insertBeforeBlockId &&
+      !options?.fullBodyHtmlReplace;
+
+    let selectionMarkerId: string | null = null;
+    if (usePlainSelectionPath) {
+      const docMark = previewIframeRef.current?.contentDocument;
+      if (docMark?.body) {
+        selectionMarkerId = tryWrapIframeSelectionForPlainAiReplace(docMark);
+      }
+      if (!selectionMarkerId) {
+        toast.error(
+          'Označení nelze nahradit jako čistý text — zkuste označit souvislý text uvnitř jednoho odstavce.',
+        );
+        return;
+      }
+    }
 
     const bubbleText = (options?.chatLabel ?? msg).trim();
     const userMsg: ChatMsg = {
@@ -2941,6 +3725,81 @@ export default function EmailBuilder() {
     }
 
     try {
+      if (usePlainSelectionPath && selectionMarkerId && selectionSlice) {
+        const runPlain = async () => {
+          const response = await fetch(`${SERVER}/admin/mailchimp/rewrite-email-selection-plain`, {
+            method: 'POST',
+            headers: AUTH_H,
+            body: JSON.stringify({
+              instruction: msg,
+              selectedPlainText: selectionSlice,
+              model: emailGenTier,
+            }),
+          });
+          const data = (await response.json()) as Record<string, unknown>;
+          return { response, data };
+        };
+        let { response, data } = await runPlain();
+        let errStr = typeof data.error === 'string' ? data.error : '';
+        const badFirst = !response.ok || Boolean(data.error);
+        if (
+          badFirst &&
+          (geminiErrorLooksOverloaded(errStr) || response.status === 503 || response.status === 429)
+        ) {
+          toast.info('Gemini je dočasně přetížená — zkouším znovu za pár sekund…', { duration: 5000 });
+          await new Promise((r) => setTimeout(r, 7000));
+          ({ response, data } = await runPlain());
+          errStr = typeof data.error === 'string' ? data.error : '';
+        }
+        if (!response.ok || data.error) {
+          throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+        }
+        const replacement = String(data.replacementText || '').trim();
+        if (!replacement) throw new Error('Prázdná odpověď AI');
+
+        const docApply = previewIframeRef.current?.contentDocument;
+        if (!docApply?.body) throw new Error('Náhled není k dispozici');
+        if (!applyPlainTextInVbAiReplaceMarker(docApply, selectionMarkerId, replacement)) {
+          unwrapVbAiReplaceMarkers(docApply);
+          throw new Error('Označené místo v náhledu už neplatí — zkuste znovu označit text.');
+        }
+
+        const normalizedBody = normalizeBodyForBuilder(docApply.body.innerHTML);
+        const now = new Date().toISOString();
+
+        const aiMsg: ChatMsg = {
+          id: crypto.randomUUID(),
+          role: 'ai',
+          content:
+            'Hotovo — označený úsek je nahrazen čistým textem; styly a HTML struktura v okolí zůstaly zachované.',
+          timestamp: now,
+        };
+        const updatedHistory = [...historyWithUser, aiMsg];
+        setChatMsgs(updatedHistory);
+
+        const base = selected || { ...EMPTY_DRAFT, id: crypto.randomUUID(), createdAt: now };
+        const updatedDraft = normalizeDraftForBuilder({
+          ...base,
+          bodyHtml: normalizedBody,
+          updatedAt: now,
+          chatHistory: updatedHistory,
+        });
+
+        setSelected(updatedDraft);
+        setDrafts((prev) => {
+          const idx = prev.findIndex((x) => x.id === updatedDraft.id);
+          if (idx >= 0) {
+            const n = [...prev];
+            n[idx] = updatedDraft;
+            return n;
+          }
+          return [updatedDraft, ...prev];
+        });
+        bumpBodyEpoch();
+        await saveDraft(updatedDraft);
+        return;
+      }
+
       const convCtx = historyWithUser.map(m => `${m.role === 'user' ? 'Uživatel' : 'AI'}: ${m.content}`).join('\n');
 
       const docLive = previewIframeRef.current?.contentDocument;
@@ -3015,6 +3874,7 @@ export default function EmailBuilder() {
         conversationContext: convCtx + currentEmailCtx + selectionCtx + insertCtx,
         model: emailGenTier,
         rag: emailGenRagEnabled,
+        preferEmailBuilderBlocks: activeBuilderMode === 'block',
       };
       const { data } = await fetchGenerateEmailWithRetry(
         `${SERVER}/admin/mailchimp/generate-email`,
@@ -3113,6 +3973,14 @@ export default function EmailBuilder() {
       await saveDraft(updatedDraft);
       if (insertAnchorId || insertBeforeBlockId) clearAiInsertIntent();
     } catch (e: unknown) {
+      if (selectionMarkerId) {
+        try {
+          const d = previewIframeRef.current?.contentDocument;
+          if (d?.body) unwrapVbAiReplaceMarkers(d);
+        } catch {
+          /* ignore */
+        }
+      }
       console.error('Send chat error:', e);
       const errMsg: ChatMsg = {
         id: crypto.randomUUID(),
@@ -3166,7 +4034,7 @@ export default function EmailBuilder() {
     };
 
     const { label, prompt } = instructions[kind];
-    await sendChatMessage(prompt, { chatLabel: label });
+    await sendChatMessage(prompt, { chatLabel: label, fullBodyHtmlReplace: true });
   };
 
   const pushToMailchimp = async () => {
@@ -3289,7 +4157,12 @@ export default function EmailBuilder() {
           if (left + barW > vw - 10) left = c.left - barW - gap;
           if (left < 8) left = 8;
           const chromeOnRight = left >= c.left + c.width;
-          const top = c.top + c.height / 2;
+          const vertPad = EMAIL_BLOCK_CHROME_HIT_PADDING_PX;
+          const vertTop = c.top - vertPad;
+          const vertH = c.height + 2 * vertPad;
+          const bridgeW = chromeOnRight
+            ? Math.max(0, left - (c.left + c.width))
+            : Math.max(0, c.left - (left + barW));
           const bid = c.blockId;
           void emailBlockClipboardTick;
           let hasCopiedBlock = false;
@@ -3306,17 +4179,24 @@ export default function EmailBuilder() {
           return createPortal(
             <div
               data-email-block-chrome
-              className="flex flex-col gap-0.5 rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
+              className="pointer-events-auto flex flex-row items-center"
               style={{
                 position: 'fixed',
                 zIndex: 19950,
-                left,
-                top,
-                transform: 'translateY(-50%)',
+                left: chromeOnRight ? c.left + c.width : left,
+                top: vertTop,
+                height: vertH,
               }}
               onMouseEnter={cancelInsertLineHide}
               onMouseLeave={scheduleInsertLineHide}
             >
+              {chromeOnRight && (
+                <div className="shrink-0" style={{ width: bridgeW, height: '100%' }} aria-hidden />
+              )}
+              <div
+                className="flex shrink-0 flex-col gap-0.5 rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
+                style={{ width: barW, alignSelf: 'center' }}
+              >
               <div
                 className={`relative ${blockChromeAddMenuOpen ? 'z-[1]' : ''}`}
                 data-email-chrome-add-menu
@@ -3477,6 +4357,28 @@ export default function EmailBuilder() {
               >
                 <Trash2 className="h-4 w-4" strokeWidth={2} />
               </button>
+              <div
+                draggable
+                role="button"
+                tabIndex={0}
+                className={`${btnClass} cursor-grab active:cursor-grabbing border-t border-gray-100 mt-0.5 pt-0.5`}
+                title="Přesunout blok — táhni do náhledu na požadované místo"
+                onDragStart={(ev) => {
+                  vbEmailActiveBlockMoveId = bid;
+                  ev.dataTransfer?.setData(VB_EMAIL_BLOCK_MOVE_DRAG_TYPE, bid);
+                  ev.dataTransfer?.setData('text/plain', `vb-move-block:${bid}`);
+                  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragEnd={() => {
+                  vbEmailActiveBlockMoveId = null;
+                }}
+              >
+                <GripVertical className="h-4 w-4" strokeWidth={2} aria-hidden />
+              </div>
+              </div>
+              {!chromeOnRight && (
+                <div className="shrink-0" style={{ width: bridgeW, height: '100%' }} aria-hidden />
+              )}
             </div>,
             document.body,
           );
@@ -3496,6 +4398,16 @@ export default function EmailBuilder() {
       className="flex min-h-0 min-w-0 flex-1 h-full bg-white text-[#001161] overflow-hidden [color-scheme:light]"
       style={{ minWidth: 1100 }}
     >
+      {emailImageUploading && (
+        <div
+          className="pointer-events-none fixed top-0 left-0 right-0 z-[20500] h-[3px] overflow-hidden bg-[#7C3AED]/12"
+          role="progressbar"
+          aria-valuetext="Nahrávám obrázek"
+          aria-busy="true"
+        >
+          <div className="vb-email-image-upload-bar-fill h-full rounded-none bg-[#7C3AED]" />
+        </div>
+      )}
 
       {blockChromePortal}
 
@@ -3915,8 +4827,9 @@ export default function EmailBuilder() {
                   <div className="px-2 py-1.5 rounded-lg bg-[#7C3AED]/5 border border-[#7C3AED]/10 flex items-center gap-2">
                     <TextCursor className="w-3 h-3 text-[#7C3AED] shrink-0" />
                     <span style={F} className="text-[9px] text-[#7C3AED] truncate flex-1">
-                      Úprava výběru: „{(capturedSelection?.trim() || selectedCanvasText).substring(0, 40)}
-                      {(capturedSelection?.trim() || selectedCanvasText).length > 40 ? '…' : ''}"
+                      Úprava výběru (AI vloží jen čistý text, styly v okolí zůstanou): „
+                      {(capturedSelection?.trim() || selectedCanvasText).substring(0, 32)}
+                      {(capturedSelection?.trim() || selectedCanvasText).length > 32 ? '…' : ''}"
                     </span>
                     <button
                       type="button"
@@ -4483,6 +5396,28 @@ export default function EmailBuilder() {
                       </div>
                     </>
                   )}
+                  {selectedBlock.type === 'image' && (
+                    <>
+                      <input
+                        ref={emailImageBlockFileInputRef}
+                        type="file"
+                        accept="image/*,.heic,.heif,.avif"
+                        className="sr-only"
+                        tabIndex={-1}
+                        aria-hidden
+                        onChange={onEmailImageBlockFileInputChange}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => emailImageBlockFileInputRef.current?.click()}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#7C3AED]/35 bg-[#7C3AED]/6 px-3 py-2.5 text-[11px] font-bold text-[#001161] hover:bg-[#7C3AED]/12 cursor-pointer"
+                        style={F}
+                      >
+                        <Upload className="h-4 w-4 shrink-0 text-[#7C3AED]" strokeWidth={2.25} aria-hidden />
+                        Nahrát z disku (nahradí tento obrázek)
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-xl border border-dashed border-gray-200 bg-[#fafbfd] px-3 py-4">
@@ -4822,8 +5757,119 @@ export default function EmailBuilder() {
                     )}
 
                     <div
-                      className={`flex flex-col flex-1 min-h-0 px-3 py-4 md:px-6 ${showInboxChrome ? 'rounded-b-xl' : 'rounded-xl'}`}
+                      ref={emailPreviewDropShellRef}
+                      className={`relative flex flex-col flex-1 min-h-0 px-3 py-4 md:px-6 ${showInboxChrome ? 'rounded-b-xl' : 'rounded-xl'}`}
+                      onDragEnter={(e) => {
+                        if (showInboxChrome || !handleImageFileDropRef.current) return;
+                        if (!dataTransferMayContainFiles(e.dataTransfer)) return;
+                        e.preventDefault();
+                        setPreviewImageFileDragActive(true);
+                      }}
+                      onDragLeave={(e) => {
+                        if (!dataTransferMayContainFiles(e.dataTransfer)) return;
+                        const next = e.relatedTarget as Node | null;
+                        if (next && emailPreviewDropShellRef.current?.contains(next)) return;
+                        setPreviewImageFileDragActive(false);
+                        setPreviewImageDropTarget(null);
+                      }}
+                      onDragOver={(e) => {
+                        if (showInboxChrome || !handleImageFileDropRef.current) return;
+                        if (!dataTransferMayContainFiles(e.dataTransfer)) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'copy';
+                        const tgt = computeEmailPreviewDropTargetForCursor(e.clientX, e.clientY);
+                        setPreviewImageDropTarget((prev) => {
+                          if (!prev && !tgt) return prev;
+                          if (prev && tgt && prev.blockId === tgt.blockId) return prev;
+                          return tgt;
+                        });
+                      }}
+                      onDrop={(e) => {
+                        restoreEmailPreviewIframePointer();
+                        setPreviewImageFileDragActive(false);
+                        setPreviewImageDropTarget(null);
+                        if (showInboxChrome || !handleImageFileDropRef.current) return;
+                        if (!dataTransferMayContainFiles(e.dataTransfer)) return;
+                        const files = e.dataTransfer.files;
+                        if (!files?.length) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const f = files[0];
+                        if (!fileDropLooksLikeImage(f)) {
+                          toast.error('Soubor nevypadá jako obrázek.');
+                          return;
+                        }
+                        runEmailPreviewShellImageDrop(f, e.clientX, e.clientY);
+                      }}
                     >
+                      {previewImageFileDragActive && !showInboxChrome && (
+                        <div
+                          className="absolute inset-0 z-[25] flex items-center justify-center rounded-xl bg-[#7C3AED]/10 px-4 pointer-events-auto"
+                          onDragOver={(ev) => {
+                            ev.preventDefault();
+                            ev.dataTransfer.dropEffect = 'copy';
+                            const tgt = computeEmailPreviewDropTargetForCursor(ev.clientX, ev.clientY);
+                            setPreviewImageDropTarget((prev) => {
+                              if (!prev && !tgt) return prev;
+                              if (prev && tgt && prev.blockId === tgt.blockId) return prev;
+                              return tgt;
+                            });
+                          }}
+                          onDrop={(ev) => {
+                            restoreEmailPreviewIframePointer();
+                            setPreviewImageFileDragActive(false);
+                            setPreviewImageDropTarget(null);
+                            if (showInboxChrome || !handleImageFileDropRef.current) return;
+                            if (!dataTransferMayContainFiles(ev.dataTransfer)) return;
+                            const files = ev.dataTransfer.files;
+                            if (!files?.length) return;
+                            ev.preventDefault();
+                            ev.stopPropagation();
+                            const f = files[0];
+                            if (!fileDropLooksLikeImage(f)) {
+                              toast.error('Soubor nevypadá jako obrázek.');
+                              return;
+                            }
+                            runEmailPreviewShellImageDrop(f, ev.clientX, ev.clientY);
+                          }}
+                        >
+                          {!previewImageDropTarget && (
+                            <div
+                              className="max-w-md rounded-2xl border-2 border-dashed border-[#7C3AED] bg-white px-6 py-7 shadow-lg text-center"
+                              style={F}
+                            >
+                              <Upload className="mx-auto h-10 w-10 text-[#7C3AED] mb-3" strokeWidth={1.75} aria-hidden />
+                              <p className="text-[14px] font-bold text-[#001161]">Pusťte na blok obrázku</p>
+                              <p className="text-[11px] text-[#001161]/60 mt-2 leading-snug">
+                                Najeďte přímo na konkrétní obrázek v mailu — zvýrazní se obrysem, kam bude nahrazen.
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {previewImageFileDragActive && previewImageDropTarget && !showInboxChrome && (
+                        <div
+                          className="absolute z-[26] pointer-events-none rounded-xl"
+                          style={{
+                            top: previewImageDropTarget.top,
+                            left: previewImageDropTarget.left,
+                            width: previewImageDropTarget.width,
+                            height: previewImageDropTarget.height,
+                            outline: '3px solid #7C3AED',
+                            outlineOffset: 2,
+                            background: 'rgba(124,58,237,0.18)',
+                            boxShadow: '0 0 0 3px rgba(124,58,237,0.18)',
+                          }}
+                        >
+                          <div
+                            className="absolute -top-7 left-0 inline-flex items-center gap-1 rounded-full bg-[#7C3AED] px-2.5 py-0.5 text-[10px] font-bold text-white"
+                            style={F}
+                          >
+                            <Upload className="h-3 w-3" strokeWidth={2.25} aria-hidden />
+                            Sem padne soubor
+                          </div>
+                        </div>
+                      )}
                       <EmailIframeEditor
                         draftId={selected.id}
                         bodyEditEpoch={bodyEditEpoch}
@@ -4844,6 +5890,7 @@ export default function EmailBuilder() {
                         onIframeLeave={scheduleInsertLineHide}
                         onIframeEnter={cancelInsertLineHide}
                         onRichTextActivity={bumpRichToolbar}
+                        onImageFileDrop={showInboxChrome ? undefined : handleImageFileDrop}
                       />
                     </div>
                   </div>
@@ -4859,7 +5906,18 @@ export default function EmailBuilder() {
         onClose={() => setImageToolSrc(null)}
         onApplyUrl={newUrl => {
           if (!selected || !imageToolSrc) return;
-          updateField('bodyHtml', replaceImgSrcInHtml(selected.bodyHtml, imageToolSrc, newUrl));
+          let next = selected.bodyHtml;
+          if (selectedBlock?.type === 'image' && selectedBlock.id) {
+            next = replaceFirstImgSrcInVbImageBlockById(selected.bodyHtml, selectedBlock.id, newUrl);
+          }
+          if (next === selected.bodyHtml) {
+            next = replaceFirstImgSrcInHtml(selected.bodyHtml, imageToolSrc, newUrl);
+          }
+          if (next === selected.bodyHtml) {
+            toast.error('V HTML se nepodařilo najít tento obrázek — zkuste „Zdroj HTML“ nebo jiný způsob vložení.');
+            return;
+          }
+          updateField('bodyHtml', next);
           setImageToolSrc(null);
           bumpBodyEpoch();
           toast.success('Obrázek v mailu byl aktualizován');
@@ -4882,7 +5940,18 @@ export default function EmailBuilder() {
         }}
         onPick={url => {
           if (imageToolSrc && selected) {
-            updateField('bodyHtml', replaceImgSrcInHtml(selected.bodyHtml, imageToolSrc, url));
+            let next = selected.bodyHtml;
+            if (selectedBlock?.type === 'image' && selectedBlock.id) {
+              next = replaceFirstImgSrcInVbImageBlockById(selected.bodyHtml, selectedBlock.id, url);
+            }
+            if (next === selected.bodyHtml) {
+              next = replaceFirstImgSrcInHtml(selected.bodyHtml, imageToolSrc, url);
+            }
+            if (next === selected.bodyHtml) {
+              toast.error('V HTML se nepodařilo najít tento obrázek.');
+              return;
+            }
+            updateField('bodyHtml', next);
             setImageToolSrc(null);
             bumpBodyEpoch();
             setAssetPickerOpen(false);

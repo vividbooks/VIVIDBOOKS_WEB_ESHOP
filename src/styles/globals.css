@@ -410,3 +410,20 @@ html {
     background-color: rgb(254 226 226 / 1);
   }
 }
+
+/* Email builder: horní indeterminate lišta při nahrání obrázku do mailu */
+@keyframes vb-email-image-upload-indeterminate {
+  0% {
+    transform: translate3d(-100%, 0, 0);
+  }
+  100% {
+    transform: translate3d(265%, 0, 0);
+  }
+}
+
+.vb-email-image-upload-bar-fill {
+  width: 38%;
+  min-width: 96px;
+  animation: vb-email-image-upload-indeterminate 1.05s ease-in-out infinite;
+  will-change: transform;
+}

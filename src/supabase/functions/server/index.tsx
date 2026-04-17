@@ -15775,6 +15775,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
     const body = await c.req.json();
     const { prompt, conversationContext } = body;
     if (!prompt) return c.json({ error: 'Chybi prompt' }, 400);
+    const preferEmailBuilderBlocks = body.preferEmailBuilderBlocks === true;
 
     const EMAIL_GEN_MODELS: Record<'lite' | 'pro', string> = {
       lite: 'gemini-3.1-flash-lite-preview',
@@ -16404,17 +16405,39 @@ ODDELOVAC:
    - „předělej na infografiku“ = ověřitelná čísla z textu → **(5)** (jinak infografiku necpat).
    - „dej tomu oranžový / tmavý / šedý pás“ / „odděl sekce pozadím“ = obal daný blok tabulkou **sekce (B)** nebo dej text do **sloupce (C)** se šedým pozadím a bílou vnitřní kartou podle vzoru v POZADÍ.
 
+═══ EMAIL BUILDER — POVINNÉ OBALY BLOKŮ (data-vb-block) ═══
+Editor e-mailu pracuje s **bloky** podle atributů \`data-vb-block\` a \`data-vb-block-id\`. Bez nich model generuje „holé“ HTML a builder bloky nerozpozná / špatně je odhadne (např. každá tabulka jako sloupce).
+
+1. **Každý logický segment** z typologie (2)(3)(4)(5)(6) a každý samostatný pás (B), vnitřní karta (C), pill CTA, oddělovač nebo koláž musí být uvnitř \`vb-email-root\` obalen vlastním **kořenovým** \`<div>\` (nebo \`<div data-vb-block="section">\` pro skupinu), který má:
+   - \`data-vb-block="<typ>"\` — jedna z hodnot: **text**, **highlight**, **columns-2**, **columns-3**, **image**, **button**, **divider**, **flow-break**, **product-collage**, **webinar**, **hero**, **html**, **section**
+   - \`data-vb-block-id="vb-block-<8+ náhodných znaků a–z0–9>"\` — **globálně unikátní** v celém \`bodyHtml\`; pro každý nový blok nové id (např. \`vb-block-x7k2m9pq\`). **Nikdy** stejné id u dvou bloků.
+
+2. **Mapování typologie na typ editoru (orientačně):**
+   - **(2) TEXT** → většinou \`data-vb-block="text"\` (odstavce, \`<h2>\`, \`<ul>\` v jednom obalu).
+   - **(3) rámeček** s výrazným pozadím / boxem → \`data-vb-block="highlight"\`; krátký výčet bez silného boxu může zůstat v \`text\`.
+   - **(4) Produkt** (tabulka \`vb-prod-img\` / \`vb-prod-txt\`) → \`data-vb-block="columns-2"\` (obal celou tabulku).
+   - **Plné pásy (B)** a složité tabulky bez jiného typu → \`data-vb-block="html"\` (jeden obal = jeden blok).
+   - **Pill / výrazné CTA** jen s odkazem → \`data-vb-block="button"\` (uvnitř stejný \`<a>\` jako dnes).
+   - **Oddělovač** → \`data-vb-block="divider"\`.
+   - **Koláž:** obal s \`data-vb-block="product-collage"\` a uvnitř přesně \`<div data-product-collage="true"></div>\` (plus \`productImages\` v JSON jako dřív).
+   - **Webinář (6*):** pokud používáš značku \`data-email-webinar\` ve vnitřku, nastav obalu \`data-vb-block="webinar"\`; jinak \`html\` nebo \`columns-2\` podle layoutu.
+
+3. **Skupiny (volitelné):** Související bloky můžeš seskupit do \`<div data-vb-block="section" data-vb-section-fill="card" data-vb-block-id="...">\` … vnořené bloky … \`</div>\`. Přímé děti sekce musí znovu mít vlastní \`data-vb-block\` + id (kromě \`style\`/\`script\`).
+
+4. **Iterace / „Aktuální e-mail“ v kontextu:** U bloků, které **neměníš**, **ponech beze změny** jejich \`data-vb-block-id\` (i \`data-vb-block\`). Nové nebo nahrazené segmenty dostanou **nová** id. Tím editor nespletie staré a nové bloky.
+
 ═══ MOBIL — POUZE @media (max-width:600px), desktop se NEMENI ═══
 - U kazdeho emailu na ZACATEK bodyHtml (pred prvni vizualni blok) vloz PRESNE tento jeden styl + obal:
 <style type="text/css">@media only screen and (max-width:600px){.vb-email-root p,.vb-email-root li{font-size:17px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color: #F06632"],.vb-email-root a[style*="background-color:#7C3AED"],.vb-email-root a[style*="background-color: #7C3AED"]{font-size:17px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt{display:block!important;width:100%!important}.vb-prod-img{padding:0 0 14px 0!important;text-align:center!important;padding-right:0!important}.vb-prod-img img{width:100%!important;max-width:280px!important;height:auto!important}.vb-prod-txt{padding-left:0!important}.vb-web-split-img,.vb-web-split-txt{display:block!important;width:100%!important}.vb-web-split-img{padding:0 0 16px 0!important;padding-right:0!important;text-align:center!important}.vb-web-split-img img{max-width:280px!important;width:100%!important;margin:0 auto!important}.vb-web-split-txt{padding-left:0!important}.vb-inf-col{display:block!important;width:100%!important;margin-bottom:12px!important}}</style>
-<div class="vb-email-root" style="max-width:100%"> ... cely obsah ... </div>
+<div class="vb-email-root" style="max-width:100%"> ... hned za style: posloupnost obalenych bloku (kazdy s data-vb-block + data-vb-block-id), viz sekce EMAIL BUILDER; zadne „hole“ top-level tabulky bez obalu ... </div>
 - Produktove karty MUSI pouzit tridy vb-prod-img a vb-prod-txt (desktop zustane side-by-side; na mobilu se zlomi podle CSS vyse).
 - Na sirce nad 600px se nesmi menit velikosti fontu oproti klasickemu newsletteru — upravy jen uvnitr @media.
 
 ═══ ITERATIVNI UPRAVY ═══
 - "Aktualni email:" v kontextu = UPRAVIT, NE prepsat
+- **data-vb-block-id:** u neměněných bloků **zachovej** stejná id; nové bloky = nová id (viz EMAIL BUILDER).
 - "pridej/doplň/přidej sekci" → zachovej existujici, PRIDEJ novou sekci (spravny TYP bloku podle zadani)
-- "zmen/prepis/uprav" / zmena TYPU bloku (text ↔ ramecek ↔ infografika ↔ produkt ↔ webinar) = UPRAV HTML strukturu podle nove typologie A tomu prizpusob text (viz PRAVIDLA bod 8); zmena pozadi sekce = uprav obalkove tabulky(B)/(C)
+- "zmen/prepis/uprav" / zmena TYPU bloku (text ↔ ramecek ↔ infografika ↔ produkt ↔ webinar) = UPRAV HTML strukturu podle nove typologie A tomu prizpusob text (viz PRAVIDLA bod 8); zmena pozadi sekce = uprav obalkove tabulky(B)/(C); uprav i \`data-vb-block\` na obalu, **id ponech** pokud jde o stejný logický blok
 - "od znova/vytvor znovu" → novy email
 - Subject/previewText/headline zachovej pokud neni zmena
 
@@ -16441,16 +16464,20 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
     let fullPrompt: string;
     if (contentBrief) {
       const composeConcreteHint =
-        '\n\n---\nPOVINNÉ PRO SKLÁDÁNÍ HTML: Šablona už má tmavý hero (\`headline\`) a fialové CTA. \`bodyHtml\` musí být **dlouhý dopis**: úvod 2–4 odstavce, více sekcí s vlastním \`<h2>\`, (3) na výčty — přeneste **celý obsah** z briefu v souvislých odstavcích (ca 800–1500 slov při bohatém briefu), ne zkrácený leták. Žádné vymyšlené počty. KONKRÉTNÍ názvy a URL z katalogu/webinářů.\n';
+        '\n\n---\nPOVINNÉ PRO SKLÁDÁNÍ HTML: Šablona už má tmavý hero (\`headline\`) a fialové CTA. \`bodyHtml\` musí být **dlouhý dopis**: úvod 2–4 odstavce, více sekcí s vlastním \`<h2>\`, (3) na výčty — přeneste **celý obsah** z briefu v souvislých odstavcích (ca 800–1500 slov při bohatém briefu), ne zkrácený leták. Žádné vymyšlené počty. KONKRÉTNÍ názvy a URL z katalogu/webinářů. Každý logický segment zabal do vlastního \`<div>\` s \`data-vb-block\` a unikátním \`data-vb-block-id\` (viz systémový prompt — EMAIL BUILDER).\n';
       fullPrompt = conversationContext
         ? `OBSAHOVÝ BRIEF (1. krok — primární zdroj faktů a formulací; strukturu bloků dodrž podle systémového promptu):\n\n${contentBrief}\n\n---\nKontext konverzace:\n${conversationContext}\n\n---\nPůvodní požadavek uživatele:\n${prompt}${composeConcreteHint}`
         : `OBSAHOVÝ BRIEF (1. krok):\n\n${contentBrief}\n\n---\nPožadavek uživatele:\n${prompt}${composeConcreteHint}`;
     } else {
       const iterHint =
-        '\n\n[KONKRÉTNOST + DÉLKA] Rozviň obsah v souvislých odstavcích a více sekcích \`<h2>\` — nezkracuj na jednovětné bloky; sociální důkazy s čísly jen z podkladů. Drž šablonu (hero + fialové CTA). Žádné vymyšlené počty.\n';
+        '\n\n[KONKRÉTNOST + DÉLKA] Rozviň obsah v souvislých odstavcích a více sekcích \`<h2>\` — nezkracuj na jednovětné bloky; sociální důkazy s čísly jen z podkladů. Drž šablonu (hero + fialové CTA). Žádné vymyšlené počty. Zachovej nebo doplň obaly \`data-vb-block\` + \`data-vb-block-id\` podle systémového promptu (Email Builder).\n';
       fullPrompt = conversationContext
         ? `Kontext konverzace:\n${conversationContext}\n\nPozadavek: ${prompt}${iterHint}`
         : `${promptStr}${iterHint}`;
+    }
+    if (preferEmailBuilderBlocks) {
+      fullPrompt +=
+        '\n\n[VÝSTUP — BLOKOVÝ EDITOR] Požadavek jde z Email Builderu (blokový režim). Ve `bodyHtml` dodrž strukturu ze sekce EMAIL BUILDER: každý logický úsek má vlastní obal s `data-vb-block` a unikátním `data-vb-block-id`. Nepřepisuj celé tělo na „holé“ HTML bez těchto atributů, neupravuj globální mobilní `<style>` ani obal `.vb-email-root`, pokud to uživatel výslovně nechce, a neměň styly částí, které v zadání nejsou.\n';
     }
     const emailJsonSchema = {
       type: 'OBJECT',
@@ -16461,7 +16488,7 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
         bodyHtml: {
           type: 'STRING',
           description:
-            'Inline HTML: dlouhy dopis (vice sekci h2, 2–4 odstavce uvodu), konkretni fakta z briefu/RAG; pri bohatem briefu cca 800–1500 slov textu; vb-email-root + mobile CSS; zadne vymyslene pocty',
+            'Inline HTML: dlouhy dopis (vice sekci h2, 2–4 odstavce uvodu), konkretni fakta z briefu/RAG; pri bohatem briefu cca 800–1500 slov textu; vb-email-root + mobile CSS; kazdy logicky usek v obalu s data-vb-block + unikatni data-vb-block-id (Email Builder); zadne vymyslene pocty',
         },
         ctaText: { type: 'STRING' },
         ctaUrl: { type: 'STRING' },
@@ -16707,6 +16734,112 @@ ODPOVEZ POUZE JSON (zadny markdown):
   } catch (e: any) {
     console.log(`[Inline CTA] Error: ${e.message}`);
     return c.json({ error: `Inline CTA: ${e.message}` }, 500);
+  }
+});
+
+/* POST /admin/mailchimp/rewrite-email-selection-plain — jen čistý text pro náhradu výběru v náhledu (bez přegenerování HTML) */
+app.post('/make-server-93a20b6f/admin/mailchimp/rewrite-email-selection-plain', async (c) => {
+  try {
+    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const body = await c.req.json();
+    const instruction = String(body.instruction || '').trim();
+    const selectedPlainText = String(body.selectedPlainText || '').trim();
+    if (!instruction) return c.json({ error: 'Chybi instruction' }, 400);
+    if (!selectedPlainText) return c.json({ error: 'Chybi selectedPlainText' }, 400);
+
+    const EMAIL_GEN_MODELS: Record<'lite' | 'pro', string> = {
+      lite: 'gemini-3.1-flash-lite-preview',
+      pro: 'gemini-3.1-pro-preview',
+    };
+    const tier: 'lite' | 'pro' = body.model === 'pro' ? 'pro' : 'lite';
+    const modelId = EMAIL_GEN_MODELS[tier];
+
+    const sys = `Jsi editor ceskeho textu pro e-mail Vividbooks.
+
+VSTUP: uzivatel v tele mailu oznacil usek (plain text) a napise instrukci, jak ho upravit.
+
+VÝSTUP: POUZE jeden JSON objekt (zadny markdown, zadny text pred/po):
+{"replacementText":"..."}
+
+PRAVIDLA PRO replacementText:
+- Je to CISTY TEXT pro vlozeni do existujiciho HTML: ZADNE HTML tagy, ZADNY Markdown (** # atd.).
+- Zachovej fakta, jmena, cisla z puvodniho vyberu, pokud instrukce nerika jinak.
+- Delka podobna jako puvodni vyber (ne trojnasobne rozsireni), pokud uzivatel nechce zkratit/rozsirit.
+- Diakritika: spravna cestina.`;
+
+    const userBlock =
+      `INSTRUKCE UZIVATELE:\n"""${instruction.slice(0, 8000)}"""\n\n` +
+      `Označený text (nahraď tento významem podle instrukce):\n"""${selectedPlainText.slice(0, 12000)}"""`;
+
+    const urlGem = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiKey}`;
+    const plainSchema = {
+      type: 'OBJECT',
+      properties: {
+        replacementText: {
+          type: 'STRING',
+          description: 'Nahradni cisty text bez HTML',
+        },
+      },
+      required: ['replacementText'],
+    };
+
+    let res = await fetch(urlGem, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: sys }] },
+        contents: [{ role: 'user', parts: [{ text: userBlock }] }],
+        generationConfig: {
+          temperature: 0.45,
+          topP: 0.9,
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json',
+          responseSchema: plainSchema,
+        },
+      }),
+    });
+
+    let rawText = '';
+    if (!res.ok) {
+      const t = await res.text();
+      if (res.status === 400 && /schema|responseSchema/i.test(t)) {
+        res = await fetch(urlGem, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: sys }] },
+            contents: [{ role: 'user', parts: [{ text: userBlock }] }],
+            generationConfig: {
+              temperature: 0.45,
+              topP: 0.9,
+              maxOutputTokens: 8192,
+              responseMimeType: 'application/json',
+            },
+          }),
+        });
+        if (!res.ok) return c.json({ error: `Gemini ${res.status}: ${(await res.text()).slice(0, 240)}` }, 500);
+      } else {
+        return c.json({ error: `Gemini ${res.status}: ${t.slice(0, 240)}` }, 500);
+      }
+    }
+
+    const gJson = await res.json();
+    const parts = gJson?.candidates?.[0]?.content?.parts ?? [];
+    rawText = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+    rawText = rawText.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+    const extracted = extractFirstJsonObject(rawText);
+    if (!extracted.ok) {
+      return c.json({ error: `AI nevratila JSON (${extracted.reason})`, raw: rawText.slice(0, 400) }, 500);
+    }
+    let replacement = String((extracted.value as any)?.replacementText ?? '').trim();
+    if (!replacement) return c.json({ error: 'Prazdny replacementText' }, 500);
+    replacement = replacement.replace(/<[^>]{0,200}>/g, '').slice(0, 16000);
+
+    return c.json({ success: true, replacementText: replacement });
+  } catch (e: any) {
+    console.log(`[Sel plain] Error: ${e.message}`);
+    return c.json({ error: `Sel plain: ${e.message}` }, 500);
   }
 });
 
@@ -17462,7 +17595,7 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'update_novinka', description: 'Upraví existující novinku.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT' } }, required: ['id', 'fields'] } },
   { name: 'delete_novinka', description: 'Smaže novinku trvale. Nejdřív zavolej get_novinky pro zjištění ID.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
   // ── Email kampaně ─────────────────────────────────────────────────
-  { name: 'create_email_campaign_draft', description: 'POVINNÉ při žádosti o mail do Mailchimpu / šablonu / canvas (Email Builder). Uloží draft v pravém panelu. Stejné jako generate-email (1)–(6): typ (2) převažuje slovně, plus (3)(4)(6); minimálně dvě různé barvy sekcí / karet (viz vrstvená pozadí v tool schema u bodyHtml). 1–2 CTA pill, Arial.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků' }, previewText: { type: 'STRING', description: 'Preheader', nullable: true }, headline: { type: 'STRING', description: 'Hlavní nadpis v šabloně' }, bodyHtml: { type: 'STRING', description: 'Jako generate-email: vb-email-root + mobile CSS, typy (1)–(6), vrstvená pozadí — full-width tabulky pro tmavý/oranžový/žlutý pás, šedý pás #E8EDF4 s bílou vnitřní kartou, produkt vb-prod-*, webinář vb-web-split-* a 6a jako width 100 % tabulka; CTA #F06632; 4+ produktů data-product-collage + URL z get_products. Bez <!DOCTYPE>.' }, ctaText: { type: 'STRING' }, ctaUrl: { type: 'STRING' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true }, fullHtml: { type: 'STRING', description: 'Volitelné: celý dokument jako hotové HTML pro Mailchimp. Jinak se vygeneruje z bodyHtml + Vividbooks obálka.', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
+  { name: 'create_email_campaign_draft', description: 'POVINNÉ při žádosti o mail do Mailchimpu / šablonu / canvas (Email Builder). Uloží draft v pravém panelu. Stejné jako generate-email (1)–(6): typ (2) převažuje slovně, plus (3)(4)(6); minimálně dvě různé barvy sekcí / karet (viz vrstvená pozadí v tool schema u bodyHtml). Každý logický segment v bodyHtml obal do divu s data-vb-block + unikátní data-vb-block-id (blokový editor). 1–2 CTA pill, Arial.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků' }, previewText: { type: 'STRING', description: 'Preheader', nullable: true }, headline: { type: 'STRING', description: 'Hlavní nadpis v šabloně' }, bodyHtml: { type: 'STRING', description: 'Jako generate-email: vb-email-root + mobile CSS, typy (1)–(6), vrstvená pozadí — full-width tabulky pro tmavý/oranžový/žlutý pás, šedý pás #E8EDF4 s bílou vnitřní kartou, produkt vb-prod-*, webinář vb-web-split-* a 6a jako width 100 % tabulka; CTA #F06632; 4+ produktů data-product-collage + URL z get_products. Každý segment: obal s data-vb-block a data-vb-block-id. Bez <!DOCTYPE>.' }, ctaText: { type: 'STRING' }, ctaUrl: { type: 'STRING' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true }, fullHtml: { type: 'STRING', description: 'Volitelné: celý dokument jako hotové HTML pro Mailchimp. Jinak se vygeneruje z bodyHtml + Vividbooks obálka.', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
   { name: 'get_email_drafts', description: 'Načte seznam existujících email draftů z Email Builderu.', parameters: { type: 'OBJECT', properties: {} } },
   // ── Delegace na specialisty ────────────────────────────────────────
   { name: 'delegate_to_seo_specialist', description: 'Předá zadání SEO specialistovi. Použij pro SEO brief, meta title/description, obsahovou strukturu, search intent, interní prolinkování a obsahovou strategii.', parameters: { type: 'OBJECT', properties: { task: { type: 'STRING', description: 'SEO nebo obsahový úkol.' }, context: { type: 'STRING', description: 'Doplňující kontext: URL, cílová stránka, publikum, produkt, téma.', nullable: true } }, required: ['task'] } },
