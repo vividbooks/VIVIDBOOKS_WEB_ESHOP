@@ -8,11 +8,14 @@ export function StripePaymentSubmitForm({
   total,
   onError,
   returnPath = '/objednavka/dekujeme',
+  submitDisabled = false,
 }: {
   total: number;
   onError: (message: string) => void;
   /** Path only, např. /objednavka/dekujeme */
   returnPath?: string;
+  /** Např. při vytváření PaymentIntent na pozadí — zablokuje dvojí odeslání. */
+  submitDisabled?: boolean;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -44,7 +47,7 @@ export function StripePaymentSubmitForm({
       <PaymentElement />
       <button
         type="submit"
-        disabled={!stripe || !elements || isSubmitting}
+        disabled={!stripe || !elements || isSubmitting || submitDisabled}
         className="inline-flex items-center justify-center gap-2 w-full px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
       >
         {isSubmitting ? (
