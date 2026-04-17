@@ -318,7 +318,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
   }
   const custDomain = custEmail.split('@')[1];
-    if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
+  if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
     return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
   }
 

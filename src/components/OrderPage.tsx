@@ -451,6 +451,11 @@ export function OrderPage() {
   const [students2, setStudents2]   = useState(100);
   const [licYears, setLicYears]     = useState(1);
   const [digitalSubjects, setDigitalSubjects] = useState<string[]>([]);
+  /** Pořadí předmětů jako u pilulek licence (2. st. → 1. st.). */
+  const orderedSchoolSubjectKeys = useMemo(
+    () => [...SUBJECTS_2.map((s) => s.key), ...SUBJECTS_1.map((s) => s.key)],
+    [],
+  );
   const [vividboardCount, setVividboardCount] = useState(1);
   const [shipping, setShipping] = useState<{
     method: SchoolShippingMethod;
@@ -1674,6 +1679,21 @@ export function OrderPage() {
     );
   }, []);
 
+  /** V kroku „Počty“ předvyplnit „Předměty pro licenci“ z kroku „Co objednáváte“; po ruční úpravě jen oříznout podle stále vybraných předmětů. */
+  useEffect(() => {
+    if (step !== 2 || !selTypes.includes('digital')) return;
+    setDigitalSubjects((prev) => {
+      const allowed = new Set(selSubjects);
+      const fromStep1 = orderedSchoolSubjectKeys.filter((k) => allowed.has(k));
+      if (fromStep1.length === 0) return prev;
+      if (prev.length === 0) return fromStep1;
+      const narrowed = orderedSchoolSubjectKeys.filter((k) => prev.includes(k) && allowed.has(k));
+      const next = narrowed.length > 0 ? narrowed : fromStep1;
+      if (next.length === prev.length && next.every((k, i) => prev[i] === k)) return prev;
+      return next;
+    });
+  }, [step, selTypes, selSubjects, orderedSchoolSubjectKeys]);
+
   const handleSchoolShippingMethodChange = useCallback((method: SchoolShippingMethod) => {
     const option = SHIPPING_OPTIONS.find((item) => item.id === method) ?? SHIPPING_OPTIONS[0];
     setShipping((prev) => ({
@@ -2069,14 +2089,20 @@ export function OrderPage() {
                                 {'Předměty pro licenci'}
                               </p>
                               <div className="flex flex-wrap gap-2">
-                                {[...SUBJECTS_2, ...SUBJECTS_1].map((subject) => (
-                                  <OrderInlineCheckboxPill
-                                    key={`digital-${subject.key}`}
-                                    active={digitalSubjects.includes(subject.key)}
-                                    label={subject.label}
-                                    onClick={() => toggleDigitalSubject(subject.key)}
-                                  />
-                                ))}
+                                {orderedSchoolSubjectKeys.map((key) => {
+                                  const subject =
+                                    SUBJECTS_2.find((s) => s.key === key) ||
+                                    SUBJECTS_1.find((s) => s.key === key);
+                                  if (!subject) return null;
+                                  return (
+                                    <OrderInlineCheckboxPill
+                                      key={`digital-${subject.key}`}
+                                      active={digitalSubjects.includes(subject.key)}
+                                      label={subject.label}
+                                      onClick={() => toggleDigitalSubject(subject.key)}
+                                    />
+                                  );
+                                })}
                               </div>
                             </div>
                             <div className="flex flex-col gap-3">
