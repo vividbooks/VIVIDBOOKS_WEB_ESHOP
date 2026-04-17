@@ -836,7 +836,7 @@ export interface AdminSchoolOrderSummary {
     orderCount: number;
   }>;
   digitalLicenses: string[];
-  /** Posledních ~20 objednávek (náhled). */
+  /** Náhled posledních objednávek (např. prvních 20 z načteného okna). */
   recentOrders: Array<{
     id: string;
     orderNumber: string;
