@@ -18,6 +18,7 @@ import {
   EMAIL_MX_REJECT_CS,
 } from '../../../utils/emailValidation.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
+import { MARKETING_ORIGIN_PRIMARY_DEFAULT, MARKETING_ORIGINS_CANONICAL_SET } from '../../../config/marketingSiteConstants.ts';
 
 const app = new Hono();
 
@@ -103,12 +104,29 @@ const WEBINAR_EMAIL_SUBJECT_PREFIX = '🔴 ';
 
 /**
  * Veřejná báze URL webu (odkazy v e-mailech a JSON po /webinar-registrace, připomínky).
- * Pro ostrý web na vlastní doméně: Supabase → Edge Functions → Secrets např.
- * PUBLIC_SITE_URL=https://www.vividbooks.com
- * Bez PUBLIC_SITE_URL: výchozí je GitHub Pages (stejný `base` jako ve vite.config.ts u GITHUB_ACTIONS).
- * Pro lokální test e-mailů: PUBLIC_SITE_URL=http://localhost:3000
+ * Produkce: Supabase → Edge Functions → Secrets např. PUBLIC_SITE_URL=https://new.vividbooks.com
+ * (nebo https://www.vividbooks.com po přesunu). Bez PUBLIC_SITE_URL: výchozí new.vividbooks.com.
+ * Lokální test e-mailů: PUBLIC_SITE_URL=http://localhost:3000
  */
-const DEFAULT_PUBLIC_SITE_ORIGIN_GITHUB_PAGES = 'https://vividbooks.github.io/VIVIDBOOKS_WEB_ESHOP';
+const DEFAULT_PUBLIC_SITE_ORIGIN_FALLBACK = MARKETING_ORIGIN_PRIMARY_DEFAULT;
+
+function marketingSitePath(path: string): string {
+  const base = getPublicSiteOrigin().replace(/\/$/, '');
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${p}`;
+}
+
+function isOurMarketingPublicHref(href: string): boolean {
+  const h = href.trim();
+  if (!h) return false;
+  try {
+    const origin = getPublicSiteOrigin().replace(/\/$/, '');
+    if (h.startsWith(origin)) return true;
+  } catch {
+    /* ignore */
+  }
+  return MARKETING_ORIGINS_CANONICAL_SET.some((o) => h.startsWith(o.replace(/\/$/, '')));
+}
 
 function normalizePublicSiteOrigin(raw: string): string {
   let s = raw.replace(/\/$/, '');
@@ -130,7 +148,7 @@ function normalizePublicSiteOrigin(raw: string): string {
 function getPublicSiteOrigin(): string {
   const u = Deno.env.get('PUBLIC_SITE_URL')?.trim();
   if (u) return normalizePublicSiteOrigin(u);
-  return normalizePublicSiteOrigin(DEFAULT_PUBLIC_SITE_ORIGIN_GITHUB_PAGES);
+  return normalizePublicSiteOrigin(DEFAULT_PUBLIC_SITE_ORIGIN_FALLBACK);
 }
 
 app.use('*', cors());
@@ -959,9 +977,9 @@ app.post('/make-server-93a20b6f/admin/shoptet-products-xml-fetch', async (c) => 
   }
   const r = await fetch(url, {
     redirect: 'follow',
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (compatible; VividbooksAdmin-ShoptetImport/1.0; +https://www.vividbooks.com)',
+      headers: {
+        'User-Agent':
+          `Mozilla/5.0 (compatible; VividbooksAdmin-ShoptetImport/1.0; +${getPublicSiteOrigin()})`,
       Accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'cs,en;q=0.8',
     },
@@ -3165,7 +3183,7 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
     if (mandrillKey) {
       try {
         const firstName = czechFirstNameVocative(name.trim().split(' ')[0] || name.trim());
-        const videoUrl = `https://www.vividbooks.com/webinare/zaznam/${videoId}`;
+        const videoUrl = marketingSitePath(`/webinare/zaznam/${videoId}`);
 
         const emailHtml = `<!DOCTYPE html>
 <html lang="cs">
@@ -3193,7 +3211,7 @@ Dekujeme za registraci ke sledovani zaznamu <strong style="color:#001161;">${vid
 </td></tr>
 </table>
 <p style="margin:0;font-size:14px;color:#718096;line-height:1.6;">
-Zaznamy vsech webinaru najdes take na <a href="https://www.vividbooks.com/webinare" style="color:#001161;font-weight:700;">vividbooks.com/webinare</a>.
+Zaznamy vsech webinaru najdes take na <a href="${marketingSitePath('/webinare')}" style="color:#001161;font-weight:700;">${new URL(marketingSitePath('/webinare')).host}/webinare</a>.
 </p>
 </td></tr>
 <tr><td style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
@@ -7073,10 +7091,10 @@ app.get('/make-server-93a20b6f/check-trial-email', async (c) => {
   }
 });
 
-/* ── SEO: robots.txt ─────────────���─────────────────────────────── */
+/* ── SEO: robots.txt ─────────────────────────────────────────────── */
 app.get('/make-server-93a20b6f/robots.txt', (c) => {
   const robotsTxt = `# Vividbooks robots.txt
-# https://www.vividbooks.com
+# ${getPublicSiteOrigin()}
 
 User-agent: *
 Allow: /
@@ -7111,7 +7129,7 @@ Allow: /
 User-agent: cohere-ai
 Allow: /
 
-Sitemap: https://www.vividbooks.com/api/sitemap.xml
+Sitemap: ${marketingSitePath('/api/sitemap.xml')}
 `;
   return c.body(robotsTxt, 200, {
     'Content-Type': 'text/plain; charset=utf-8',
@@ -7128,15 +7146,15 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 ## Předměty
 
 ### 2. stupeň
-- [Matematika 2. stupeň](https://www.vividbooks.com/predmet/matematika-2-stupen): Interaktivní digitální učebnice a pracovní sešity matematiky pro 6.–9. ročník ZŠ
-- [Fyzika](https://www.vividbooks.com/predmet/fyzika): Animované experimenty, simulace a interaktivní lekce fyziky
-- [Přírodopis](https://www.vividbooks.com/predmet/prirodopis): 3D modely, interaktivní lekce a badatelské listy z přírodopisu
-- [Chemie](https://www.vividbooks.com/predmet/chemie): Digitální učebnice chemie s animovanými reakcemi a pokusy
+- [Matematika 2. stupeň](${marketingSitePath('/predmet/matematika-2-stupen')}): Interaktivní digitální učebnice a pracovní sešity matematiky pro 6.–9. ročník ZŠ
+- [Fyzika](${marketingSitePath('/predmet/fyzika')}): Animované experimenty, simulace a interaktivní lekce fyziky
+- [Přírodopis](${marketingSitePath('/predmet/prirodopis')}): 3D modely, interaktivní lekce a badatelské listy z přírodopisu
+- [Chemie](${marketingSitePath('/predmet/chemie')}): Digitální učebnice chemie s animovanými reakcemi a pokusy
 
 ### 1. stupeň
-- [Matematika 1. stupeň](https://www.vividbooks.com/predmet/matematika-1-stupen): Pracovní sešity a digitální materiály pro 1.–5. ročník ZŠ
-- [Český jazyk](https://www.vividbooks.com/predmet/cesky-jazyk): Písanky a pracovní sešity českého jazyka
-- [Prvouka](https://www.vividbooks.com/predmet/prvouka): Učební materiály prvouky pro 1. stupeň
+- [Matematika 1. stupeň](${marketingSitePath('/predmet/matematika-1-stupen')}): Pracovní sešity a digitální materiály pro 1.–5. ročník ZŠ
+- [Český jazyk](${marketingSitePath('/predmet/cesky-jazyk')}): Písanky a pracovní sešity českého jazyka
+- [Prvouka](${marketingSitePath('/predmet/prvouka')}): Učební materiály prvouky pro 1. stupeň
 
 ## Produkty
 - Digitální učebnice (online platforma s interaktivním obsahem)
@@ -7144,18 +7162,18 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 - Vividboard (nástroj pro interaktivní tabule)
 
 ## Webináře
-- [DVPP webináře](https://www.vividbooks.com/webinare): Pravidelné webináře pro učitele, akreditované DVPP, zdarma s certifikátem
+- [DVPP webináře](${marketingSitePath('/webinare')}): Pravidelné webináře pro učitele, akreditované DVPP, zdarma s certifikátem
 
 ## Blog a novinky
-- [Blog](https://www.vividbooks.com/blog): Články o moderním vzdělávání, rozhovory s učiteli
-- [Novinky](https://www.vividbooks.com/novinky): Aktuality o nových produktech a aktualizacích
+- [Blog](${marketingSitePath('/blog')}): Články o moderním vzdělávání, rozhovory s učiteli
+- [Novinky](${marketingSitePath('/novinky')}): Aktuality o nových produktech a aktualizacích
 
 ## Vyzkoušení
-- [14denní trial zdarma](https://www.vividbooks.com/vyzkousejte): Bezplatný zkušební přístup k digitálním učebnicím
+- [14denní trial zdarma](${marketingSitePath('/vyzkousejte')}): Bezplatný zkušební přístup k digitálním učebnicím
 
 ## Kontakt
 - Telefon: +420 602 227 674
-- Web: https://www.vividbooks.com
+- Web: ${getPublicSiteOrigin()}
 `;
   return c.body(llmsTxt, 200, {
     'Content-Type': 'text/plain; charset=utf-8',
@@ -7165,7 +7183,7 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 
 /* ── SEO: sitemap.xml ───────────────────���──────────────────────── */
 app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
-  const BASE = 'https://www.vividbooks.com';
+  const BASE = getPublicSiteOrigin();
   const now = new Date().toISOString().split('T')[0];
 
   // Static pages
@@ -7831,7 +7849,7 @@ const MARKETING_AGENT_SYSTEM_PROMPT = `Jsi marketingový agent pro Vividbooks �
 - **Předměty**: Matematika (1. i 2. stupeň), Fyzika, Chemie, Přírodopis, Český jazyk, Prvouka
 - **Cílové skupiny**: Učitelé ZŠ, školy, ředitelé, rodiče, žáci
 - **Klíčové USP**: Animace a interaktivní lekce, 3D modely, badatelské listy, okamžitá zpětná vazba, Vividboard (interaktivní tabule), soulad s RVP 2025, doložky MŠMT, bezplatný 14denní trial
-- **Web**: www.vividbooks.com | **Trial**: vividbooks.com/vyzkousejte
+- **Web**: new.vividbooks.com (primární), příprava www.vividbooks.com | **Trial**: /vyzkousejte na hlavním webu
 - **Webináře**: Pravidelné DVPP webináře zdarma s certifikátem pro učitele
 
 ## Brand voice & tone
@@ -12759,7 +12777,7 @@ async function removeChunk(id: string): Promise<void> {
 function subjectFaqsToRagText(subject: any, faqs: { question: string; answer: string }[]): string {
   const name = String(subject?.displayName || 'Předmět').trim();
   const slug = String(subject?.slug || '').trim();
-  const baseUrl = 'https://www.vividbooks.com';
+  const baseUrl = getPublicSiteOrigin();
   const lines: string[] = [
     `Často kladené dotazy — předmět ${name} (Vividbooks).`,
     slug ? `Veřejná stránka předmětu: ${baseUrl}/predmet/${slug}` : '',
@@ -15453,7 +15471,7 @@ function vividbooksEmailTemplate(params: {
 </style>`;
   /* Původní náhled AI Email Agentu: světle šedé plátno + bílá zaoblená karta, tmavě modrý hero, fialové hlavní CTA. */
   const vbCanvas = '#E8EAED';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /**
@@ -15476,7 +15494,7 @@ function vividbooksEmailTestMatchEditorTemplate(params: { body: string; preheade
   const pre = preheader
     ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>`
     : '';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="https://www.vividbooks.com" style="color:#F06632;text-decoration:underline;">www.vividbooks.com</a> &middot; <a href="https://www.vividbooks.com/vyzkousejte" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* GET /admin/mailchimp/campaigns */
@@ -15616,7 +15634,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
       headline: headline || subject,
       body: bodyContent || '<p>Obsah emailu</p>',
       ctaText: ctaText || 'Vyzkoušejte zdarma',
-      ctaUrl: ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+      ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
       preheader: previewText,
     });
 
@@ -15913,7 +15931,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
           '\n\n## Aktualni produkty v katalogu Vividbooks (POUZIJ KONKRETNI NAZVY!):\n' +
           allProducts
             .map((p: any) =>
-              `- **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: https://www.vividbooks.com/produkt/${p.id}`,
+              `- **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: ${marketingSitePath('/produkt/' + encodeURIComponent(String(p.id)))}`,
             )
             .join('\n');
       }
@@ -15936,7 +15954,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
             .slice(0, webLimit)
             .map((w: any) => {
               const slug = String(w.slug || w.id || '').trim();
-              const pageUrl = slug ? `https://www.vividbooks.com/webinar/${slug}` : '';
+              const pageUrl = slug ? marketingSitePath(`/webinar/${slug}`) : '';
               return (
                 `- **${w.title}**${w.subtitle ? ' — ' + w.subtitle : ''} | ${w.day || ''}. ${w.monthName || ''} ${w.year || ''} ${w.time || ''} | Lektor: ${w.lecturer || '?'}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'}${pageUrl ? ' | url: ' + pageUrl : ''}${w.coverImage ? ' | img: ' + w.coverImage : ''}`
               );
@@ -16602,7 +16620,7 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
 
     (ragDebug as any).productImagesCount = productImages.length;
 
-    const fullHtml = vividbooksEmailTemplate({ headline: emailData.headline || emailData.subject || '', body: bodyForTemplate, ctaText: emailData.ctaText || 'Vyzkoušejte zdarma', ctaUrl: emailData.ctaUrl || 'https://www.vividbooks.com/vyzkousejte', preheader: emailData.previewText || '' });
+    const fullHtml = vividbooksEmailTemplate({ headline: emailData.headline || emailData.subject || '', body: bodyForTemplate, ctaText: emailData.ctaText || 'Vyzkoušejte zdarma', ctaUrl: emailData.ctaUrl || marketingSitePath('/vyzkousejte'), preheader: emailData.previewText || '' });
     return c.json({ success: true, email: { ...emailData, fullHtml, productImages }, ragDebug });
   } catch (e: any) {
     console.log(`[MC Gen] Error: ${e.message}`);
@@ -16619,7 +16637,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) 
     const contextText = (body.contextText || '').toString().slice(0, 6000);
     const subject = (body.subject || '').toString().slice(0, 200);
     const headline = (body.headline || '').toString().slice(0, 200);
-    const defaultCtaUrl = (body.defaultCtaUrl || 'https://www.vividbooks.com/vyzkousejte').toString().slice(0, 500);
+    const defaultCtaUrl = (body.defaultCtaUrl || marketingSitePath('/vyzkousejte')).toString().slice(0, 500);
     if (!contextText.trim() && !subject.trim()) {
       return c.json({ error: 'Chybi contextText nebo subject' }, 400);
     }
@@ -16628,7 +16646,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) 
     try {
       const allProducts = await getAllProducts();
       productLines = allProducts.slice(0, 60).map((p: any) =>
-        `- ${p.name}${p.category ? ' | ' + p.category : ''} → https://www.vividbooks.com/produkt/${p.id}`,
+        `- ${p.name}${p.category ? ' | ' + p.category : ''} → ${marketingSitePath('/produkt/' + encodeURIComponent(String(p.id)))}`,
       ).join('\n');
     } catch { /* ignore */ }
 
@@ -16639,7 +16657,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) 
         .filter((w: any) => w?.slug || w?.id)
         .slice(0, 12)
         .map((w: any) =>
-          `- ${w.title} → https://www.vividbooks.com/webinar/${w.slug || w.id}`,
+          `- ${w.title} → ${marketingSitePath('/webinar/' + encodeURIComponent(String(w.slug || w.id)))}`,
         ).join('\n');
     } catch { /* ignore */ }
 
@@ -16647,9 +16665,9 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) 
 Tvym ukolem je navrhnout KRATKY text na tlacitko (max 40 znaku, cesky, akcni) a URL kam ma tlacitko vest.
 
 OSTRE PRAVIDLA:
-- url MUSI byt budz "https://www.vividbooks.com/..." z tabulek nize NEBO presne defaultCtaUrl z pozadavku.
+- url MUSI byt bud URL z tabulek nize (stejny hostname jako ${getPublicSiteOrigin()}) NEBO presne defaultCtaUrl z pozadavku.
 - NIKDY nevymyslej produktovou URL, ktera neni v seznamu produktu.
-- Pokud kontext nesedi k konkretnimu produktu, pouzij defaultCtaUrl nebo https://www.vividbooks.com/vyzkousejte nebo https://www.vividbooks.com/produkty
+- Pokud kontext nesedi k konkretnimu produktu, pouzij defaultCtaUrl nebo ${marketingSitePath('/vyzkousejte')} nebo ${marketingSitePath('/produkty')}
 - buttonText: bez uvozovek, bez HTML
 
 ODPOVEZ POUZE JSON (zadny markdown):
@@ -16700,8 +16718,7 @@ ODPOVEZ POUZE JSON (zadny markdown):
     if (!href || !href.startsWith('http')) href = defaultCtaUrl;
 
     const allowed =
-      href.startsWith('https://www.vividbooks.com') ||
-      href.startsWith('https://vividbooks.com') ||
+      isOurMarketingPublicHref(href) ||
       href.startsWith('https://www.vividbooks.cz') ||
       href.startsWith('https://vividbooks.cz') ||
       href === defaultCtaUrl;
@@ -16929,7 +16946,7 @@ app.post('/make-server-93a20b6f/admin/email-drafts', async (c) => {
         headline: String(toSave.headline || toSave.subject || ''),
         body: mergedBody,
         ctaText: String(toSave.ctaText || 'Vyzkoušejte zdarma'),
-        ctaUrl: String(toSave.ctaUrl || 'https://www.vividbooks.com/vyzkousejte'),
+        ctaUrl: String(toSave.ctaUrl || marketingSitePath('/vyzkousejte')),
         preheader: String(toSave.previewText || ''),
       });
     }
@@ -18489,7 +18506,7 @@ async function runAdminTool(
       headline,
       body: bodyHtml,
       ctaText: String(args.ctaText || 'Prohlédnout produkty'),
-      ctaUrl: String(args.ctaUrl || 'https://www.vividbooks.com'),
+      ctaUrl: String(args.ctaUrl || getPublicSiteOrigin()),
       preheader: String(args.previewText || ''),
     });
     const rawMsgs = Array.isArray(ctx?.agentMessages) && ctx.agentMessages.length > 0
@@ -18527,7 +18544,7 @@ async function runAdminTool(
       bodyHtml,
       fullHtml,
       ctaText: args.ctaText || 'Prohlédnout produkty',
-      ctaUrl: args.ctaUrl || 'https://www.vividbooks.com',
+      ctaUrl: args.ctaUrl || getPublicSiteOrigin(),
       audience: (args.audience === 'no-newsletter' ? 'no-newsletter' : 'newsletter') as 'newsletter' | 'no-newsletter',
       status: 'draft' as const,
       createdAt: now,
@@ -19126,7 +19143,7 @@ Máš k dispozici 2 specialisty:
 - Předměty: Matematika, Fyzika, Chemie, Přírodopis, Český jazyk, Prvouka.
 - Cílové skupiny: učitelé ZŠ, školy, ředitelé, rodiče, žáci.
 - Silné stránky: animace a interaktivní lekce, 3D modely, badatelské listy, okamžitá zpětná vazba, Vividboard, soulad s RVP 2025, doložky MŠMT, 14denní trial zdarma.
-- Web: www.vividbooks.com
+- Web: new.vividbooks.com (primární), www.vividbooks.com (alternativa po přesunu)
 
 ### Tone of voice
 - Vždy česky.

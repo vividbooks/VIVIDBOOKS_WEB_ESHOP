@@ -9,6 +9,7 @@ import digitalSeriesImg from 'figma:asset/cf223de1d9c5d972540d939e1fb808679daac3
 import { SUBJECT_CONFIGS, type SubjectConfig } from './subjectConfigs';
 import { SEOHead, breadcrumbJsonLd, faqJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
@@ -698,8 +699,8 @@ export function SubjectPage({
         imageHeight={630}
         jsonLd={[
           breadcrumbJsonLd([
-            { name: 'Katalog', url: 'https://www.vividbooks.com/' },
-            { name: seoTitle, url: `https://www.vividbooks.com/predmet/${subjectToSlug(subject)}` },
+            { name: 'Katalog', url: marketingUrl('/') },
+            { name: seoTitle, url: marketingUrl(`/predmet/${subjectToSlug(subject)}`) },
           ]),
           ...(subjectFaqs.length > 0 ? [faqJsonLd(subjectFaqs)] : []),
         ]}

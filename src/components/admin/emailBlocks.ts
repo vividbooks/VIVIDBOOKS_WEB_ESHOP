@@ -1,5 +1,6 @@
 import { buildProductCollageBlockHtml } from './emailProductCollage';
 import { buildWebinarBlockHtml, EMPTY_EMAIL_WEBINAR_SNAPSHOT } from './emailWebinarBlock';
+import { marketingUrl } from '../../config/marketingSite';
 
 export type EmailBuilderMode = 'block' | 'html';
 
@@ -29,7 +30,7 @@ export interface EmailBlockPreset {
   category: 'Content' | 'Media' | 'Layout' | 'Commerce' | 'Brand';
 }
 
-const CTA_URL = 'https://www.vividbooks.com/vyzkousejte';
+const CTA_URL = marketingUrl('/vyzkousejte');
 
 export const EMAIL_BLOCK_PRESETS: EmailBlockPreset[] = [
   { type: 'text', label: 'Text', description: 'Odstavce nebo krátká sekce', category: 'Content' },

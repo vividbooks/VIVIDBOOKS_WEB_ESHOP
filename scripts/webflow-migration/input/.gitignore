@@ -1,0 +1,3 @@
+# Volitelný export Google Search Console (Page report CSV).
+# Soubor může obsahovat citlivá data — typicky se necommituje.
+gsc-pages.csv

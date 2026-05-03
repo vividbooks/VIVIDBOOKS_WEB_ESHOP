@@ -18,6 +18,7 @@ import { SEOHead } from './SEOHead';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { NewsletterBanner } from './NewsletterBanner';
 import { NovinkySection } from './NovinkySection';
+import { marketingUrl } from '../config/marketingSite';
 import {
   clampHeroBlockGapPx,
   clampHeroTitleLineHeightPct,
@@ -477,12 +478,12 @@ const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk
 /* ── helpers ──────────────────────────────────────────────────── */
 const getCategoryLink = (category: string) => {
   const cat = (category || '').toLowerCase();
-  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return 'https://www.vividbooks.com/cs/matematika-1-stupen';
-  if (cat.includes('prvouka'))   return 'https://www.vividbooks.com/cs/prvouka';
-  if (cat.includes('matematika')) return 'https://www.vividbooks.com/cs/matematika';
-  if (cat.includes('fyzika'))     return 'https://www.vividbooks.com/cs/fyzika';
-  if (cat.includes('chemie'))     return 'https://www.vividbooks.com/cs/chemie';
-  if (cat.includes('p\u0159\u00edrodopis')) return 'https://www.vividbooks.com/cs/prirodopis';
+  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/cs/matematika-1-stupen');
+  if (cat.includes('prvouka')) return marketingUrl('/cs/prvouka');
+  if (cat.includes('matematika')) return marketingUrl('/cs/matematika');
+  if (cat.includes('fyzika')) return marketingUrl('/cs/fyzika');
+  if (cat.includes('chemie')) return marketingUrl('/cs/chemie');
+  if (cat.includes('p\u0159\u00edrodopis')) return marketingUrl('/cs/prirodopis');
   return 'https://eshop.vividbooks.com';
 };
 

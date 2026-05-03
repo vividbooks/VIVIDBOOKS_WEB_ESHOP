@@ -178,7 +178,7 @@ export function articleJsonLd(article: {
     publisher: {
       '@type': 'Organization',
       name: 'Vividbooks',
-      logo: { '@type': 'ImageObject', url: 'https://www.vividbooks.com/logo.svg' },
+      logo: { '@type': 'ImageObject', url: `${SITE_URL}/logo.svg` },
     },
     mainEntityOfPage: { '@type': 'WebPage', '@id': article.url },
   };

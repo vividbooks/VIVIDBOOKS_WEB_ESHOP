@@ -1,0 +1,2 @@
+# Jedna URL na řádek (absolutní https://… nebo cesta začínající /).
+# Řádky začínající # se ignorují.

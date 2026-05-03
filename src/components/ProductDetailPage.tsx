@@ -8,6 +8,7 @@ import { UnifiedBookCard } from './UnifiedBookCard';
 import { SUBJECT_CONFIGS } from './subjectConfigs';
 import { SEOHead, productJsonLd, breadcrumbJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { useCart } from '../contexts/CartContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchProductStockItem, type ProductStockItem } from '../utils/productStock';
@@ -1169,21 +1170,21 @@ export function ProductDetailPage({
             category: product.category,
           }),
           breadcrumbJsonLd([
-            { name: 'Katalog', url: 'https://www.vividbooks.com/' },
+            { name: 'Katalog', url: marketingUrl('/') },
             ...(product.type === 'merch'
               ? [
                   {
                     name: 'Další produkty',
-                    url: 'https://www.vividbooks.com/dalsi-produkty',
+                    url: marketingUrl('/dalsi-produkty'),
                   },
                 ]
               : [
                   {
                     name: product.category,
-                    url: `https://www.vividbooks.com/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`,
+                    url: marketingUrl(`/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`),
                   },
                 ]),
-            { name: product.name, url: `https://www.vividbooks.com/produkt/${encodeURIComponent(product.id)}` },
+            { name: product.name, url: marketingUrl(`/produkt/${encodeURIComponent(product.id)}`) },
           ]),
         ]}
       />
