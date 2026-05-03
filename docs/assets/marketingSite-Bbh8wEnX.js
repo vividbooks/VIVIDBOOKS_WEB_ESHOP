@@ -1,1 +1,0 @@
-const i="https://new.vividbooks.com",e={BASE_URL:"/",DEV:!1,MODE:"production",PROD:!0,SSR:!1,VITE_GA_MEASUREMENT_ID:"G-T2YTCB5DJZ"};function _(){try{const t=e?.VITE_PUBLIC_SITE_URL;if(t?.trim())return t.trim().replace(/\/$/,"")}catch{}return i}function o(t){const r=_(),n=t.startsWith("/")?t:`/${t}`;return`${r}${n}`}export{_ as g,o as m};
