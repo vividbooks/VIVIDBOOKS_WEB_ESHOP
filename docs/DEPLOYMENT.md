@@ -25,6 +25,10 @@ Workflow: [.github/workflows/deploy-github-pages.yml](../.github/workflows/deplo
 2. **Settings → Pages → Build and deployment:** zdroj musí být **GitHub Actions**. Pokud je nastavené **Deploy from a branch** (např. `gh-pages`), nasazuje se obsah z větve **bez** proměnných z Actions — pak klíče v Secrets nemají na výsledek vliv.
 3. V prohlížeči zkuste **tvrdé obnovení** nebo anonymní okno (cache starého `*.js`).
 
+### Nasazení ze složky `/docs` na větvi `main`
+
+Pokud v **Settings → Pages** máte **Deploy from a branch** a složku **`/docs`**, GitHub servíruje přímo soubory z repozitáře — **ne** artefakt z workflow „Deploy GitHub Actions“. Po změnách v `index.html`, `public/` (favicon, logo) nebo kódu je potřeba lokálně spustit **`npm run build:github-pages`**, zkontrolovat změny v `docs/` a **commitnout je**. Bez toho zůstane např. starý `docs/index.html` bez odkazu na ikonu záložky.
+
 ---
 
 ## Supabase (produkce)
