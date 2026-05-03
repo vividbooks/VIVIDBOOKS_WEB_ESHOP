@@ -22,6 +22,7 @@ export function ResumePaymentPage() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
   const [totalHalers, setTotalHalers] = useState(0);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [paymentError, setPaymentError] = useState('');
 
   useEffect(() => {
@@ -76,7 +77,8 @@ export function ResumePaymentPage() {
         setTotalHalers(Number(data.total) || 0);
         {
           const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(rtt || null);
           if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
         }
         window.history.replaceState({}, '', window.location.pathname);
@@ -179,7 +181,11 @@ export function ResumePaymentPage() {
                 },
               }}
             >
-              <StripePaymentSubmitForm total={totalHalers} onError={setPaymentError} />
+              <StripePaymentSubmitForm
+                total={totalHalers}
+                onError={setPaymentError}
+                thankYouTrackingToken={thankYouTrackingToken}
+              />
             </Elements>
           )}
         </div>

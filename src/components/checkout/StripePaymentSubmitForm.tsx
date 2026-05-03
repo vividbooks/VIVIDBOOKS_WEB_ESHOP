@@ -8,12 +8,15 @@ export function StripePaymentSubmitForm({
   total,
   onError,
   returnPath = '/objednavka/dekujeme',
+  thankYouTrackingToken,
   submitDisabled = false,
 }: {
   total: number;
   onError: (message: string) => void;
   /** Path only, např. /objednavka/dekujeme */
   returnPath?: string;
+  /** HMAC `t` z create-payment-intent — Stripe přidá vlastní query; bez `t` by návrat bez sessionStorage selhal u get-order-by-payment-intent. */
+  thankYouTrackingToken?: string | null;
   /** Např. při vytváření PaymentIntent na pozadí — zablokuje dvojí odeslání. */
   submitDisabled?: boolean;
 }) {
@@ -28,10 +31,15 @@ export function StripePaymentSubmitForm({
     setIsSubmitting(true);
     onError('');
 
+    const pathOnly = returnPath.startsWith('/') ? returnPath : `/${returnPath}`;
+    const returnUrl = new URL(absoluteAppUrl(pathOnly));
+    const tt = (thankYouTrackingToken ?? '').trim();
+    if (tt) returnUrl.searchParams.set('t', tt);
+
     const result = await stripe.confirmPayment({
       elements,
       confirmParams: {
-        return_url: absoluteAppUrl(returnPath.startsWith('/') ? returnPath : `/${returnPath}`),
+        return_url: returnUrl.toString(),
       },
     });
 

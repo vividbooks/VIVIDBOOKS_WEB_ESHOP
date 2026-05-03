@@ -203,6 +203,7 @@ export function CheckoutPage() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [paymentResumeToken, setPaymentResumeToken] = useState<string | null>(null);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [resumeFlowActive, setResumeFlowActive] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState('');
@@ -377,7 +378,8 @@ export function CheckoutPage() {
         setPaymentIntentId(typeof data.paymentIntentId === 'string' ? data.paymentIntentId : null);
         {
           const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(rtt || null);
           if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
         }
         setResumedOrderNumber(typeof data.orderNumber === 'string' ? data.orderNumber : null);
@@ -637,6 +639,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setPaymentIntentError('');
       lastPaymentKeyRef.current = null;
       return;
@@ -648,6 +651,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       lastPaymentKeyRef.current = null;
       return;
     }
@@ -718,7 +722,8 @@ export function CheckoutPage() {
         setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
         {
           const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(apiTt || null);
           if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
         }
       })
@@ -727,6 +732,7 @@ export function CheckoutPage() {
         setClientSecret(null);
         setPaymentIntentId(null);
         setPaymentResumeToken(null);
+        setThankYouTrackingToken(null);
         setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => {
@@ -1890,6 +1896,7 @@ export function CheckoutPage() {
                       <StripePaymentSubmitForm
                         total={summaryTotal}
                         onError={setPaymentIntentError}
+                        thankYouTrackingToken={thankYouTrackingToken}
                       />
                     </Elements>
                   )}

@@ -7,3 +7,17 @@ verify_jwt = false
 # Stejně jako scripts/supabase-deploy-eshop-functions.sh — admin API volané z aplikace s anon + apikey.
 [functions.make-server-93a20b6f]
 verify_jwt = false
+
+# Stripe neposílá Supabase JWT. Autenticitu ověřuje až funkce přes STRIPE_WEBHOOK_SECRET
+# a hlavičku stripe-signature.
+[functions.stripe-webhook]
+verify_jwt = false
+
+# Interně volaná funkce z webhooku / admin akcí. Přístup je chráněný tím,
+# že tělo obsahuje konkrétní orderId a funkce pracuje jen se serverovými secrets.
+[functions.send-order-email]
+verify_jwt = false
+
+# Interně volaná funkce z webhooku a admin retry akcí pro Base.com/iDoklad export.
+[functions.process-export-queue]
+verify_jwt = false

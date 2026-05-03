@@ -384,6 +384,175 @@ async function invokeEshopPipedriveSync(
   }
 }
 
+type PendingOrderFallbackRow = {
+  id: string;
+  customer_email: string;
+  customer_name: string;
+  customer_phone: string | null;
+  school_name: string | null;
+  ico: string | null;
+  street: string;
+  city: string;
+  zip: string;
+  shipping_method: string;
+  shipping_price: number;
+  pickup_point_id: string | null;
+  pickup_point_name: string | null;
+};
+
+type OrderItemFallbackRow = {
+  product_id: string;
+  product_name: string;
+  variant: string | null;
+  quantity: number;
+  unit_price: number;
+  bundle_id: string | null;
+  bundle_title: string | null;
+};
+
+/**
+ * Košík + zákazník pro webhook: checkout_sessions (canonical),
+ * doplnění session UUID z orders.checkout_session_id když Stripe metadata chybí,
+ * případně rekonstrukce z pending řádku orders + order_items.
+ */
+async function loadCheckoutContextForSucceededPayment(
+  sql: SqlClient,
+  paymentIntent: Stripe.PaymentIntent,
+): Promise<{
+  items: OrderItemMetadata[];
+  customer: CustomerMetadata;
+  shipping: ShippingMetadata;
+  schoolInquiry: unknown | null;
+}> {
+  let checkoutSessionId = String(paymentIntent.metadata?.checkout_session_id ?? '').trim();
+
+  if (!checkoutSessionId) {
+    const oidRows = await sql<{ checkout_session_id: string | null }[]>`
+      select checkout_session_id
+      from public.orders
+      where stripe_payment_intent_id = ${paymentIntent.id}
+      limit 1
+    `;
+    const fromOrder = oidRows[0]?.checkout_session_id;
+    if (fromOrder) checkoutSessionId = String(fromOrder).trim();
+  }
+
+  if (checkoutSessionId) {
+    const checkoutSessionRows = await sql<CheckoutSessionRow[]>`
+      select
+        cart_data,
+        customer_data,
+        shipping_data,
+        school_inquiry
+      from public.checkout_sessions
+      where id = ${checkoutSessionId}::uuid
+      limit 1
+    `;
+    const checkoutSession = checkoutSessionRows[0];
+    if (checkoutSession) {
+      return {
+        items: normalizeItems(checkoutSession.cart_data),
+        customer: normalizeCustomer(checkoutSession.customer_data),
+        shipping: normalizeShipping(checkoutSession.shipping_data),
+        schoolInquiry: checkoutSession.school_inquiry ?? null,
+      };
+    }
+    console.warn(
+      '[stripe-webhook] checkout_sessions row missing; rebuilding from orders',
+      paymentIntent.id,
+      checkoutSessionId,
+    );
+  } else {
+    console.warn(
+      '[stripe-webhook] No checkout_session_id on PI or order; rebuilding from pending order',
+      paymentIntent.id,
+    );
+  }
+
+  const pendingRows = await sql<PendingOrderFallbackRow[]>`
+    select
+      id,
+      customer_email,
+      customer_name,
+      customer_phone,
+      school_name,
+      ico,
+      street,
+      city,
+      zip,
+      shipping_method,
+      shipping_price,
+      pickup_point_id,
+      pickup_point_name
+    from public.orders
+    where stripe_payment_intent_id = ${paymentIntent.id}
+      and status = 'pending_payment'
+    limit 1
+  `;
+  const po = pendingRows[0];
+  if (!po) {
+    throw new Error(
+      `Cannot resolve checkout context for PaymentIntent ${paymentIntent.id} (no session, no pending order).`,
+    );
+  }
+
+  const itemRows = await sql<OrderItemFallbackRow[]>`
+    select
+      product_id,
+      product_name,
+      variant,
+      quantity,
+      unit_price,
+      bundle_id,
+      bundle_title
+    from public.order_items
+    where order_id = ${po.id}::uuid
+  `;
+
+  if (itemRows.length === 0) {
+    throw new Error(`Order ${po.id} has no items for webhook fallback.`);
+  }
+
+  const customer: CustomerMetadata = {
+    email: po.customer_email.trim(),
+    name: po.customer_name.trim(),
+    phone: (po.customer_phone ?? '').trim(),
+    ...(po.school_name?.trim() ? { schoolName: po.school_name.trim() } : {}),
+    ...(po.ico?.trim() ? { ico: po.ico.trim() } : {}),
+    street: po.street.trim(),
+    city: po.city.trim(),
+    zip: po.zip.trim(),
+  };
+
+  const shipping: ShippingMetadata = {
+    method: po.shipping_method,
+    price: Number.isInteger(po.shipping_price) ? po.shipping_price : 0,
+    ...(po.pickup_point_id?.trim() ? { pickupPointId: po.pickup_point_id.trim() } : {}),
+    ...(po.pickup_point_name?.trim() ? { pickupPointName: po.pickup_point_name.trim() } : {}),
+  };
+
+  const items: OrderItemMetadata[] = itemRows.map((row) => ({
+    productId: row.product_id,
+    productName: row.product_name,
+    quantity: row.quantity,
+    unitPrice: row.unit_price,
+    ...(row.variant?.trim() ? { variant: row.variant.trim() } : {}),
+    ...(row.bundle_id?.trim()
+      ? {
+        bundleId: row.bundle_id.trim(),
+        ...(row.bundle_title?.trim() ? { bundleTitle: row.bundle_title.trim() } : {}),
+      }
+      : {}),
+  }));
+
+  return {
+    items,
+    customer,
+    shipping,
+    schoolInquiry: null,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return errorResponse('Method not allowed.', 405);
@@ -440,31 +609,10 @@ Deno.serve(async (req) => {
       );
       currentPaymentIntentId = paymentIntent.id;
       const receiptUrl = extractStripeReceiptUrl(paymentIntent);
-      const checkoutSessionId = paymentIntent.metadata?.checkout_session_id;
-
-      if (!checkoutSessionId) {
-        throw new Error('Missing checkout_session_id in PaymentIntent metadata.');
-      }
-
-      const checkoutSessionRows = await sql<CheckoutSessionRow[]>`
-        select
-          cart_data,
-          customer_data,
-          shipping_data,
-          school_inquiry
-        from public.checkout_sessions
-        where id = ${checkoutSessionId}::uuid
-        limit 1
-      `;
-
-      const checkoutSession = checkoutSessionRows[0];
-      if (!checkoutSession) {
-        throw new Error(`Checkout session not found for ${checkoutSessionId}.`);
-      }
-
-      const items = normalizeItems(checkoutSession.cart_data);
-      const customer = normalizeCustomer(checkoutSession.customer_data);
-      const shipping = normalizeShipping(checkoutSession.shipping_data);
+      const { items, customer, shipping, schoolInquiry } = await loadCheckoutContextForSucceededPayment(
+        sql,
+        paymentIntent,
+      );
       const posterOnly = isPosterOnlyOrder(items);
 
       const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
@@ -797,9 +945,9 @@ Deno.serve(async (req) => {
 
       if (createdOrderId) {
         const hasStoredInquiry =
-          checkoutSession.school_inquiry != null
-          && typeof checkoutSession.school_inquiry === 'object'
-          && !Array.isArray(checkoutSession.school_inquiry);
+          schoolInquiry != null
+          && typeof schoolInquiry === 'object'
+          && !Array.isArray(schoolInquiry);
         const isSchoolObjednat =
           paymentIntent.metadata?.order_source === 'school_objednat' || hasStoredInquiry;
 
@@ -812,7 +960,7 @@ Deno.serve(async (req) => {
           forwardSchoolInquiryToMakeServer(sql, {
             eshopOrderId: createdOrderId,
             paymentIntentId: paymentIntent.id,
-            schoolInquiry: checkoutSession.school_inquiry ?? null,
+            schoolInquiry,
             orderSource: paymentIntent.metadata?.order_source,
             customer,
             shipping,

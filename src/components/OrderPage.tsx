@@ -475,6 +475,7 @@ export function OrderPage() {
   const [schoolPaymentIntentLoading, setSchoolPaymentIntentLoading] = useState(false);
   const [schoolPaymentIntentError, setSchoolPaymentIntentError] = useState('');
   const [schoolPaymentResumeToken, setSchoolPaymentResumeToken] = useState<string | null>(null);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const lastSchoolPaymentKeyRef = useRef<string | null>(null);
   const schoolPaymentIntentFetchRef = useRef<AbortController | null>(null);
@@ -1246,6 +1247,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
@@ -1256,6 +1258,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
@@ -1305,6 +1308,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       return;
     }
 
@@ -1370,7 +1374,8 @@ export function OrderPage() {
         setSchoolPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
         {
           const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(apiTt || null);
           if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
         }
       })
@@ -1379,6 +1384,7 @@ export function OrderPage() {
         setClientSecret(null);
         setPaymentIntentId(null);
         setSchoolPaymentResumeToken(null);
+        setThankYouTrackingToken(null);
         setSchoolPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => {
@@ -3171,6 +3177,7 @@ export function OrderPage() {
                         <StripePaymentSubmitForm
                           total={orderSummaryGrandHalers}
                           onError={setSchoolPaymentIntentError}
+                          thankYouTrackingToken={thankYouTrackingToken}
                         />
                       </Elements>
                     )}

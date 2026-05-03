@@ -83,6 +83,33 @@ Migrace `20260417210000_marketing_rls_admin_only.sql` omezuje čtení marketingo
 
 Další proměnné podle zapnutých integrací (Basecom, iDoklad, e‑mail SMTP, …).
 
+#### Base.com / BaseLinker
+
+`process-export-queue` vytváří objednávky v Base.com přes `addOrder`. Cílová skupina/stav v levém menu Base.com se nastavuje parametrem `order_status_id`, který bere hodnotu ze Supabase secretu `BASECOM_ORDER_STATUS_ID`.
+
+Aktuální Base.com stavy z `getOrderStatusList`:
+
+| ID | Název |
+|----|-------|
+| `438571` | Nové objednávky (přenos do FF) |
+| `438572` | Vytvořeno v FF |
+| `438573` | Odesláno |
+| `438574` | Zrušeno |
+| `438575` | Čeká na zboží v FF |
+| `441049` | Doručeno |
+| `441050` | Problém v expedici FF |
+| `441051` | Error FF (chyba přenosu) |
+| `441052` | V expedici FF |
+| `441053` | Zabaleno v FF |
+| `441054` | Vrácena do FF |
+| `444858` | Do expedice (manual) |
+
+Pro nové objednávky, které mají čekat na přenos do FF, nastavte:
+
+```bash
+supabase secrets set BASECOM_ORDER_STATUS_ID=438571 --project-ref iekkundgizzdbmkzatdl
+```
+
 #### iDoklad ([API v3](https://api.idoklad.cz/Help/v3/cs/index.html))
 
 Po úspěšné platbě kartou zařadí `stripe-webhook` úlohu `idoklad` do `export_queue` **pro každou zaplacenou objednávku** (bez ohledu na IČO). Stejně se faktura zařadí u inbound objednávek z Pipedrive (pokud není chybějící kontakt). Zpracuje ji funkce **`process-export-queue`** (OAuth **client credentials**, pak `POST https://api.idoklad.cz/v3/IssuedInvoices`). U objednávek ve stavu zaplaceno se do iDokladu posílá i **`DateOfPayment`** (den vystavení), aby byl doklad veden jako uhrazený; odeslání PDF e-mailem řeší pravidla v samotném iDokladu.
