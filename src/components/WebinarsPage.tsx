@@ -34,16 +34,37 @@ export function WebinarsPage() {
 
   const grouped = useMemo(() => {
     if (activeTopic) {
-      const vids = videos.filter(v => v.topicIds.includes(activeTopic));
+      const vids = videos.filter(v => Array.isArray(v.topicIds) && v.topicIds.includes(activeTopic));
       const topic = topics.find(t => t.id === activeTopic);
       return topic ? [{ topic, videos: vids }] : [];
     }
-    return topics
+    const topicGroups = topics
       .map(topic => ({
         topic,
         videos: videos.filter(v => v.topicIds.includes(topic.id)),
       }))
       .filter(g => g.videos.length > 0);
+
+    const assignedTopicIds = new Set(topics.map(topic => topic.id));
+    const unassignedVideos = videos.filter(video => {
+      const ids = Array.isArray(video.topicIds) ? video.topicIds : [];
+      return ids.length === 0 || ids.every(id => !assignedTopicIds.has(id));
+    });
+
+    return unassignedVideos.length > 0
+      ? [
+        ...topicGroups,
+        {
+          topic: {
+            id: 'manual-recordings',
+            name: 'Další záznamy',
+            slug: 'dalsi-zaznamy',
+            order: Number.MAX_SAFE_INTEGER,
+          },
+          videos: unassignedVideos,
+        },
+      ]
+      : topicGroups;
   }, [topics, videos, activeTopic]);
 
   return (

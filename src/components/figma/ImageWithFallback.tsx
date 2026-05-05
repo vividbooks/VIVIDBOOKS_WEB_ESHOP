@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { supabasePublicUrlToTinyRenderUrl } from '../../utils/supabaseImageThumbnail';
+import { supabasePublicUrlToTinyRenderUrl, normalizeSupabaseImageSrc } from '../../utils/supabaseImageThumbnail';
 import { splitImageClassName } from './splitImageClassName';
 import { isProgressiveStackLayout } from './progressiveStackEligible';
 
@@ -28,10 +28,15 @@ export function ImageWithFallback({
   const [fullReady, setFullReady] = useState(false);
   const [thumbFailed, setThumbFailed] = useState(false);
 
+  const resolvedSrc = useMemo(() => {
+    if (!src || typeof src !== 'string') return src;
+    return normalizeSupabaseImageSrc(src);
+  }, [src]);
+
   const thumbSrc = useMemo(() => {
-    if (disableProgressive || !src || typeof src !== 'string') return null;
-    return supabasePublicUrlToTinyRenderUrl(src, { width: 80, quality: 45 });
-  }, [src, disableProgressive]);
+    if (disableProgressive || !resolvedSrc || typeof resolvedSrc !== 'string') return null;
+    return supabasePublicUrlToTinyRenderUrl(resolvedSrc, { width: 80, quality: 45 });
+  }, [resolvedSrc, disableProgressive]);
 
   const stackOk = isProgressiveStackLayout(className);
 
@@ -83,7 +88,7 @@ export function ImageWithFallback({
           onError={() => setThumbFailed(true)}
         />
         <img
-          src={src}
+          src={resolvedSrc}
           alt={alt}
           className={fullClass}
           style={fullStyle}
@@ -100,7 +105,7 @@ export function ImageWithFallback({
 
   return (
     <img
-      src={src}
+      src={typeof resolvedSrc === 'string' ? resolvedSrc : src}
       alt={alt}
       className={className}
       style={style}

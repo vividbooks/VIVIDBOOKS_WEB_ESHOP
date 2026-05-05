@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { ShoppingCart } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getProductImage, isPrintProduct } from './cartUpsellUtils';
@@ -27,12 +27,15 @@ function bundleFanRotationDeg(index: number, total: number): number {
 function BundleFanCoverThumb({
   book,
   onClick,
+  clickable,
   index,
   total,
   className = '',
 }: {
   book: any;
-  onClick: () => void;
+  onClick?: () => void;
+  /** Obálky jen ilustrace — bez přechodu na PDP (katalog PDP i stránka Akce). */
+  clickable: boolean;
   index: number;
   total: number;
   className?: string;
@@ -49,31 +52,44 @@ function BundleFanCoverThumb({
         }
       : { zIndex };
 
+  const frameStyle = { width: BUNDLE_FAN_COVER_W, height: BUNDLE_FAN_COVER_H };
+  const inner = src ? (
+    <ImageWithFallback
+      src={src}
+      alt={clickable ? (book?.name || '') : ''}
+      className="w-full h-full object-cover"
+      draggable={false}
+    />
+  ) : (
+    <div
+      className="w-full h-full flex items-center justify-center text-[9px] font-bold text-[#92400e]/35 text-center px-1 font-['Fenomen_Sans',sans-serif] leading-tight"
+      style={{ background: 'linear-gradient(145deg, #fffbeb, #fef3c7)' }}
+    >
+      Sešit
+    </div>
+  );
+
+  const frameClass = clickable
+    ? 'block rounded-none overflow-hidden bg-white shadow-md border border-[#92400e]/22 hover:border-[#b45309]/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fff8e8] transition-colors cursor-pointer p-0'
+    : 'block rounded-none overflow-hidden bg-white shadow-md border border-[#92400e]/22 pointer-events-none cursor-default select-none';
+
   return (
     <div className={`shrink-0 ${className}`} style={wrapStyle}>
-      <button
-        type="button"
-        onClick={onClick}
-        title={book?.name || 'Zobrazit produkt'}
-        className="block rounded-none overflow-hidden bg-white shadow-md border border-[#92400e]/22 hover:border-[#b45309]/45 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-600/55 focus-visible:ring-offset-2 focus-visible:ring-offset-[#fff8e8] transition-colors cursor-pointer p-0"
-        style={{ width: BUNDLE_FAN_COVER_W, height: BUNDLE_FAN_COVER_H }}
-      >
-        {src ? (
-          <ImageWithFallback
-            src={src}
-            alt={book?.name || ''}
-            className="w-full h-full object-cover"
-            draggable={false}
-          />
-        ) : (
-          <div
-            className="w-full h-full flex items-center justify-center text-[9px] font-bold text-[#92400e]/35 text-center px-1 font-['Fenomen_Sans',sans-serif] leading-tight"
-            style={{ background: 'linear-gradient(145deg, #fffbeb, #fef3c7)' }}
-          >
-            Sešit
-          </div>
-        )}
-      </button>
+      {clickable ? (
+        <button
+          type="button"
+          onClick={onClick}
+          title={book?.name || 'Zobrazit produkt'}
+          className={frameClass}
+          style={frameStyle}
+        >
+          {inner}
+        </button>
+      ) : (
+        <div className={frameClass} style={frameStyle}>
+          {inner}
+        </div>
+      )}
     </div>
   );
 }
@@ -157,7 +173,6 @@ export function ProductBundlePromoTile({
   onAddToSchoolOrder,
   addingBundleId,
 }: ProductBundlePromoTileProps) {
-  const navigate = useNavigate();
   const nTit = bundleSlotTotalCount(bundle);
   const listHaler = bundleCatalogListSumHaler(bundle, products);
   const packHaler = Math.max(0, Math.round(bundle.bundlePriceHaler || 0));
@@ -287,14 +302,15 @@ export function ProductBundlePromoTile({
                   ? 'flex items-center justify-center shrink-0 pt-0.5'
                   : 'flex items-center justify-center sm:justify-start shrink-0 mx-auto sm:mx-0 self-center sm:-translate-x-5'
               }
+              aria-hidden
             >
               {coverPick.map((bp, idx) => (
                 <BundleFanCoverThumb
                   key={String(bp.id)}
                   book={bp}
+                  clickable={false}
                   index={idx}
                   total={coverPick.length}
-                  onClick={() => navigate(`/produkt/${encodeURIComponent(String(bp.id))}`)}
                   className={idx > 0 ? (narrowGrid ? '-ml-[30px]' : '-ml-[30px] sm:-ml-[34px]') : ''}
                 />
               ))}

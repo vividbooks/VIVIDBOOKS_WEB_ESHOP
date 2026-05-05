@@ -5,6 +5,7 @@ import { useProducts } from '../contexts/ProductsContext';
 import { SEOHead } from './SEOHead';
 import { resolveShareImageUrl } from '../utils/ogImage';
 import { UnifiedBookCard } from './UnifiedBookCard';
+import { productDetailPath } from '../utils/slugify';
 import {
   filterMerchByBrowse,
   isMerchProduct,
@@ -205,7 +206,7 @@ export function OtherProductsPage() {
                   <UnifiedBookCard
                     key={p.id}
                     book={p}
-                    onClick={() => navigate(`/produkt/${encodeURIComponent(p.id)}`)}
+                    onClick={() => navigate(productDetailPath(p, products))}
                   />
                 ))}
               </div>

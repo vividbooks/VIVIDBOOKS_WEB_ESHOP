@@ -588,6 +588,28 @@ export function SubjectPage({
     .filter(p => showSeriesPanels ? matchesSeries(p) : true)
     .sort(sortByRocnik);
 
+  /** Matematika 2. st.: při „Vše“ zobrazit řady jako samostatné bloky (nadpis + mřížka), ne jednu smíšenou mřížku. */
+  const mathSeriesBlocks =
+    showSeriesPanels && activeSeries === 'all'
+      ? (() => {
+          const pool = afterRocnikPool;
+          const digital = pool.filter((p: any) => p.type === 'online').sort(sortByRocnik);
+          const offline = pool.filter((p: any) => p.type !== 'online');
+          const nameLo = (p: any) => (p.name || '').toLowerCase();
+          const krok = offline
+            .filter((p: any) => nameLo(p).includes('krok za krokem'))
+            .sort(sortByRocnik);
+          const proVsechny = offline
+            .filter((p: any) => !nameLo(p).includes('krok za krokem'))
+            .sort(sortByRocnik);
+          return [
+            { key: 'pro-vsechny' as const, title: 'Pro v\u0161echny', books: proVsechny },
+            { key: 'krok' as const, title: 'Krok za krokem', books: krok },
+            { key: 'digital' as const, title: 'Digit\u00e1ln\u00ed p\u0159\u00edstup', books: digital },
+          ].filter((b) => b.books.length > 0);
+        })()
+      : null;
+
   const isMultiGrade = cfg.grades.length > 1 && !subjectGradeNum;
   const gradeOrder = ['2. stupe\u0148', '1. stupe\u0148'];
   const booksByGrade = isMultiGrade && activeSeries === 'all'
@@ -962,6 +984,27 @@ export function SubjectPage({
                     {'Pro tento stupeň nejsou nalezeny žádné tituly.'}
                   </p>
                 )}
+              </div>
+            ))}
+          </div>
+        ) : mathSeriesBlocks != null && mathSeriesBlocks.length > 0 ? (
+          <div className="space-y-12 mt-2">
+            {mathSeriesBlocks.map(({ key, title, books }) => (
+              <div key={key}>
+                <div className="flex items-center gap-3 mb-2">
+                  <span
+                    className="text-[#001161] text-[18px] font-bold shrink-0"
+                    style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  >
+                    {title}
+                  </span>
+                  <div className="h-px flex-1 bg-[#001161]/8" />
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch">
+                  {books.map((book: any) => (
+                    <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
+                  ))}
+                </div>
               </div>
             ))}
           </div>

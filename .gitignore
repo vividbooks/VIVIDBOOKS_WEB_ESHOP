@@ -10,3 +10,4 @@ dist/
 # Supabase CLI lokální cache
 supabase/.temp/
 VIVIDASISTANT/supabase/.temp/
+.gstack/

@@ -2,6 +2,7 @@ import React from 'react';
 import { BookOpen, Check, ChevronRight, Sparkles } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { useProducts } from '../contexts/ProductsContext';
+import { productDetailPath } from '../utils/slugify';
 
 const BASIC_FEATURES = ['Učební text', 'Pracovní listy', 'Metodická inspirace'];
 
@@ -57,7 +58,7 @@ export function FyzikaAccessJourney({ onOrder, compact = false, subject = 'Fyzik
 
   const handlePredplatit = () => {
     if (onlineProduct) {
-      navigate(`/produkt/${encodeURIComponent(onlineProduct.id)}`);
+      navigate(productDetailPath(onlineProduct, products));
     } else {
       navigate('/vyzkousejte');
     }

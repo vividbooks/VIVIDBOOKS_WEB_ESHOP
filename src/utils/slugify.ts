@@ -7,6 +7,41 @@ export const slugify = (text: string): string =>
     .replace(/\s+/g, '-')
     .toLowerCase();
 
+type ProductSlugSource = {
+  id?: unknown;
+  name?: unknown;
+  title?: unknown;
+};
+
+function productBaseSlug(product: ProductSlugSource): string {
+  const fromName = slugify(String(product?.name ?? product?.title ?? '').trim());
+  if (fromName) return fromName;
+  const fromId = slugify(String(product?.id ?? '').trim());
+  return fromId || 'produkt';
+}
+
+function productSlugIdentity(product: ProductSlugSource): string {
+  return String(product?.id ?? product?.name ?? product?.title ?? '').trim();
+}
+
+export function productSlug(product: ProductSlugSource, allProducts?: readonly ProductSlugSource[]): string {
+  const base = productBaseSlug(product);
+  if (!allProducts?.length) return base;
+
+  const siblings = allProducts
+    .filter((item) => productBaseSlug(item) === base)
+    .sort((a, b) => productSlugIdentity(a).localeCompare(productSlugIdentity(b), 'cs'));
+  if (siblings.length <= 1) return base;
+
+  const ownIdentity = productSlugIdentity(product);
+  const idx = siblings.findIndex((item) => productSlugIdentity(item) === ownIdentity);
+  return idx <= 0 ? base : `${base}-${idx + 1}`;
+}
+
+export function productDetailPath(product: ProductSlugSource, allProducts?: readonly ProductSlugSource[]): string {
+  return `/produkt/${encodeURIComponent(productSlug(product, allProducts))}`;
+}
+
 const SLUG_TO_SUBJECT: Record<string, string> = {
   'matematika-2-stupen': 'Matematika 2. stupe\u0148',
   'matematika-1-stupen': 'Matematika 1. stupe\u0148',

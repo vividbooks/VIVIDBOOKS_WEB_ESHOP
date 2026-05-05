@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { SubjectPage, type SubjectHeroMeta } from './SubjectPage';
 import { useProducts } from '../contexts/ProductsContext';
-import { slugToSubject } from '../utils/slugify';
+import { productDetailPath, slugToSubject } from '../utils/slugify';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -97,7 +97,7 @@ export function SubjectPageRoute() {
       subjectHeroMeta={subjectHeroMeta}
       onBack={() => navigate(-1)}
       onOrder={() => navigate(`/objednat?predmet=${encodeURIComponent(subject)}`, { state: { category: subject } })}
-      onProductClick={(p) => navigate(`/produkt/${encodeURIComponent(p.id)}`)}
+      onProductClick={(p) => navigate(productDetailPath(p, products))}
       hideTopNav
     />
   );

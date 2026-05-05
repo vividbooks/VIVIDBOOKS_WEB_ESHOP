@@ -360,6 +360,42 @@ function parseHexRgb(hex: string): { r: number; g: number; b: number } | null {
   };
 }
 
+function rgbToHex(c: { r: number; g: number; b: number }): string {
+  return `#${[c.r, c.g, c.b].map((x) => Math.max(0, Math.min(255, x)).toString(16).padStart(2, '0')).join('')}`;
+}
+
+function mixRgb(
+  a: { r: number; g: number; b: number },
+  b: { r: number; g: number; b: number },
+  t: number,
+): { r: number; g: number; b: number } {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+  };
+}
+
+/**
+ * Pozadí skeletonu hero při načítání — stejná základní barva jako u `heroSurfaceHexFromSlide`,
+ * jemný gradient uprostřed a ztlumené panely v peek režimu (odvozeno od skutečného tónu slidu).
+ */
+export function heroSkeletonGradientsFromSurfaceHex(baseHex: string): {
+  centerSurface: string;
+  sideSurface: string;
+} {
+  const base = parseHexRgb(baseHex) ?? parseHexRgb('#e8d5f2')!;
+  const white = { r: 255, g: 255, b: 255 };
+  const hi = rgbToHex(mixRgb(base, white, 0.2));
+  const mid = rgbToHex(base);
+  const lo = rgbToHex(mixRgb(base, white, 0.1));
+  const centerSurface = `linear-gradient(125deg, ${hi} 0%, ${mid} 42%, ${lo} 100%)`;
+  const edge = rgbToHex(mixRgb(base, white, 0.52));
+  const sideMid = rgbToHex(mixRgb(base, white, 0.28));
+  const sideSurface = `linear-gradient(125deg, ${edge} 0%, ${sideMid} 45%, ${edge} 100%)`;
+  return { centerSurface, sideSurface };
+}
+
 /**
  * Drop-shadow vrstvy pro obálky v hero (bez zaoblení) — tón stínu se míchá s barvou pozadí slidu,
  * podobně jako digitální tituly na homepage (UnifiedBookCard).

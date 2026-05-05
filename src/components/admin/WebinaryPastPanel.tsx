@@ -64,6 +64,7 @@ interface FormState {
   day: number; monthNum: number; year: number; time: string;
   lecturer: string; description: string; perks: string; targetAudience: string;
   coverImage: string; recordingUrl: string;
+  topicIds: string[];
   certificateLinkMode: 'external' | 'survey';
   certificateUrl: string; greyButtonText: string;
   orangeButtonText: string; orangeButtonLink: string;
@@ -127,6 +128,7 @@ const EMPTY_FORM: FormState = {
   day: new Date().getDate(), monthNum: new Date().getMonth() + 1, year: new Date().getFullYear(),
   time: '18:00', lecturer: '', description: '', perks: '', targetAudience: 'Pro učitele',
   coverImage: '', recordingUrl: '',
+  topicIds: [],
   certificateLinkMode: 'external',
   certificateUrl: '', greyButtonText: 'Certifikát DVPP',
   orangeButtonText: 'Vyzkoušejte zdarma', orangeButtonLink: '/vyzkousejte',
@@ -170,6 +172,7 @@ function itemToForm(webinar: any, dvpp: any | null): FormState {
     targetAudience:   webinar.targetAudience   ?? '',
     coverImage:       webinar.coverImage       ?? dvpp?.thumbnail   ?? '',
     recordingUrl:     webinar.recordingUrl || webinar.youtubeUrl || dvpp?.youtubeUrl       || '',
+    topicIds:         Array.isArray(webinar.topicIds) ? webinar.topicIds : Array.isArray(dvpp?.topicIds) ? dvpp.topicIds : [],
     certificateLinkMode:
       webinar.certificateLinkMode === 'survey' || dvpp?.certificateLinkMode === 'survey' ? 'survey' : 'external',
     certificateUrl:   webinar.certificateUrl   || dvpp?.certificateUrl   || '',
@@ -242,6 +245,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
   const { refresh: refreshContext } = useWebinars();
   const [items, setItems]           = useState<any[]>([]);
   const [dvppVideos, setDvppVideos] = useState<any[]>([]);
+  const [dvppTopics, setDvppTopics] = useState<any[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [search, setSearch]         = useState('');
   const [selected, setSelected]     = useState<any | null>(null);
@@ -330,6 +334,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       const dvpp = dvppData.videos ?? [];
       setItems(past);
       setDvppVideos(dvpp);
+      setDvppTopics(dvppData.topics ?? []);
       return { past, dvpp };
     } catch (e: any) {
       toast.error(`Chyba: ${e.message}`);
@@ -939,7 +944,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         devFollowupRecordingUrl: form.devFollowupRecordingUrl,
         devFollowupTrialUrl: form.devFollowupTrialUrl,
         description:      form.description,
-        topicIds:         matchedDvpp?.topicIds ?? [],
+        topicIds:         form.topicIds,
       };
 
       if (isNew) {
@@ -1041,6 +1046,17 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     return (w.title || '').toLowerCase().includes(q);
   });
   const videoId  = form.recordingUrl ? extractYoutubeId(form.recordingUrl) : null;
+  const toggleTopic = (topicId: string) => {
+    setForm((f) => {
+      const current = Array.isArray(f.topicIds) ? f.topicIds : [];
+      return {
+        ...f,
+        topicIds: current.includes(topicId)
+          ? current.filter((id) => id !== topicId)
+          : [...current, topicId],
+      };
+    });
+  };
   const status   = selected ? ragStatus[selected.id] : null;
 
   const kvAndMailchimpBlocks =
@@ -1662,6 +1678,51 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   <span className="text-[12px] text-gray-400">{'Vlož YouTube URL záznamu výše'}</span>
                 </div>
               )}
+            </Section>
+
+            {/* ── TÉMATA ── */}
+            <Section
+              icon={<BookOpen className="w-4 h-4" />}
+              title={'Témata veřejného výpisu'}
+              subtitle={'Kam se záznam zařadí na stránce /webinare'}
+              color="#001161" bgColor="#EEF0FA"
+              badge={
+                form.topicIds.length > 0
+                  ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 flex items-center gap-0.5"><CheckCircle2 className="w-2.5 h-2.5" /> {form.topicIds.length}</span>
+                  : <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600">Bez tématu</span>
+              }
+            >
+              <Field
+                label={'Vybraná témata'}
+                hint={'Bez tématu se záznam na webu zobrazí ve fallback sekci „Další záznamy“. Pro běžné řazení vyberte jedno nebo více témat.'}
+              >
+                {dvppTopics.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {dvppTopics.map((topic: any) => {
+                      const id = String(topic.id ?? '');
+                      const activeTopic = form.topicIds.includes(id);
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => toggleTopic(id)}
+                          className={`px-3 py-2 rounded-xl text-[12px] font-bold border transition-colors ${
+                            activeTopic
+                              ? 'bg-[#001161] border-[#001161] text-white shadow-sm'
+                              : 'bg-white border-gray-200 text-gray-600 hover:border-[#001161]/40 hover:text-[#001161]'
+                          }`}
+                        >
+                          {topic.name || id}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 p-4 text-[12px] text-gray-400">
+                    {'Témata se zatím nenačetla z DVPP videí.'}
+                  </div>
+                )}
+              </Field>
             </Section>
 
             {/* ── TLAČÍTKA ── */}

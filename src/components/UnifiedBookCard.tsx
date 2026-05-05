@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { BookOpen } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
+import { useProducts } from '../contexts/ProductsContext';
 
 /* ─── helpers ───────────────────────────────────────────── */
 const formatTypography = (text: string) => {
@@ -82,7 +83,14 @@ export interface UnifiedBookCardProps {
   variant?: 'catalog' | 'related';
   isDistributorMode?: boolean;
   onDownload?: (e: React.MouseEvent, book: any) => void;
+  /** Vizitka katalogu: nezačít stahovat obálku, dokud není skupina řádků odemčená (viewport). */
+  deferCoverImage?: boolean;
   hideSubjectBadgeOnMobile?: boolean;
+  /**
+   * Přepiš bobánky akce z kontextu (např. když karta není pod ProductsProvider).
+   * Jinak se berou z aktivních balíčků (`productCardBadgeEnabled` + text).
+   */
+  promotionCardBadges?: string[];
 }
 
 export function UnifiedBookCard({
@@ -92,8 +100,13 @@ export function UnifiedBookCard({
   isDistributorMode = false,
   onDownload,
   hideSubjectBadgeOnMobile = false,
+  deferCoverImage = false,
+  promotionCardBadges: promotionCardBadgesProp,
 }: UnifiedBookCardProps) {
   const [isLandscape, setIsLandscape] = React.useState(false);
+  const { getProductPromotionCardBadges } = useProducts();
+  const promotionCardBadges =
+    promotionCardBadgesProp ?? getProductPromotionCardBadges(book);
 
   const note = getNote(book);
   // Dostupnostní bobánek (měsíc) → vedle ceny; ostatní → na obrázku
@@ -127,7 +140,7 @@ export function UnifiedBookCard({
 
   return (
     <motion.div
-      className={`flex h-full min-h-0 flex-col cursor-pointer group overflow-visible ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'}`}
+      className={`isolate flex h-full min-h-0 flex-col cursor-pointer group overflow-visible ${isRelated ? 'flex-shrink-0 w-[207px] max-[1200px]:w-[186px] max-[1050px]:w-[149px]' : 'w-full'}`}
       whileHover={{ y: -6 }}
       transition={{ duration: 0.22, ease: [0.25, 0.46, 0.45, 0.94] }}
       onClick={onClick}
@@ -137,8 +150,28 @@ export function UnifiedBookCard({
         výšce bez ohledu na počet řádků pod nimi. flex-1 jen dole vyplní buňku mřížky.
       */}
       <div className="relative mb-1 aspect-[3/4] w-full shrink-0 overflow-visible">
+        {promotionCardBadges.length > 0 && (
+          <div className="pointer-events-none absolute left-2 top-[38%] z-20 flex max-w-[calc(100%-1rem)] flex-col items-start gap-1">
+            {promotionCardBadges.map((label, i) => (
+              <span
+                key={`${label}-${i}`}
+                className="max-w-full truncate rounded-full bg-[#ff2e43] px-2.5 py-1 font-['Fenomen_Sans',sans-serif] text-[10px] font-bold uppercase tracking-wide text-white shadow-md ring-1 ring-white/50"
+                title={label}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
         {book.image ? (
-          isDigitalTile ? (
+          deferCoverImage ? (
+            <div
+              className="flex h-full w-full items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-b from-[#eef2fb] to-[#e4e9f5]"
+              aria-hidden
+            >
+              <div className="h-[78%] w-[48%] max-w-[120px] rounded-lg bg-[#001161]/[0.06] motion-safe:animate-pulse" />
+            </div>
+          ) : isDigitalTile ? (
             <div className="relative flex h-full w-full items-end justify-center">
               <div
                 className="pointer-events-none absolute inset-x-0 bottom-0 rounded-[20px]"
@@ -152,11 +185,13 @@ export function UnifiedBookCard({
             </div>
           ) : (
             <div className="flex h-full w-full items-end justify-center">
-              <div className={`relative z-10 ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}>
+              <div
+                className={`relative z-10 flex h-[92%] max-h-full shrink-0 items-center justify-center ${isLandscape ? 'w-[71.4%]' : 'w-[51%]'}`}
+              >
                 <ImageWithFallback
                   src={book.image}
                   alt={book.name}
-                  className="block h-auto w-full object-contain transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom"
+                  className="w-full h-full object-contain object-bottom transition-all duration-500 group-hover:-rotate-[13deg] group-hover:scale-[1.12] origin-bottom max-md:drop-shadow-[0_3px_8px_rgba(0,0,0,0.08)] md:drop-shadow-[0_7px_16px_rgba(0,0,0,0.1)]"
                   style={{ filter: PRINT_BOOK_COVER_DROP_SHADOW }}
                   onLoad={(e) => {
                     const img = e.currentTarget;
