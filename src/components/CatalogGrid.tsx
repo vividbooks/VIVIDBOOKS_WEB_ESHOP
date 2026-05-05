@@ -505,8 +505,11 @@ const getDefaultDescription = (product: any) => {
   return '';
 };
 
+/** Základ pro gradient pozadí loaderu hero — neutrální světle modrošedá (ne závislé na CMS ani webináři). */
+const CATALOG_HERO_LOADER_SURFACE_HEX = '#dfe8f2';
+
 /**
- * Prázdný skeleton během načítání hero z API — stejná výška, zaoblení a tón pozadí jako u reálného slidu (`surfaceHex`).
+ * Prázdný skeleton během načítání hero z API — stejná výška a zaoblení; pozadí z `heroSkeletonGradientsFromSurfaceHex(surfaceHex)`.
  */
 function CatalogHeroSliderSkeleton({
   isPeekMode,
@@ -517,7 +520,7 @@ function CatalogHeroSliderSkeleton({
   isPeekMode: boolean;
   slideWPercent: number;
   gapWPercent: number;
-  /** HEX stejný řád jako `heroSurfaceHexFromSlide` / CMS `bg` — výchozí levandulová jako prázdný slide. */
+  /** HEX pro výpočet jemného gradientu (loader používá `CATALOG_HERO_LOADER_SURFACE_HEX`). */
   surfaceHex: string;
 }) {
   const { centerSurface, sideSurface } = heroSkeletonGradientsFromSurfaceHex(surfaceHex);
@@ -971,26 +974,6 @@ export default function CatalogGrid() {
   const REAL_N = heroSlides.length;
   const showHeroSliderSkeleton =
     REAL_N === 0 && (!cmsHeroFetchDone || !notifFetchDone);
-  /** Barva skeletonu hero: stejná logika jako u prvního reálného slidu (webinář / CMS bg / notif), jinak výchozí levandulová z `heroSurfaceHexFromSlide`. */
-  const catalogHeroSkeletonSurfaceHex = useMemo(() => {
-    if (upcomingWebinarSlide?.showInSlider) {
-      return upcomingWebinarSlide.isLive ? '#dc2626' : '#1e3a8a';
-    }
-    const cms0 = cmsHeroSlides[0] as { bg?: string; distributorBg?: string } | undefined;
-    if (cms0) {
-      if (isDistributorMode && typeof cms0.distributorBg === 'string' && cms0.distributorBg.trim().startsWith('#')) {
-        return cms0.distributorBg.trim().slice(0, 7);
-      }
-      if (typeof cms0.bg === 'string' && cms0.bg.trim().startsWith('#')) {
-        return cms0.bg.trim().slice(0, 7);
-      }
-    }
-    const n0 = notifSliders[0] as { sliderBg?: string } | undefined;
-    if (n0 && typeof n0.sliderBg === 'string' && n0.sliderBg.trim().startsWith('#')) {
-      return n0.sliderBg.trim().slice(0, 7);
-    }
-    return heroSurfaceHexFromSlide({});
-  }, [upcomingWebinarSlide, cmsHeroSlides, notifSliders, isDistributorMode]);
   const extSlides =
     REAL_N > 0 ? [heroSlides[heroSlides.length - 1], ...heroSlides, heroSlides[0]] : [];
   /** Poslední platný index v extSlides (ochrana proti intervalu/klikům mimo rozsah → bílý hero). */
@@ -1976,7 +1959,7 @@ export default function CatalogGrid() {
         isPeekMode={isPeekMode}
         slideWPercent={SLIDE_W}
         gapWPercent={GAP_W}
-        surfaceHex={catalogHeroSkeletonSurfaceHex}
+        surfaceHex={CATALOG_HERO_LOADER_SURFACE_HEX}
       />
       ) : null}
 
