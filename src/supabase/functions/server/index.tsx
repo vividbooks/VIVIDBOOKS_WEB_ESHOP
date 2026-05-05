@@ -1998,6 +1998,28 @@ function sanitizeWebinarLearningsHtml(raw: string): string {
   return s.slice(0, 120_000);
 }
 
+/** Gemini občas vrátí jiné klíče než `learningsHtml` — sjednotit na jeden HTML řetězec před sanitizací. */
+function learningsHtmlFromGeminiParsedObject(parsed: unknown): string {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
+  const o = parsed as Record<string, unknown>;
+  const pick =
+    o.learningsHtml ??
+    o.learnings_html ??
+    o.articleHtml ??
+    o.article_html ??
+    o.html ??
+    o.content ??
+    o.body ??
+    o.text;
+  if (typeof pick === 'string' && pick.trim()) return pick;
+  if (pick && typeof pick === 'object') {
+    const nested = learningsHtmlFromGeminiParsedObject(pick);
+    if (nested) return nested;
+  }
+  const inner = (o.data ?? o.result ?? o.article) as unknown;
+  return typeof inner === 'string' && inner.trim() ? inner : '';
+}
+
 /** Společné zadání pro dlouhý „blogový“ článek do e-mailu (struktura + rozsah jako metodický text). */
 const WEBINAR_LEARNINGS_ARTICLE_SYSTEM = `Vytvoř shrnutí webináře pro e-mail učitelům — článek v češtině v HTML.
 Rozsah a struktura (inspirace stylem odborného článku / newsletteru, ne jedna krátká odrážka):
@@ -2084,8 +2106,8 @@ async function geminiGenerateWebinarLearningsArticle(
     console.log(`[dvpp-learnings] parse: ${extracted.reason} | head=${text.slice(0, 200)}`);
     return '';
   }
-  const v = extracted.value as { learningsHtml?: string };
-  return sanitizeWebinarLearningsHtml(String(v?.learningsHtml || ''));
+  const rawHtml = learningsHtmlFromGeminiParsedObject(extracted.value);
+  return sanitizeWebinarLearningsHtml(rawHtml);
 }
 
 async function geminiGenerateWebinarLearningsFallback(
@@ -2103,8 +2125,8 @@ async function geminiGenerateWebinarLearningsFallback(
   );
   const extracted = extractFirstJsonObject(text);
   if (!extracted.ok) return '';
-  const v = extracted.value as { learningsHtml?: string };
-  return sanitizeWebinarLearningsHtml(String(v?.learningsHtml || ''));
+  const rawHtml = learningsHtmlFromGeminiParsedObject(extracted.value);
+  return sanitizeWebinarLearningsHtml(rawHtml);
 }
 
 function dvppQuizQuestionLabel(q: Record<string, unknown>): string {
@@ -2185,6 +2207,15 @@ async function adminWebinarGenerateDvppQuizHandler(c: Context) {
           titleStr,
           lecturerStr,
           truncated,
+        );
+      }
+      if (learningsHtml.length < 80) {
+        return c.json(
+          {
+            error:
+              'Gemini nevrátil platný článek v očekávaném formátu JSON (pole learningsHtml s HTML). Zkuste „Generovat článek“ znovu; pokud problém přetrvává, zkraťte přepis.',
+          },
+          422,
         );
       }
       return c.json({ learningsHtml, webinarId, part: 'learnings' as const });

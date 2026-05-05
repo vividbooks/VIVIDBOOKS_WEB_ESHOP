@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Bold, Italic, List, ListOrdered, Quote, Undo2, Redo2 } from 'lucide-react';
@@ -111,6 +111,8 @@ export function WebinarLearningsRichEditor({
   value: string;
   onChange: (html: string) => void;
 }) {
+  const syncFromParentSkipRef = useRef(false);
+
   const editor = useEditor({
     extensions: [StarterKit],
     content: normalizeInitialHtml(value),
@@ -120,9 +122,22 @@ export function WebinarLearningsRichEditor({
       },
     },
     onUpdate: ({ editor: ed }) => {
+      syncFromParentSkipRef.current = true;
       onChange(ed.getHTML());
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    if (syncFromParentSkipRef.current) {
+      syncFromParentSkipRef.current = false;
+      return;
+    }
+    const next = normalizeInitialHtml(value);
+    const cur = editor.getHTML();
+    if (cur.trim() === next.trim()) return;
+    editor.commands.setContent(next, false);
+  }, [editor, value]);
 
   return (
     <>

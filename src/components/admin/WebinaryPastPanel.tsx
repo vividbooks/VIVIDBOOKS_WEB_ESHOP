@@ -772,7 +772,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
           : {}),
       }));
 
-      if (typeof data.learningsHtml === 'string') {
+      if (typeof data.learningsHtml === 'string' && data.learningsHtml.trim().length >= 80) {
         setLearningsRemountKey((k) => k + 1);
       }
 
@@ -781,7 +781,16 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         if (n === 0) throw new Error('Server nevrátil otázky');
         toast.success(`Vygenerováno ${n} otázek — zkontrolujte a uložte.`);
       } else {
-        toast.success('Vygenerován článek — zkontrolujte a uložte.');
+        const lh = typeof data.learningsHtml === 'string' ? data.learningsHtml.trim() : '';
+        if (!lh.length) {
+          toast.error(
+            'Článek je prázdný — zkuste generovat znovu. Bez nasazení poslední verze Edge funkce uvidíte i falešný úspěch.',
+          );
+        } else if (lh.length < 80) {
+          toast.warning('Článek je nepřirozeně krátký — raději zkuste generovat znovu.');
+        } else {
+          toast.success('Vygenerován článek — zkontrolujte a uložte.');
+        }
       }
     } catch (e: any) {
       toast.error(e?.message || 'Generování selhalo');
