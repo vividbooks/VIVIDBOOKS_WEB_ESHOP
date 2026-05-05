@@ -17,6 +17,7 @@ import {
   EMAIL_FORMAT_HINT_CS,
   EMAIL_MX_REJECT_CS,
 } from '../../../utils/emailValidation.ts';
+import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { MARKETING_ORIGIN_PRIMARY_DEFAULT, MARKETING_ORIGINS_CANONICAL_SET } from '../../../config/marketingSiteConstants.ts';
 
@@ -1987,17 +1988,6 @@ Pravidla:
   }
 });
 
-/** HTML z AI pro e-mail — odstraní nebezpečné části; povolené značky nechává (Gemini). */
-function sanitizeWebinarLearningsHtml(raw: string): string {
-  let s = String(raw || '').trim();
-  if (!s) return '';
-  s = s.replace(/<script[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<style[\s\S]*?<\/style>/gi, '');
-  s = s.replace(/\son\w+\s*=\s*["'][^"']*["']/gi, '');
-  s = s.replace(/javascript:/gi, '');
-  return s.slice(0, 120_000);
-}
-
 /** Gemini občas vrátí jiné klíče než `learningsHtml` — sjednotit na jeden HTML řetězec před sanitizací. */
 function learningsHtmlFromGeminiParsedObject(parsed: unknown): string {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return '';
@@ -2021,8 +2011,8 @@ function learningsHtmlFromGeminiParsedObject(parsed: unknown): string {
 }
 
 /** Společné zadání pro dlouhý „blogový“ článek do e-mailu (struktura + rozsah jako metodický text). */
-const WEBINAR_LEARNINGS_ARTICLE_SYSTEM = `Vytvoř shrnutí webináře pro e-mail učitelům — článek v češtině v HTML.
-Rozsah a struktura (inspirace stylem odborného článku / newsletteru, ne jedna krátká odrážka):
+const WEBINAR_LEARNINGS_ARTICLE_SYSTEM = `Vytvoř blogově strukturované shrnutí webináře pro učitele — článek v češtině v HTML (nadpisy + odstavce + seznamy jako na blogu či v mailu).
+Rozsah a struktura (inspirace blogovým článkem / metodickým newsletterem, ne jedna krátká odrážka):
 - Úvod: první <h2> ve tvaru: „Co jsme se dozvěděli na webináři: [stručné téma podle názvu webináře]“.
 - Pod ním krátký perex: 1–2 odstavce <p> (nastínění kontextu z přepisu).
 - Dál několik logických sekcí <h2> podle témat z přepisu; kde to dává smysl, dílčí podnadpisy <h3>.
@@ -2031,17 +2021,19 @@ Rozsah a struktura (inspirace stylem odborného článku / newsletteru, ne jedna
 - Výhradně fakta a témata z přepisu — nic nevymýšlej.
 
 Povolené tagy: h2, h3, p, ul, ol, li, strong, em, br. Bez odkazů <a> pokud v přepisu není konkrétní URL. Bez obrázků. Bez markdownu mimo JSON.
+ZÁKAZ: do textu článku NIKDY nevkládej doslovný řetězec „\\n“ nebo „\\n\\n“ (backslash + písmeno n) — to musí být vždy skutečné HTML značky: každý souvislý odstavec celý v <p>...</p>.
 Odpověz POUZE platným JSON: {"learningsHtml":"..."} kde hodnota je jeden řetězec s HTML.`;
 
 /** Stejné látkové zadání, ale výstup jen jako HTML bez JSON — obchází výpadek/useknutí při dlouhém řetězci v JSON. */
-const WEBINAR_LEARNINGS_PLAIN_HTML_SYSTEM = `Vytvoř shrnutí webináře pro e-mail učitelům — článek v češtině jako HTML FRAGMENT.
-Struktura (jako metodický newsletter):
+const WEBINAR_LEARNINGS_PLAIN_HTML_SYSTEM = `Vytvoř blogově strukturované shrnutí webináře pro učitele — jako HTML článek na web či newsletter.
+Struktura (blog — čitelné sekce: nadpis → odstavce → další blok):
 - První nadpis <h2>: „Co jsme se dozvěděli na webináři: [stručné téma podle názvu webináře]“.
 - Perex 1–2 odstavce <p>, pak sekce <h2> podle témat z přepisu, případně <h3>.
 - <p>, <ul>/<ol> s <li>, <strong>/<em>/<br>.
 - Délka: ca 700–1400 slov, výhradně z přepisu.
 
 Povolené tagy: h2, h3, p, ul, ol, li, strong, em, br. Bez <a>, bez obrázků.
+ZÁKAZ: v obsahu nesmí být viditelné znaky „\\n“ / „\\n\\n“ — jen validní HTML; každý odstavec v <p>...</p>, odrážky pouze jako <ul><li>…</li></ul>.
 Odpověz VÝLUČNĚ HTML (žádný JSON, žádné \`\`\` ploty), začni rovnou značkou <h2> nebo <p>.`;
 
 async function geminiCallJson(

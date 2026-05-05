@@ -2,6 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Bold, Italic, List, ListOrdered, Quote, Undo2, Redo2 } from 'lucide-react';
+import { sanitizeWebinarLearningsHtml } from '../../utils/webinarLearningsHtmlNormalize';
 
 function normalizeInitialHtml(s: string): string {
   const t = (s || '').trim();
@@ -11,6 +12,11 @@ function normalizeInitialHtml(s: string): string {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')}</p>`;
+}
+
+/** Stejná sanitizace jako na serveru — opraví doslovné \\n v HTML a holý text po nadpisech. */
+function learningsHtmlForEditor(raw: string): string {
+  return normalizeInitialHtml(sanitizeWebinarLearningsHtml(raw));
 }
 
 function ToolbarBtn({
@@ -68,10 +74,14 @@ function LearningsToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) 
       >
         <span className="text-[11px] font-black">H2</span>
       </ToolbarBtn>
-      {sep}
       <ToolbarBtn
-        active={editor.isActive('blockquote')}
-        title="Citát"
+        active={editor.isActive('heading', { level: 3 })}
+        title="Nadpis H3"
+        onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+      >
+        <span className="text-[11px] font-black">H3</span>
+      </ToolbarBtn>
+      {sep}
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
       >
         <Quote className="w-3.5 h-3.5" />
@@ -115,7 +125,7 @@ export function WebinarLearningsRichEditor({
 
   const editor = useEditor({
     extensions: [StarterKit],
-    content: normalizeInitialHtml(value),
+    content: learningsHtmlForEditor(value),
     editorProps: {
       attributes: {
         class: 'vvb-past-learnings-editor',
@@ -133,10 +143,19 @@ export function WebinarLearningsRichEditor({
       syncFromParentSkipRef.current = false;
       return;
     }
-    const next = normalizeInitialHtml(value);
+    const next = learningsHtmlForEditor(value);
     const cur = editor.getHTML();
     if (cur.trim() === next.trim()) return;
     editor.commands.setContent(next, false);
+  useEffect(() => {
+    if (!editor) return;
+    const raw = String(value || '');
+    if (!/\\[nrt"']|\\r\\n/.test(raw)) return;
+    const sanitized = sanitizeWebinarLearningsHtml(raw);
+    if (!sanitized.trim() || sanitized.trim() === raw.trim()) return;
+    syncFromParentSkipRef.current = true;
+    onChange(sanitized);
+    editor.commands.setContent(normalizeInitialHtml(sanitized), false);
   }, [editor, value]);
 
   return (
@@ -145,6 +164,7 @@ export function WebinarLearningsRichEditor({
         .vvb-past-learnings-editor { outline: none; min-height: 220px; padding: 1rem 1.25rem 1.5rem; font-family: 'Fenomen Sans', sans-serif; color: #001161; font-size: 14px; line-height: 1.75; }
         .vvb-past-learnings-editor p { margin-bottom: 0.75rem; }
         .vvb-past-learnings-editor h2 { font-size: 1.05rem; font-weight: 800; margin: 1.25rem 0 0.5rem; }
+        .vvb-past-learnings-editor h3 { font-size: 1rem; font-weight: 800; margin: 1rem 0 0.4rem; opacity: 0.95; }
         .vvb-past-learnings-editor h2:first-child { margin-top: 0; }
         .vvb-past-learnings-editor blockquote { border-left: 4px solid #7C3AED; padding: 0.6rem 1rem; background: #f5f3ff; border-radius: 8px; margin: 1rem 0; }
         .vvb-past-learnings-editor ul { padding-left: 1.4rem; margin-bottom: 0.8rem; list-style: disc; }
