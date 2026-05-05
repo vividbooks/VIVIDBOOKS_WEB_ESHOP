@@ -82,6 +82,9 @@ function LearningsToolbar({ editor }: { editor: ReturnType<typeof useEditor> }) 
         <span className="text-[11px] font-black">H3</span>
       </ToolbarBtn>
       {sep}
+      <ToolbarBtn
+        active={editor.isActive('blockquote')}
+        title="Citát"
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
       >
         <Quote className="w-3.5 h-3.5" />
@@ -147,6 +150,8 @@ export function WebinarLearningsRichEditor({
     const cur = editor.getHTML();
     if (cur.trim() === next.trim()) return;
     editor.commands.setContent(next, false);
+  }, [editor, value]);
+
   useEffect(() => {
     if (!editor) return;
     const raw = String(value || '');
