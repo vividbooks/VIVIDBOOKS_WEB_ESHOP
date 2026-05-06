@@ -21,3 +21,9 @@ verify_jwt = false
 # Interně volaná funkce z webhooku a admin retry akcí pro Base.com/iDoklad export.
 [functions.process-export-queue]
 verify_jwt = false
+
+# Pipedrive inbound webhook (won deal → objednávka). Pipedrive neposílá Supabase JWT,
+# autenticitu řeší až funkce přes ?token= / hlavičku x-pipedrive-inbound-token a PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
+# Bez tohohle vrací gateway 401 (UNAUTHORIZED_NO_AUTH_HEADER) ještě před spuštěním funkce.
+[functions.pipedrive-inbound-deal]
+verify_jwt = false
