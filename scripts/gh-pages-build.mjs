@@ -18,7 +18,8 @@ const clean = (rel) => {
 };
 
 clean('assets');
-for (const f of ['index.html', 'vite.svg', 'robots.txt']) {
+/* Staří favicon.ico zůstával v docs/ při emptyOutDir:false — Chrome pak bere ICO před SVG. */
+for (const f of ['index.html', 'vite.svg', 'robots.txt', 'favicon.ico', 'favicon.svg', 'logo.svg']) {
   clean(f);
 }
 

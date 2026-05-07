@@ -15,22 +15,22 @@ export const TRIAL_TRAINING_VIDEOS: readonly TrialTrainingVideo[] = [
   {
     href: 'https://www.youtube.com/watch?v=H_L7V4iu228&t=66s',
     videoId: 'H_L7V4iu228',
-    title: 'Úvod do Vividbooks',
+    title: 'Online rozhraní pro fyziku, přírodopis a chemii',
     description:
-      'Přihlášení žáka i učitele, základní ovládání aplikace a kde najdete hlavní nabídky.',
+      'Krátké představení práce s digitálními učebnicemi pro fyziku, přírodopis a chemii.',
   },
   {
     href: 'https://www.youtube.com/watch?v=sMXor8VBlE8&t=2s',
     videoId: 'sMXor8VBlE8',
-    title: 'Digitální učebnice v praxi',
+    title: 'Online rozhraní Matematiky pro 2. stupeň',
     description:
-      'Jak listovat učebnicí, pracovat s přehledem a využívat interaktivní prvky na stránkách.',
+      'Ukázka ovládání online rozhraní a práce s digitální Matematikou pro 2. stupeň.',
   },
   {
     href: 'https://www.youtube.com/watch?v=8qruYt57TC8&t=3s',
     videoId: '8qruYt57TC8',
-    title: 'Tipy pro výuku s Vividbooks',
+    title: 'Online rozhraní pro 1. stupeň',
     description:
-      'Krátké doporučení, jak začlenit Vividbooks do hodiny krok za krokem — bez zbytečné administrativy.',
+      'Ukázka online rozhraní pro materiály Vividbooks určené pro 1. stupeň.',
   },
 ];

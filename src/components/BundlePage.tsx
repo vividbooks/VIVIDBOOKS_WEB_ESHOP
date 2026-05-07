@@ -21,6 +21,7 @@ import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import { BookCoverThumb } from './checkout/BookCoverThumb';
 import { SEOHead } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { productDetailPath } from '../utils/slugify';
 import {
   matchSchoolSubjectKeysFromCategory,
   mergeSchoolOrderDraft,
@@ -528,7 +529,7 @@ export function BundlePage() {
                       />
                       <div className="min-w-0 flex-1">
                         <Link
-                          to={`/produkt/${encodeURIComponent(id)}`}
+                          to={productDetailPath(p, products)}
                           className="font-['Fenomen_Sans'] text-[14px] font-semibold text-[#001161] hover:underline"
                         >
                           {p.name || p.title}
@@ -590,7 +591,7 @@ export function BundlePage() {
                     />
                     <div className="min-w-0 flex-1">
                       <Link
-                        to={`/produkt/${encodeURIComponent(String(p.id))}`}
+                        to={productDetailPath(p, products)}
                         className="font-['Fenomen_Sans'] text-[15px] font-bold text-[#001161] hover:underline leading-snug"
                       >
                         {p.name || p.title}

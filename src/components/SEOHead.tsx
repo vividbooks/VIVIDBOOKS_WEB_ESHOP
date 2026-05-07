@@ -1,8 +1,9 @@
 import { Helmet } from 'react-helmet-async';
+import { MARKETING_SITE_TAGLINE_CS } from '../config/marketingSiteConstants';
 import { DEFAULT_OG_IMAGE, SITE_URL } from '../utils/ogImage';
 
 const SITE_NAME = 'Vividbooks';
-const DEFAULT_DESCRIPTION = 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed p\u0159edm\u011bty o\u017eivuj\u00ed d\u00edky animac\u00edm a interaktivn\u00edm prvk\u016fm.';
+const DEFAULT_DESCRIPTION = MARKETING_SITE_TAGLINE_CS;
 
 interface SEOHeadProps {
   title?: string;
@@ -50,10 +51,10 @@ export function SEOHead({
   jsonLd,
   noIndex = false,
 }: SEOHeadProps) {
-  const fullTitle = title ? `${title} | ${SITE_NAME}` : `${SITE_NAME} \u2013 Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice`;
+  const fullTitle = title ? `${title} | ${SITE_NAME}` : `${SITE_NAME} \u2013 ${MARKETING_SITE_TAGLINE_CS}`;
   const canonicalUrl = `${SITE_URL}${path}`;
   const resolvedImageAlt =
-    (imageAlt?.trim() || (title ? `Náhled: ${title} — ${SITE_NAME}` : `${SITE_NAME} — digitální učebnice pro ZŠ`)).slice(0, 420);
+    (imageAlt?.trim() || (title ? `Náhled: ${title} — ${SITE_NAME}` : `${SITE_NAME} — ${MARKETING_SITE_TAGLINE_CS}`)).slice(0, 420);
   const twitterSite = (twitterSiteProp?.replace(/^@/, '').trim() || envTwitterSite()) ?? '';
 
   // Organization JSON-LD (always present)
@@ -63,7 +64,7 @@ export function SEOHead({
     name: 'Vividbooks',
     url: SITE_URL,
     logo: `${SITE_URL}/logo.svg`,
-    description: 'Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly.',
+    description: MARKETING_SITE_TAGLINE_CS,
     contactPoint: {
       '@type': 'ContactPoint',
       telephone: '+420-602-227-674',
@@ -178,7 +179,7 @@ export function articleJsonLd(article: {
     publisher: {
       '@type': 'Organization',
       name: 'Vividbooks',
-      logo: { '@type': 'ImageObject', url: 'https://www.vividbooks.com/logo.svg' },
+      logo: { '@type': 'ImageObject', url: `${SITE_URL}/logo.svg` },
     },
     mainEntityOfPage: { '@type': 'WebPage', '@id': article.url },
   };

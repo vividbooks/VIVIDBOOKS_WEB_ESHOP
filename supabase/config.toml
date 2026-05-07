@@ -7,3 +7,29 @@ verify_jwt = false
 # Stejně jako scripts/supabase-deploy-eshop-functions.sh — admin API volané z aplikace s anon + apikey.
 [functions.make-server-93a20b6f]
 verify_jwt = false
+
+# Stripe neposílá Supabase JWT. Autenticitu ověřuje až funkce přes STRIPE_WEBHOOK_SECRET
+# a hlavičku stripe-signature.
+[functions.stripe-webhook]
+verify_jwt = false
+
+# Interně volaná funkce z webhooku / admin akcí. Přístup je chráněný tím,
+# že tělo obsahuje konkrétní orderId a funkce pracuje jen se serverovými secrets.
+[functions.send-order-email]
+verify_jwt = false
+
+# Interně volaná funkce z webhooku a admin retry akcí pro Base.com/iDoklad export.
+[functions.process-export-queue]
+verify_jwt = false
+
+# Pipedrive inbound webhook (won deal → objednávka). Pipedrive neposílá Supabase JWT,
+# autenticitu řeší až funkce přes ?token= / hlavičku x-pipedrive-inbound-token a PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
+# Bez tohohle vrací gateway 401 (UNAUTHORIZED_NO_AUTH_HEADER) ještě před spuštěním funkce.
+[functions.pipedrive-inbound-deal]
+verify_jwt = false
+
+# Zákaznický odkaz „Stáhnout fakturu" jde přímo z e-mailu / sledování objednávky bez Supabase JWT.
+# Endpoint si autentizuje sám: orderNumber + ?t= (HMAC tracking token) pro zákazníka,
+# nebo orderId + admin JWT přes requireAdminJwt() pro administraci.
+[functions.idoklad-invoice-pdf]
+verify_jwt = false

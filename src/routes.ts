@@ -88,6 +88,14 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/WebinarLiveRoute'), 'WebinarLiveRoute'),
         },
         {
+          path: 'dvpp-webinare',
+          lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
+        },
+        {
+          path: 'cs/dvpp-webinare',
+          lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
+        },
+        {
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
           children: [
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },

@@ -1,0 +1,136 @@
+# Nasazení Supabase Edge funkcí, které se mění po push do main.
+#
+# Vyžaduje GitHub Actions repo secret:
+#   - SUPABASE_ACCESS_TOKEN  (Personal Access Token z https://supabase.com/dashboard/account/tokens)
+#
+# Nepoužívá Cloud Agent secrets (ty se neinjektují do Actions).
+# Pro ruční spuštění z UI: Actions → "Deploy Supabase Edge functions" → Run workflow.
+
+name: Deploy Supabase Edge functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - 'src/supabase/functions/**'
+      - 'src/utils/emailValidation.ts'
+      - 'src/utils/webinarLearningsHtmlNormalize.ts'
+      - 'src/config/marketingSiteConstants.ts'
+  workflow_dispatch:
+    inputs:
+      function_filter:
+        description: 'Volitelný filtr (substring) — deploy jen funkcí jejichž název obsahuje tento řetězec. Prázdné = vše.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-functions-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: iekkundgizzdbmkzatdl
+      FUNCTION_FILTER: ${{ inputs.function_filter }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Pro --paths potřeba i předchozí commit kvůli git diff (paths-changed v `push` eventu).
+          fetch-depth: 2
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Verify access token reaches the runner
+        run: |
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo "::error::Chybí repository secret SUPABASE_ACCESS_TOKEN — nastav ho v Settings → Secrets and variables → Actions a workflow znovu spusť."
+            exit 1
+          fi
+          echo "::notice::SUPABASE_ACCESS_TOKEN je v běhu k dispozici."
+
+      - name: Determine which functions to deploy
+        id: plan
+        run: |
+          set -euo pipefail
+          # Mapování změny souboru → seznam funkcí, které je potřeba znovu nasadit.
+          # Funkce v `supabase/functions/<name>/` se mapuje 1:1.
+          # Sdílené `_shared/*` znamená redeploy všech funkcí, které je importují (zde: jednoduše vše „eshopové“).
+          # `src/supabase/functions/server/**` a hlavní src utility → `make-server-93a20b6f`.
+
+          # Změněné soubory pro tento push (HEAD~1..HEAD) nebo manual: vše.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CHANGED="ALL"
+          else
+            CHANGED="$(git diff --name-only ${{ github.event.before || 'HEAD~1' }}..HEAD || true)"
+            if [ -z "$CHANGED" ]; then CHANGED="ALL"; fi
+          fi
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          declare -A WANT=()
+          # Vždy zkontroluj všechny funkce v repu.
+          for d in supabase/functions/*/; do
+            n="$(basename "$d")"
+            case "$n" in
+              _shared) continue ;;
+              # Wrapper funkce serverového handleru:
+              make-server-93a20b6f|make-server-954b19ad) ;;
+              *) ;;
+            esac
+            if [ "$CHANGED" = "ALL" ]; then
+              WANT["$n"]=1
+              continue
+            fi
+            # Per-funkce změny:
+            if echo "$CHANGED" | grep -q "^supabase/functions/$n/"; then
+              WANT["$n"]=1
+            fi
+            # Sdílené soubory v `_shared/` → musíme předpokládat, že to může ovlivnit více funkcí.
+            if echo "$CHANGED" | grep -q "^supabase/functions/_shared/"; then
+              WANT["$n"]=1
+            fi
+          done
+          # Hlavní serverové změny → wrapper:
+          if [ "$CHANGED" = "ALL" ] || echo "$CHANGED" | grep -qE "^src/supabase/functions/server/|^src/utils/(emailValidation|webinarLearningsHtmlNormalize)\.ts|^src/config/marketingSiteConstants\.ts"; then
+            WANT["make-server-93a20b6f"]=1
+          fi
+
+          # Aplikuj filtr (workflow_dispatch input).
+          FILTER="${FUNCTION_FILTER:-}"
+          OUT=()
+          for k in "${!WANT[@]}"; do
+            if [ -n "$FILTER" ] && [[ "$k" != *"$FILTER"* ]]; then continue; fi
+            OUT+=("$k")
+          done
+
+          if [ "${#OUT[@]}" -eq 0 ]; then
+            echo "::notice::Nic k deployi — žádné dotčené Edge funkce."
+            echo "functions=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Stabilní pořadí (kvůli logu).
+          IFS=$'\n' SORTED=($(printf '%s\n' "${OUT[@]}" | sort))
+          unset IFS
+          echo "Funkce k nasazení: ${SORTED[*]}"
+          echo "functions=${SORTED[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy each function
+        if: steps.plan.outputs.functions != ''
+        run: |
+          set -euo pipefail
+          read -ra FNS <<< "${{ steps.plan.outputs.functions }}"
+          for fn in "${FNS[@]}"; do
+            echo "=== deploy $fn ==="
+            # `verify_jwt` se řídí per-function v supabase/config.toml.
+            # Globální --no-verify-jwt by přepsal i admin / interní funkce, které JWT vyžadují.
+            supabase functions deploy "$fn" \
+              --project-ref "$SUPABASE_PROJECT_REF"
+          done

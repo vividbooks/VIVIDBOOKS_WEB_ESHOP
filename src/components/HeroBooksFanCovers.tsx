@@ -6,6 +6,7 @@ import {
   type HeroBooksFanArrangement,
   type HeroBooksFanZOrder,
 } from '../data/heroSlides';
+import { productDetailPath } from '../utils/slugify';
 
 export type HeroBooksFanCover = { id: string; name: string; image: string };
 
@@ -123,13 +124,13 @@ function CoverTile({
       style={outerStyle}
       onClick={(e) => {
         e.stopPropagation();
-        navigate(`/produkt/${encodeURIComponent(book.id)}`);
+        navigate(productDetailPath(book));
       }}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           e.stopPropagation();
-          navigate(`/produkt/${encodeURIComponent(book.id)}`);
+          navigate(productDetailPath(book));
         }
       }}
       className={`group cursor-pointer outline-none transition-[z-index] duration-150 ease-out ${arrangement === 'fan' || arrangement === 'grid' ? 'shrink-0' : ''} ${outerHoverZ}`}

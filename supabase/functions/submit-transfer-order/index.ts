@@ -18,6 +18,19 @@ import {
   validateShippingPriceHalers,
   type CheckoutItemInput,
 } from '../_shared/checkout-pricing.ts';
+import {
+  buildPaymentIntentIdempotencyPayload,
+  sha256HexOfString,
+  type IdempotencyCustomer,
+  type IdempotencyItem,
+  type IdempotencyShipping,
+} from '../_shared/checkout-idempotency.ts';
+
+function isPostgresUniqueViolation(e: unknown): boolean {
+  return Boolean(
+    e && typeof e === 'object' && 'code' in e && (e as { code?: string }).code === '23505',
+  );
+}
 
 type CheckoutItem = {
   productId: string;
@@ -294,6 +307,20 @@ Deno.serve(async (req) => {
       ? JSON.stringify({ schoolInquiry }, null, 2).slice(0, 12000)
       : null;
 
+  const schoolInquiryJson =
+    schoolInquiry != null && typeof schoolInquiry === 'object' && !Array.isArray(schoolInquiry)
+      ? JSON.stringify(schoolInquiry)
+      : null;
+
+  const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
+    items as IdempotencyItem[],
+    shipping as IdempotencyShipping,
+    customer as IdempotencyCustomer,
+    'transfer' as const,
+    schoolInquiryJson,
+  );
+  const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));
+
   const sql = postgres(databaseUrl, {
     prepare: false,
     max: 1,
@@ -303,122 +330,179 @@ Deno.serve(async (req) => {
   });
 
   try {
-    const inserted = await sql<{ id: string; order_number: string }[]>`
-      insert into public.orders (
-        status,
-        customer_email,
-        customer_name,
-        customer_phone,
-        school_name,
-        ico,
-        street,
-        city,
-        zip,
-        country,
-        shipping_method,
-        shipping_price,
-        pickup_point_id,
-        pickup_point_name,
-        payment_method,
-        payment_status,
-        subtotal,
-        total,
-        note
-      ) values (
-        'pending_payment',
-        ${customer.email.trim()},
-        ${customer.name.trim()},
-        ${customer.phone.trim()},
-        ${customer.schoolName?.trim() || null},
-        ${ico},
-        ${customer.street.trim()},
-        ${customer.city.trim()},
-        ${customer.zip.trim()},
-        'CZ',
-        ${shipping.method},
-        ${shipping.price ?? 0},
-        ${shipping.pickupPointId ?? null},
-        ${shipping.pickupPointName ?? null},
-        'transfer',
-        'pending',
-        ${subtotal},
-        ${total},
-        ${noteText}
-      )
-      returning id, order_number
-    `;
-
-    const orderRow = inserted[0];
-    if (!orderRow) {
-      return jsonResponse({ error: 'Uložení objednávky selhalo.' }, 500);
-    }
-
-    for (const item of items) {
-      const variant = typeof item.variant === 'string' && item.variant.trim()
-        ? item.variant.trim()
-        : null;
-      const bundleId = typeof item.bundleId === 'string' && item.bundleId.trim()
-        ? item.bundleId.trim()
-        : null;
-      const bundleTitle = typeof item.bundleTitle === 'string' && item.bundleTitle.trim()
-        ? item.bundleTitle.trim()
-        : null;
-      await sql`
-        insert into public.order_items (
-          order_id,
-          product_id,
-          product_name,
-          variant,
-          quantity,
-          unit_price,
-          total_price,
-          bundle_id,
-          bundle_title
-        ) values (
-          ${orderRow.id}::uuid,
-          ${item.productId},
-          ${item.productName},
-          ${variant},
-          ${item.quantity},
-          ${item.unitPrice},
-          ${item.unitPrice * item.quantity},
-          ${bundleId},
-          ${bundleTitle}
-        )
-      `;
-    }
-
-    await sql`
-      insert into public.order_events (
-        order_id,
-        event_type,
-        from_status,
-        to_status,
-        details,
-        actor
-      ) values (
-        ${orderRow.id}::uuid,
-        'order_created',
-        null,
-        'pending_payment',
-        ${JSON.stringify({ paymentMethod: 'transfer', ico })}::jsonb,
-        'customer'
-      )
-    `;
-
+    await sql`select pg_advisory_lock(hashtext(${idempotencyKey}::text))`;
     try {
-      await sendOrderEmail(sql, { orderId: orderRow.id, emailType: 'order_transfer_received' });
-    } catch (e) {
-      console.error('[submit-transfer-order] Email:', e);
+      const existingEarly = await sql<{ id: string; order_number: string }[]>`
+        select id, order_number from public.orders
+        where idempotency_key = ${idempotencyKey}
+        limit 1
+      `;
+      if (existingEarly.length > 0) {
+        return jsonResponse({
+          success: true,
+          orderId: existingEarly[0].id,
+          orderNumber: existingEarly[0].order_number,
+          deduplicated: true,
+        });
+      }
+
+      type TxOutcome =
+        | { kind: 'new'; row: { id: string; order_number: string } }
+        | { kind: 'dup'; row: { id: string; order_number: string } };
+
+      const outcome = await sql.begin(async (tx): Promise<TxOutcome> => {
+        let inserted: { id: string; order_number: string }[];
+        try {
+          inserted = await tx<{ id: string; order_number: string }[]>`
+            insert into public.orders (
+              status,
+              customer_email,
+              customer_name,
+              customer_phone,
+              school_name,
+              ico,
+              street,
+              city,
+              zip,
+              country,
+              shipping_method,
+              shipping_price,
+              pickup_point_id,
+              pickup_point_name,
+              payment_method,
+              payment_status,
+              subtotal,
+              total,
+              note,
+              idempotency_key
+            ) values (
+              'pending_payment',
+              ${customer.email.trim()},
+              ${customer.name.trim()},
+              ${customer.phone.trim()},
+              ${customer.schoolName?.trim() || null},
+              ${ico},
+              ${customer.street.trim()},
+              ${customer.city.trim()},
+              ${customer.zip.trim()},
+              'CZ',
+              ${shipping.method},
+              ${shipping.price ?? 0},
+              ${shipping.pickupPointId ?? null},
+              ${shipping.pickupPointName ?? null},
+              'transfer',
+              'pending',
+              ${subtotal},
+              ${total},
+              ${noteText},
+              ${idempotencyKey}
+            )
+            returning id, order_number
+          `;
+        } catch (insErr) {
+          if (isPostgresUniqueViolation(insErr)) {
+            const again = await tx<{ id: string; order_number: string }[]>`
+              select id, order_number from public.orders
+              where idempotency_key = ${idempotencyKey}
+              limit 1
+            `;
+            if (again[0]) return { kind: 'dup', row: again[0] };
+          }
+          throw insErr;
+        }
+
+        const orderRow = inserted[0];
+        if (!orderRow) {
+          throw new Error('Insert returned no row.');
+        }
+
+        for (const item of items) {
+          const variant = typeof item.variant === 'string' && item.variant.trim()
+            ? item.variant.trim()
+            : null;
+          const bundleId = typeof item.bundleId === 'string' && item.bundleId.trim()
+            ? item.bundleId.trim()
+            : null;
+          const bundleTitle = typeof item.bundleTitle === 'string' && item.bundleTitle.trim()
+            ? item.bundleTitle.trim()
+            : null;
+          await tx`
+            insert into public.order_items (
+              order_id,
+              product_id,
+              product_name,
+              variant,
+              quantity,
+              unit_price,
+              total_price,
+              bundle_id,
+              bundle_title
+            ) values (
+              ${orderRow.id}::uuid,
+              ${item.productId},
+              ${item.productName},
+              ${variant},
+              ${item.quantity},
+              ${item.unitPrice},
+              ${item.unitPrice * item.quantity},
+              ${bundleId},
+              ${bundleTitle}
+            )
+          `;
+        }
+
+        await tx`
+          insert into public.order_events (
+            order_id,
+            event_type,
+            from_status,
+            to_status,
+            details,
+            actor
+          ) values (
+            ${orderRow.id}::uuid,
+            'order_created',
+            null,
+            'pending_payment',
+            ${JSON.stringify({ paymentMethod: 'transfer', ico })}::jsonb,
+            'customer'
+          )
+        `;
+
+        return { kind: 'new', row: orderRow };
+      });
+
+      if (outcome.kind === 'dup') {
+        return jsonResponse({
+          success: true,
+          orderId: outcome.row.id,
+          orderNumber: outcome.row.order_number,
+          deduplicated: true,
+        });
+      }
+
+      const orderRow = outcome.row;
+
+      try {
+        await sendOrderEmail(sql, { orderId: orderRow.id, emailType: 'order_transfer_received' });
+      } catch (e) {
+        console.error('[submit-transfer-order] Email:', e);
+      }
+
+      fireEshopPipedriveTransferSync(orderRow.id, req.url);
+
+      return jsonResponse({
+        success: true,
+        orderId: orderRow.id,
+        orderNumber: orderRow.order_number,
+      });
+    } finally {
+      try {
+        await sql`select pg_advisory_unlock(hashtext(${idempotencyKey}::text))`;
+      } catch {
+        /* ignore */
+      }
     }
-
-    fireEshopPipedriveTransferSync(orderRow.id, req.url);
-
-    return jsonResponse({
-      success: true,
-      orderId: orderRow.id,
-      orderNumber: orderRow.order_number,
-    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Submit failed.';
     console.error('[submit-transfer-order]', msg);

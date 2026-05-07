@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
@@ -7,7 +7,7 @@ import { VividbooksFeatures } from './VividbooksFeatures';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
-import { subjectToSlug } from '../utils/slugify';
+import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchJsonWithRetry } from '../utils/fetchWithRetry';
 import { parseHeroPhoneDiff } from '../utils/heroPhoneOverrides';
@@ -18,6 +18,7 @@ import { SEOHead } from './SEOHead';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { NewsletterBanner } from './NewsletterBanner';
 import { NovinkySection } from './NovinkySection';
+import { marketingUrl } from '../config/marketingSite';
 import {
   clampHeroBlockGapPx,
   clampHeroTitleLineHeightPct,
@@ -37,6 +38,7 @@ import {
   normalizeTitlePlayfulSeed,
   heroBookCoverShadowFilter,
   heroSurfaceHexFromSlide,
+  heroSkeletonGradientsFromSurfaceHex,
   parseHeroBookProductIds,
   parseHeroTitleUnderlines,
   resolveHeroFanBooks,
@@ -74,6 +76,9 @@ function cmsHeroTitleTiltDeg(raw: unknown): number | undefined {
 function cmsHeroTextColor(raw: unknown): string | undefined {
   return typeof raw === 'string' && raw.startsWith('#') && raw.length >= 4 ? raw : undefined;
 }
+
+/** Okraj IO pro odemykání obálek v řádku katalogu — nejdřív nahoře, níže až při přiblížení viewportu. */
+const CATALOG_GROUP_IMAGE_ROOT_MARGIN = '96px 0px 340px 0px';
 
 /** URL hlavního obrázku slidu + obálek (pro předběžné načtení prvních dvou sliderů). */
 function collectHeroSlideImageUrls(slide: unknown, maxBookCovers: number): string[] {
@@ -477,12 +482,12 @@ const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk
 /* ── helpers ──────────────────────────────────────────────────── */
 const getCategoryLink = (category: string) => {
   const cat = (category || '').toLowerCase();
-  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return 'https://www.vividbooks.com/cs/matematika-1-stupen';
-  if (cat.includes('prvouka'))   return 'https://www.vividbooks.com/cs/prvouka';
-  if (cat.includes('matematika')) return 'https://www.vividbooks.com/cs/matematika';
-  if (cat.includes('fyzika'))     return 'https://www.vividbooks.com/cs/fyzika';
-  if (cat.includes('chemie'))     return 'https://www.vividbooks.com/cs/chemie';
-  if (cat.includes('p\u0159\u00edrodopis')) return 'https://www.vividbooks.com/cs/prirodopis';
+  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/cs/matematika-1-stupen');
+  if (cat.includes('prvouka')) return marketingUrl('/cs/prvouka');
+  if (cat.includes('matematika')) return marketingUrl('/cs/matematika');
+  if (cat.includes('fyzika')) return marketingUrl('/cs/fyzika');
+  if (cat.includes('chemie')) return marketingUrl('/cs/chemie');
+  if (cat.includes('p\u0159\u00edrodopis')) return marketingUrl('/cs/prirodopis');
   return 'https://eshop.vividbooks.com';
 };
 
@@ -499,6 +504,99 @@ const getDefaultDescription = (product: any) => {
   }
   return '';
 };
+
+/** Základ pro gradient pozadí loaderu hero — neutrální světle modrošedá (ne závislé na CMS ani webináři). */
+const CATALOG_HERO_LOADER_SURFACE_HEX = '#dfe8f2';
+
+/**
+ * Prázdný skeleton během načítání hero z API — stejná výška a zaoblení; pozadí z `heroSkeletonGradientsFromSurfaceHex(surfaceHex)`.
+ */
+function CatalogHeroSliderSkeleton({
+  isPeekMode,
+  slideWPercent,
+  gapWPercent,
+  surfaceHex,
+}: {
+  isPeekMode: boolean;
+  slideWPercent: number;
+  gapWPercent: number;
+  /** HEX pro výpočet jemného gradientu (loader používá `CATALOG_HERO_LOADER_SURFACE_HEX`). */
+  surfaceHex: string;
+}) {
+  const { centerSurface, sideSurface } = heroSkeletonGradientsFromSurfaceHex(surfaceHex);
+
+  const fakeArrows = (
+    <>
+      <div
+        className="pointer-events-none absolute left-2 top-1/2 z-30 flex size-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#001161]/10 bg-white/80 opacity-50 shadow-md md:left-3"
+        aria-hidden
+      >
+        <svg className="size-5 text-[#001161]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+        </svg>
+      </div>
+      <div
+        className="pointer-events-none absolute right-2 top-1/2 z-30 flex size-10 -translate-y-1/2 items-center justify-center rounded-full border border-[#001161]/10 bg-white/80 opacity-50 shadow-md md:right-3"
+        aria-hidden
+      >
+        <svg className="size-5 text-[#001161]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+        </svg>
+      </div>
+    </>
+  );
+
+  return (
+    <div className={isPeekMode ? 'pt-4 md:pt-8' : 'p-4 md:p-8'}>
+      <div
+        className={`relative w-full min-h-0 overflow-hidden select-none ${isPeekMode ? '' : 'rounded-[35px]'}`}
+        style={{ height: HERO_SLIDER_HEIGHT_PX }}
+        aria-busy="true"
+        aria-label="Na\u010d\u00edt\u00e1 se hlavn\u00ed nab\u00eddka"
+      >
+        {isPeekMode ? (
+          <>
+            <div className="flex h-full items-stretch justify-center">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="flex h-full shrink-0 flex-col rounded-[35px]"
+                  style={{
+                    width: `${slideWPercent}%`,
+                    marginRight: i < 2 ? `${gapWPercent}%` : 0,
+                    background: i === 1 ? centerSurface : sideSurface,
+                    boxShadow: '0 12px 40px rgba(0,17,97,0.07)',
+                  }}
+                >
+                  <div className="min-h-0 flex flex-1 flex-col items-center justify-center px-6 opacity-35">
+                    <div className="h-14 w-[min(88%,520px)] max-w-xl rounded-xl bg-[#001161]/06" />
+                    <div className="mt-3 h-3 w-[min(70%,340px)] rounded-lg bg-[#001161]/05" />
+                    <div className="mt-2 h-3 w-[min(50%,260px)] rounded-lg bg-[#001161]/04" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {fakeArrows}
+          </>
+        ) : (
+          <>
+            <div
+              className="h-full w-full rounded-[35px]"
+              style={{ background: centerSurface }}
+            >
+              <div className="flex h-full flex-col items-center justify-center px-8 opacity-35">
+                <div className="h-14 w-[min(92vw,520px)] max-w-xl rounded-xl bg-[#001161]/08" />
+                <div className="mt-3 h-3 w-[min(70vw,360px)] rounded-lg bg-[#001161]/06" />
+                <div className="mt-2 h-3 w-[min(45vw,240px)] rounded-lg bg-[#001161]/05" />
+              </div>
+            </div>
+            {fakeArrows}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function CatalogGrid() {
   const navigate  = useNavigate();
@@ -526,6 +624,9 @@ export default function CatalogGrid() {
   const [notifSliders, setNotifSliders] = useState<any[]>([]);
   /** Hero slidery uložené v CMS (KV) — doplnění za pevné slidery */
   const [cmsHeroSlides, setCmsHeroSlides] = useState<any[]>([]);
+  /** Dokončený první pokus o stažení (úspěch/chyba) — mezitím skeleton slideru. */
+  const [cmsHeroFetchDone, setCmsHeroFetchDone] = useState(false);
+  const [notifFetchDone, setNotifFetchDone] = useState(false);
 
   /* ── webinar slide countdown ─────────────────────────────── */
   const [webinarCountdown, setWebinarCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
@@ -624,6 +725,8 @@ export default function CatalogGrid() {
         }
       } catch (e) {
         console.error('[Notif] Fetch failed:', e);
+      } finally {
+        setNotifFetchDone(true);
       }
     };
     fetchNotifications();
@@ -634,21 +737,25 @@ export default function CatalogGrid() {
     const url = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/public/hero-slidy`;
 
     (async () => {
-      const result = await fetchJsonWithRetry<{ items?: unknown }>(
-        url,
-        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
-        { maxAttempts: 4, baseDelayMs: 350 },
-      );
-      if (cancelled) return;
-      if (!result.ok) {
-        setCmsHeroSlides([]);
-        return;
+      try {
+        const result = await fetchJsonWithRetry<{ items?: unknown }>(
+          url,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+          { maxAttempts: 4, baseDelayMs: 350 },
+        );
+        if (cancelled) return;
+        if (!result.ok) {
+          setCmsHeroSlides([]);
+          return;
+        }
+        const raw = Array.isArray(result.data.items) ? result.data.items : [];
+        const sorted = [...raw]
+          .filter((s: any) => s.isActive !== false && s.active !== false)
+          .sort((a: any, b: any) => (Number(a.order) || 0) - (Number(b.order) || 0));
+        setCmsHeroSlides(sorted);
+      } finally {
+        if (!cancelled) setCmsHeroFetchDone(true);
       }
-      const raw = Array.isArray(result.data.items) ? result.data.items : [];
-      const sorted = [...raw]
-        .filter((s: any) => s.isActive !== false && s.active !== false)
-        .sort((a: any, b: any) => (Number(a.order) || 0) - (Number(b.order) || 0));
-      setCmsHeroSlides(sorted);
     })();
 
     return () => {
@@ -865,6 +972,8 @@ export default function CatalogGrid() {
     ];
   }, [upcomingWebinarSlide, isDistributorMode, cmsHeroSlides, notifSliders, products]);
   const REAL_N = heroSlides.length;
+  const showHeroSliderSkeleton =
+    REAL_N === 0 && (!cmsHeroFetchDone || !notifFetchDone);
   const extSlides =
     REAL_N > 0 ? [heroSlides[heroSlides.length - 1], ...heroSlides, heroSlides[0]] : [];
   /** Poslední platný index v extSlides (ochrana proti intervalu/klikům mimo rozsah → bílý hero). */
@@ -1074,6 +1183,71 @@ export default function CatalogGrid() {
     });
   }, [groupedWorkbooks, groupingMode]);
 
+  /** Skupiny katalogu (Matematika 2. stupeň, …): obálky stahovat až když je blok na obrazovce (+ rootMargin), shora dolů. */
+  const [catalogImgReadyGroups, setCatalogImgReadyGroups] = useState<Set<string>>(() => new Set());
+  const catalogImgGateElsRef = useRef<Map<string, HTMLElement>>(new Map());
+  const catalogImgGateObsRef = useRef<IntersectionObserver | null>(null);
+
+  useLayoutEffect(() => {
+    const first = sortedGroups[0]?.[0];
+    if (!first) {
+      setCatalogImgReadyGroups(new Set());
+      return;
+    }
+    const valid = new Set(sortedGroups.map(([g]) => g));
+    setCatalogImgReadyGroups((prev) => {
+      const next = new Set<string>();
+      for (const g of prev) {
+        if (valid.has(g)) next.add(g);
+      }
+      next.add(first);
+      return next;
+    });
+  }, [sortedGroups]);
+
+  const bindCatalogImgGateEl = useCallback((mainGroup: string, el: HTMLElement | null) => {
+    const obs = catalogImgGateObsRef.current;
+    const map = catalogImgGateElsRef.current;
+    const prev = map.get(mainGroup);
+    if (prev && obs) obs.unobserve(prev);
+    if (!el) {
+      map.delete(mainGroup);
+      return;
+    }
+    map.set(mainGroup, el);
+    obs?.observe(el);
+  }, []);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') {
+      setCatalogImgReadyGroups(new Set(sortedGroups.map(([g]) => g)));
+      catalogImgGateObsRef.current = null;
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const en of entries) {
+          if (!en.isIntersecting) continue;
+          const gid = (en.target as HTMLElement).dataset.catalogImgGate;
+          if (!gid) continue;
+          setCatalogImgReadyGroups((prev) => {
+            if (prev.has(gid)) return prev;
+            const n = new Set(prev);
+            n.add(gid);
+            return n;
+          });
+        }
+      },
+      { root: null, rootMargin: CATALOG_GROUP_IMAGE_ROOT_MARGIN, threshold: 0 },
+    );
+    catalogImgGateObsRef.current = observer;
+    catalogImgGateElsRef.current.forEach((node) => observer.observe(node));
+    return () => {
+      observer.disconnect();
+      catalogImgGateObsRef.current = null;
+    };
+  }, [sortedGroups]);
+
   /* ── distributor download ────────────────────────────────── */
   const handleDownloadSingle = (e: React.MouseEvent, book: any) => {
     e.stopPropagation();
@@ -1103,14 +1277,15 @@ export default function CatalogGrid() {
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   /* ── render card ─────────────────────────────────────────── */
-  const renderCard = (book: any, compact = false) => (
+  const renderCard = (book: any, compact = false, mainGroupForDefer?: string) => (
     <UnifiedBookCard
       key={book.id}
       book={book}
-      onClick={() => navigate(`/produkt/${encodeURIComponent(book.id)}`)}
+      onClick={() => navigate(productDetailPath(book, products))}
       variant={compact ? 'related' : 'catalog'}
       isDistributorMode={isDistributorMode}
       onDownload={handleDownloadSingle}
+      deferCoverImage={mainGroupForDefer != null ? !catalogImgReadyGroups.has(mainGroupForDefer) : false}
     />
   );
 
@@ -1779,6 +1954,13 @@ export default function CatalogGrid() {
           </button>
         </div>
       </div>
+      ) : showHeroSliderSkeleton ? (
+      <CatalogHeroSliderSkeleton
+        isPeekMode={isPeekMode}
+        slideWPercent={SLIDE_W}
+        gapWPercent={GAP_W}
+        surfaceHex={CATALOG_HERO_LOADER_SURFACE_HEX}
+      />
       ) : null}
 
       {/* Webinar bobánek — vždy zobrazí nejbližší webinář */}
@@ -1836,6 +2018,8 @@ export default function CatalogGrid() {
           return [
             <div
               key={mainGroup}
+              ref={(el) => bindCatalogImgGateEl(mainGroup, el)}
+              data-catalog-img-gate={mainGroup}
               id={groupingMode === 'subject' ? mainGroup.replace(/\s+/g, '-').toLowerCase() : undefined}
               className={`mb-4 ${groupingMode === 'subject' ? 'catalog-section scroll-mt-24' : ''}`}
             >
@@ -1897,7 +2081,7 @@ export default function CatalogGrid() {
                         <p className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[22px] xl:text-[26px] text-center mb-1.5">{subGroup}</p>
                       )}
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-1 sm:gap-x-5 gap-y-0 justify-items-stretch items-stretch">
-                        {[...(index === 0 ? [getDigitalLicenseForGroup(mainGroup)] : []), ...(books as any[])].map(b => renderCard(b, false))}
+                        {[...(index === 0 ? [getDigitalLicenseForGroup(mainGroup)] : []), ...(books as any[])].map(b => renderCard(b, false, mainGroup))}
                       </div>
                     </div>
                   ))}
@@ -1916,7 +2100,7 @@ export default function CatalogGrid() {
                   className="flex gap-2.5 items-stretch pb-5 overflow-x-auto overflow-y-visible -mt-[50px] -mx-4 md:-mx-8 px-4 md:px-8"
                   style={{ scrollbarWidth: 'none' }}
                 >
-                  {allRowBooks.map(b => renderCard(b, true))}
+                  {allRowBooks.map(b => renderCard(b, true, mainGroup))}
                 </div>
               )}
               <div className="border-t border-[#001161]/8 mt-1 mb-1" />

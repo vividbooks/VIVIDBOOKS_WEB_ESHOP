@@ -1,3 +1,5 @@
+import { marketingUrl } from '../config/marketingSite';
+
 /** Položka „Často kladené dotazy“ na stránce předmětu + RAG. */
 export type SubjectFaqItem = { question: string; answer: string };
 
@@ -39,7 +41,7 @@ const FAQ_RVP =
 
 /** Spole\u010dn\u00e9 z\u00e1v\u011br\u010dn\u00e9 ot\u00e1zky + specifick\u00e9 pro p\u0159edm\u011bt (naho\u0159e). */
 function subjectFaqs(slug: string, displayName: string, specific: SubjectFaqItem[]): SubjectFaqItem[] {
-  const url = `https://www.vividbooks.com/predmet/${slug}`;
+  const url = marketingUrl(`/predmet/${slug}`);
   return [
     ...specific,
     {

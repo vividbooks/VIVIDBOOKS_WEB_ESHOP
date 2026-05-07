@@ -8,6 +8,7 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { SEOHead, webinarJsonLd } from './SEOHead';
+import { marketingUrl } from '../config/marketingSite';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
@@ -571,7 +572,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
@@ -597,7 +598,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col justify-center gap-4 px-4 py-10 sm:px-6">
@@ -765,7 +766,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <div className="mx-auto grid w-full max-w-[560px] flex-1 content-start gap-4 px-4 py-8 sm:px-6">
@@ -881,7 +882,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             name: webinar.title,
             description: webinar.title,
             startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-            url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+            url: marketingUrl(`/webinar/${webinar.id}`),
           })}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -916,7 +917,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
           name: webinar.title,
           description: webinar.title,
           startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-          url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+          url: marketingUrl(`/webinar/${webinar.id}`),
         })}
       />
 

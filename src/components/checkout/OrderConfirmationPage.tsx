@@ -331,16 +331,6 @@ export function OrderConfirmationPage() {
                       {'Stáhnout fakturu'}
                     </a>
                   )}
-                  {order.stripe_receipt_url && (
-                    <a
-                      href={order.stripe_receipt_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"
-                    >
-                      {'Účtenka (Stripe)'}
-                    </a>
-                  )}
                   <a
                     href="mailto:hello@vividbooks.com"
                     className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-[14px] border border-[#001161]/15 bg-white text-[#001161] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold hover:bg-[#f8f9fc] transition-colors"

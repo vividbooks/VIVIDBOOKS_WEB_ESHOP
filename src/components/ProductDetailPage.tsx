@@ -8,10 +8,11 @@ import { UnifiedBookCard } from './UnifiedBookCard';
 import { SUBJECT_CONFIGS } from './subjectConfigs';
 import { SEOHead, productJsonLd, breadcrumbJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { useCart } from '../contexts/CartContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchProductStockItem, type ProductStockItem } from '../utils/productStock';
-import { subjectToSlug } from '../utils/slugify';
+import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
@@ -20,6 +21,8 @@ import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './c
 import {
   bundleIsNxPlusOneSubject,
   productMatchesBundleSubjectLabels,
+  productBundleDetailPath,
+  promotionCardBundlesForProduct,
   type ProductBundleRecord,
 } from '../utils/bundlePricing';
 import { ProductBundlePromoTile } from './ProductBundlePromoTile';
@@ -944,10 +947,15 @@ export function ProductDetailPage({
     });
   }, [publicProductBundles, product]);
 
+  const promotionCardBundlesForPdp = useMemo(
+    () => promotionCardBundlesForProduct(product, publicProductBundles),
+    [product, publicProductBundles],
+  );
+
   const handleAddKvBundleToSchoolOrder = (bundle: ProductBundleRecord) => {
     if (kvBundleAddingId) return;
     if (bundleIsNxPlusOneSubject(bundle)) {
-      navigate(`/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`);
+      navigate(productBundleDetailPath(bundle));
       return;
     }
     setKvBundleAddingId(bundle.id);
@@ -1155,7 +1163,7 @@ export function ProductDetailPage({
     >
       <SEOHead
         title={product.name}
-        path={`/produkt/${encodeURIComponent(product.id)}`}
+        path={productDetailPath(product, products)}
         description={desc || `${product.name} \u2014 ${product.category}. Interaktivn\u00ed u\u010debn\u00ed materi\u00e1l od Vividbooks.`}
         image={resolveShareImageUrl({ explicitImage: product.image, category: product.category })}
         imageAlt={buildOgImageAlt({ productName: product.name, categoryLabel: product.category })}
@@ -1169,21 +1177,21 @@ export function ProductDetailPage({
             category: product.category,
           }),
           breadcrumbJsonLd([
-            { name: 'Katalog', url: 'https://www.vividbooks.com/' },
+            { name: 'Katalog', url: marketingUrl('/') },
             ...(product.type === 'merch'
               ? [
                   {
                     name: 'Další produkty',
-                    url: 'https://www.vividbooks.com/dalsi-produkty',
+                    url: marketingUrl('/dalsi-produkty'),
                   },
                 ]
               : [
                   {
                     name: product.category,
-                    url: `https://www.vividbooks.com/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`,
+                    url: marketingUrl(`/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`),
                   },
                 ]),
-            { name: product.name, url: `https://www.vividbooks.com/produkt/${encodeURIComponent(product.id)}` },
+            { name: product.name, url: marketingUrl(productDetailPath(product, products)) },
           ]),
         ]}
       />
@@ -1465,7 +1473,7 @@ export function ProductDetailPage({
               <span className="text-[#001161]/40 font-['Fenomen_Sans',sans-serif] text-[12px]">{product.category}</span>
             </div>
 
-            {/* Category + type label */}
+            {/* Category + type label + odkazy na akční balíčky */}
             <div className="flex items-center gap-2 flex-wrap mb-4">
               <span
                 className="inline-block px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.15em]"
@@ -1473,6 +1481,20 @@ export function ProductDetailPage({
               >
                 {product.category}
               </span>
+              {promotionCardBundlesForPdp.map((bundle) => {
+                const label = String(bundle.productCardBadgeText || '').trim();
+                if (!label) return null;
+                return (
+                  <Link
+                    key={bundle.id}
+                    to={productBundleDetailPath(bundle)}
+                    className="inline-flex max-w-[min(100%,280px)] items-center truncate rounded-full bg-[#ff2e43] px-2.5 py-1 font-['Fenomen_Sans',sans-serif] text-[10px] font-bold uppercase tracking-wide text-white shadow-md ring-1 ring-white/50 transition-transform hover:brightness-110 hover:ring-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff2e43] active:scale-[0.98]"
+                    title={bundle.title ? `Akce:\u00a0${bundle.title}` : 'Detail akce'}
+                  >
+                    {label}
+                  </Link>
+                );
+              })}
               {product.rocnik && (
                 <span className="inline-block px-3 py-1 rounded-xl bg-[#f1f3f8] text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.15em]">
                   {product.rocnik}{'.\u00a0ro\u010dn\u00edk'}
@@ -2059,14 +2081,14 @@ export function ProductDetailPage({
                     >
                       <Math2ComparisonCoverThumb
                         book={product}
-                        onClick={() => navigate(`/produkt/${encodeURIComponent(product.id)}`)}
+                        onClick={() => navigate(productDetailPath(product, products))}
                         zIndex={3}
                       />
                       {mat2BannerCounterpart && (
                         <Math2ComparisonCoverThumb
                           book={mat2BannerCounterpart}
                           onClick={() =>
-                            navigate(`/produkt/${encodeURIComponent(mat2BannerCounterpart.id)}`)
+                            navigate(productDetailPath(mat2BannerCounterpart, products))
                           }
                           rotatedDeg={15}
                           className="-ml-7 sm:-ml-8"
@@ -2341,7 +2363,7 @@ export function ProductDetailPage({
                 );
                 const handleMat2Digital = () => {
                   if (mat2OnlineProduct) {
-                    navigate(`/produkt/${encodeURIComponent(mat2OnlineProduct.id)}`);
+                    navigate(productDetailPath(mat2OnlineProduct, products));
                   } else {
                     navigate('/predmet/matematika-2-stupen');
                   }

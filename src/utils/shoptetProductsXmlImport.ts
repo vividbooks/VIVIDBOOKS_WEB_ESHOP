@@ -1,12 +1,25 @@
 /**
- * Parsování Shoptet exportu productsComplete.xml → produkty typu merch.
- * Kořeny: „Nástěnné obrazy a tabule“, „Žákovské knížky“.
- * Jedna položka Shoptetu (SHOPITEM) = jeden produkt v katalogu; varianty (velikosti) v merchVariants.
+ * Parsování Shoptet exportu productsComplete.xml → produkty typu `merch`.
+ * Jedna položka Shoptetu (SHOPITEM) = jeden záznam v katalogu; varianty v `merchVariants`.
+ *
+ * Ve výchozím režimu platí filtr kořenových kategorií (`SHOPTET_IMPORT_ALLOWED_ROOTS`).
+ * Volitelně: `includeAllCategories` (celý export) nebo `extraAllowedRoots`.
  */
 
 import type { MerchVariantOption } from '../types/merchVariants';
+import {
+  SHOPTET_IMPORT_ALLOWED_ROOTS,
+  mergeShoptetAllowedRoots,
+} from '../config/shoptetImportAllowedRoots';
 
-export const SHOPTET_IMPORT_ALLOWED_ROOTS = ['Nástěnné obrazy a tabule', 'Žákovské knížky'] as const;
+export type ShoptetProductsParseOptions = {
+  /** Přidá další názvy segmentů k výchozímu seznamu (stejná logika jako v administraci). */
+  extraAllowedRoots?: readonly string[];
+  /** Bez whitelistu — každý SHOPITEM s kategorií; kořen bere po přeskočení „E-shop“ apod. */
+  includeAllCategories?: boolean;
+};
+
+export { SHOPTET_IMPORT_ALLOWED_ROOTS, mergeShoptetAllowedRoots, parseShoptetExtraRootsEnv } from '../config/shoptetImportAllowedRoots';
 
 export type ShoptetMerchMergedProduct = {
   id: string;
@@ -36,7 +49,7 @@ export type ShoptetMerchMergedProduct = {
   availabilityDisplay?: 'on_order';
 };
 
-const ALLOWED_ROOTS = new Set<string>(SHOPTET_IMPORT_ALLOWED_ROOTS);
+type CategoryGate = { mode: 'filter'; roots: readonly string[] } | { mode: 'all' };
 
 function decodeXmlText(s: string): string {
   return String(s)

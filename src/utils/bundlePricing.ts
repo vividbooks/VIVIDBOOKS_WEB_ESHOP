@@ -124,7 +124,66 @@ export type ProductBundleRecord = {
   bundleSubjectLabels?: string[];
   /** Jen `nx_plus_one_subject`: počet placených kusů v jedné sadě. */
   paidItemCount?: number;
+  /** Zobrazit červený bobánek vlevo nahoře na produktové kartě (katalog, předmět, …). */
+  productCardBadgeEnabled?: boolean;
+  /** Text v bobánku (např. „Akce 10+1“). */
+  productCardBadgeText?: string;
 };
+
+/** Stejná logika platnosti jako na serveru u veřejného GET /product-bundles. */
+export function isProductBundleActiveAt(b: ProductBundleRecord | undefined | null, now = new Date()): boolean {
+  if (!b || b.isActive === false) return false;
+  if (b.validFrom) {
+    const from = new Date(b.validFrom);
+    if (Number.isFinite(from.getTime()) && now < from) return false;
+  }
+  if (b.validTo) {
+    const to = new Date(b.validTo);
+    if (Number.isFinite(to.getTime()) && now > to) return false;
+  }
+  return true;
+}
+
+/** Texty bobánků akce pro produkt (pořadí = pořadí balíčků v API; může jich být více). */
+export function promotionCardBundlesForProduct(
+  product: any,
+  bundles: readonly ProductBundleRecord[] | undefined | null,
+): ProductBundleRecord[] {
+  if (!product || !bundles?.length) return [];
+  const now = new Date();
+  const out: ProductBundleRecord[] = [];
+  for (const b of bundles) {
+    if (!isProductBundleActiveAt(b, now)) continue;
+    if (!b.productCardBadgeEnabled) continue;
+    const text = String(b.productCardBadgeText || '').trim();
+    if (!text) continue;
+
+    let inBundle = false;
+    if (bundleIsNxPlusOneSubject(b)) {
+      inBundle =
+        !!(getProductVariantId(product) && isPrintProduct(product))
+        && productMatchesBundleSubjectLabels(product, b.bundleSubjectLabels);
+    } else {
+      inBundle = (b.productIds || []).some((id) => String(id) === String(product.id));
+    }
+    if (inBundle) out.push(b);
+  }
+  return out;
+}
+
+export function promotionCardBadgeTextsForProduct(
+  product: any,
+  bundles: readonly ProductBundleRecord[] | undefined | null,
+): string[] {
+  return promotionCardBundlesForProduct(product, bundles).map((b) =>
+    String(b.productCardBadgeText || '').trim(),
+  );
+}
+
+/** URL stránky akčního balíčku (`/balicek/...`). */
+export function productBundleDetailPath(bundle: Pick<ProductBundleRecord, 'slug' | 'id'>): string {
+  return `/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`;
+}
 
 /**
  * Akce 10+1 podle předmětu — v KV může chybět `bundleKind` nebo být zastaralý zápis.

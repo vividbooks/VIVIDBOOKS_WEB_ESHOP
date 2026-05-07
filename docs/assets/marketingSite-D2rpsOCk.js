@@ -1,0 +1,1 @@
+const o="Učení, které inspiruje a baví.",e="https://new.vividbooks.com",i={BASE_URL:"/",DEV:!1,MODE:"production",PROD:!0,SSR:!1,VITE_GA_MEASUREMENT_ID:"G-T2YTCB5DJZ"};function _(){try{const t=i?.VITE_PUBLIC_SITE_URL;if(t?.trim())return t.trim().replace(/\/$/,"")}catch{}return e}function s(t){const n=_(),r=t.startsWith("/")?t:`/${t}`;return`${n}${r}`}export{o as M,_ as g,s as m};

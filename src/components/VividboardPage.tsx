@@ -37,37 +37,37 @@ const CREATION_CARDS: { label: string; image: string; href: string; variant: Car
   {
     label: 'Soutěžní kvízy',
     image: `${VB}/card-soutezni-kvizy.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/hudebni-vychova-kviz-popularni-hudby',
+    href: `${SITE_URL}/cs/vividboard/inspirace/hudebni-vychova-kviz-popularni-hudby`,
     variant: 'kvizy',
   },
   {
     label: 'Interaktivní lekce',
     image: `${VB}/card-interaktivni-lekce.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/dejepis-zacatek-1-svetove-valky',
+    href: `${SITE_URL}/cs/vividboard/inspirace/dejepis-zacatek-1-svetove-valky`,
     variant: 'lekce',
   },
   {
     label: 'Učební materiály a prezentace',
     image: `${VB}/card-ucebni-materialy.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/prvociselny-rozklad-na-soucin',
+    href: `${SITE_URL}/cs/vividboard/inspirace/prvociselny-rozklad-na-soucin`,
     variant: 'materialy',
   },
   {
     label: 'Testy a písemky',
     image: `${VB}/card-testy-pisemky.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/chemie-smesi',
+    href: `${SITE_URL}/cs/vividboard/inspirace/chemie-smesi`,
     variant: 'testy',
   },
   {
     label: 'Dotazníky',
     image: `${VB}/card-dotazniky.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/prihlaska-na-skolni-vylet',
+    href: `${SITE_URL}/cs/vividboard/inspirace/prihlaska-na-skolni-vylet`,
     variant: 'dotazniky',
   },
   {
     label: 'Studijní karty',
     image: `${VB}/card-studijni-karty.avif`,
-    href: 'https://www.vividbooks.com/cs/vividboard/inspirace/anglicky-jazyk-zakladni-slovicka',
+    href: `${SITE_URL}/cs/vividboard/inspirace/anglicky-jazyk-zakladni-slovicka`,
     variant: 'karty',
   },
 ];
@@ -76,43 +76,43 @@ const INSPIRATION = [
   {
     title: 'Soutěžní kvízy',
     items: [
-      { label: 'Hudební výchova: Kvíz populární hudby', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/hudebni-vychova-kviz-popularni-hudby' },
-      { label: 'Informatika: Úniková hra', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/informatika-unikova-hra' },
+      { label: 'Hudební výchova: Kvíz populární hudby', href: `${SITE_URL}/cs/vividboard/inspirace/hudebni-vychova-kviz-popularni-hudby` },
+      { label: 'Informatika: Úniková hra', href: `${SITE_URL}/cs/vividboard/inspirace/informatika-unikova-hra` },
     ],
   },
   {
     title: 'Interaktivní lekce',
     items: [
-      { label: 'Dějepis: Začátek 1. světové války', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/dejepis-zacatek-1-svetove-valky' },
-      { label: 'Fyzika: Skládání sil', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/fyzika-skladani-sil' },
+      { label: 'Dějepis: Začátek 1. světové války', href: `${SITE_URL}/cs/vividboard/inspirace/dejepis-zacatek-1-svetove-valky` },
+      { label: 'Fyzika: Skládání sil', href: `${SITE_URL}/cs/vividboard/inspirace/fyzika-skladani-sil` },
     ],
   },
   {
     title: 'Učební materiály a prezentace',
     items: [
-      { label: 'Matematika: Vzájemná poloha dvou přímek', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/vzajemna-poloha-dvou-primek' },
-      { label: 'Matematika: Prvočíselný rozklad na součin', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/prvociselny-rozklad-na-soucin' },
+      { label: 'Matematika: Vzájemná poloha dvou přímek', href: `${SITE_URL}/cs/vividboard/inspirace/vzajemna-poloha-dvou-primek` },
+      { label: 'Matematika: Prvočíselný rozklad na součin', href: `${SITE_URL}/cs/vividboard/inspirace/prvociselny-rozklad-na-soucin` },
     ],
   },
   {
     title: 'Testy a písemky',
     items: [
-      { label: 'Matematika: Odčítání desetinných čísel', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/odcitani-desetinnych-cisel' },
-      { label: 'Chemie: Směsi', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/chemie-smesi' },
+      { label: 'Matematika: Odčítání desetinných čísel', href: `${SITE_URL}/cs/vividboard/inspirace/odcitani-desetinnych-cisel` },
+      { label: 'Chemie: Směsi', href: `${SITE_URL}/cs/vividboard/inspirace/chemie-smesi` },
     ],
   },
   {
     title: 'Dotazníky',
     items: [
-      { label: 'Spokojenost ve škole', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/spokojenost-ve-skole' },
-      { label: 'Přihláška na školní výlet', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/prihlaska-na-skolni-vylet' },
+      { label: 'Spokojenost ve škole', href: `${SITE_URL}/cs/vividboard/inspirace/spokojenost-ve-skole` },
+      { label: 'Přihláška na školní výlet', href: `${SITE_URL}/cs/vividboard/inspirace/prihlaska-na-skolni-vylet` },
     ],
   },
   {
     title: 'Procvičování a studijní karty',
     items: [
-      { label: 'Přírodopis: Savci a ptáci', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/prirodopis-savci-a-ptaci' },
-      { label: 'Anglický jazyk: Základní slovíčka', href: 'https://www.vividbooks.com/cs/vividboard/inspirace/anglicky-jazyk-zakladni-slovicka' },
+      { label: 'Přírodopis: Savci a ptáci', href: `${SITE_URL}/cs/vividboard/inspirace/prirodopis-savci-a-ptaci` },
+      { label: 'Anglický jazyk: Základní slovíčka', href: `${SITE_URL}/cs/vividboard/inspirace/anglicky-jazyk-zakladni-slovicka` },
     ],
   },
 ] as const;
@@ -147,7 +147,7 @@ const TOOLS = [
   { image: `${VB}/tool-annotations.webp`, title: 'Anotace', text: 'Kresba a poznámky v režimu promítání, export výsledku.' },
 ] as const;
 
-const VIDEO_HREF = 'https://www.vividbooks.com/video/tvorba-vlastnich-interaktivnich-materialu';
+const VIDEO_HREF = `${SITE_URL}/video/tvorba-vlastnich-interaktivnich-materialu`;
 
 function BtnPrimary({ href, children, external }: { href: string; children: React.ReactNode; external?: boolean }) {
   const cls =
@@ -602,7 +602,7 @@ export function VividboardPage() {
         <p className="text-center text-[12px] text-[#4e5871] mt-6 opacity-90 max-w-[640px] mx-auto" style={{ fontFamily: ff }}>
           Kompletní podmínky a aktuální ceny najdete na{' '}
           <a
-            href="https://www.vividbooks.com/cs/vividboard#cenik"
+            href={`${SITE_URL}/cs/vividboard#cenik`}
             className="font-semibold hover:underline"
             style={{ color: WB.blue }}
             target="_blank"
@@ -657,7 +657,7 @@ export function VividboardPage() {
             <ExternalLink className="w-4 h-4" />
           </a>
           <a
-            href="https://www.vividbooks.com/cs/vividboard/nastroje"
+            href={`${SITE_URL}/cs/vividboard/nastroje`}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 font-bold text-[14px] hover:underline"

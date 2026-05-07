@@ -154,7 +154,10 @@ function parsePipedriveEntityId(value: unknown): number | null {
     return n > 0 ? n : null;
   }
   if (typeof value === 'string') {
-    const n = Number.parseInt(value.trim(), 10);
+    const t = value.trim();
+    /** Jen celé číslo v řetězci — parseInt z UUID prefixu by vracelo náhodné číslo. */
+    if (!/^\d+$/.test(t)) return null;
+    const n = Number.parseInt(t, 10);
     return Number.isInteger(n) && n > 0 ? n : null;
   }
   if (typeof value === 'object' && value !== null) {
@@ -182,18 +185,33 @@ function extractDealId(body: Record<string, unknown>): number | null {
     if (Number.isInteger(n) && n > 0) return n;
   }
 
+  /** Webhooks v2: deal ID je v meta.entity_id; objekt dealu je `data` (ne `current`). */
   const meta = body.meta as Record<string, unknown> | undefined;
+  if (meta) {
+    const fromEntity = parsePipedriveEntityId(meta.entity_id ?? meta.entityId);
+    if (fromEntity != null) return fromEntity;
+  }
+
+  const dataObj = body.data as Record<string, unknown> | undefined;
+  if (dataObj) {
+    const fromData = parsePipedriveEntityId(dataObj.id);
+    if (fromData != null) return fromData;
+  }
+
+  /** Legacy webhooks v1: meta.id = číselné ID entity (ne UUID jako ve v2). */
   if (meta && typeof meta.id === 'number' && Number.isInteger(meta.id)) return meta.id as number;
   if (meta && typeof meta.id === 'string') {
-    const n = Number.parseInt(meta.id, 10);
-    if (Number.isInteger(n) && n > 0) return n;
+    const s = meta.id.trim();
+    if (/^\d+$/.test(s)) {
+      const n = Number.parseInt(s, 10);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
   }
 
   const current = body.current as Record<string, unknown> | undefined;
-  if (current && typeof current.id === 'number' && Number.isInteger(current.id)) return current.id as number;
-  if (current && typeof current.id === 'string') {
-    const n = Number.parseInt(current.id, 10);
-    if (Number.isInteger(n) && n > 0) return n;
+  if (current) {
+    const fromCurrent = parsePipedriveEntityId(current.id);
+    if (fromCurrent != null) return fromCurrent;
   }
 
   return null;
@@ -211,6 +229,12 @@ function pipelineAllowed(pipelineId: number): boolean {
 /** Viditelné v Supabase → Edge Functions → Logs (ne jen shutdown/boot). */
 function logInbound(event: string, data?: Record<string, unknown>) {
   console.log(`[pipedrive-inbound] ${event}`, data ? JSON.stringify(data) : '');
+}
+
+function isPostgresUniqueViolation(e: unknown): boolean {
+  return Boolean(
+    e && typeof e === 'object' && 'code' in e && (e as { code?: string }).code === '23505',
+  );
 }
 
 Deno.serve(async (req) => {
@@ -281,7 +305,8 @@ Deno.serve(async (req) => {
         ok: true,
         skipped: true,
         reason: 'no_deal_id',
-        hint: 'Could not resolve deal id from payload (expected meta.id, current.id, or deal_id).',
+        hint:
+          'Could not resolve deal id from payload (expected meta.entity_id / data.id — Webhooks v2 — or legacy meta.id / current.id / deal_id).',
       },
       200,
     );
@@ -483,7 +508,9 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    const inserted = await sql<{ id: string; order_number: string }[]>`
+    let inserted: { id: string; order_number: string }[];
+    try {
+      inserted = await sql<{ id: string; order_number: string }[]>`
       insert into public.orders (
         status,
         customer_email,
@@ -533,6 +560,28 @@ Deno.serve(async (req) => {
       )
       returning id, order_number
     `;
+    } catch (insertErr) {
+      if (isPostgresUniqueViolation(insertErr)) {
+        const race = await sql<{ id: string; order_number: string }[]>`
+          select id, order_number from public.orders where pipedrive_deal_id = ${dealIdStr} limit 1
+        `;
+        if (race.length > 0) {
+          logInbound('skipped', {
+            dealId,
+            reason: 'already_imported_race',
+            orderId: race[0].id,
+          });
+          return jsonResponse({
+            skipped: true,
+            reason: 'already_imported',
+            dealId,
+            orderId: race[0].id,
+            orderNumber: race[0].order_number,
+          }, 200);
+        }
+      }
+      throw insertErr;
+    }
 
     const row = inserted[0];
     if (!row) {

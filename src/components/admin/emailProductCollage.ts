@@ -1,5 +1,6 @@
 import { getProductImage, getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import type { ProductBundleRecord } from '../../utils/bundlePricing';
+import { getMarketingSiteOrigin } from '../../config/marketingSite';
 
 export type EmailProductCollageLayout = 'grid' | 'list' | 'compact';
 
@@ -38,7 +39,7 @@ export type EmailProductCollagePayloadV2 = {
   imageSize?: EmailProductCollageImageSize;
 };
 
-const SITE = 'https://www.vividbooks.com';
+const SITE = getMarketingSiteOrigin();
 
 function escapeHtml(s: string): string {
   return String(s)

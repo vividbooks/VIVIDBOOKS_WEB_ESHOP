@@ -17,6 +17,7 @@ import {
   heroTitleFontUseTightTracking,
   normalizeHeroSlideTitleFont,
 } from '../../data/heroSlides';
+import { marketingUrl } from '../../config/marketingSite';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -1164,7 +1165,7 @@ function StructuredCanvas({
           headline: email.headline || email.subject,
           bodyHtml: email.bodyHtml || '',
           ctaText: email.ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: email.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+          ctaUrl: email.ctaUrl || marketingUrl('/vyzkousejte'),
           audience: email.audience || 'newsletter',
           fullHtml: email.fullHtml,
         }),
@@ -1198,7 +1199,7 @@ function StructuredCanvas({
           headline: d.headline || d.subject,
           bodyContent: d.bodyHtml || '',
           ctaText: d.ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: d.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+          ctaUrl: d.ctaUrl || marketingUrl('/vyzkousejte'),
           audience: d.audience === 'no-newsletter' ? 'no-newsletter' : 'newsletter',
           htmlBody: d.fullHtml || undefined,
         }),

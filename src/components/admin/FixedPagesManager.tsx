@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { FileText, ExternalLink, Globe, Lock, Edit2, Eye } from 'lucide-react';
+import { marketingUrl } from '../../config/marketingSite';
 
 interface FixedPage {
   id: string;
@@ -54,7 +55,7 @@ const FIXED_PAGES: FixedPage[] = [
   {
     id: 'kontakt',
     title: 'Kontakt',
-    path: 'https://www.vividbooks.com/cs/kontakt',
+    path: marketingUrl('/cs/kontakt'),
     description: 'Kontaktní stránka na hlavním webu Vividbooks (externě).',
     status: 'active',
     type: 'external',
@@ -62,7 +63,7 @@ const FIXED_PAGES: FixedPage[] = [
   {
     id: 'zakaznici',
     title: 'Naši zákazníci',
-    path: 'https://www.vividbooks.com/cs/zakaznici',
+    path: marketingUrl('/cs/zakaznici'),
     description: 'Reference a případové studie zákazníků (externě).',
     status: 'active',
     type: 'external',
@@ -70,7 +71,7 @@ const FIXED_PAGES: FixedPage[] = [
   {
     id: 'proc-to-delame',
     title: 'Proč to děláme?',
-    path: 'https://www.vividbooks.com/cs/proc-to-delame',
+    path: marketingUrl('/cs/proc-to-delame'),
     description: 'Stránka o poslání a vizi Vividbooks (externě).',
     status: 'active',
     type: 'external',

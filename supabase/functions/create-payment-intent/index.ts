@@ -16,6 +16,10 @@ import {
   type CheckoutItemInput,
 } from '../_shared/checkout-pricing.ts';
 import { computeOrderTrackingToken } from '../_shared/order-tracking-token.ts';
+import {
+  buildPaymentIntentIdempotencyPayload,
+  sha256HexOfString,
+} from '../_shared/checkout-idempotency.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -164,105 +168,6 @@ function generateResumeToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-function sortKeysDeep(obj: unknown): unknown {
-  if (obj === null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
-  const sorted: Record<string, unknown> = {};
-  for (const k of Object.keys(obj as object).sort()) {
-    sorted[k] = sortKeysDeep((obj as Record<string, unknown>)[k]);
-  }
-  return sorted;
-}
-
-function buildPaymentIntentIdempotencyPayload(
-  items: CheckoutItem[],
-  shipping: CheckoutShipping,
-  customer: CheckoutCustomer,
-  checkoutPaymentMethod: string,
-  schoolInquiryJson: string | null,
-) {
-  const sortedItems = [...items]
-    .map((it) => ({
-      productId: String(it.productId).trim(),
-      productName: String(it.productName).trim(),
-      quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      ...(typeof it.variant === 'string' && it.variant.trim() ? { variant: it.variant.trim() } : {}),
-      ...(typeof it.bundleId === 'string' && it.bundleId.trim() ? { bundleId: it.bundleId.trim() } : {}),
-      ...(typeof it.bundleTitle === 'string' && it.bundleTitle.trim()
-        ? { bundleTitle: it.bundleTitle.trim() }
-        : {}),
-      ...(it.posterMerch === true ? { posterMerch: true } : {}),
-    }))
-    .sort((a, b) => {
-      const c = a.productId.localeCompare(b.productId);
-      if (c !== 0) return c;
-      return JSON.stringify(a).localeCompare(JSON.stringify(b));
-    });
-
-  const ship: Record<string, unknown> = {
-    method: String(shipping.method).trim(),
-    price: shipping.price,
-  };
-  if (typeof shipping.pickupPointId === 'string' && shipping.pickupPointId.trim()) {
-    ship.pickupPointId = shipping.pickupPointId.trim();
-  }
-  if (typeof shipping.pickupPointName === 'string' && shipping.pickupPointName.trim()) {
-    ship.pickupPointName = shipping.pickupPointName.trim();
-  }
-  if (shipping.differentAddress) {
-    ship.differentAddress = true;
-    const da = shipping.deliveryAddress;
-    ship.deliveryAddress = da && typeof da === 'object'
-      ? {
-        recipientName: typeof da.recipientName === 'string' ? da.recipientName.trim() : '',
-        street: typeof da.street === 'string' ? da.street.trim() : '',
-        city: typeof da.city === 'string' ? da.city.trim() : '',
-        zip: typeof da.zip === 'string' ? da.zip.trim() : '',
-      }
-      : {};
-  } else {
-    ship.differentAddress = false;
-  }
-
-  const cust = {
-    email: normalizeEmail(String(customer.email).trim()),
-    name: String(customer.name).trim(),
-    phone: String(customer.phone).trim(),
-    schoolName: typeof customer.schoolName === 'string' ? customer.schoolName.trim() : '',
-    ico: String(customer.ico ?? '').trim().replace(/\s/g, ''),
-    street: String(customer.street).trim(),
-    city: String(customer.city).trim(),
-    zip: String(customer.zip).trim(),
-  };
-
-  let schoolInquiry: unknown = null;
-  if (schoolInquiryJson) {
-    try {
-      schoolInquiry = sortKeysDeep(JSON.parse(schoolInquiryJson));
-    } catch {
-      schoolInquiry = schoolInquiryJson;
-    }
-  }
-
-  return {
-    v: 1,
-    checkoutPaymentMethod,
-    items: sortedItems,
-    shipping: ship,
-    customer: cust,
-    schoolInquiry,
-  };
-}
-
-async function sha256HexOfString(s: string): Promise<string> {
-  const data = new TextEncoder().encode(s);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -372,11 +277,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
   }
 
+  /** Hash košíku — bez `paymentMethod`. Card/APay/GPay přes `automatic_payment_methods=true` jdou na stejný PaymentIntent,
+   *  takže přepínání karta↔Apple Pay↔Google Pay nemá zakládat nové objednávky. */
   const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
     items,
     shipping,
     customer,
-    checkoutPaymentMethod,
+    'stripe',
     schoolInquiryJson,
   );
   const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));
@@ -480,18 +387,22 @@ Deno.serve(async (req) => {
       )
     `;
 
-    paymentIntent = await stripe.paymentIntents.create({
-      amount: total,
-      currency: 'czk',
-      automatic_payment_methods: {
-        enabled: true,
+    /** Stejný klíč jako u DB — když klient pošle POST 2×, Stripe nevyrobí druhý PaymentIntent. */
+    paymentIntent = await stripe.paymentIntents.create(
+      {
+        amount: total,
+        currency: 'czk',
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        metadata: {
+          checkout_session_id: checkoutSessionId,
+          payment_method: checkoutPaymentMethod,
+          ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
+        },
       },
-      metadata: {
-        checkout_session_id: checkoutSessionId,
-        payment_method: checkoutPaymentMethod,
-        ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
-      },
-    });
+      { idempotencyKey: `eshop-pi-${idempotencyKey}`.slice(0, 255) },
+    );
 
     await sql`
       update public.checkout_sessions
@@ -500,62 +411,87 @@ Deno.serve(async (req) => {
     `;
 
     let persistedOrderId: string | null = null;
+    let persistedResumeToken = resumeToken;
     try {
       await sql.begin(async (tx) => {
-        const inserted = await tx<{ id: string }[]>`
-          insert into public.orders (
-            status,
-            customer_email,
-            customer_name,
-            customer_phone,
-            school_name,
-            ico,
-            street,
-            city,
-            zip,
-            country,
-            shipping_method,
-            shipping_price,
-            pickup_point_id,
-            pickup_point_name,
-            payment_method,
-            payment_status,
-            stripe_payment_intent_id,
-            subtotal,
-            total,
-            checkout_session_id,
-            payment_resume_token
-          ) values (
-            'pending_payment',
-            ${customer.email.trim()},
-            ${customer.name.trim()},
-            ${customer.phone.trim()},
-            ${customer.schoolName?.trim() || null},
-            ${customer.ico?.trim() || null},
-            ${customer.street.trim()},
-            ${customer.city.trim()},
-            ${customer.zip.trim()},
-            'CZ',
-            ${shipping.method},
-            ${shipping.price ?? 0},
-            ${shipping.pickupPointId ?? null},
-            ${shipping.pickupPointName ?? null},
-            ${checkoutPaymentMethod},
-            'pending',
-            ${paymentIntent.id},
-            ${subtotal},
-            ${total},
-            ${checkoutSessionId}::uuid,
-            ${resumeToken}
-          )
-          returning id
-        `;
+        let inserted: { id: string; payment_resume_token: string | null }[];
+        try {
+          inserted = await tx<{ id: string; payment_resume_token: string | null }[]>`
+            insert into public.orders (
+              status,
+              customer_email,
+              customer_name,
+              customer_phone,
+              school_name,
+              ico,
+              street,
+              city,
+              zip,
+              country,
+              shipping_method,
+              shipping_price,
+              pickup_point_id,
+              pickup_point_name,
+              payment_method,
+              payment_status,
+              stripe_payment_intent_id,
+              subtotal,
+              total,
+              checkout_session_id,
+              payment_resume_token,
+              idempotency_key
+            ) values (
+              'pending_payment',
+              ${customer.email.trim()},
+              ${customer.name.trim()},
+              ${customer.phone.trim()},
+              ${customer.schoolName?.trim() || null},
+              ${customer.ico?.trim() || null},
+              ${customer.street.trim()},
+              ${customer.city.trim()},
+              ${customer.zip.trim()},
+              'CZ',
+              ${shipping.method},
+              ${shipping.price ?? 0},
+              ${shipping.pickupPointId ?? null},
+              ${shipping.pickupPointName ?? null},
+              ${checkoutPaymentMethod},
+              'pending',
+              ${paymentIntent.id},
+              ${subtotal},
+              ${total},
+              ${checkoutSessionId}::uuid,
+              ${resumeToken},
+              ${idempotencyKey}
+            )
+            returning id, payment_resume_token
+          `;
+        } catch (insErr) {
+          /** Race / dvojklik: druhý INSERT s tímtéž `idempotency_key` selže UNIQUE indexem.
+           *  Vrátíme stávající `pending_payment` objednávku; PI z `existing.stripe_payment_intent_id` byla už spárována dřív. */
+          if (insErr && typeof insErr === 'object' && 'code' in insErr && (insErr as { code?: string }).code === '23505') {
+            const reuse = await tx<{ id: string; payment_resume_token: string | null; stripe_payment_intent_id: string | null }[]>`
+              select id, payment_resume_token, stripe_payment_intent_id
+              from public.orders
+              where idempotency_key = ${idempotencyKey}
+              limit 1
+            `;
+            const reuseRow = reuse[0];
+            if (reuseRow?.id && reuseRow.payment_resume_token) {
+              persistedOrderId = reuseRow.id;
+              persistedResumeToken = reuseRow.payment_resume_token;
+              return;
+            }
+          }
+          throw insErr;
+        }
 
-        const orderId = inserted[0]?.id;
-        if (!orderId) {
+        const row = inserted[0];
+        if (!row?.id) {
           throw new Error('Order insert returned no id.');
         }
-        persistedOrderId = orderId;
+        persistedOrderId = row.id;
+        persistedResumeToken = row.payment_resume_token || resumeToken;
 
         for (const item of items) {
           const variant = typeof item.variant === 'string' && item.variant.trim()
@@ -579,7 +515,7 @@ Deno.serve(async (req) => {
               bundle_id,
               bundle_title
             ) values (
-              ${orderId}::uuid,
+              ${row.id}::uuid,
               ${item.productId},
               ${item.productName},
               ${variant},
@@ -615,7 +551,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
-      resumeToken,
+      resumeToken: persistedResumeToken,
       ...(thankYouTracking ? { trackingToken: thankYouTracking } : {}),
     });
   } catch (error) {

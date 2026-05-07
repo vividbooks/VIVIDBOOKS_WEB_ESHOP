@@ -203,6 +203,7 @@ export function CheckoutPage() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [paymentResumeToken, setPaymentResumeToken] = useState<string | null>(null);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [resumeFlowActive, setResumeFlowActive] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState('');
@@ -215,6 +216,8 @@ export function CheckoutPage() {
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('card');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+  /** Dvojklik na „Odeslat převodem“ — setState je asynchronní, ref zablokuje hned. */
+  const transferSubmitGuardRef = useRef(false);
   const [schoolQuery, setSchoolQuery] = useState('');
   const [schoolResults, setSchoolResults] = useState<SchoolSearchResult[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
@@ -377,7 +380,8 @@ export function CheckoutPage() {
         setPaymentIntentId(typeof data.paymentIntentId === 'string' ? data.paymentIntentId : null);
         {
           const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(rtt || null);
           if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
         }
         setResumedOrderNumber(typeof data.orderNumber === 'string' ? data.orderNumber : null);
@@ -637,6 +641,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setPaymentIntentError('');
       lastPaymentKeyRef.current = null;
       return;
@@ -648,6 +653,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       lastPaymentKeyRef.current = null;
       return;
     }
@@ -689,7 +695,11 @@ export function CheckoutPage() {
       checkoutPaymentMethod: paymentMethod,
     };
 
-    const paymentKey = JSON.stringify(payload);
+    /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod`, aby přepnutí karta↔Apple Pay↔Google Pay
+     *  nezakládalo nový PaymentIntent (a tím i novou objednávku). Stripe Payment Element s `automatic_payment_methods=true`
+     *  zvládne všechny tři varianty na stejném PI. */
+    const { checkoutPaymentMethod: _unusedPm, ...keyPayload } = payload;
+    const paymentKey = JSON.stringify(keyPayload);
     if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
     lastPaymentKeyRef.current = paymentKey;
@@ -718,7 +728,8 @@ export function CheckoutPage() {
         setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
         {
           const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(apiTt || null);
           if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
         }
       })
@@ -727,6 +738,7 @@ export function CheckoutPage() {
         setClientSecret(null);
         setPaymentIntentId(null);
         setPaymentResumeToken(null);
+        setThankYouTrackingToken(null);
         setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => {
@@ -745,7 +757,6 @@ export function CheckoutPage() {
     deliveryAddress,
     isCustomerStepValid,
     isShippingStepValid,
-    clientSecret,
     resumeFlowActive,
     paymentMethod,
     wantsCardLikePayment,
@@ -803,6 +814,8 @@ export function CheckoutPage() {
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
     if (!validateCustomerStep()) return;
+    if (transferSubmitGuardRef.current) return;
+    transferSubmitGuardRef.current = true;
     setTransferSubmitting(true);
     setPaymentIntentError('');
     try {
@@ -861,6 +874,7 @@ export function CheckoutPage() {
       thankYou.searchParams.set('transfer', '1');
       window.location.assign(thankYou.toString());
     } catch (error: unknown) {
+      transferSubmitGuardRef.current = false;
       setPaymentIntentError(error instanceof Error ? error.message : 'Odeslání se nezdařilo.');
     } finally {
       setTransferSubmitting(false);
@@ -1890,6 +1904,7 @@ export function CheckoutPage() {
                       <StripePaymentSubmitForm
                         total={summaryTotal}
                         onError={setPaymentIntentError}
+                        thankYouTrackingToken={thankYouTrackingToken}
                       />
                     </Elements>
                   )}
