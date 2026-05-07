@@ -231,6 +231,12 @@ function logInbound(event: string, data?: Record<string, unknown>) {
   console.log(`[pipedrive-inbound] ${event}`, data ? JSON.stringify(data) : '');
 }
 
+function isPostgresUniqueViolation(e: unknown): boolean {
+  return Boolean(
+    e && typeof e === 'object' && 'code' in e && (e as { code?: string }).code === '23505',
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -502,7 +508,9 @@ Deno.serve(async (req) => {
       }, 200);
     }
 
-    const inserted = await sql<{ id: string; order_number: string }[]>`
+    let inserted: { id: string; order_number: string }[];
+    try {
+      inserted = await sql<{ id: string; order_number: string }[]>`
       insert into public.orders (
         status,
         customer_email,
@@ -552,6 +560,28 @@ Deno.serve(async (req) => {
       )
       returning id, order_number
     `;
+    } catch (insertErr) {
+      if (isPostgresUniqueViolation(insertErr)) {
+        const race = await sql<{ id: string; order_number: string }[]>`
+          select id, order_number from public.orders where pipedrive_deal_id = ${dealIdStr} limit 1
+        `;
+        if (race.length > 0) {
+          logInbound('skipped', {
+            dealId,
+            reason: 'already_imported_race',
+            orderId: race[0].id,
+          });
+          return jsonResponse({
+            skipped: true,
+            reason: 'already_imported',
+            dealId,
+            orderId: race[0].id,
+            orderNumber: race[0].order_number,
+          }, 200);
+        }
+      }
+      throw insertErr;
+    }
 
     const row = inserted[0];
     if (!row) {

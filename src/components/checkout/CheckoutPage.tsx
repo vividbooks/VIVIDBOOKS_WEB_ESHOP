@@ -216,6 +216,8 @@ export function CheckoutPage() {
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('card');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+  /** Dvojklik na „Odeslat převodem“ — setState je asynchronní, ref zablokuje hned. */
+  const transferSubmitGuardRef = useRef(false);
   const [schoolQuery, setSchoolQuery] = useState('');
   const [schoolResults, setSchoolResults] = useState<SchoolSearchResult[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
@@ -751,7 +753,6 @@ export function CheckoutPage() {
     deliveryAddress,
     isCustomerStepValid,
     isShippingStepValid,
-    clientSecret,
     resumeFlowActive,
     paymentMethod,
     wantsCardLikePayment,
@@ -809,6 +810,8 @@ export function CheckoutPage() {
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
     if (!validateCustomerStep()) return;
+    if (transferSubmitGuardRef.current) return;
+    transferSubmitGuardRef.current = true;
     setTransferSubmitting(true);
     setPaymentIntentError('');
     try {
@@ -867,6 +870,7 @@ export function CheckoutPage() {
       thankYou.searchParams.set('transfer', '1');
       window.location.assign(thankYou.toString());
     } catch (error: unknown) {
+      transferSubmitGuardRef.current = false;
       setPaymentIntentError(error instanceof Error ? error.message : 'Odeslání se nezdařilo.');
     } finally {
       setTransferSubmitting(false);

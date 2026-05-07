@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { PaymentElement, useElements, useStripe } from '@stripe/react-stripe-js';
 import { formatPrice } from './formatPrice';
@@ -23,10 +23,14 @@ export function StripePaymentSubmitForm({
   const stripe = useStripe();
   const elements = useElements();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /** Synchronní blok — dvojklik před setState stihne poslat confirmPayment dvakrát. */
+  const submitGuardRef = useRef(false);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!stripe || !elements) return;
+    if (submitGuardRef.current) return;
+    submitGuardRef.current = true;
 
     setIsSubmitting(true);
     onError('');
@@ -45,6 +49,7 @@ export function StripePaymentSubmitForm({
 
     if (result.error) {
       onError(result.error.message || 'Platbu se nepodařilo dokončit. Zkuste to prosím znovu.');
+      submitGuardRef.current = false;
       setIsSubmitting(false);
       return;
     }

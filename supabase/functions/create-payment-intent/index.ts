@@ -16,6 +16,10 @@ import {
   type CheckoutItemInput,
 } from '../_shared/checkout-pricing.ts';
 import { computeOrderTrackingToken } from '../_shared/order-tracking-token.ts';
+import {
+  buildPaymentIntentIdempotencyPayload,
+  sha256HexOfString,
+} from '../_shared/checkout-idempotency.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -162,105 +166,6 @@ function generateResumeToken(): string {
   const a = new Uint8Array(32);
   crypto.getRandomValues(a);
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function sortKeysDeep(obj: unknown): unknown {
-  if (obj === null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(sortKeysDeep);
-  const sorted: Record<string, unknown> = {};
-  for (const k of Object.keys(obj as object).sort()) {
-    sorted[k] = sortKeysDeep((obj as Record<string, unknown>)[k]);
-  }
-  return sorted;
-}
-
-function buildPaymentIntentIdempotencyPayload(
-  items: CheckoutItem[],
-  shipping: CheckoutShipping,
-  customer: CheckoutCustomer,
-  checkoutPaymentMethod: string,
-  schoolInquiryJson: string | null,
-) {
-  const sortedItems = [...items]
-    .map((it) => ({
-      productId: String(it.productId).trim(),
-      productName: String(it.productName).trim(),
-      quantity: it.quantity,
-      unitPrice: it.unitPrice,
-      ...(typeof it.variant === 'string' && it.variant.trim() ? { variant: it.variant.trim() } : {}),
-      ...(typeof it.bundleId === 'string' && it.bundleId.trim() ? { bundleId: it.bundleId.trim() } : {}),
-      ...(typeof it.bundleTitle === 'string' && it.bundleTitle.trim()
-        ? { bundleTitle: it.bundleTitle.trim() }
-        : {}),
-      ...(it.posterMerch === true ? { posterMerch: true } : {}),
-    }))
-    .sort((a, b) => {
-      const c = a.productId.localeCompare(b.productId);
-      if (c !== 0) return c;
-      return JSON.stringify(a).localeCompare(JSON.stringify(b));
-    });
-
-  const ship: Record<string, unknown> = {
-    method: String(shipping.method).trim(),
-    price: shipping.price,
-  };
-  if (typeof shipping.pickupPointId === 'string' && shipping.pickupPointId.trim()) {
-    ship.pickupPointId = shipping.pickupPointId.trim();
-  }
-  if (typeof shipping.pickupPointName === 'string' && shipping.pickupPointName.trim()) {
-    ship.pickupPointName = shipping.pickupPointName.trim();
-  }
-  if (shipping.differentAddress) {
-    ship.differentAddress = true;
-    const da = shipping.deliveryAddress;
-    ship.deliveryAddress = da && typeof da === 'object'
-      ? {
-        recipientName: typeof da.recipientName === 'string' ? da.recipientName.trim() : '',
-        street: typeof da.street === 'string' ? da.street.trim() : '',
-        city: typeof da.city === 'string' ? da.city.trim() : '',
-        zip: typeof da.zip === 'string' ? da.zip.trim() : '',
-      }
-      : {};
-  } else {
-    ship.differentAddress = false;
-  }
-
-  const cust = {
-    email: normalizeEmail(String(customer.email).trim()),
-    name: String(customer.name).trim(),
-    phone: String(customer.phone).trim(),
-    schoolName: typeof customer.schoolName === 'string' ? customer.schoolName.trim() : '',
-    ico: String(customer.ico ?? '').trim().replace(/\s/g, ''),
-    street: String(customer.street).trim(),
-    city: String(customer.city).trim(),
-    zip: String(customer.zip).trim(),
-  };
-
-  let schoolInquiry: unknown = null;
-  if (schoolInquiryJson) {
-    try {
-      schoolInquiry = sortKeysDeep(JSON.parse(schoolInquiryJson));
-    } catch {
-      schoolInquiry = schoolInquiryJson;
-    }
-  }
-
-  return {
-    v: 1,
-    checkoutPaymentMethod,
-    items: sortedItems,
-    shipping: ship,
-    customer: cust,
-    schoolInquiry,
-  };
-}
-
-async function sha256HexOfString(s: string): Promise<string> {
-  const data = new TextEncoder().encode(s);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 Deno.serve(async (req) => {
@@ -480,18 +385,22 @@ Deno.serve(async (req) => {
       )
     `;
 
-    paymentIntent = await stripe.paymentIntents.create({
-      amount: total,
-      currency: 'czk',
-      automatic_payment_methods: {
-        enabled: true,
+    /** Stejný klíč jako u DB — když klient pošle POST 2×, Stripe nevyrobí druhý PaymentIntent. */
+    paymentIntent = await stripe.paymentIntents.create(
+      {
+        amount: total,
+        currency: 'czk',
+        automatic_payment_methods: {
+          enabled: true,
+        },
+        metadata: {
+          checkout_session_id: checkoutSessionId,
+          payment_method: checkoutPaymentMethod,
+          ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
+        },
       },
-      metadata: {
-        checkout_session_id: checkoutSessionId,
-        payment_method: checkoutPaymentMethod,
-        ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
-      },
-    });
+      { idempotencyKey: `eshop-pi-${idempotencyKey}`.slice(0, 255) },
+    );
 
     await sql`
       update public.checkout_sessions
