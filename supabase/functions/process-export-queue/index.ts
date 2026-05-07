@@ -98,6 +98,15 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
+const cronSecret = Deno.env.get('PROCESS_EXPORT_QUEUE_CRON_SECRET')?.trim();
+
+function isAuthorizedCronRequest(req: Request) {
+  if (!cronSecret) return true;
+  const secretHeader = req.headers.get('x-cron-secret')?.trim();
+  const secretQuery = new URL(req.url).searchParams.get('cronSecret')?.trim();
+  return secretHeader === cronSecret || secretQuery === cronSecret;
+}
+
 function idokladEnvInt(name: string, fallback: number): number {
   const raw = (Deno.env.get(name) || '').trim();
   if (!raw) return fallback;
@@ -1102,6 +1111,10 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  if (!isAuthorizedCronRequest(req)) {
+    return jsonResponse({ error: 'Unauthorized.' }, 401);
   }
 
   if (!['GET', 'POST'].includes(req.method)) {

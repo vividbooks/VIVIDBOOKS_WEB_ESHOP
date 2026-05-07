@@ -52,6 +52,15 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
 };
 
+const cronSecret = Deno.env.get('MONITOR_ORDER_WORKFLOWS_CRON_SECRET')?.trim();
+
+function isAuthorizedCronRequest(req: Request) {
+  if (!cronSecret) return true;
+  const secretHeader = req.headers.get('x-cron-secret')?.trim();
+  const secretQuery = new URL(req.url).searchParams.get('cronSecret')?.trim();
+  return secretHeader === cronSecret || secretQuery === cronSecret;
+}
+
 const MONITORED_ALERT_TYPES = [
   'customer_email_missing',
   'basecom_stuck',
@@ -127,6 +136,10 @@ function dedupeKey(alertType: string, orderId: string, suffix?: string) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  if (!isAuthorizedCronRequest(req)) {
+    return jsonResponse({ error: 'Unauthorized.' }, 401);
   }
 
   if (!['GET', 'POST'].includes(req.method)) {
