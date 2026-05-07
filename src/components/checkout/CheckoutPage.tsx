@@ -695,7 +695,11 @@ export function CheckoutPage() {
       checkoutPaymentMethod: paymentMethod,
     };
 
-    const paymentKey = JSON.stringify(payload);
+    /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod`, aby přepnutí karta↔Apple Pay↔Google Pay
+     *  nezakládalo nový PaymentIntent (a tím i novou objednávku). Stripe Payment Element s `automatic_payment_methods=true`
+     *  zvládne všechny tři varianty na stejném PI. */
+    const { checkoutPaymentMethod: _unusedPm, ...keyPayload } = payload;
+    const paymentKey = JSON.stringify(keyPayload);
     if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
     lastPaymentKeyRef.current = paymentKey;

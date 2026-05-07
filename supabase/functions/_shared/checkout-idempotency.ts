@@ -57,12 +57,18 @@ export type IdempotencyCustomer = {
   zip: string;
 };
 
-/** Stejný kanonický tvar jako dříve v create-payment-intent — aby hash košíku seděl napříč platbou kartou i převodem. */
+/**
+ * Kanonický tvar — používá ho create-payment-intent i submit-transfer-order.
+ *
+ * `paymentChannel` rozlišuje jen `stripe` (libovolná karta/wallet ve Stripe Payment Elementu — `automatic_payment_methods=true`)
+ * vs `transfer` (B2B převod). NEZAhrnujeme jednotlivé volby v Stripe (card/apple_pay/google_pay) — všechny vznikají na stejném PaymentIntentu,
+ * proto by switching mezi nimi neměl produkovat nové objednávky.
+ */
 export function buildPaymentIntentIdempotencyPayload(
   items: IdempotencyItem[],
   shipping: IdempotencyShipping,
   customer: IdempotencyCustomer,
-  checkoutPaymentMethod: string,
+  paymentChannel: 'stripe' | 'transfer',
   schoolInquiryJson: string | null,
 ) {
   const sortedItems = [...items]
@@ -130,8 +136,8 @@ export function buildPaymentIntentIdempotencyPayload(
   }
 
   return {
-    v: 1,
-    checkoutPaymentMethod,
+    v: 2,
+    paymentChannel,
     items: sortedItems,
     shipping: ship,
     customer: cust,

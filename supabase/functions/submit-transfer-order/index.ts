@@ -316,7 +316,7 @@ Deno.serve(async (req) => {
     items as IdempotencyItem[],
     shipping as IdempotencyShipping,
     customer as IdempotencyCustomer,
-    'transfer',
+    'transfer' as const,
     schoolInquiryJson,
   );
   const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));

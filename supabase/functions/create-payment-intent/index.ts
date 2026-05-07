@@ -277,11 +277,13 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
   }
 
+  /** Hash košíku — bez `paymentMethod`. Card/APay/GPay přes `automatic_payment_methods=true` jdou na stejný PaymentIntent,
+   *  takže přepínání karta↔Apple Pay↔Google Pay nemá zakládat nové objednávky. */
   const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
     items,
     shipping,
     customer,
-    checkoutPaymentMethod,
+    'stripe',
     schoolInquiryJson,
   );
   const idempotencyKey = await sha256HexOfString(JSON.stringify(idempotencyCanonical));
@@ -409,62 +411,87 @@ Deno.serve(async (req) => {
     `;
 
     let persistedOrderId: string | null = null;
+    let persistedResumeToken = resumeToken;
     try {
       await sql.begin(async (tx) => {
-        const inserted = await tx<{ id: string }[]>`
-          insert into public.orders (
-            status,
-            customer_email,
-            customer_name,
-            customer_phone,
-            school_name,
-            ico,
-            street,
-            city,
-            zip,
-            country,
-            shipping_method,
-            shipping_price,
-            pickup_point_id,
-            pickup_point_name,
-            payment_method,
-            payment_status,
-            stripe_payment_intent_id,
-            subtotal,
-            total,
-            checkout_session_id,
-            payment_resume_token
-          ) values (
-            'pending_payment',
-            ${customer.email.trim()},
-            ${customer.name.trim()},
-            ${customer.phone.trim()},
-            ${customer.schoolName?.trim() || null},
-            ${customer.ico?.trim() || null},
-            ${customer.street.trim()},
-            ${customer.city.trim()},
-            ${customer.zip.trim()},
-            'CZ',
-            ${shipping.method},
-            ${shipping.price ?? 0},
-            ${shipping.pickupPointId ?? null},
-            ${shipping.pickupPointName ?? null},
-            ${checkoutPaymentMethod},
-            'pending',
-            ${paymentIntent.id},
-            ${subtotal},
-            ${total},
-            ${checkoutSessionId}::uuid,
-            ${resumeToken}
-          )
-          returning id
-        `;
+        let inserted: { id: string; payment_resume_token: string | null }[];
+        try {
+          inserted = await tx<{ id: string; payment_resume_token: string | null }[]>`
+            insert into public.orders (
+              status,
+              customer_email,
+              customer_name,
+              customer_phone,
+              school_name,
+              ico,
+              street,
+              city,
+              zip,
+              country,
+              shipping_method,
+              shipping_price,
+              pickup_point_id,
+              pickup_point_name,
+              payment_method,
+              payment_status,
+              stripe_payment_intent_id,
+              subtotal,
+              total,
+              checkout_session_id,
+              payment_resume_token,
+              idempotency_key
+            ) values (
+              'pending_payment',
+              ${customer.email.trim()},
+              ${customer.name.trim()},
+              ${customer.phone.trim()},
+              ${customer.schoolName?.trim() || null},
+              ${customer.ico?.trim() || null},
+              ${customer.street.trim()},
+              ${customer.city.trim()},
+              ${customer.zip.trim()},
+              'CZ',
+              ${shipping.method},
+              ${shipping.price ?? 0},
+              ${shipping.pickupPointId ?? null},
+              ${shipping.pickupPointName ?? null},
+              ${checkoutPaymentMethod},
+              'pending',
+              ${paymentIntent.id},
+              ${subtotal},
+              ${total},
+              ${checkoutSessionId}::uuid,
+              ${resumeToken},
+              ${idempotencyKey}
+            )
+            returning id, payment_resume_token
+          `;
+        } catch (insErr) {
+          /** Race / dvojklik: druhý INSERT s tímtéž `idempotency_key` selže UNIQUE indexem.
+           *  Vrátíme stávající `pending_payment` objednávku; PI z `existing.stripe_payment_intent_id` byla už spárována dřív. */
+          if (insErr && typeof insErr === 'object' && 'code' in insErr && (insErr as { code?: string }).code === '23505') {
+            const reuse = await tx<{ id: string; payment_resume_token: string | null; stripe_payment_intent_id: string | null }[]>`
+              select id, payment_resume_token, stripe_payment_intent_id
+              from public.orders
+              where idempotency_key = ${idempotencyKey}
+              limit 1
+            `;
+            const reuseRow = reuse[0];
+            if (reuseRow?.id && reuseRow.payment_resume_token) {
+              persistedOrderId = reuseRow.id;
+              persistedResumeToken = reuseRow.payment_resume_token;
+              return;
+            }
+          }
+          throw insErr;
+        }
 
-        const orderId = inserted[0]?.id;
-        if (!orderId) {
+        const row = inserted[0];
+        if (!row?.id) {
           throw new Error('Order insert returned no id.');
         }
-        persistedOrderId = orderId;
+        persistedOrderId = row.id;
+        persistedResumeToken = row.payment_resume_token || resumeToken;
 
         for (const item of items) {
           const variant = typeof item.variant === 'string' && item.variant.trim()
@@ -488,7 +515,7 @@ Deno.serve(async (req) => {
               bundle_id,
               bundle_title
             ) values (
-              ${orderId}::uuid,
+              ${row.id}::uuid,
               ${item.productId},
               ${item.productName},
               ${variant},
@@ -524,7 +551,7 @@ Deno.serve(async (req) => {
     return jsonResponse({
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
-      resumeToken,
+      resumeToken: persistedResumeToken,
       ...(thankYouTracking ? { trackingToken: thankYouTracking } : {}),
     });
   } catch (error) {
