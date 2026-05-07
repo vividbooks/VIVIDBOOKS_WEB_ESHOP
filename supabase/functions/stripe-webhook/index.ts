@@ -558,8 +558,8 @@ Deno.serve(async (req) => {
     return errorResponse('Method not allowed.', 405);
   }
 
-  const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
-  const stripeWebhookSecret = Deno.env.get('STRIPE_WEBHOOK_SECRET');
+  const stripeSecretKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim();
+  const stripeWebhookSecret = (Deno.env.get('STRIPE_WEBHOOK_SECRET') || '').trim();
   const databaseUrl = getDatabaseUrl();
 
   if (!stripeSecretKey || !stripeWebhookSecret || !databaseUrl) {
