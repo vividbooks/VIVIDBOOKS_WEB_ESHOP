@@ -894,34 +894,6 @@ export function AdminOrderDetailPage() {
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               )}
-              {order.stripe_receipt_url
-                && !(order.invoice_status === 'done' && order.idoklad_invoice_id?.trim()) && (
-                <a
-                  href={order.stripe_receipt_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]"
-                >
-                  {'Stripe účtenka (záloha, dokud není iDoklad)'}
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              )}
-              {order.stripe_receipt_url
-                && order.invoice_status === 'done'
-                && order.idoklad_invoice_id?.trim() && (
-                <p className="text-[11px] text-gray-500 leading-snug">
-                  <span className="text-gray-400">{'Technicky: '}</span>
-                  <a
-                    href={order.stripe_receipt_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-[#001161] hover:text-[#ff6a35] inline-flex items-center gap-0.5"
-                  >
-                    {'Stripe receipt'}
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </p>
-              )}
               {basecomHref && (
                 <a href={basecomHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">
                   {`Base.com order ${order.basecom_order_id}`}

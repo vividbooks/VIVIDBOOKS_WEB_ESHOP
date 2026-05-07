@@ -27,3 +27,9 @@ verify_jwt = false
 # Bez tohohle vrací gateway 401 (UNAUTHORIZED_NO_AUTH_HEADER) ještě před spuštěním funkce.
 [functions.pipedrive-inbound-deal]
 verify_jwt = false
+
+# Zákaznický odkaz „Stáhnout fakturu" jde přímo z e-mailu / sledování objednávky bez Supabase JWT.
+# Endpoint si autentizuje sám: orderNumber + ?t= (HMAC tracking token) pro zákazníka,
+# nebo orderId + admin JWT přes requireAdminJwt() pro administraci.
+[functions.idoklad-invoice-pdf]
+verify_jwt = false
