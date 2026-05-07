@@ -11,3 +11,4 @@ dist/
 supabase/.temp/
 VIVIDASISTANT/supabase/.temp/
 .gstack/
+.deploy-args/

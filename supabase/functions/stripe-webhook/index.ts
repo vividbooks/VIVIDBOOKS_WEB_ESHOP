@@ -952,7 +952,11 @@ Deno.serve(async (req) => {
           paymentIntent.metadata?.order_source === 'school_objednat' || hasStoredInquiry;
 
         const icoNorm = String(customer.ico || '').trim().replace(/\s/g, '');
-        const eshopPipedriveMode: 'b2c_card_won' | 'b2b_card_won' = icoNorm ? 'b2b_card_won' : 'b2c_card_won';
+        const schoolNameTrim = String((customer as { schoolName?: string }).schoolName || '').trim();
+        /** B2B i pro objednávku bez IČO, ale s vyplněnou školou — vznikne organizace v Pipedrive (matchování pak podle názvu),
+         *  jinak by deal pro „test PŘGO gymnázium…" skončil jako B2C bez org a obchod by neviděl, že je to škola. */
+        const eshopPipedriveMode: 'b2c_card_won' | 'b2b_card_won' =
+          (icoNorm || schoolNameTrim) ? 'b2b_card_won' : 'b2c_card_won';
 
         const [emailResult, exportQueueResult, schoolOrdersResult, pipedriveSyncResult] = await Promise.allSettled([
           invokeOrderEmail(createdOrderId, 'order_confirmed', req.url),

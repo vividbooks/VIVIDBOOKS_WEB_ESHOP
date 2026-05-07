@@ -11304,6 +11304,14 @@ function buildPipedriveLookupCacheKey(params: { ico?: string; name?: string; inc
   return `${String(params.ico || '').trim()}::${normalizePipedriveSearchText(String(params.name || ''))}::${raw}`;
 }
 
+/** Po POST /organizations: smazat cache pro `{ico, name}` (raw0/raw1), ať `lookupSchoolInPipedrive` neopakuje
+ *  předchozí „nenalezeno" výsledek místo právě vytvořené organizace. */
+function invalidatePipedriveSchoolLookupCache(params: { ico?: string; name?: string }) {
+  for (const raw of [false, true]) {
+    pipedriveSchoolLookupCache.delete(buildPipedriveLookupCacheKey({ ...params, includePipedriveRaw: raw }));
+  }
+}
+
 function summarizePipedriveSchoolState(params: {
   orgId: number | null;
   orgName: string | null;
@@ -11937,10 +11945,40 @@ async function upsertPipedriveSchoolOrganization(
   const payload: Record<string, any> = { name: schoolName };
   if (address) payload.address = address;
   if (icoFieldKey && ico) payload[icoFieldKey] = ico;
-  await pipedriveRequest<any>(apiToken, '/organizations', {
+  const created = await pipedriveRequest<any>(apiToken, '/organizations', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
+  /** Nutné — jinak by druhý `lookupSchoolInPipedrive` vrátil starý `orgId: null` z 5min cache. */
+  invalidatePipedriveSchoolLookupCache({ ico, name: schoolName });
+
+  /** Vezmi orgId přímo z odpovědi POST `/organizations` — Pipedrive search index má prodlevu (sekundy až minuty),
+   *  takže okamžité GET /organizations/search by mohlo vrátit prázdný výsledek a sync by spadl na `missing_org`. */
+  const createdOrgId = parsePipedriveNumericId(created?.data?.id);
+  if (createdOrgId) {
+    console.log(`[Pipedrive] Org created id=${createdOrgId} name="${schoolName}"`);
+    return {
+      status: 'new',
+      message: '',
+      orgId: createdOrgId,
+      orgName: schoolName || (created?.data?.name ? String(created.data.name) : null),
+      owner: null,
+      colleagues: [],
+      products: [],
+      openDeals: 0,
+      wonDeals: 0,
+      totalDeals: 0,
+      matchedBy: ico ? 'ico' : 'name',
+      org: created?.data || null,
+      deals: [],
+      ownerUserId: null,
+      lastTrialDealAt: null,
+      trialCooldownActive: false,
+      trialNextEligibleAt: null,
+    } as PipedriveSchoolLookup;
+  }
+
+  /** Fallback: ID z odpovědi není (chyba v API) — zkus znovu lookup (cache už vyprázdněná). */
   return lookupSchoolInPipedrive(apiToken, { ico, name: schoolName });
 }
 
@@ -15079,7 +15117,10 @@ async function syncEshopOrderToPipedriveFromDb(
   const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
 
   const ico = String((order as any).ico || '').trim().replace(/\s/g, '');
-  const isB2b = ico.length > 0;
+  const schoolNameRaw = String((order as any).school_name || '').trim();
+  /** B2B i bez IČO — pokud uživatel uvedl jméno školy, založíme/spárujeme organizaci.
+   *  Bez IČO i bez `school_name` je to čisté B2C → person v Pipedrivu, deal bez org. */
+  const isB2b = ico.length > 0 || schoolNameRaw.length > 0;
   const personName = String((order as any).customer_name || '').trim() || 'Zákazník';
   const email = String((order as any).customer_email || '').trim();
   const phone = String((order as any).customer_phone || '').trim();
@@ -15088,7 +15129,7 @@ async function syncEshopOrderToPipedriveFromDb(
   let orgId: number | null = null;
   let orgLookupForTitle: { orgName: string | null } | null = null;
   if (isB2b) {
-    const schoolName = String((order as any).school_name || personName).trim();
+    const schoolName = schoolNameRaw || personName;
     const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
       schoolName,
       ico,
