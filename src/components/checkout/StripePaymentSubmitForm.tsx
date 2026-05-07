@@ -57,7 +57,20 @@ export function StripePaymentSubmitForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
-      <PaymentElement />
+      {/* min-height + tabs: někdy se accordion/stack nevykreslí viditelně; iframe i chyby blokování jsou v Console / Network */}
+      <div className="min-h-[140px]" data-stripe-payment-element-mount>
+        <PaymentElement
+          options={{
+            layout: 'tabs',
+          }}
+          onLoadError={(e) => {
+            const msg =
+              e.error?.message ||
+              'Platební pole se nepodařilo načíst (zkuste jiný prohlížeč, vypněte blokování skriptů nebo zkontrolujte publishable klíč vůči PaymentIntent).';
+            onError(msg);
+          }}
+        />
+      </div>
       <button
         type="submit"
         disabled={!stripe || !elements || isSubmitting || submitDisabled}
