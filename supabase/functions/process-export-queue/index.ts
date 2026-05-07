@@ -655,8 +655,8 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
 
   const productMap = await loadCatalogProductMap();
 
-  const apiToken = Deno.env.get('BASECOM_API_TOKEN');
-  const customSourceIdRaw = Deno.env.get('BASECOM_CUSTOM_SOURCE_ID');
+  const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+  const customSourceIdRaw = (Deno.env.get('BASECOM_CUSTOM_SOURCE_ID') || '').trim();
 
   if (!apiToken || !customSourceIdRaw) {
     throw new Error('Missing Base.com environment configuration.');

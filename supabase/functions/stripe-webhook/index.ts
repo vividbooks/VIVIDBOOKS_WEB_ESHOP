@@ -1,6 +1,7 @@
 import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
 import { ensureWorkflowSteps, upsertWorkflowStep } from '../_shared/order-monitoring.ts';
+import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 type OrderItemMetadata = {
   productId: string;
@@ -348,6 +349,7 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
     headers: {
       'Content-Type': 'application/json',
       ...getFunctionAuthHeaders(),
+      ...processExportQueueCronHeaders(),
     },
   });
 

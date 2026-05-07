@@ -1,6 +1,7 @@
 import postgres from 'npm:postgres';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
+import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 type ActionPayload = {
   action?: string;
@@ -130,6 +131,7 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
     headers: {
       'Content-Type': 'application/json',
       ...getFunctionAuthHeaders(),
+      ...processExportQueueCronHeaders(),
     },
   });
 

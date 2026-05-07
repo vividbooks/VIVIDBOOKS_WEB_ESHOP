@@ -15,6 +15,7 @@
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
 import postgres from 'npm:postgres';
+import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -76,7 +77,11 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
   if (!url) throw new Error('Missing base URL for process-export-queue.');
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...getFunctionAuthHeaders() },
+    headers: {
+      'Content-Type': 'application/json',
+      ...getFunctionAuthHeaders(),
+      ...processExportQueueCronHeaders(),
+    },
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
