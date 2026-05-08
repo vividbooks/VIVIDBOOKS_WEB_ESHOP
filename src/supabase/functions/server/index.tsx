@@ -15564,54 +15564,44 @@ async function syncEshopOrderToPipedriveFromDb(
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
 
-  /** Pro B2B/e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
-   *  „current deal owner" (ID 4056), pak ENV fallback dle typu platby.
+  /** Pro e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
+   *  „current deal owner" (ID 4056), pak Daniel Ondrášek jako univerzální fallback.
    *
-   *  Speciální pravidla:
-   *    • **B2C jednotlivec** (bez IČO i bez školy) — vždy a jen kartová platba (`b2c_card_won`),
-   *      vlastníkem je **vždy Daniel Ondrášek** (`PIPEDRIVE_ESHOP_B2C_OWNER_ID`, fallback
-   *      na `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`). B2C nemá organizaci → org pole
-   *      `current_deal_owner` se ani nečte; jednotlivci řeší vždy Daniel.
-   *    • **B2B kartová a uhrazená** (`b2b_card_won`), když je org pole prázdné →
-   *      Daniel Ondrášek (`PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`).
-   *    • **B2B platba převodem** (`b2b_transfer_open`), když je org pole prázdné →
-   *      Gabriela Švédová (`PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID`).
+   *  Pravidla:
+   *    • **B2C jednotlivec** (bez IČO i bez školy) — vždy `b2c_card_won`, vlastník vždy
+   *      Daniel Ondrášek přes explicit override (`PIPEDRIVE_ESHOP_B2C_OWNER_ID` →
+   *      fallback na `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`).
+   *      B2C nemá organizaci → org pole `current_deal_owner` se ani nečte.
+   *    • **B2B objednávka** (IČO nebo škola, kartová i převodová) — primárně org pole
+   *      `current_deal_owner` (ID 4056). Když je prázdné, **vždy Daniel Ondrášek**
+   *      (`PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID` → fallback na
+   *      `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` pro zpětnou kompatibilitu).
+   *      Dříve byl pro převody Gabriela Švédová (`PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID`),
+   *      tato cesta byla odstraněna — Daniel řeší všechny eshop B2B objednávky bez owner pole.
    *  Když ani specifický fallback není nastaven, použije se obecný
    *  `PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID`, jinak deal převezme vlastníka API tokenu. */
-  const isCardPaidWon = mode === 'b2c_card_won' || mode === 'b2b_card_won';
-  const isTransferOpen = mode === 'b2b_transfer_open';
   const isB2cOrder = !isB2b;
-  /** B2C explicit override: jednotlivec bez školy/IČO → Daniel Ondrášek vždy, bez ohledu na cokoliv.
-   *  ENV PIPEDRIVE_ESHOP_B2C_OWNER_ID s fallbackem na PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID
-   *  (Daniel je už v něm nakonfigurovaný — sdílíme tu hodnotu, abychom nemuseli duplikovat secret). */
+  /** B2C explicit override: jednotlivec → Daniel Ondrášek vždy, bez ohledu na cokoliv. */
   const b2cOwnerId = isB2cOrder
     ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2C_OWNER_ID', 0)
         || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
     : 0;
-  const cardPaidFallbackOwnerId = isCardPaidWon
-    ? pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0)
-    : 0;
-  const transferFallbackOwnerId = isTransferOpen
-    ? pipedriveEnvInt('PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID', 0)
+  /** Univerzální B2B fallback (kartová i převodová) — Daniel Ondrášek. Akceptuje historické
+   *  jméno `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` (Daniel je v něm nakonfigurovaný),
+   *  aby se nemusel měnit secret při deployi. */
+  const b2bFallbackOwnerId = isB2b
+    ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID', 0)
+        || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
     : 0;
   const eshopFallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
-  const modeSpecificFallback = cardPaidFallbackOwnerId > 0
-    ? cardPaidFallbackOwnerId
-    : transferFallbackOwnerId > 0
-      ? transferFallbackOwnerId
-      : 0;
   const dealOwnerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
     orgId: isB2b ? orgId : null,
     /** B2C jde explicit overridem (= 1. priorita, nezávisle na cokoliv). */
     explicitOwnerUserId: b2cOwnerId > 0 ? b2cOwnerId : null,
-    fallbackOwnerUserId: modeSpecificFallback > 0 ? modeSpecificFallback : eshopFallbackOwnerId,
+    fallbackOwnerUserId: b2bFallbackOwnerId > 0 ? b2bFallbackOwnerId : eshopFallbackOwnerId,
     contextLabel: isB2cOrder
       ? `Pipedrive eshop ${mode} (B2C jednotlivec → Daniel)`
-      : isCardPaidWon
-        ? `Pipedrive eshop ${mode} (card paid)`
-        : isTransferOpen
-          ? `Pipedrive eshop ${mode} (transfer)`
-          : `Pipedrive eshop ${mode}`,
+      : `Pipedrive eshop ${mode} (B2B → org pole / Daniel)`,
   });
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
