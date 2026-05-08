@@ -847,6 +847,8 @@ Deno.serve(async (req) => {
     const search = (url.searchParams.get('search') || '').trim();
     const filter = normalizeFilter(url.searchParams.get('filter'));
     const posterOnly = url.searchParams.get('poster') === '1' || url.searchParams.get('poster') === 'true';
+    const includeSuperseded = url.searchParams.get('includeSuperseded') === '1'
+      || url.searchParams.get('includeSuperseded') === 'true';
     const searchPattern = `%${search}%`;
 
     const searchClause = search
@@ -865,6 +867,13 @@ Deno.serve(async (req) => {
           ? sql`and o.status in ('failed', 'cancelled')`
           : sql``;
 
+    /** Skrýt audit-trail záznamy supersession (cancelled s reason 'Superseded by new checkout attempt')
+     *  z výchozího seznamu — admin v hlavním přehledu nepotřebuje vidět historické pokusy stejného
+     *  draftu. Filter 'problem' i explicit search/`includeSuperseded=1` je nadále zobrazí. */
+    const supersededClause = (filter === 'problem' || search || includeSuperseded)
+      ? sql``
+      : sql`and not (o.status = 'cancelled' and o.cancelled_reason = 'Superseded by new checkout attempt')`;
+
     const [countRows, items] = await Promise.all([
       sql<{ count: number }[]>`
         select count(*)::int as count
@@ -873,6 +882,7 @@ Deno.serve(async (req) => {
         ${searchClause}
         ${posterClause}
         ${filterClause}
+        ${supersededClause}
       `,
       sql<OrderListRow[]>`
         select
@@ -896,6 +906,7 @@ Deno.serve(async (req) => {
         ${searchClause}
         ${posterClause}
         ${filterClause}
+        ${supersededClause}
         group by o.id
         order by o.created_at desc
         limit ${pageSize}
