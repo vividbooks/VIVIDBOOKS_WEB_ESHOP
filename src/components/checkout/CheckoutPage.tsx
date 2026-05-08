@@ -35,6 +35,7 @@ import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../../utils/checkoutThankYouRedirect';
+import { getOrCreateCheckoutDraftId } from '../../utils/checkoutDraftId';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -226,6 +227,11 @@ export function CheckoutPage() {
   const lastPaymentKeyRef = useRef<string | null>(null);
   /** Zruší paralelní POST create-payment-intent (React Strict Mode / rychlé změny kroku). */
   const paymentIntentFetchRef = useRef<AbortController | null>(null);
+  /** Per-tab UUID — server zruší starší pending objednávky téhož draftu při novém POST. */
+  const checkoutDraftIdRef = useRef<string>('');
+  if (!checkoutDraftIdRef.current) {
+    checkoutDraftIdRef.current = getOrCreateCheckoutDraftId();
+  }
   const schoolSearchRef = useRef<HTMLDivElement | null>(null);
   /** Aby starší odpověď ARES/CSV nepřepsala novější požadavek (dvojí fetch při výběru školy). */
   const schoolAddressFetchSeq = useRef(0);
@@ -693,12 +699,14 @@ export function CheckoutPage() {
         zip: customer.zip.trim(),
       },
       checkoutPaymentMethod: paymentMethod,
+      checkoutDraftId: checkoutDraftIdRef.current,
     };
 
-    /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod`, aby přepnutí karta↔Apple Pay↔Google Pay
-     *  nezakládalo nový PaymentIntent (a tím i novou objednávku). Stripe Payment Element s `automatic_payment_methods=true`
-     *  zvládne všechny tři varianty na stejném PI. */
-    const { checkoutPaymentMethod: _unusedPm, ...keyPayload } = payload;
+    /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod` a `checkoutDraftId`, aby přepnutí
+     *  karta↔Apple Pay↔Google Pay nezakládalo nový PaymentIntent (a tím i novou objednávku).
+     *  Stripe Payment Element s `automatic_payment_methods=true` zvládne všechny tři varianty na stejném PI.
+     *  `checkoutDraftId` se v rámci jednoho tabu nemění, takže ho z klíče vynecháváme jen pro čistotu. */
+    const { checkoutPaymentMethod: _unusedPm, checkoutDraftId: _unusedDraft, ...keyPayload } = payload;
     const paymentKey = JSON.stringify(keyPayload);
     if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
@@ -706,46 +714,54 @@ export function CheckoutPage() {
     paymentIntentFetchRef.current?.abort();
     const ac = new AbortController();
     paymentIntentFetchRef.current = ac;
-    setPaymentIntentLoading(true);
     setPaymentIntentError('');
 
-    fetch(CREATE_PAYMENT_INTENT_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${publicAnonKey}`,
-      },
-      body: JSON.stringify(payload),
-      signal: ac.signal,
-    })
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.error || 'Nepodařilo se připravit platbu.');
-        }
-        setClientSecret(data.clientSecret ?? null);
-        setPaymentIntentId(data.paymentIntentId ?? null);
-        setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
-        {
-          const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
-          setThankYouTrackingToken(apiTt || null);
-          if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
-        }
+    /** Debounce ~600 ms — když uživatel rychle proklikává dopravu/údaje, nezatěžuje to server
+     *  ani neprodukuje stovky pending záznamů (server následně sice zruší starší přes
+     *  `checkoutDraftId`, ale lepší síťový provoz neposílat vůbec). */
+    const debounceId = window.setTimeout(() => {
+      setPaymentIntentLoading(true);
+      fetch(CREATE_PAYMENT_INTENT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: ac.signal,
       })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return;
-        setClientSecret(null);
-        setPaymentIntentId(null);
-        setPaymentResumeToken(null);
-        setThankYouTrackingToken(null);
-        setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
-      })
-      .finally(() => {
-        if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
-        setPaymentIntentLoading(false);
-      });
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.error || 'Nepodařilo se připravit platbu.');
+          }
+          setClientSecret(data.clientSecret ?? null);
+          setPaymentIntentId(data.paymentIntentId ?? null);
+          setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
+          {
+            const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+            const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+            setThankYouTrackingToken(apiTt || null);
+            if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
+          }
+        })
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+          setClientSecret(null);
+          setPaymentIntentId(null);
+          setPaymentResumeToken(null);
+          setThankYouTrackingToken(null);
+          setPaymentIntentError(
+            error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.',
+          );
+        })
+        .finally(() => {
+          if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
+          setPaymentIntentLoading(false);
+        });
+    }, 600);
     return () => {
+      window.clearTimeout(debounceId);
       ac.abort();
     };
   }, [
@@ -853,6 +869,7 @@ export function CheckoutPage() {
           city: customer.city.trim(),
           zip: customer.zip.trim(),
         },
+        checkoutDraftId: checkoutDraftIdRef.current,
       };
 
       const response = await fetch(SUBMIT_TRANSFER_ORDER_URL, {
