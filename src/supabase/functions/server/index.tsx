@@ -11670,6 +11670,68 @@ async function getOrganizationCurrentDealOwnerUserId(
   }
 }
 
+/**
+ * Sjednocená logika pro nastavení vlastníka dealu (`user_id`) napříč všemi cestami,
+ * které v Pipedrivu zakládají deal (e‑shop kartová/převodová objednávka, školní objednávka,
+ * admin manuální /admin/pipedrive/deals).
+ *
+ * Pořadí priorit:
+ *   1) `explicitOwnerUserId` — pokud caller (typicky admin) výslovně určí vlastníka.
+ *   2) Custom org pole „current deal owner" (ID 4056, key `7825f3fdbf7a73a202047a54a429f556a5406b81`).
+ *   3) `lookupOwnerUserId` — vlastník odvozený z existujících dealů organizace (`upsertPipedriveSchoolOrganization`).
+ *   4) `fallbackOwnerUserId` — ENV fallback (např. `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`).
+ *
+ * Bez `orgId` (typicky čistě B2C bez organizace) se vrací `null` a deal převezme vlastník
+ * držitel API tokenu — tam nemáme z čeho čerpat.
+ */
+async function resolvePipedriveDealOwnerUserId(
+  apiToken: string,
+  params: {
+    orgId?: number | null;
+    explicitOwnerUserId?: number | null;
+    lookupOwnerUserId?: number | null;
+    fallbackOwnerUserId?: number | null;
+    contextLabel?: string;
+  },
+): Promise<number | null> {
+  const ctx = params.contextLabel || 'Pipedrive deal';
+  const explicit = params.explicitOwnerUserId != null && params.explicitOwnerUserId > 0
+    ? params.explicitOwnerUserId
+    : null;
+  if (explicit) {
+    console.log(`[${ctx}] owner z explicitního overrideu: user_id=${explicit}`);
+    return explicit;
+  }
+
+  const orgId = params.orgId != null && params.orgId > 0 ? params.orgId : null;
+  if (orgId) {
+    const fromOrgField = await getOrganizationCurrentDealOwnerUserId(apiToken, orgId);
+    if (fromOrgField) {
+      console.log(`[${ctx}] owner z org pole current_deal_owner (ID 4056): user_id=${fromOrgField}`);
+      return fromOrgField;
+    }
+  }
+
+  const fromLookup = params.lookupOwnerUserId != null && params.lookupOwnerUserId > 0
+    ? params.lookupOwnerUserId
+    : null;
+  if (fromLookup) {
+    console.log(`[${ctx}] owner z lookupu existujících dealů: user_id=${fromLookup} (current_deal_owner prázdné)`);
+    return fromLookup;
+  }
+
+  const fallback = params.fallbackOwnerUserId != null && params.fallbackOwnerUserId > 0
+    ? params.fallbackOwnerUserId
+    : null;
+  if (fallback) {
+    console.log(`[${ctx}] owner z ENV fallbacku: user_id=${fallback}`);
+    return fallback;
+  }
+
+  console.log(`[${ctx}] žádný owner — deal převezme vlastníka API tokenu.`);
+  return null;
+}
+
 async function organizationHasCustomerLabel(apiToken: string, orgId: number): Promise<boolean> {
   const labelEnumFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_FIELD_ID', 4003);
   const labelSetFieldId = pipedriveEnvInt('PIPEDRIVE_ORG_LABEL_IDS_FIELD_ID', 4101);
@@ -12629,7 +12691,15 @@ app.post('/make-server-93a20b6f/admin/pipedrive/deals', async (c) => {
         }).catch(() => null)
       : null;
 
-    const ownerId = parsePipedriveNumericId(body.ownerId) || orgLookup?.ownerUserId || null;
+    /** Sjednocená logika výběru vlastníka: explicit `body.ownerId` (admin override) →
+     *  custom org pole „current deal owner" (ID 4056) → owner z existujících dealů org. */
+    const explicitOwnerId = parsePipedriveNumericId(body.ownerId);
+    const ownerId = await resolvePipedriveDealOwnerUserId(apiToken, {
+      orgId,
+      explicitOwnerUserId: explicitOwnerId,
+      lookupOwnerUserId: orgLookup?.ownerUserId ?? null,
+      contextLabel: 'Pipedrive admin manual deal',
+    });
 
     const deal = await createPipedriveDeal(apiToken, {
       title: String(body.title || '').trim() || `Deal ${new Date().toISOString().slice(0, 10)}`,
@@ -15234,14 +15304,15 @@ async function syncEshopOrderToPipedriveFromDb(
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
 
-  /** Pro B2B/e-shop deal taky převzít vlastníka z org pole „current deal owner" (4056). Pro B2C bez orgId zůstane API token vlastník. */
-  let dealOwnerUserId: number | null = null;
-  if (isB2b && orgId) {
-    dealOwnerUserId = await getOrganizationCurrentDealOwnerUserId(apiToken, orgId);
-    if (dealOwnerUserId) {
-      console.log(`[Pipedrive eshop] owner z org pole current_deal_owner: user_id=${dealOwnerUserId}`);
-    }
-  }
+  /** Pro B2B/e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
+   *  „current deal owner" (ID 4056), pak lookup z existujících dealů organizace, pak ENV fallback.
+   *  Pro B2C bez orgId helper vrátí null a vlastník zůstane na držiteli API tokenu. */
+  const eshopFallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
+  const dealOwnerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
+    orgId: isB2b ? orgId : null,
+    fallbackOwnerUserId: eshopFallbackOwnerId,
+    contextLabel: 'Pipedrive eshop',
+  });
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
     title,
@@ -15557,26 +15628,16 @@ async function syncSchoolOrderToPipedrive(
   const pipelineId = isCustomerOrg ? pipelineUpsell : pipelineAkvizice;
   const stageId = isCustomerOrg ? stageUpsell : stageAkvizice;
 
-  /** Owner se primárně bere z custom pole organizace „current deal owner" (ID 4056). Teprve když není naplněno,
-   *  použije se vlastník z existujících dealů (lookup); jako poslední fallback ENV `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`.
+  /** Sjednocená logika: 1) explicit override (zde nemáme), 2) custom org pole „current deal owner" (ID 4056),
+   *  3) lookup z existujících dealů org, 4) ENV fallback `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`.
    *  Bez tohohle deal vždy patřil držiteli API tokenu (Daniel Ondrášek) místo přiděleného obchodníka. */
   const fallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
-  const ownerFromOrgField = await getOrganizationCurrentDealOwnerUserId(apiToken, orgLookup.orgId);
-  const ownerFromLookup = orgLookup.ownerUserId != null && orgLookup.ownerUserId > 0
-    ? orgLookup.ownerUserId
-    : null;
-  const ownerUserId = ownerFromOrgField
-    ?? ownerFromLookup
-    ?? (fallbackOwnerId > 0 ? fallbackOwnerId : null);
-  if (ownerFromOrgField) {
-    console.log(`[Pipedrive school order] owner z org pole current_deal_owner: user_id=${ownerFromOrgField}`);
-  } else if (ownerFromLookup) {
-    console.log(`[Pipedrive school order] owner z dealů org: user_id=${ownerFromLookup} (org pole prázdné)`);
-  } else if (fallbackOwnerId > 0) {
-    console.log(`[Pipedrive school order] owner z ENV fallbacku: user_id=${fallbackOwnerId}`);
-  } else {
-    console.log('[Pipedrive school order] Žádný owner z org pole / dealů a fallback ENV není — deal bez user_id (bude vlastník API tokenu).');
-  }
+  const ownerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
+    orgId: orgLookup.orgId,
+    lookupOwnerUserId: orgLookup.ownerUserId,
+    fallbackOwnerUserId: fallbackOwnerId,
+    contextLabel: 'Pipedrive school order',
+  });
 
   const orderFormFieldId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_FIELD_ID', 12463);
   const orderFormOptionId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_OPTION_ID', 48);
