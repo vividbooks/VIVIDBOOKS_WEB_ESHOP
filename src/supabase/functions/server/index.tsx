@@ -11090,6 +11090,8 @@ const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
 /** API v2 (products/search, …) — stejný host, jiný prefix než v1. */
 const PIPEDRIVE_V2_BASE_URL = 'https://api.pipedrive.com/api/v2';
 let pipedriveOrgIcoFieldKeyCache: string | null | undefined;
+/** Cache: person field key pro „pozici / role" (custom field na Pipedrive person; není standardní). */
+let pipedrivePersonPositionFieldKeyCache: string | null | undefined;
 /** Cache: organization field id → { key, field_type } for school-order customer label detection */
 let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 /** Cache: deal field id → { key, field_type } (order form label) */
@@ -11578,6 +11580,38 @@ async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
     pipedriveOrgIcoFieldKeyCache = null;
   }
   return pipedriveOrgIcoFieldKeyCache;
+}
+
+/** Custom field key na Pipedrive person pro „pozice / role" (např. „ředitel", „učitelka").
+ *  Pipedrive person nemá standardní `job_title` — pole je vždy custom. ENV override
+ *  `PIPEDRIVE_PERSON_POSITION_FIELD_KEY` má přednost před auto-detekcí přes `/personFields`. */
+async function getPipedrivePersonPositionFieldKey(apiToken: string): Promise<string | null> {
+  if (pipedrivePersonPositionFieldKeyCache !== undefined) return pipedrivePersonPositionFieldKeyCache;
+  const envKey = (Deno.env.get('PIPEDRIVE_PERSON_POSITION_FIELD_KEY') || '').trim();
+  if (envKey) {
+    pipedrivePersonPositionFieldKeyCache = envKey;
+    return pipedrivePersonPositionFieldKeyCache;
+  }
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/personFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const field = fields.find((item: any) => {
+      const name = normalizePipedriveSearchText(item?.name || '');
+      const key = String(item?.key || '');
+      /** Hledá názvy „pozice", „role", „funkce", „position", „job title" — diakritika zahodí normalize. */
+      return /^(pozice|role|funkce|position|job ?title|titul|prace|práce)$/i.test(name)
+        || /pozice|funkce|job.?title/i.test(name)
+        || /pozice|funkce|job.?title/i.test(key);
+    });
+    pipedrivePersonPositionFieldKeyCache = field?.key || null;
+    if (field?.key) {
+      console.log(`[Pipedrive] Person position field auto: key=${field.key} name="${field.name || ''}"`);
+    }
+  } catch (error: any) {
+    console.log(`[Pipedrive] Person field lookup failed: ${error.message}`);
+    pipedrivePersonPositionFieldKeyCache = null;
+  }
+  return pipedrivePersonPositionFieldKeyCache;
 }
 
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
@@ -12110,12 +12144,16 @@ function readPipedrivePersonEmails(person: any) {
 
 async function findOrCreatePipedrivePerson(
   apiToken: string,
-  params: { orgId: number; name: string; email?: string; phone?: string },
+  params: { orgId: number; name: string; email?: string; phone?: string; position?: string },
 ) {
   const orgId = params.orgId;
   const name = String(params.name || '').trim();
   const email = String(params.email || '').trim().toLowerCase();
   const phone = String(params.phone || '').trim();
+  const position = String(params.position || '').trim();
+
+  /** Custom field key pro „pozici" se resolvuje jen když máme co zapsat — šetří `/personFields` request. */
+  const positionFieldKey = position ? await getPipedrivePersonPositionFieldKey(apiToken) : null;
 
   if (email) {
     const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
@@ -12125,6 +12163,9 @@ async function findOrCreatePipedrivePerson(
       if (existingOrgId !== orgId) patch.org_id = orgId;
       if (name && String(globalHit.name || '').trim() !== name) patch.name = name;
       if (phone) patch.phone = phone;
+      /** Pozici existující osoby zásadně nepřepisujeme — search response nevrací custom pole spolehlivě
+       *  a obchodník mohl pozici ručně doupřesnit (např. „ředitel" vs „učitel matematiky").
+       *  Pozice se zapisuje jen u nově zakládané osoby (níže `payload[positionFieldKey] = position`). */
       if (Object.keys(patch).length > 0) {
         try {
           await pipedriveRequest(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`, {
@@ -12149,9 +12190,18 @@ async function findOrCreatePipedrivePerson(
 
   if (existing?.id) return existing;
 
+  /** Nová osoba — z údajů objednávky / formuláře:
+   *   - name (jméno + příjmení v jednom poli, Pipedrive si first/last odvodí sám),
+   *   - email (primary), phone (primary),
+   *   - org_id = napojení na organizaci školy,
+   *   - position (custom field, jen pokud je vyplněná a klíč rozpoznaný). */
   const payload: Record<string, any> = { name, org_id: orgId };
   if (email) payload.email = email;
   if (phone) payload.phone = phone;
+  if (positionFieldKey && position) payload[positionFieldKey] = position;
+  console.log(
+    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" position="${position || '(none)'}" org_id=${orgId}`,
+  );
   const created = await pipedriveRequest<any>(apiToken, '/persons', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -15693,11 +15743,15 @@ async function syncSchoolOrderToPipedrive(
   const orderFormOptionId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_OPTION_ID', 48);
   const orderFormExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, orderFormFieldId, [orderFormOptionId]);
 
+  /** Pozice ze school_inquiry formuláře (např. „ředitelka", „učitel matematiky") — putuje do custom
+   *  pole na person v Pipedrivu, aby obchodník hned věděl, s kým jedná. */
+  const contactPosition = String(body?.customer?.position ?? body?.position ?? '').trim();
   const person = await findOrCreatePipedrivePerson(apiToken, {
     orgId: orgLookup.orgId,
     name: order.contactName,
     email: order.email,
     phone: order.phone,
+    position: contactPosition,
   }).catch((error: any) => {
     console.log(`[Pipedrive] Person sync error: ${error.message}`);
     return null;
