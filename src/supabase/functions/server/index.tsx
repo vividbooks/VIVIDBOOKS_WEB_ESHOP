@@ -15197,12 +15197,75 @@ async function createPipedriveEshopDealAdvanced(
   return data?.data || null;
 }
 
+/** Mapování `orders.shipping_method` (lowercase enum z eshopu) → kód produktu v Pipedrive katalogu.
+ *  ENV override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_<METHOD>` (např. `_DPD`, `_PPL`, `_GLS`,
+ *  `_ZASILKOVNA`) přepíše default. Vrací `null`, když jde o neznámou nebo prázdnou metodu. */
+function getEshopShippingProductCode(shippingMethod: string | null | undefined): string | null {
+  const m = String(shippingMethod || '').trim().toLowerCase();
+  if (!m) return null;
+  const envKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_${m.toUpperCase()}`;
+  const fromEnv = (Deno.env.get(envKey) || '').trim();
+  if (fromEnv) return fromEnv.toUpperCase();
+  switch (m) {
+    case 'dpd': return 'DPD';
+    case 'ppl': return 'PPL';
+    case 'gls': return 'GLS';
+    case 'zasilkovna': return 'ZZ';
+    default: return null;
+  }
+}
+
+/** Přidá řádek s dopravou na Pipedrive deal — produkt z katalogu identifikovaný kódem
+ *  (PPL/DPD/GLS/ZZ). Když produkt v Pipedrivu pod tímto kódem neexistuje, jen zaloguje
+ *  warning a pokračuje (deal nepadne). Cena je `orders.shipping_price` v halířích → koruny. */
+async function addPipedriveDealShippingLineItem(
+  apiToken: string,
+  dealId: number,
+  shippingMethod: string | null | undefined,
+  shippingPriceHaler: number,
+  pickupPointName: string | null | undefined,
+  orderIndex: number,
+  codeToPdId: Map<string, number | null>,
+): Promise<void> {
+  const code = getEshopShippingProductCode(shippingMethod);
+  if (!code) {
+    console.log(`[Pipedrive eshop] skip shipping line: unknown method "${shippingMethod || ''}"`);
+    return;
+  }
+  const priceCzk = Math.max(0, Math.round((Number(shippingPriceHaler) || 0) / 100));
+  const pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  if (!pipedriveProductId) {
+    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code}" not found`);
+    return;
+  }
+  /** Poznámku „Z‑Point: Praha…" připíšeme do `comments`, aby obchodník v dealu hned viděl
+   *  konkrétní výdejnu (jen u Zásilkovny — ostatní dopravci ji nemají). */
+  const comments = String(pickupPointName || '').trim();
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealId}/products`, {
+      method: 'POST',
+      body: JSON.stringify({
+        product_id: pipedriveProductId,
+        quantity: 1,
+        item_price: priceCzk,
+        order: orderIndex,
+        ...(comments ? { comments } : {}),
+      }),
+    });
+    console.log(
+      `[Pipedrive eshop] shipping line added: code=${code} pd_product_id=${pipedriveProductId} price=${priceCzk}${comments ? ` pickup="${comments.slice(0, 60)}"` : ''}`,
+    );
+  } catch (error: any) {
+    console.log(`[Pipedrive eshop] shipping line ${pipedriveProductId} (${code}): ${error.message}`);
+  }
+}
+
 async function addPipedriveDealLineItemsFromOrder(
   apiToken: string,
   dealId: number,
   orderItems: any[],
   catalogById: Map<string, any>,
-) {
+): Promise<{ codeToPdId: Map<string, number | null>; lastOrder: number }> {
   /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
   const codeToPdId = new Map<string, number | null>();
   let ord = 0;
@@ -15251,6 +15314,9 @@ async function addPipedriveDealLineItemsFromOrder(
       console.log(`[Pipedrive eshop] deal product ${pipedriveProductId}: ${error.message}`);
     }
   }
+  /** Vrací sdílenou cache kódů (použije ji caller pro doplnění shipping line, ať se kód
+   *  nehledá podruhé) a poslední `order` index, aby další řádky pokračovaly. */
+  return { codeToPdId, lastOrder: ord };
 }
 
 async function persistPipedriveEshopOrderState(
@@ -15386,7 +15452,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -15568,9 +15634,24 @@ async function syncEshopOrderToPipedriveFromDb(
   const catalogProducts = await getAllProducts();
   const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p]));
   const lineItems = Array.isArray((order as any).order_items) ? (order as any).order_items : [];
+  let codeToPdIdShared: Map<string, number | null> = new Map();
+  let nextLineOrder = 0;
   if (lineItems.length) {
-    await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    const result = await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    codeToPdIdShared = result.codeToPdId;
+    nextLineOrder = result.lastOrder;
   }
+  /** Doprava jako samostatný produktový řádek na dealu (PPL / DPD / GLS / ZZ). Caller už zná
+   *  sdílenou cache code→pd_product_id, takže se nehledá podruhé. */
+  await addPipedriveDealShippingLineItem(
+    apiToken,
+    dealId,
+    String((order as any).shipping_method || ''),
+    Number((order as any).shipping_price) || 0,
+    String((order as any).pickup_point_name || '') || null,
+    nextLineOrder + 1,
+    codeToPdIdShared,
+  );
 
   const dealIdStr = String(dealId);
   const nowIso = new Date().toISOString();
