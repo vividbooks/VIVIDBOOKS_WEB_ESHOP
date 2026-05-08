@@ -11567,17 +11567,39 @@ async function resolvePipedriveProductIdByCode(
 
 async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   if (pipedriveOrgIcoFieldKeyCache !== undefined) return pipedriveOrgIcoFieldKeyCache;
+
+  /** Hash key vlastního pole "CIN" na organizaci (Pipedrive field id 4033) — ENV override ho umí přepsat,
+   *  jinak je natvrdo (single source of truth z dashboardu /organization-fields). Heuristika přes
+   *  /organizationFields původně hledala `name`/`key` obsahující "ico" (case-sensitive po normalize),
+   *  což u pojmenování "CIN" / "IČO" neprojde a IČO se do nové organizace nezapíše. */
+  const envKey = (Deno.env.get('PIPEDRIVE_ORG_ICO_FIELD_KEY') || '').trim();
+  if (envKey) {
+    pipedriveOrgIcoFieldKeyCache = envKey;
+    return pipedriveOrgIcoFieldKeyCache;
+  }
+  const defaultKey = '0f91eb090c567025d50bd189c2fcef7660168cd2';
+  pipedriveOrgIcoFieldKeyCache = defaultKey;
+
+  /** Best-effort potvrzení přes /organizationFields — pokud `defaultKey` v projektu existuje, OK; pokud ne,
+   *  zkusíme widcer match podle názvu (CIN / IČO / IC / Company ID). Selhání API => zůstane defaultKey. */
   try {
     const data = await pipedriveRequest<any>(apiToken, '/organizationFields', {}, { limit: 500 });
-    const fields: any[] = data?.data || [];
-    const field = fields.find((item: any) => {
-      const label = normalizePipedriveSearchText(item?.name || item?.key || '');
-      return label.includes('ico');
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const byKey = fields.find((item: any) => String(item?.key || '').trim() === defaultKey);
+    if (byKey?.key) {
+      pipedriveOrgIcoFieldKeyCache = String(byKey.key);
+      return pipedriveOrgIcoFieldKeyCache;
+    }
+    const byName = fields.find((item: any) => {
+      const name = normalizePipedriveSearchText(String(item?.name || '')).toLowerCase();
+      const keyName = String(item?.key || '').toLowerCase();
+      return /\b(cin|ico|ic|company\s*id)\b/.test(name) || /\b(cin|ico)\b/.test(keyName);
     });
-    pipedriveOrgIcoFieldKeyCache = field?.key || null;
+    if (byName?.key) {
+      pipedriveOrgIcoFieldKeyCache = String(byName.key);
+    }
   } catch (error: any) {
-    console.log(`[Pipedrive] Organization field lookup failed: ${error.message}`);
-    pipedriveOrgIcoFieldKeyCache = null;
+    console.log(`[Pipedrive] Organization field lookup failed (using default key ${defaultKey.slice(0, 6)}…): ${error.message}`);
   }
   return pipedriveOrgIcoFieldKeyCache;
 }
