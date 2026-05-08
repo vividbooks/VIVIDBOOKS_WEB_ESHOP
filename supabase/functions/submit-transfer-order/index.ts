@@ -26,6 +26,11 @@ import {
   type IdempotencyShipping,
 } from '../_shared/checkout-idempotency.ts';
 import {
+  findExistingDraftOrder,
+  recordDraftUpdatedEvent,
+  replaceDraftOrderItems,
+} from '../_shared/update-draft-order.ts';
+import {
   cancelStripePaymentIntentsBestEffort,
   cancelSupersededPendingOrders,
   type SupersededOrder,
@@ -345,37 +350,110 @@ Deno.serve(async (req) => {
     ssl: 'require',
   });
 
+  /** Lock primárně per draft (1 řádek per draft = serializovat všechny POSTy téhož tabu).
+   *  Bez draftId fallback na idempotencyKey (zachová zpětnou kompatibilitu). */
+  const lockKeyText = draftId ? `draft:${draftId}` : `idemp:${idempotencyKey}`;
+
   try {
-    await sql`select pg_advisory_lock(hashtext(${idempotencyKey}::text))`;
+    await sql`select pg_advisory_lock(hashtext(${lockKeyText}::text))`;
     try {
+      /* ---------------------------------------------------------------
+       * NOVÁ DRAFT PATH — UPDATE existující pending objednávky in-place.
+       *
+       * Když pro `draftId` už pending objednávka existuje (uživatel přepnul
+       * dopravu / upravil košík / změnil zákazníka), neudělá se nový INSERT
+       * + supersession, ale UPDATE existující. `id`, `order_number` zůstávají;
+       * e-mail „převod přijat" se NEposílá podruhé (uživatel ho dostal poprvé)
+       * a Pipedrive sync se zase pokusí — `syncEshopOrderToPipedriveFromDb`
+       * má vlastní idempotenci přes `pipedrive_deal_id`.
+       * ------------------------------------------------------------- */
+      if (draftId) {
+        const existingDraft = await findExistingDraftOrder(sql, draftId);
+        if (existingDraft) {
+          const draftOrderId = existingDraft.id;
+          /** Pokud má objednávka už `pipedrive_deal_id`, je už dokončená (zaplacená nebo
+           *  alespoň přenesená do Pipedrive) — neměníme. */
+          const finalizedRows = await sql<{ pipedrive_deal_id: string | null }[]>`
+            select pipedrive_deal_id from public.orders where id = ${draftOrderId}::uuid limit 1
+          `;
+          if (finalizedRows[0]?.pipedrive_deal_id) {
+            return jsonResponse({
+              success: true,
+              orderId: draftOrderId,
+              orderNumber: existingDraft.order_number,
+              deduplicated: true,
+            });
+          }
+
+          try {
+            await sql.begin(async (tx) => {
+              await tx`
+                update public.orders
+                set
+                  customer_email = ${customer.email.trim()},
+                  customer_name = ${customer.name.trim()},
+                  customer_phone = ${customer.phone.trim()},
+                  school_name = ${customer.schoolName?.trim() || null},
+                  ico = ${ico},
+                  street = ${customer.street.trim()},
+                  city = ${customer.city.trim()},
+                  zip = ${customer.zip.trim()},
+                  shipping_method = ${shipping.method},
+                  shipping_price = ${shipping.price ?? 0},
+                  pickup_point_id = ${shipping.pickupPointId ?? null},
+                  pickup_point_name = ${shipping.pickupPointName ?? null},
+                  payment_method = 'transfer',
+                  subtotal = ${subtotal},
+                  total = ${total},
+                  note = ${noteText},
+                  idempotency_key = ${idempotencyKey},
+                  updated_at = now()
+                where id = ${draftOrderId}::uuid
+              `;
+              await replaceDraftOrderItems(tx, draftOrderId, items as IdempotencyItem[]);
+              await recordDraftUpdatedEvent(tx, {
+                orderId: draftOrderId,
+                actor: 'customer',
+                details: {
+                  source: 'submit-transfer-order',
+                  oldTotal: existingDraft.total,
+                  newTotal: total,
+                  shippingMethod: shipping.method,
+                  paymentMethod: 'transfer',
+                  ico,
+                },
+              });
+            });
+          } catch (updateErr) {
+            console.error('[submit-transfer-order] Draft UPDATE in-place failed:', updateErr);
+            const message = updateErr instanceof Error ? updateErr.message : 'Update objednávky selhal.';
+            return jsonResponse({ error: message }, 500);
+          }
+
+          console.log(
+            `[submit-transfer-order] Draft updated in-place: order=${draftOrderId.slice(0, 8)}… draft=${draftId.slice(0, 8)}… total=${total}`,
+          );
+
+          /** Pipedrive sync je idempotentní (kontroluje `pipedrive_deal_id`), takže
+           *  při UPDATE buď doplní deal, který se předtím nepovedl, nebo skip. */
+          fireEshopPipedriveTransferSync(draftOrderId, req.url);
+
+          return jsonResponse({
+            success: true,
+            orderId: draftOrderId,
+            orderNumber: existingDraft.order_number,
+            updated: true,
+          });
+        }
+      }
+
       const existingEarly = await sql<{ id: string; order_number: string }[]>`
         select id, order_number from public.orders
         where idempotency_key = ${idempotencyKey}
         limit 1
       `;
       if (existingEarly.length > 0) {
-        // Existující objednávka stejného hashe — uživatel ji jen znovu odeslal. Pokud má `checkoutDraftId`,
-        // zrušíme případné jiné pending z téhož draftu, aby admin viděl jen tu jednu.
-        if (draftId) {
-          try {
-            const reuseSuperseded = await sql.begin((tx) =>
-              cancelSupersededPendingOrders(tx, draftId, existingEarly[0].id),
-            );
-            if (reuseSuperseded.length > 0) {
-              console.log(
-                `[submit-transfer-order] Reuse path: superseded ${reuseSuperseded.length} pending order(s) for draft ${draftId.slice(0, 8)}…`,
-              );
-              const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim();
-              void cancelStripePaymentIntentsBestEffort(
-                reuseSuperseded.map((s) => s.stripe_payment_intent_id),
-                stripeKey,
-                'submit-transfer-order',
-              );
-            }
-          } catch (e) {
-            console.warn('[submit-transfer-order] Reuse path supersession failed:', e);
-          }
-        }
+        // Existující objednávka stejného hashe (bez draftId, např. legacy session).
         return jsonResponse({
           success: true,
           orderId: existingEarly[0].id,
@@ -554,7 +632,7 @@ Deno.serve(async (req) => {
       });
     } finally {
       try {
-        await sql`select pg_advisory_unlock(hashtext(${idempotencyKey}::text))`;
+        await sql`select pg_advisory_unlock(hashtext(${lockKeyText}::text))`;
       } catch {
         /* ignore */
       }

@@ -25,6 +25,11 @@ import {
   cancelSupersededPendingOrders,
   type SupersededOrder,
 } from '../_shared/cancel-superseded-orders.ts';
+import {
+  findExistingDraftOrder,
+  recordDraftUpdatedEvent,
+  replaceDraftOrderItems,
+} from '../_shared/update-draft-order.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -313,8 +318,218 @@ Deno.serve(async (req) => {
   let resumeToken = '';
   let paymentIntent: Stripe.PaymentIntent;
 
+  /** Lock primárně per draft (1 řádek per draft = serializovat všechny POSTy téhož tabu).
+   *  Bez draftId fallback na idempotencyKey (zachová zpětnou kompatibilitu). */
+  const lockKeyText = draftId ? `draft:${draftId}` : `idemp:${idempotencyKey}`;
+
   try {
-    await sql`select pg_advisory_lock(hashtext(${idempotencyKey}::text))`;
+    await sql`select pg_advisory_lock(hashtext(${lockKeyText}::text))`;
+
+    /* ---------------------------------------------------------------
+     * NOVÁ DRAFT PATH — UPDATE existujícího pending řádku in-place.
+     *
+     * Když pro `draftId` už pending objednávka existuje (uživatel přepnul
+     * dopravu / upravil košík ve stejném checkout tabu), nezakládáme novou
+     * objednávku, ale UPDATE existující. `id`, `order_number` a
+     * `payment_resume_token` přežijí; Stripe PI se případně recreatne
+     * (cancel staré + create nové) jen když se změnila částka, hash košíku
+     * nebo je stará PI v `canceled` stavu. Mid-payment PI (processing /
+     * requires_action / requires_confirmation) se nesahá — vrátí se existující
+     * client_secret, aby se uživateli neztratil rozdělaný 3D-Secure flow.
+     * ------------------------------------------------------------- */
+    if (draftId) {
+      const existingDraft = await findExistingDraftOrder(sql, draftId);
+      if (existingDraft) {
+        const draftOrderId = existingDraft.id;
+        let existingPi: Stripe.PaymentIntent | null = null;
+        if (existingDraft.stripe_payment_intent_id) {
+          try {
+            existingPi = await stripe.paymentIntents.retrieve(existingDraft.stripe_payment_intent_id);
+          } catch (e) {
+            console.warn(
+              `[create-payment-intent] Existing draft PI fetch failed (${existingDraft.stripe_payment_intent_id}):`,
+              e,
+            );
+          }
+        }
+
+        if (existingPi?.status === 'succeeded') {
+          return jsonResponse({
+            error: 'Tato platba je již dokončená.',
+            alreadyPaid: true,
+          }, 409);
+        }
+
+        /** Mid-payment: 3D-Secure / Apple Pay / processing — nesahat. Vrátit klientovi
+         *  existující client_secret, ať doklikne to, co rozjel. */
+        if (
+          existingPi
+          && (existingPi.status === 'processing'
+            || existingPi.status === 'requires_action'
+            || existingPi.status === 'requires_confirmation'
+            || existingPi.status === 'requires_capture')
+        ) {
+          if (!existingPi.client_secret) {
+            console.error('[create-payment-intent] Mid-flight PI missing client_secret.');
+            return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+          }
+          const tracking = await trackingTokenForOrder(draftOrderId);
+          return jsonResponse({
+            clientSecret: existingPi.client_secret,
+            paymentIntentId: existingPi.id,
+            resumeToken: existingDraft.payment_resume_token || '',
+            ...(tracking ? { trackingToken: tracking } : {}),
+          });
+        }
+
+        /** Stejný hash + stejná částka + PI ještě čeká na kartu → není co dělat,
+         *  vrátit existující PI client_secret jako reuse. */
+        if (
+          existingPi
+          && existingPi.status === 'requires_payment_method'
+          && existingPi.amount === total
+          && existingPi.currency === 'czk'
+          && existingDraft.idempotency_key === idempotencyKey
+        ) {
+          if (!existingPi.client_secret) {
+            console.error('[create-payment-intent] Same-config PI missing client_secret.');
+            return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+          }
+          const tracking = await trackingTokenForOrder(draftOrderId);
+          return jsonResponse({
+            clientSecret: existingPi.client_secret,
+            paymentIntentId: existingPi.id,
+            resumeToken: existingDraft.payment_resume_token || '',
+            ...(tracking ? { trackingToken: tracking } : {}),
+          });
+        }
+
+        /** Jinak: cancel staré PI (best-effort), create novou s aktuální částkou,
+         *  UPDATE řádku v transakci. */
+        if (existingPi && existingPi.status === 'requires_payment_method') {
+          try {
+            await stripe.paymentIntents.cancel(existingPi.id);
+          } catch (e) {
+            console.warn('[create-payment-intent] Cancel old draft PI failed:', e);
+          }
+        }
+
+        /** Pro nový PI použít vlastní idempotency key — pokud klient pošle 2× ten samý request
+         *  (např. React Strict Mode), Stripe vrátí stejnou PI, ne dvě. Hash zahrnuje draft id
+         *  + cart hash, takže přepínání dopravy v rámci draftu vždy = jiný klíč = jiná PI. */
+        const newPiIdempotencyKey =
+          `eshop-pi-d-${draftId.slice(0, 16)}-${idempotencyKey}`.slice(0, 255);
+        let newPi: Stripe.PaymentIntent;
+        try {
+          newPi = await stripe.paymentIntents.create(
+            {
+              amount: total,
+              currency: 'czk',
+              automatic_payment_methods: { enabled: true },
+              metadata: {
+                checkout_session_id: existingDraft.checkout_session_id || '',
+                payment_method: checkoutPaymentMethod,
+                checkout_draft_id: draftId,
+                ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
+              },
+            },
+            { idempotencyKey: newPiIdempotencyKey },
+          );
+        } catch (e) {
+          console.error('[create-payment-intent] New PI for draft update failed:', e);
+          const message = e instanceof Error ? e.message : 'Stripe PaymentIntent creation failed.';
+          return jsonResponse({ error: message }, 500);
+        }
+
+        try {
+          await sql.begin(async (tx) => {
+            /** UPDATE všech polí, která se mohla změnit. `id`, `order_number`,
+             *  `payment_resume_token`, `created_at`, `checkout_draft_id` zůstávají. */
+            await tx`
+              update public.orders
+              set
+                customer_email = ${customer.email.trim()},
+                customer_name = ${customer.name.trim()},
+                customer_phone = ${customer.phone.trim()},
+                school_name = ${customer.schoolName?.trim() || null},
+                ico = ${customer.ico?.trim() || null},
+                street = ${customer.street.trim()},
+                city = ${customer.city.trim()},
+                zip = ${customer.zip.trim()},
+                shipping_method = ${shipping.method},
+                shipping_price = ${shipping.price ?? 0},
+                pickup_point_id = ${shipping.pickupPointId ?? null},
+                pickup_point_name = ${shipping.pickupPointName ?? null},
+                payment_method = ${checkoutPaymentMethod},
+                stripe_payment_intent_id = ${newPi.id},
+                subtotal = ${subtotal},
+                total = ${total},
+                idempotency_key = ${idempotencyKey},
+                updated_at = now()
+              where id = ${draftOrderId}::uuid
+            `;
+
+            await replaceDraftOrderItems(tx, draftOrderId, items);
+
+            await recordDraftUpdatedEvent(tx, {
+              orderId: draftOrderId,
+              actor: 'customer',
+              details: {
+                source: 'create-payment-intent',
+                oldPaymentIntent: existingDraft.stripe_payment_intent_id,
+                newPaymentIntent: newPi.id,
+                oldTotal: existingDraft.total,
+                newTotal: total,
+                shippingMethod: shipping.method,
+                paymentMethod: checkoutPaymentMethod,
+              },
+            });
+
+            /** checkout_sessions je working tabulka — pokud existuje stará session,
+             *  uvolnit její `idempotency_key` (jinak by nový INSERT z jiného draftu se stejnou
+             *  konfigurací havaroval na UNIQUE). Ji samotnou nemažeme — orphan session se
+             *  vyčistí cancel-stale-orders cronem. */
+            await tx`
+              update public.checkout_sessions
+              set
+                cart_data = ${JSON.stringify(items)}::jsonb,
+                customer_data = ${JSON.stringify(customer)}::jsonb,
+                shipping_data = ${JSON.stringify(shipping)}::jsonb,
+                school_inquiry = ${schoolInquiryJson}::jsonb,
+                idempotency_key = ${idempotencyKey},
+                stripe_payment_intent_id = ${newPi.id}
+              where stripe_payment_intent_id = ${existingDraft.stripe_payment_intent_id}
+            `;
+          });
+        } catch (updateErr) {
+          console.error('[create-payment-intent] Draft UPDATE in-place failed:', updateErr);
+          /** Cleanup: nově vyrobenou PI zrušíme, abychom neměli orphaned PI ve Stripe. */
+          try {
+            await stripe.paymentIntents.cancel(newPi.id);
+          } catch {
+            /* ignore */
+          }
+          const message = updateErr instanceof Error ? updateErr.message : 'Update objednávky selhal.';
+          return jsonResponse({ error: message }, 500);
+        }
+
+        if (!newPi.client_secret) {
+          console.error('[create-payment-intent] New PI missing client_secret after draft update.');
+          return jsonResponse({ error: 'Nepodařilo se vytvořit platbu. Zkuste to znovu.' }, 500);
+        }
+        console.log(
+          `[create-payment-intent] Draft updated in-place: order=${draftOrderId.slice(0, 8)}… draft=${draftId.slice(0, 8)}… new_pi=${newPi.id} old_pi=${existingDraft.stripe_payment_intent_id || '(none)'}`,
+        );
+
+        const tracking = await trackingTokenForOrder(draftOrderId);
+        return jsonResponse({
+          clientSecret: newPi.client_secret,
+          paymentIntentId: newPi.id,
+          resumeToken: existingDraft.payment_resume_token || '',
+          ...(tracking ? { trackingToken: tracking } : {}),
+        });
+      }
+    }
 
     const existingRows = await sql<{ id: string; stripe_payment_intent_id: string | null }[]>`
       select id, stripe_payment_intent_id
@@ -621,7 +836,7 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: message }, 500);
   } finally {
     try {
-      await sql`select pg_advisory_unlock(hashtext(${idempotencyKey}::text))`;
+      await sql`select pg_advisory_unlock(hashtext(${lockKeyText}::text))`;
     } catch {
       /* ignore */
     }
