@@ -14883,6 +14883,11 @@ const PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT = '3f0c870ac132eec72589
 const PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT = '0e41017f4d0a3aa58177d7727844f98a6569d630';
 const PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT = 489;
 
+/** Vlastní pole „Eshop ID" na dealu (text) — UI ID 12586. Vyplňujeme `order_number` při vytvoření / refreshi
+ *  dealu z e‑shopu. Webhook `pipedrive-inbound-deal` podle něj rozhoduje, zda zakládá novou objednávku
+ *  (pole prázdné = ručně založený deal v CRM), nebo aktualizuje existující objednávku z e‑shopu. */
+const PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT = '26e4a2f8dc44e49f369c468ccc816ad668b37d92';
+
 function getEshopProductCategoryPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY') || '').trim()
@@ -14900,6 +14905,17 @@ function getEshopCardPaidStatusPayload(): Record<string, unknown> {
     parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID'))
     ?? PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT;
   return { [key]: optId };
+}
+
+/** Payload pro pole „Eshop ID" — uloží `order_number` (např. „VB-2026-0123"). Prázdná hodnota
+ *  = nic neposíláme (Pipedrive by null neuložil tak, jak chceme). */
+function getEshopOrderIdPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY') || '').trim()
+    || PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
+  const value = String(orderNumber || '').trim();
+  if (!value) return {};
+  return { [key]: value };
 }
 
 function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
@@ -15283,7 +15299,7 @@ async function refreshEshopPipedriveDealFromDb(
 
   const { data: row, error: rowErr } = await sb
     .from('orders')
-    .select('pipedrive_deal_id')
+    .select('pipedrive_deal_id, order_number')
     .eq('id', orderId)
     .single();
 
@@ -15312,6 +15328,7 @@ async function refreshEshopPipedriveDealFromDb(
   }
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
+  Object.assign(patchBody, getEshopOrderIdPayload(String((row as any).order_number || '')));
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(patchBody, getEshopCardPaidStatusPayload());
   }
@@ -15460,10 +15477,18 @@ async function syncEshopOrderToPipedriveFromDb(
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
-  const extraPayload: Record<string, unknown> = { ...printPayload, ...productCategoryPayload };
+  const orderIdPayload = getEshopOrderIdPayload(orderNumber);
+  const extraPayload: Record<string, unknown> = {
+    ...printPayload,
+    ...productCategoryPayload,
+    ...orderIdPayload,
+  };
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(extraPayload, getEshopCardPaidStatusPayload());
     console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
+  }
+  if (Object.keys(orderIdPayload).length) {
+    console.log(`[Pipedrive eshop] custom field Eshop ID = ${orderNumber}`);
   }
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);

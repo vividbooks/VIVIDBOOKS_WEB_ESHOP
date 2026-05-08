@@ -210,6 +210,8 @@ export interface AdminOrderListItem {
   items_summary?: string | null;
   /** Jen objednávky plakátů (admin záložka). */
   poster_fulfillment_status?: string | null;
+  /** Zdroj objednávky: `eshop` = web checkout, `pipedrive` = ručně založený deal v CRM. */
+  source?: 'eshop' | 'pipedrive' | string | null;
 }
 
 export interface AdminOrderItem {
@@ -564,6 +566,8 @@ export async function fetchAdminOrders(params: {
   pageSize?: number;
   /** Jen řádky s `poster_fulfillment_status` (objednávky jen z plakátů v košíku). */
   posterOnly?: boolean;
+  /** Filtr zdroje objednávky: `all` (default) nebo `eshop` / `pipedrive`. */
+  source?: 'all' | 'eshop' | 'pipedrive';
 }) {
   const url = new URL(ADMIN_ORDERS_BASE);
   url.searchParams.set('filter', params.filter || 'all');
@@ -571,6 +575,7 @@ export async function fetchAdminOrders(params: {
   url.searchParams.set('page', String(params.page || 1));
   url.searchParams.set('pageSize', String(params.pageSize || 20));
   if (params.posterOnly) url.searchParams.set('poster', '1');
+  if (params.source && params.source !== 'all') url.searchParams.set('source', params.source);
 
   const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
