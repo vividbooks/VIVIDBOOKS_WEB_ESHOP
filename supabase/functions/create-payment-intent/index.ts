@@ -20,6 +20,11 @@ import {
   buildPaymentIntentIdempotencyPayload,
   sha256HexOfString,
 } from '../_shared/checkout-idempotency.ts';
+import {
+  cancelStripePaymentIntentsBestEffort,
+  cancelSupersededPendingOrders,
+  type SupersededOrder,
+} from '../_shared/cancel-superseded-orders.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -190,6 +195,7 @@ Deno.serve(async (req) => {
     customer?: unknown;
     schoolInquiry?: unknown;
     checkoutPaymentMethod?: unknown;
+    checkoutDraftId?: unknown;
   };
 
   try {
@@ -205,6 +211,10 @@ Deno.serve(async (req) => {
     rawPm === 'apple_pay' || rawPm === 'google_pay'
       ? rawPm
       : 'card';
+
+  const draftId = typeof payload.checkoutDraftId === 'string'
+    ? payload.checkoutDraftId.trim().slice(0, 64)
+    : '';
 
   const schoolInquiryJson =
     schoolInquiry != null && typeof schoolInquiry === 'object' && !Array.isArray(schoolInquiry)
@@ -350,6 +360,28 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
       }
 
+      // Reuse: i tady chceme zrušit ostatní pending záznamy téhož draftu (uživatel se vrátil
+      // ke stejné kombinaci doprava+platba, ale mezitím vyzkoušel jinou — ta se má supersede).
+      if (draftId && reuseOrderId) {
+        try {
+          const reuseSuperseded = await sql.begin((tx) =>
+            cancelSupersededPendingOrders(tx, draftId, reuseOrderId),
+          );
+          if (reuseSuperseded.length > 0) {
+            console.log(
+              `[create-payment-intent] Reuse path: superseded ${reuseSuperseded.length} pending order(s) for draft ${draftId.slice(0, 8)}…`,
+            );
+            void cancelStripePaymentIntentsBestEffort(
+              reuseSuperseded.map((s) => s.stripe_payment_intent_id),
+              stripeSecretKey,
+              'create-payment-intent',
+            );
+          }
+        } catch (e) {
+          console.warn('[create-payment-intent] Reuse path supersession failed:', e);
+        }
+      }
+
       const reuseTracking = reuseOrderId ? await trackingTokenForOrder(reuseOrderId) : null;
       return jsonResponse({
         clientSecret: paymentIntent.client_secret,
@@ -412,6 +444,7 @@ Deno.serve(async (req) => {
 
     let persistedOrderId: string | null = null;
     let persistedResumeToken = resumeToken;
+    let supersededOrders: SupersededOrder[] = [];
     try {
       await sql.begin(async (tx) => {
         let inserted: { id: string; payment_resume_token: string | null }[];
@@ -439,7 +472,8 @@ Deno.serve(async (req) => {
               total,
               checkout_session_id,
               payment_resume_token,
-              idempotency_key
+              idempotency_key,
+              checkout_draft_id
             ) values (
               'pending_payment',
               ${customer.email.trim()},
@@ -462,7 +496,8 @@ Deno.serve(async (req) => {
               ${total},
               ${checkoutSessionId}::uuid,
               ${resumeToken},
-              ${idempotencyKey}
+              ${idempotencyKey},
+              ${draftId || null}
             )
             returning id, payment_resume_token
           `;
@@ -527,6 +562,10 @@ Deno.serve(async (req) => {
             )
           `;
         }
+
+        if (draftId) {
+          supersededOrders = await cancelSupersededPendingOrders(tx, draftId, row.id);
+        }
       });
     } catch (orderErr) {
       console.error('[create-payment-intent] Pending order persist failed:', orderErr);
@@ -545,6 +584,17 @@ Deno.serve(async (req) => {
       }
       const message = orderErr instanceof Error ? orderErr.message : 'Uložení objednávky selhalo.';
       return jsonResponse({ error: message }, 500);
+    }
+
+    if (supersededOrders.length > 0) {
+      console.log(
+        `[create-payment-intent] Superseded ${supersededOrders.length} pending order(s) for draft ${draftId.slice(0, 8)}…`,
+      );
+      void cancelStripePaymentIntentsBestEffort(
+        supersededOrders.map((s) => s.stripe_payment_intent_id),
+        stripeSecretKey,
+        'create-payment-intent',
+      );
     }
 
     const thankYouTracking = persistedOrderId ? await trackingTokenForOrder(persistedOrderId) : null;

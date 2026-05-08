@@ -25,6 +25,11 @@ import {
   type IdempotencyItem,
   type IdempotencyShipping,
 } from '../_shared/checkout-idempotency.ts';
+import {
+  cancelStripePaymentIntentsBestEffort,
+  cancelSupersededPendingOrders,
+  type SupersededOrder,
+} from '../_shared/cancel-superseded-orders.ts';
 
 function isPostgresUniqueViolation(e: unknown): boolean {
   return Boolean(
@@ -225,6 +230,7 @@ Deno.serve(async (req) => {
     shipping?: unknown;
     customer?: unknown;
     schoolInquiry?: unknown;
+    checkoutDraftId?: unknown;
   };
   try {
     payload = await req.json();
@@ -233,6 +239,10 @@ Deno.serve(async (req) => {
   }
 
   const { items, shipping, customer, schoolInquiry } = payload;
+
+  const draftId = typeof payload.checkoutDraftId === 'string'
+    ? payload.checkoutDraftId.trim().slice(0, 64)
+    : '';
 
   if (!validateItems(items)) {
     return jsonResponse({ error: 'Neplatné položky košíku.' }, 400);
@@ -338,6 +348,28 @@ Deno.serve(async (req) => {
         limit 1
       `;
       if (existingEarly.length > 0) {
+        // Existující objednávka stejného hashe — uživatel ji jen znovu odeslal. Pokud má `checkoutDraftId`,
+        // zrušíme případné jiné pending z téhož draftu, aby admin viděl jen tu jednu.
+        if (draftId) {
+          try {
+            const reuseSuperseded = await sql.begin((tx) =>
+              cancelSupersededPendingOrders(tx, draftId, existingEarly[0].id),
+            );
+            if (reuseSuperseded.length > 0) {
+              console.log(
+                `[submit-transfer-order] Reuse path: superseded ${reuseSuperseded.length} pending order(s) for draft ${draftId.slice(0, 8)}…`,
+              );
+              const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim();
+              void cancelStripePaymentIntentsBestEffort(
+                reuseSuperseded.map((s) => s.stripe_payment_intent_id),
+                stripeKey,
+                'submit-transfer-order',
+              );
+            }
+          } catch (e) {
+            console.warn('[submit-transfer-order] Reuse path supersession failed:', e);
+          }
+        }
         return jsonResponse({
           success: true,
           orderId: existingEarly[0].id,
@@ -347,7 +379,7 @@ Deno.serve(async (req) => {
       }
 
       type TxOutcome =
-        | { kind: 'new'; row: { id: string; order_number: string } }
+        | { kind: 'new'; row: { id: string; order_number: string }; superseded: SupersededOrder[] }
         | { kind: 'dup'; row: { id: string; order_number: string } };
 
       const outcome = await sql.begin(async (tx): Promise<TxOutcome> => {
@@ -374,7 +406,8 @@ Deno.serve(async (req) => {
               subtotal,
               total,
               note,
-              idempotency_key
+              idempotency_key,
+              checkout_draft_id
             ) values (
               'pending_payment',
               ${customer.email.trim()},
@@ -395,7 +428,8 @@ Deno.serve(async (req) => {
               ${subtotal},
               ${total},
               ${noteText},
-              ${idempotencyKey}
+              ${idempotencyKey},
+              ${draftId || null}
             )
             returning id, order_number
           `;
@@ -469,7 +503,11 @@ Deno.serve(async (req) => {
           )
         `;
 
-        return { kind: 'new', row: orderRow };
+        const supersededInTx = draftId
+          ? await cancelSupersededPendingOrders(tx, draftId, orderRow.id)
+          : [];
+
+        return { kind: 'new', row: orderRow, superseded: supersededInTx };
       });
 
       if (outcome.kind === 'dup') {
@@ -482,6 +520,18 @@ Deno.serve(async (req) => {
       }
 
       const orderRow = outcome.row;
+
+      if (outcome.superseded.length > 0) {
+        console.log(
+          `[submit-transfer-order] Superseded ${outcome.superseded.length} pending order(s) for draft ${draftId.slice(0, 8)}…`,
+        );
+        const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim();
+        void cancelStripePaymentIntentsBestEffort(
+          outcome.superseded.map((s) => s.stripe_payment_intent_id),
+          stripeKey,
+          'submit-transfer-order',
+        );
+      }
 
       try {
         await sendOrderEmail(sql, { orderId: orderRow.id, emailType: 'order_transfer_received' });
