@@ -15831,9 +15831,14 @@ async function syncSchoolOrderToPipedrive(
 app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
   try {
     const expected = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    /** Nový API-keys model: u sb_secret_… formátu Supabase gateway přepisuje/strippuje
+     *  Authorization Bearer mezi Edge funkcemi (zatímco legacy JWT projde nezměněn).
+     *  Akceptujeme proto obě varianty — Bearer v Authorization (legacy) i hodnotu v `apikey` headeru. */
     const auth = c.req.header('Authorization') || '';
-    const token = auth.replace(/^Bearer\s+/i, '').trim();
-    if (!expected || token !== expected) {
+    const tokenFromAuth = auth.replace(/^Bearer\s+/i, '').trim();
+    const tokenFromApikey = (c.req.header('apikey') || c.req.header('apiKey') || '').trim();
+    const matches = !!expected && (tokenFromAuth === expected || tokenFromApikey === expected);
+    if (!matches) {
       return c.json({ error: 'Unauthorized.' }, 401);
     }
     const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };
