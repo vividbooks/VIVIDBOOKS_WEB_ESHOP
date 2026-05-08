@@ -1977,15 +1977,38 @@ export function CheckoutPage() {
                   {'Zpět'}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => void goForward()}
-                  disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {'Pokračovat'}
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                {/* Krok 4 + převod: „Pokračovat" plní stejnou funkci jako tlačítko „Odeslat objednávku (převod)“
+                    uvnitř panelu (uživateli stačí klik na tlačítko, na které je zvyklý z předchozích kroků). */}
+                {currentStep === 4 && paymentMethod === 'transfer' ? (
+                  <button
+                    type="button"
+                    onClick={() => void submitTransferOrder()}
+                    disabled={transferSubmitting || !hasTransferIco}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {transferSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {'Odesílám…'}
+                      </>
+                    ) : (
+                      <>
+                        {'Odeslat objednávku'}
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void goForward()}
+                    disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {'Pokračovat'}
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )}
         </div>
