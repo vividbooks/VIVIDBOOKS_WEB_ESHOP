@@ -96,8 +96,15 @@ function getFunctionBaseUrl(fallbackRequestUrl?: string) {
   return '';
 }
 
-/** Neblokuje odpověď klientovi; chyby jen do logu. */
-function fireEshopPipedriveTransferSync(orderId: string, fallbackRequestUrl?: string) {
+/**
+ * Synchronní zavolání pipedrive-sync s ošetřenou chybou.
+ *
+ * **Pozor**: Dříve šlo o fire-and-forget `void fetch(...)`. V Supabase Edge runtime se po `return`
+ * z handleru zruší pending I/O — fetch se k make-server-93a20b6f vůbec nedostal a `pipedrive_sync_status`
+ * v DB zůstával `null` (sync se ani nezaregistroval). Pro spolehlivost teď fetch awaitujeme; chyby
+ * jen logujeme, aby selhání Pipedrivu nezablokovalo úspěšnou odpověď klientovi.
+ */
+async function invokeEshopPipedriveTransferSync(orderId: string, fallbackRequestUrl?: string): Promise<void> {
   const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
   const url = baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
   if (!url) {
@@ -109,24 +116,23 @@ function fireEshopPipedriveTransferSync(orderId: string, fallbackRequestUrl?: st
     console.error('[submit-transfer-order] Missing SUPABASE_SERVICE_ROLE_KEY for eshop/pipedrive-sync.');
     return;
   }
-  void fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-      apikey: key,
-    },
-    body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
-  })
-    .then(async (res) => {
-      if (!res.ok) {
-        const t = await res.text().catch(() => '');
-        console.error('[submit-transfer-order] eshop/pipedrive-sync HTTP', res.status, t.slice(0, 500));
-      }
-    })
-    .catch((e) => {
-      console.error('[submit-transfer-order] eshop/pipedrive-sync:', e);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
     });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      console.error('[submit-transfer-order] eshop/pipedrive-sync HTTP', res.status, t.slice(0, 500));
+    }
+  } catch (e) {
+    console.error('[submit-transfer-order] eshop/pipedrive-sync:', e);
+  }
 }
 
 function jsonResponse(body: Record<string, unknown>, status = 200) {
@@ -539,7 +545,7 @@ Deno.serve(async (req) => {
         console.error('[submit-transfer-order] Email:', e);
       }
 
-      fireEshopPipedriveTransferSync(orderRow.id, req.url);
+      await invokeEshopPipedriveTransferSync(orderRow.id, req.url);
 
       return jsonResponse({
         success: true,
