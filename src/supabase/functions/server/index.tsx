@@ -11897,7 +11897,7 @@ function pickBestPipedriveOrganizationMatch(items: any[], expectedName: string) 
 
 async function lookupSchoolInPipedrive(
   apiToken: string,
-  params: { ico?: string; name?: string; includePipedriveRaw?: boolean },
+  params: { ico?: string; name?: string; includePipedriveRaw?: boolean; strictIcoMatch?: boolean },
 ): Promise<PipedriveSchoolLookup> {
   const cacheKey = buildPipedriveLookupCacheKey(params);
   const cached = pipedriveSchoolLookupCache.get(cacheKey);
@@ -11908,6 +11908,10 @@ async function lookupSchoolInPipedrive(
   const includePipedriveRaw = !!params.includePipedriveRaw;
   const ico = String(params.ico || '').trim();
   const name = String(params.name || '').trim();
+  /** strictIcoMatch: když je IČO zadané a v Pipedrive žádná organizace s tímhle IČO není,
+   *  vrátí se prázdný výsledek (status `new`) — zabrání to chybnému spárování s jinou
+   *  organizací stejného jména, jejíž IČO by se navíc v upsertu přepsalo novou hodnotou. */
+  const strictIcoMatch = !!params.strictIcoMatch;
   let items: any[] = [];
   let matchedBy: 'ico' | 'name' | null = null;
 
@@ -11915,7 +11919,7 @@ async function lookupSchoolInPipedrive(
     items = await searchPipedriveOrganizations(apiToken, ico, { fields: 'custom_fields' });
     if (items.length > 0) matchedBy = 'ico';
   }
-  if (!items.length && name) {
+  if (!items.length && name && !(strictIcoMatch && ico)) {
     items = await searchPipedriveOrganizations(apiToken, name);
     if (items.length > 0) matchedBy = 'name';
   }
@@ -12022,17 +12026,26 @@ async function lookupSchoolInPipedrive(
 
 async function upsertPipedriveSchoolOrganization(
   apiToken: string,
-  params: { schoolName: string; ico?: string; address?: string },
+  params: { schoolName: string; ico?: string; address?: string; strictIcoMatch?: boolean },
 ) {
   const ico = String(params.ico || '').trim();
   const schoolName = String(params.schoolName || '').trim();
   const address = String(params.address || '').trim();
-  const lookup = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName });
+  /** strictIcoMatch: pro objednávky z eshopu — když má objednávka IČO a v Pipedrive není
+   *  organizace s tímhle IČO, založí se nová z údajů objednávky (IČO + název školy + adresa),
+   *  místo aby se připlácla k existující organizaci stejného jména s jiným IČO. */
+  const strictIcoMatch = !!params.strictIcoMatch;
+  const lookup = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName, strictIcoMatch });
   if (lookup.orgId) {
     const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
     const updatePayload: Record<string, any> = {};
     if (address) updatePayload.address = address;
-    if (icoFieldKey && lookup.matchedBy !== 'ico') updatePayload[icoFieldKey] = ico;
+    /** IČO na existující organizaci doplníme jen pokud byla spárovaná podle jména
+     *  a strictIcoMatch je vypnutý (admin tooly). U strictIcoMatch by se sem ani
+     *  nemělo dostat — když IČO nematchne, lookup vrátí orgId=null a založí se nová. */
+    if (icoFieldKey && lookup.matchedBy !== 'ico' && !strictIcoMatch) {
+      updatePayload[icoFieldKey] = ico;
+    }
     if (Object.keys(updatePayload).length > 0) {
       try {
         await pipedriveRequest(apiToken, `/organizations/${lookup.orgId}`, {
@@ -12050,6 +12063,9 @@ async function upsertPipedriveSchoolOrganization(
   const payload: Record<string, any> = { name: schoolName };
   if (address) payload.address = address;
   if (icoFieldKey && ico) payload[icoFieldKey] = ico;
+  console.log(
+    `[Pipedrive] Org create (strictIco=${strictIcoMatch}): name="${schoolName}" ico="${ico || '(none)'}" address="${address || '(none)'}"`,
+  );
   const created = await pipedriveRequest<any>(apiToken, '/organizations', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -15246,10 +15262,15 @@ async function syncEshopOrderToPipedriveFromDb(
   let orgLookupForTitle: { orgName: string | null } | null = null;
   if (isB2b) {
     const schoolName = schoolNameRaw || personName;
+    /** strictIcoMatch: pokud objednávka má IČO a v Pipedrive není organizace s tímhle IČO,
+     *  založí se nová organizace z údajů objednávky (IČO + název školy + adresa). Nepřilepí
+     *  se k jiné organizaci stejného jména s jiným IČO (a nepřepíše jí IČO). Pokud IČO není
+     *  vyplněné, lookup pokračuje fuzzy podle jména jako dřív. */
     const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
       schoolName,
       ico,
       address: [(order as any).street, (order as any).city, (order as any).zip].filter(Boolean).join(', '),
+      strictIcoMatch: ico.length > 0,
     });
     orgId = orgLookup.orgId;
     orgLookupForTitle = orgLookup;
@@ -15638,10 +15659,14 @@ async function syncSchoolOrderToPipedrive(
   if (!apiToken) return { skipped: true, reason: 'missing_api_token' as const };
 
   const ico = String(body?.customer?.ico || body?.customer?.vat || '').trim();
+  /** strictIcoMatch: pokud má objednávka IČO a v Pipedrive není organizace s tímhle IČO,
+   *  založí se nová organizace z údajů objednávky (IČO + název školy + adresa) místo
+   *  napojení na náhodnou stejnojmennou organizaci s jiným IČO. */
   const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
     schoolName: order.schoolName,
     ico,
     address: order.address,
+    strictIcoMatch: ico.length > 0,
   });
   if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' as const };
 
