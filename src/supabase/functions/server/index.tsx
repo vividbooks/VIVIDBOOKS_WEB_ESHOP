@@ -11604,9 +11604,14 @@ async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   return pipedriveOrgIcoFieldKeyCache;
 }
 
-/** Custom field key na Pipedrive person pro „pozice / role" (např. „ředitel", „učitelka").
+/** Custom field key na Pipedrive person pro „pozice / role" (enum, id 9093 v projektu Vividbooks).
  *  Pipedrive person nemá standardní `job_title` — pole je vždy custom. ENV override
- *  `PIPEDRIVE_PERSON_POSITION_FIELD_KEY` má přednost před auto-detekcí přes `/personFields`. */
+ *  `PIPEDRIVE_PERSON_POSITION_FIELD_KEY` má přednost; jinak default = známý hash key.
+ *
+ *  Default `ce836d68746d7bd88847ec25056d52d762d12857` je jediný zdroj pravdy z dashboardu /personFields
+ *  (id 9093). Stejný pattern jako u `current_deal_owner` (4056) a CIN (4033) — heuristika přes název
+ *  pole je nespolehlivá u jiného pojmenování.
+ */
 async function getPipedrivePersonPositionFieldKey(apiToken: string): Promise<string | null> {
   if (pipedrivePersonPositionFieldKeyCache !== undefined) return pipedrivePersonPositionFieldKeyCache;
   const envKey = (Deno.env.get('PIPEDRIVE_PERSON_POSITION_FIELD_KEY') || '').trim();
@@ -11614,26 +11619,85 @@ async function getPipedrivePersonPositionFieldKey(apiToken: string): Promise<str
     pipedrivePersonPositionFieldKeyCache = envKey;
     return pipedrivePersonPositionFieldKeyCache;
   }
+  const defaultKey = 'ce836d68746d7bd88847ec25056d52d762d12857';
+  pipedrivePersonPositionFieldKeyCache = defaultKey;
+
+  /** Best-effort potvrzení přes /personFields — pokud `defaultKey` v projektu existuje, OK; pokud ne,
+   *  zkusí najít pole podle názvu (Position / Pozice / Role / Funkce). Selhání API → zůstane defaultKey. */
   try {
     const data = await pipedriveRequest<any>(apiToken, '/personFields', {}, { limit: 500 });
     const fields: any[] = Array.isArray(data?.data) ? data.data : [];
-    const field = fields.find((item: any) => {
-      const name = normalizePipedriveSearchText(item?.name || '');
-      const key = String(item?.key || '');
-      /** Hledá názvy „pozice", „role", „funkce", „position", „job title" — diakritika zahodí normalize. */
+    const byKey = fields.find((item: any) => String(item?.key || '').trim() === defaultKey);
+    if (byKey?.key) {
+      pipedrivePersonPositionFieldKeyCache = String(byKey.key);
+      return pipedrivePersonPositionFieldKeyCache;
+    }
+    const byName = fields.find((item: any) => {
+      const name = normalizePipedriveSearchText(item?.name || '').toLowerCase();
+      const key = String(item?.key || '').toLowerCase();
       return /^(pozice|role|funkce|position|job ?title|titul|prace|práce)$/i.test(name)
-        || /pozice|funkce|job.?title/i.test(name)
-        || /pozice|funkce|job.?title/i.test(key);
+        || /pozice|funkce|position|job.?title/i.test(name)
+        || /pozice|funkce|position|job.?title/i.test(key);
     });
-    pipedrivePersonPositionFieldKeyCache = field?.key || null;
-    if (field?.key) {
-      console.log(`[Pipedrive] Person position field auto: key=${field.key} name="${field.name || ''}"`);
+    if (byName?.key) {
+      pipedrivePersonPositionFieldKeyCache = String(byName.key);
+      console.log(`[Pipedrive] Person position field auto: key=${byName.key} name="${byName.name || ''}"`);
     }
   } catch (error: any) {
-    console.log(`[Pipedrive] Person field lookup failed: ${error.message}`);
-    pipedrivePersonPositionFieldKeyCache = null;
+    console.log(`[Pipedrive] Person field lookup failed (using default key ${defaultKey.slice(0, 6)}…): ${error.message}`);
   }
   return pipedrivePersonPositionFieldKeyCache;
+}
+
+/**
+ * Mapování volného textu pozice (z eshop / school inquiry / DVPP / webinář formulářů) na konkrétní
+ * enum option ID na Pipedrive person field 9093 (Position).
+ *
+ * Option IDs:
+ *   159 — Headmaster (e-shop „Director" / „Ředitel")
+ *   160 — Deputy director (e-shop „Deputy director" / „Zástupce ředitele")
+ *   161 — Physics teacher
+ *   163 — Chemistry teacher
+ *   164 — Teacher (e-shop „Teacher" / „Učitel" / „Učitelka")
+ *   166 — Parent
+ *   168 — Student
+ *   170 — Homeschooling
+ *   172 — Other (fallback pro neprázdnou, ale neznámou hodnotu)
+ *   173 — DOPLNIT (placeholder; nepoužívat pro mapování — necháme pro ruční doplnění)
+ *   177 — ICT coordinator
+ *   178 — Secretary/economist (e-shop „Accountant" / „Hospodář")
+ *   179 — Physics and chemistry teacher
+ *   274 — Coordinator of studies
+ *
+ * Vrací `null`, pokud je vstup prázdný (žádná hodnota se do payloadu nezapíše). Pokud je vstup
+ * neprázdný a žádné konkrétní pravidlo nesedne, vrací 172 (Other).
+ */
+function mapPipedrivePersonPositionToOptionId(rawPosition: string): number | null {
+  const trimmed = String(rawPosition || '').trim();
+  if (!trimmed) return null;
+
+  const normalized = normalizePipedriveSearchText(trimmed).toLowerCase();
+
+  /** Specifická pole „učitel fyziky a chemie" musí předcházet samostatným fyzika/chemie. */
+  const hasPhysics = /\b(fyzik|physic)\w*/.test(normalized);
+  const hasChemistry = /\b(chemi|chemic)\w*/.test(normalized);
+  const looksLikeTeacher = /\b(ucitel|teacher)\w*/.test(normalized);
+
+  if (looksLikeTeacher && hasPhysics && hasChemistry) return 179;
+  if (looksLikeTeacher && hasPhysics) return 161;
+  if (looksLikeTeacher && hasChemistry) return 163;
+
+  if (/\b(zastupc|deputy)\w*/.test(normalized)) return 160;
+  if (/\b(headmaster|reditel|director|principal)\w*/.test(normalized)) return 159;
+  if (/\b(coordinator of studies|koordinator studi)\w*/.test(normalized)) return 274;
+  if (/\bict\b/.test(normalized) || /(koordinator ict|ict coordinator)/.test(normalized)) return 177;
+  if (/\b(secretary|economist|hospodar|ucetn|accountant)\w*/.test(normalized)) return 178;
+  if (/\b(parent|rodic)\w*/.test(normalized)) return 166;
+  if (/\b(student|zak|pupil)\w*/.test(normalized)) return 168;
+  if (/(homeschool|home schooling|domaci vzdelav|domaci skolovan)/.test(normalized)) return 170;
+  if (looksLikeTeacher) return 164;
+
+  return 172;
 }
 
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
@@ -12216,13 +12280,21 @@ async function findOrCreatePipedrivePerson(
    *   - name (jméno + příjmení v jednom poli, Pipedrive si first/last odvodí sám),
    *   - email (primary), phone (primary),
    *   - org_id = napojení na organizaci školy,
-   *   - position (custom field, jen pokud je vyplněná a klíč rozpoznaný). */
+   *   - position (custom field 9093, **enum** — namapuje string na option ID 159–274). */
   const payload: Record<string, any> = { name, org_id: orgId };
   if (email) payload.email = email;
   if (phone) payload.phone = phone;
-  if (positionFieldKey && position) payload[positionFieldKey] = position;
+  let positionOptionId: number | null = null;
+  if (positionFieldKey && position) {
+    positionOptionId = mapPipedrivePersonPositionToOptionId(position);
+    if (positionOptionId) {
+      /** Pipedrive enum field očekává number (option_id), nikoli volný text — předchozí verze posílala
+       *  string a Pipedrive to tiše ignoroval. */
+      payload[positionFieldKey] = positionOptionId;
+    }
+  }
   console.log(
-    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" position="${position || '(none)'}" org_id=${orgId}`,
+    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" position="${position || '(none)'}" → option_id=${positionOptionId ?? '(none)'} org_id=${orgId}`,
   );
   const created = await pipedriveRequest<any>(apiToken, '/persons', {
     method: 'POST',
