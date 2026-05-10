@@ -10,6 +10,19 @@ const FILTERS = [
   { id: 'problem', label: 'Problémové' },
 ] as const;
 
+const SOURCE_FILTERS = [
+  { id: 'all', label: 'Všechny zdroje' },
+  { id: 'eshop', label: 'E-shop' },
+  { id: 'pipedrive', label: 'Pipedrive' },
+] as const;
+
+function sourceBadge(source: AdminOrderListItem['source']) {
+  if (source === 'pipedrive') {
+    return { label: 'Pipedrive', cls: 'bg-purple-100 text-purple-700' };
+  }
+  return { label: 'E-shop', cls: 'bg-sky-100 text-sky-700' };
+}
+
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
     minimumFractionDigits: 2,
@@ -60,6 +73,7 @@ export function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -82,7 +96,7 @@ export function AdminOrdersPage() {
       setLoading(true);
       setError('');
       try {
-        const data = await fetchAdminOrders({ filter, search, page, pageSize });
+        const data = await fetchAdminOrders({ filter, search, page, pageSize, source: sourceFilter });
         if (cancelled) return;
         setItems(data.items || []);
         setTotal(data.total || 0);
@@ -98,7 +112,7 @@ export function AdminOrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, search, page]);
+  }, [filter, search, page, sourceFilter]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
@@ -138,14 +152,35 @@ export function AdminOrdersPage() {
           ))}
         </div>
 
-        <div className="relative w-full lg:w-[320px]">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Hledat číslo objednávky nebo e-mail"
-            className="w-full rounded-xl border border-gray-200 bg-white pl-10 pr-4 py-2 text-[13px] text-[#001161] outline-none focus:border-[#001161]/30"
-          />
+        <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:gap-3">
+          <div className="flex flex-wrap gap-2">
+            {SOURCE_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setPage(1);
+                  setSourceFilter(item.id);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-[12px] font-bold transition-colors ${
+                  sourceFilter === item.id
+                    ? 'bg-[#001161] text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-full lg:w-[320px]">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Hledat číslo objednávky nebo e-mail"
+              className="w-full rounded-xl border border-gray-200 bg-white pl-10 pr-4 py-2 text-[13px] text-[#001161] outline-none focus:border-[#001161]/30"
+            />
+          </div>
         </div>
       </div>
 
@@ -187,14 +222,21 @@ export function AdminOrdersPage() {
                   </td>
                 </tr>
               ) : (
-                items.map((order) => (
+                items.map((order) => {
+                  const sb = sourceBadge(order.source);
+                  return (
                   <tr
                     key={order.id}
                     onClick={() => navigate(`/admin/objednavky/${order.id}`)}
                     className="border-b border-gray-100 hover:bg-[#f9fafc] cursor-pointer align-top"
                   >
                     <td className="px-3 py-3">
-                      <div className="font-bold text-[#001161] text-[12px]">{order.order_number}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[#001161] text-[12px]">{order.order_number}</span>
+                        <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold ${sb.cls}`}>
+                          {sb.label}
+                        </span>
+                      </div>
                       <div className="text-[11px] text-gray-400">{order.customer_email}</div>
                     </td>
                     <td className="px-3 py-3 text-[12px] text-gray-600 whitespace-nowrap">
@@ -237,7 +279,8 @@ export function AdminOrdersPage() {
                       )}
                     </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
