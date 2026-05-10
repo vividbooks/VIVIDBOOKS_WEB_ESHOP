@@ -14883,17 +14883,31 @@ const PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT = '3f0c870ac132eec72589
 const PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY_DEFAULT = '0e41017f4d0a3aa58177d7727844f98a6569d630';
 const PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT = 489;
 
-/** Vlastní pole „Eshop ID" na dealu (text) — UI ID 12586. Vyplňujeme `order_number` při vytvoření / refreshi
- *  dealu z e‑shopu. Webhook `pipedrive-inbound-deal` podle něj rozhoduje, zda zakládá novou objednávku
- *  (pole prázdné = ručně založený deal v CRM), nebo aktualizuje existující objednávku z e‑shopu. */
-const PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT = '26e4a2f8dc44e49f369c468ccc816ad668b37d92';
-
 function getEshopProductCategoryPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY') || '').trim()
     || PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_FIELD_KEY_DEFAULT;
   const value = (Deno.env.get('PIPEDRIVE_ESHOP_PRODUCT_CATEGORY_VALUE') || '').trim() || 'print';
   return { [key]: value };
+}
+
+/** Payload pro „Eshop ID" pole — naplnění `orders.order_number`. Zavolá se v create i refresh path; pokud
+ *  caller nepošle hodnotu, vrátí prázdný objekt (pole se přepisovat nebude).
+ *  Podporujeme nové (ORDER_NUMBER) i starší (ORDER_ID) env jméno – oba mapují na tutéž hodnotu. */
+function getEshopOrderIdPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  const value = String(orderNumber || '').trim();
+  if (!value) return {};
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_NUMBER_FIELD_KEY') || '').trim() ||
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY') || '').trim() ||
+    PIPEDRIVE_ESHOP_ORDER_NUMBER_FIELD_KEY_DEFAULT ||
+    PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
+  return { [key]: value };
+}
+
+/** Backward compatible alias pro interní použití. */
+function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  return getEshopOrderIdPayload(orderNumber);
 }
 
 /** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
@@ -15197,12 +15211,75 @@ async function createPipedriveEshopDealAdvanced(
   return data?.data || null;
 }
 
+/** Mapování `orders.shipping_method` (lowercase enum z eshopu) → kód produktu v Pipedrive katalogu.
+ *  ENV override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_<METHOD>` (např. `_DPD`, `_PPL`, `_GLS`,
+ *  `_ZASILKOVNA`) přepíše default. Vrací `null`, když jde o neznámou nebo prázdnou metodu. */
+function getEshopShippingProductCode(shippingMethod: string | null | undefined): string | null {
+  const m = String(shippingMethod || '').trim().toLowerCase();
+  if (!m) return null;
+  const envKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_${m.toUpperCase()}`;
+  const fromEnv = (Deno.env.get(envKey) || '').trim();
+  if (fromEnv) return fromEnv.toUpperCase();
+  switch (m) {
+    case 'dpd': return 'DPD';
+    case 'ppl': return 'PPL';
+    case 'gls': return 'GLS';
+    case 'zasilkovna': return 'ZZ';
+    default: return null;
+  }
+}
+
+/** Přidá řádek s dopravou na Pipedrive deal — produkt z katalogu identifikovaný kódem
+ *  (PPL/DPD/GLS/ZZ). Když produkt v Pipedrivu pod tímto kódem neexistuje, jen zaloguje
+ *  warning a pokračuje (deal nepadne). Cena je `orders.shipping_price` v halířích → koruny. */
+async function addPipedriveDealShippingLineItem(
+  apiToken: string,
+  dealId: number,
+  shippingMethod: string | null | undefined,
+  shippingPriceHaler: number,
+  pickupPointName: string | null | undefined,
+  orderIndex: number,
+  codeToPdId: Map<string, number | null>,
+): Promise<void> {
+  const code = getEshopShippingProductCode(shippingMethod);
+  if (!code) {
+    console.log(`[Pipedrive eshop] skip shipping line: unknown method "${shippingMethod || ''}"`);
+    return;
+  }
+  const priceCzk = Math.max(0, Math.round((Number(shippingPriceHaler) || 0) / 100));
+  const pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  if (!pipedriveProductId) {
+    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code}" not found`);
+    return;
+  }
+  /** Poznámku „Z‑Point: Praha…" připíšeme do `comments`, aby obchodník v dealu hned viděl
+   *  konkrétní výdejnu (jen u Zásilkovny — ostatní dopravci ji nemají). */
+  const comments = String(pickupPointName || '').trim();
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealId}/products`, {
+      method: 'POST',
+      body: JSON.stringify({
+        product_id: pipedriveProductId,
+        quantity: 1,
+        item_price: priceCzk,
+        order: orderIndex,
+        ...(comments ? { comments } : {}),
+      }),
+    });
+    console.log(
+      `[Pipedrive eshop] shipping line added: code=${code} pd_product_id=${pipedriveProductId} price=${priceCzk}${comments ? ` pickup="${comments.slice(0, 60)}"` : ''}`,
+    );
+  } catch (error: any) {
+    console.log(`[Pipedrive eshop] shipping line ${pipedriveProductId} (${code}): ${error.message}`);
+  }
+}
+
 async function addPipedriveDealLineItemsFromOrder(
   apiToken: string,
   dealId: number,
   orderItems: any[],
   catalogById: Map<string, any>,
-) {
+): Promise<{ codeToPdId: Map<string, number | null>; lastOrder: number }> {
   /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
   const codeToPdId = new Map<string, number | null>();
   let ord = 0;
@@ -15251,6 +15328,9 @@ async function addPipedriveDealLineItemsFromOrder(
       console.log(`[Pipedrive eshop] deal product ${pipedriveProductId}: ${error.message}`);
     }
   }
+  /** Vrací sdílenou cache kódů (použije ji caller pro doplnění shipping line, ať se kód
+   *  nehledá podruhé) a poslední `order` index, aby další řádky pokračovaly. */
+  return { codeToPdId, lastOrder: ord };
 }
 
 async function persistPipedriveEshopOrderState(
@@ -15317,6 +15397,8 @@ async function refreshEshopPipedriveDealFromDb(
     return await fail('invalid_deal_id', existing);
   }
 
+  const orderNumber = String((row as any).order_number || '').trim();
+
   const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
@@ -15328,7 +15410,7 @@ async function refreshEshopPipedriveDealFromDb(
   }
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
-  Object.assign(patchBody, getEshopOrderIdPayload(String((row as any).order_number || '')));
+  Object.assign(patchBody, getEshopOrderNumberPayload(String((row as any).order_number || '')));
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(patchBody, getEshopCardPaidStatusPayload());
   }
@@ -15384,7 +15466,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -15477,71 +15559,61 @@ async function syncEshopOrderToPipedriveFromDb(
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
-  const orderIdPayload = getEshopOrderIdPayload(orderNumber);
+  const orderNumberPayload = getEshopOrderNumberPayload(orderNumber);
   const extraPayload: Record<string, unknown> = {
     ...printPayload,
     ...productCategoryPayload,
-    ...orderIdPayload,
+    ...orderNumberPayload,
   };
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(extraPayload, getEshopCardPaidStatusPayload());
     console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
   }
-  if (Object.keys(orderIdPayload).length) {
-    console.log(`[Pipedrive eshop] custom field Eshop ID = ${orderNumber}`);
+  if (Object.keys(orderNumberPayload).length) {
+    console.log(`[Pipedrive eshop] eshop ID pole = ${orderNumber}`);
   }
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
 
-  /** Pro B2B/e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
-   *  „current deal owner" (ID 4056), pak ENV fallback dle typu platby.
+  /** Pro e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
+   *  „current deal owner" (ID 4056), pak Daniel Ondrášek jako univerzální fallback.
    *
-   *  Speciální pravidla:
-   *    • **B2C jednotlivec** (bez IČO i bez školy) — vždy a jen kartová platba (`b2c_card_won`),
-   *      vlastníkem je **vždy Daniel Ondrášek** (`PIPEDRIVE_ESHOP_B2C_OWNER_ID`, fallback
-   *      na `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`). B2C nemá organizaci → org pole
-   *      `current_deal_owner` se ani nečte; jednotlivci řeší vždy Daniel.
-   *    • **B2B kartová a uhrazená** (`b2b_card_won`), když je org pole prázdné →
-   *      Daniel Ondrášek (`PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`).
-   *    • **B2B platba převodem** (`b2b_transfer_open`), když je org pole prázdné →
-   *      Gabriela Švédová (`PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID`).
+   *  Pravidla:
+   *    • **B2C jednotlivec** (bez IČO i bez školy) — vždy `b2c_card_won`, vlastník vždy
+   *      Daniel Ondrášek přes explicit override (`PIPEDRIVE_ESHOP_B2C_OWNER_ID` →
+   *      fallback na `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`).
+   *      B2C nemá organizaci → org pole `current_deal_owner` se ani nečte.
+   *    • **B2B objednávka** (IČO nebo škola, kartová i převodová) — primárně org pole
+   *      `current_deal_owner` (ID 4056). Když je prázdné, **vždy Daniel Ondrášek**
+   *      (`PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID` → fallback na
+   *      `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` pro zpětnou kompatibilitu).
+   *      Dříve byl pro převody Gabriela Švédová (`PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID`),
+   *      tato cesta byla odstraněna — Daniel řeší všechny eshop B2B objednávky bez owner pole.
    *  Když ani specifický fallback není nastaven, použije se obecný
    *  `PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID`, jinak deal převezme vlastníka API tokenu. */
-  const isCardPaidWon = mode === 'b2c_card_won' || mode === 'b2b_card_won';
-  const isTransferOpen = mode === 'b2b_transfer_open';
   const isB2cOrder = !isB2b;
-  /** B2C explicit override: jednotlivec bez školy/IČO → Daniel Ondrášek vždy, bez ohledu na cokoliv.
-   *  ENV PIPEDRIVE_ESHOP_B2C_OWNER_ID s fallbackem na PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID
-   *  (Daniel je už v něm nakonfigurovaný — sdílíme tu hodnotu, abychom nemuseli duplikovat secret). */
+  /** B2C explicit override: jednotlivec → Daniel Ondrášek vždy, bez ohledu na cokoliv. */
   const b2cOwnerId = isB2cOrder
     ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2C_OWNER_ID', 0)
         || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
     : 0;
-  const cardPaidFallbackOwnerId = isCardPaidWon
-    ? pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0)
-    : 0;
-  const transferFallbackOwnerId = isTransferOpen
-    ? pipedriveEnvInt('PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID', 0)
+  /** Univerzální B2B fallback (kartová i převodová) — Daniel Ondrášek. Akceptuje historické
+   *  jméno `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` (Daniel je v něm nakonfigurovaný),
+   *  aby se nemusel měnit secret při deployi. */
+  const b2bFallbackOwnerId = isB2b
+    ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID', 0)
+        || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
     : 0;
   const eshopFallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
-  const modeSpecificFallback = cardPaidFallbackOwnerId > 0
-    ? cardPaidFallbackOwnerId
-    : transferFallbackOwnerId > 0
-      ? transferFallbackOwnerId
-      : 0;
   const dealOwnerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
     orgId: isB2b ? orgId : null,
     /** B2C jde explicit overridem (= 1. priorita, nezávisle na cokoliv). */
     explicitOwnerUserId: b2cOwnerId > 0 ? b2cOwnerId : null,
-    fallbackOwnerUserId: modeSpecificFallback > 0 ? modeSpecificFallback : eshopFallbackOwnerId,
+    fallbackOwnerUserId: b2bFallbackOwnerId > 0 ? b2bFallbackOwnerId : eshopFallbackOwnerId,
     contextLabel: isB2cOrder
       ? `Pipedrive eshop ${mode} (B2C jednotlivec → Daniel)`
-      : isCardPaidWon
-        ? `Pipedrive eshop ${mode} (card paid)`
-        : isTransferOpen
-          ? `Pipedrive eshop ${mode} (transfer)`
-          : `Pipedrive eshop ${mode}`,
+      : `Pipedrive eshop ${mode} (B2B → org pole / Daniel)`,
   });
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
@@ -15564,9 +15636,24 @@ async function syncEshopOrderToPipedriveFromDb(
   const catalogProducts = await getAllProducts();
   const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p]));
   const lineItems = Array.isArray((order as any).order_items) ? (order as any).order_items : [];
+  let codeToPdIdShared: Map<string, number | null> = new Map();
+  let nextLineOrder = 0;
   if (lineItems.length) {
-    await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    const result = await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    codeToPdIdShared = result.codeToPdId;
+    nextLineOrder = result.lastOrder;
   }
+  /** Doprava jako samostatný produktový řádek na dealu (PPL / DPD / GLS / ZZ). Caller už zná
+   *  sdílenou cache code→pd_product_id, takže se nehledá podruhé. */
+  await addPipedriveDealShippingLineItem(
+    apiToken,
+    dealId,
+    String((order as any).shipping_method || ''),
+    Number((order as any).shipping_price) || 0,
+    String((order as any).pickup_point_name || '') || null,
+    nextLineOrder + 1,
+    codeToPdIdShared,
+  );
 
   const dealIdStr = String(dealId);
   const nowIso = new Date().toISOString();
