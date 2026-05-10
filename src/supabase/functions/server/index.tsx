@@ -11090,6 +11090,8 @@ const PIPEDRIVE_BASE_URL = 'https://api.pipedrive.com/v1';
 /** API v2 (products/search, …) — stejný host, jiný prefix než v1. */
 const PIPEDRIVE_V2_BASE_URL = 'https://api.pipedrive.com/api/v2';
 let pipedriveOrgIcoFieldKeyCache: string | null | undefined;
+/** Cache: person field key pro „pozici / role" (custom field na Pipedrive person; není standardní). */
+let pipedrivePersonPositionFieldKeyCache: string | null | undefined;
 /** Cache: organization field id → { key, field_type } for school-order customer label detection */
 let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 /** Cache: deal field id → { key, field_type } (order form label) */
@@ -11565,19 +11567,137 @@ async function resolvePipedriveProductIdByCode(
 
 async function getPipedriveOrganizationIcoFieldKey(apiToken: string) {
   if (pipedriveOrgIcoFieldKeyCache !== undefined) return pipedriveOrgIcoFieldKeyCache;
+
+  /** Hash key vlastního pole "CIN" na organizaci (Pipedrive field id 4033) — ENV override ho umí přepsat,
+   *  jinak je natvrdo (single source of truth z dashboardu /organization-fields). Heuristika přes
+   *  /organizationFields původně hledala `name`/`key` obsahující "ico" (case-sensitive po normalize),
+   *  což u pojmenování "CIN" / "IČO" neprojde a IČO se do nové organizace nezapíše. */
+  const envKey = (Deno.env.get('PIPEDRIVE_ORG_ICO_FIELD_KEY') || '').trim();
+  if (envKey) {
+    pipedriveOrgIcoFieldKeyCache = envKey;
+    return pipedriveOrgIcoFieldKeyCache;
+  }
+  const defaultKey = '0f91eb090c567025d50bd189c2fcef7660168cd2';
+  pipedriveOrgIcoFieldKeyCache = defaultKey;
+
+  /** Best-effort potvrzení přes /organizationFields — pokud `defaultKey` v projektu existuje, OK; pokud ne,
+   *  zkusíme widcer match podle názvu (CIN / IČO / IC / Company ID). Selhání API => zůstane defaultKey. */
   try {
     const data = await pipedriveRequest<any>(apiToken, '/organizationFields', {}, { limit: 500 });
-    const fields: any[] = data?.data || [];
-    const field = fields.find((item: any) => {
-      const label = normalizePipedriveSearchText(item?.name || item?.key || '');
-      return label.includes('ico');
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const byKey = fields.find((item: any) => String(item?.key || '').trim() === defaultKey);
+    if (byKey?.key) {
+      pipedriveOrgIcoFieldKeyCache = String(byKey.key);
+      return pipedriveOrgIcoFieldKeyCache;
+    }
+    const byName = fields.find((item: any) => {
+      const name = normalizePipedriveSearchText(String(item?.name || '')).toLowerCase();
+      const keyName = String(item?.key || '').toLowerCase();
+      return /\b(cin|ico|ic|company\s*id)\b/.test(name) || /\b(cin|ico)\b/.test(keyName);
     });
-    pipedriveOrgIcoFieldKeyCache = field?.key || null;
+    if (byName?.key) {
+      pipedriveOrgIcoFieldKeyCache = String(byName.key);
+    }
   } catch (error: any) {
-    console.log(`[Pipedrive] Organization field lookup failed: ${error.message}`);
-    pipedriveOrgIcoFieldKeyCache = null;
+    console.log(`[Pipedrive] Organization field lookup failed (using default key ${defaultKey.slice(0, 6)}…): ${error.message}`);
   }
   return pipedriveOrgIcoFieldKeyCache;
+}
+
+/** Custom field key na Pipedrive person pro „pozice / role" (enum, id 9093 v projektu Vividbooks).
+ *  Pipedrive person nemá standardní `job_title` — pole je vždy custom. ENV override
+ *  `PIPEDRIVE_PERSON_POSITION_FIELD_KEY` má přednost; jinak default = známý hash key.
+ *
+ *  Default `ce836d68746d7bd88847ec25056d52d762d12857` je jediný zdroj pravdy z dashboardu /personFields
+ *  (id 9093). Stejný pattern jako u `current_deal_owner` (4056) a CIN (4033) — heuristika přes název
+ *  pole je nespolehlivá u jiného pojmenování.
+ */
+async function getPipedrivePersonPositionFieldKey(apiToken: string): Promise<string | null> {
+  if (pipedrivePersonPositionFieldKeyCache !== undefined) return pipedrivePersonPositionFieldKeyCache;
+  const envKey = (Deno.env.get('PIPEDRIVE_PERSON_POSITION_FIELD_KEY') || '').trim();
+  if (envKey) {
+    pipedrivePersonPositionFieldKeyCache = envKey;
+    return pipedrivePersonPositionFieldKeyCache;
+  }
+  const defaultKey = 'ce836d68746d7bd88847ec25056d52d762d12857';
+  pipedrivePersonPositionFieldKeyCache = defaultKey;
+
+  /** Best-effort potvrzení přes /personFields — pokud `defaultKey` v projektu existuje, OK; pokud ne,
+   *  zkusí najít pole podle názvu (Position / Pozice / Role / Funkce). Selhání API → zůstane defaultKey. */
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/personFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    const byKey = fields.find((item: any) => String(item?.key || '').trim() === defaultKey);
+    if (byKey?.key) {
+      pipedrivePersonPositionFieldKeyCache = String(byKey.key);
+      return pipedrivePersonPositionFieldKeyCache;
+    }
+    const byName = fields.find((item: any) => {
+      const name = normalizePipedriveSearchText(item?.name || '').toLowerCase();
+      const key = String(item?.key || '').toLowerCase();
+      return /^(pozice|role|funkce|position|job ?title|titul|prace|práce)$/i.test(name)
+        || /pozice|funkce|position|job.?title/i.test(name)
+        || /pozice|funkce|position|job.?title/i.test(key);
+    });
+    if (byName?.key) {
+      pipedrivePersonPositionFieldKeyCache = String(byName.key);
+      console.log(`[Pipedrive] Person position field auto: key=${byName.key} name="${byName.name || ''}"`);
+    }
+  } catch (error: any) {
+    console.log(`[Pipedrive] Person field lookup failed (using default key ${defaultKey.slice(0, 6)}…): ${error.message}`);
+  }
+  return pipedrivePersonPositionFieldKeyCache;
+}
+
+/**
+ * Mapování volného textu pozice (z eshop / school inquiry / DVPP / webinář formulářů) na konkrétní
+ * enum option ID na Pipedrive person field 9093 (Position).
+ *
+ * Option IDs:
+ *   159 — Headmaster (e-shop „Director" / „Ředitel")
+ *   160 — Deputy director (e-shop „Deputy director" / „Zástupce ředitele")
+ *   161 — Physics teacher
+ *   163 — Chemistry teacher
+ *   164 — Teacher (e-shop „Teacher" / „Učitel" / „Učitelka")
+ *   166 — Parent
+ *   168 — Student
+ *   170 — Homeschooling
+ *   172 — Other (fallback pro neprázdnou, ale neznámou hodnotu)
+ *   173 — DOPLNIT (placeholder; nepoužívat pro mapování — necháme pro ruční doplnění)
+ *   177 — ICT coordinator
+ *   178 — Secretary/economist (e-shop „Accountant" / „Hospodář")
+ *   179 — Physics and chemistry teacher
+ *   274 — Coordinator of studies
+ *
+ * Vrací `null`, pokud je vstup prázdný (žádná hodnota se do payloadu nezapíše). Pokud je vstup
+ * neprázdný a žádné konkrétní pravidlo nesedne, vrací 172 (Other).
+ */
+function mapPipedrivePersonPositionToOptionId(rawPosition: string): number | null {
+  const trimmed = String(rawPosition || '').trim();
+  if (!trimmed) return null;
+
+  const normalized = normalizePipedriveSearchText(trimmed).toLowerCase();
+
+  /** Specifická pole „učitel fyziky a chemie" musí předcházet samostatným fyzika/chemie. */
+  const hasPhysics = /\b(fyzik|physic)\w*/.test(normalized);
+  const hasChemistry = /\b(chemi|chemic)\w*/.test(normalized);
+  const looksLikeTeacher = /\b(ucitel|teacher)\w*/.test(normalized);
+
+  if (looksLikeTeacher && hasPhysics && hasChemistry) return 179;
+  if (looksLikeTeacher && hasPhysics) return 161;
+  if (looksLikeTeacher && hasChemistry) return 163;
+
+  if (/\b(zastupc|deputy)\w*/.test(normalized)) return 160;
+  if (/\b(headmaster|reditel|director|principal)\w*/.test(normalized)) return 159;
+  if (/\b(coordinator of studies|koordinator studi)\w*/.test(normalized)) return 274;
+  if (/\bict\b/.test(normalized) || /(koordinator ict|ict coordinator)/.test(normalized)) return 177;
+  if (/\b(secretary|economist|hospodar|ucetn|accountant)\w*/.test(normalized)) return 178;
+  if (/\b(parent|rodic)\w*/.test(normalized)) return 166;
+  if (/\b(student|zak|pupil)\w*/.test(normalized)) return 168;
+  if (/(homeschool|home schooling|domaci vzdelav|domaci skolovan)/.test(normalized)) return 170;
+  if (looksLikeTeacher) return 164;
+
+  return 172;
 }
 
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
@@ -11668,6 +11788,68 @@ async function getOrganizationCurrentDealOwnerUserId(
     console.log(`[Pipedrive] Org current_deal_owner read failed for org ${orgId}: ${e.message}`);
     return null;
   }
+}
+
+/**
+ * Sjednocená logika pro nastavení vlastníka dealu (`user_id`) napříč všemi cestami,
+ * které v Pipedrivu zakládají deal (e‑shop kartová/převodová objednávka, školní objednávka,
+ * admin manuální /admin/pipedrive/deals).
+ *
+ * Pořadí priorit:
+ *   1) `explicitOwnerUserId` — pokud caller (typicky admin) výslovně určí vlastníka.
+ *   2) Custom org pole „current deal owner" (ID 4056, key `7825f3fdbf7a73a202047a54a429f556a5406b81`).
+ *   3) `lookupOwnerUserId` — vlastník odvozený z existujících dealů organizace (`upsertPipedriveSchoolOrganization`).
+ *   4) `fallbackOwnerUserId` — ENV fallback (např. `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`).
+ *
+ * Bez `orgId` (typicky čistě B2C bez organizace) se vrací `null` a deal převezme vlastník
+ * držitel API tokenu — tam nemáme z čeho čerpat.
+ */
+async function resolvePipedriveDealOwnerUserId(
+  apiToken: string,
+  params: {
+    orgId?: number | null;
+    explicitOwnerUserId?: number | null;
+    lookupOwnerUserId?: number | null;
+    fallbackOwnerUserId?: number | null;
+    contextLabel?: string;
+  },
+): Promise<number | null> {
+  const ctx = params.contextLabel || 'Pipedrive deal';
+  const explicit = params.explicitOwnerUserId != null && params.explicitOwnerUserId > 0
+    ? params.explicitOwnerUserId
+    : null;
+  if (explicit) {
+    console.log(`[${ctx}] owner z explicitního overrideu: user_id=${explicit}`);
+    return explicit;
+  }
+
+  const orgId = params.orgId != null && params.orgId > 0 ? params.orgId : null;
+  if (orgId) {
+    const fromOrgField = await getOrganizationCurrentDealOwnerUserId(apiToken, orgId);
+    if (fromOrgField) {
+      console.log(`[${ctx}] owner z org pole current_deal_owner (ID 4056): user_id=${fromOrgField}`);
+      return fromOrgField;
+    }
+  }
+
+  const fromLookup = params.lookupOwnerUserId != null && params.lookupOwnerUserId > 0
+    ? params.lookupOwnerUserId
+    : null;
+  if (fromLookup) {
+    console.log(`[${ctx}] owner z lookupu existujících dealů: user_id=${fromLookup} (current_deal_owner prázdné)`);
+    return fromLookup;
+  }
+
+  const fallback = params.fallbackOwnerUserId != null && params.fallbackOwnerUserId > 0
+    ? params.fallbackOwnerUserId
+    : null;
+  if (fallback) {
+    console.log(`[${ctx}] owner z ENV fallbacku: user_id=${fallback}`);
+    return fallback;
+  }
+
+  console.log(`[${ctx}] žádný owner — deal převezme vlastníka API tokenu.`);
+  return null;
 }
 
 async function organizationHasCustomerLabel(apiToken: string, orgId: number): Promise<boolean> {
@@ -11835,7 +12017,7 @@ function pickBestPipedriveOrganizationMatch(items: any[], expectedName: string) 
 
 async function lookupSchoolInPipedrive(
   apiToken: string,
-  params: { ico?: string; name?: string; includePipedriveRaw?: boolean },
+  params: { ico?: string; name?: string; includePipedriveRaw?: boolean; strictIcoMatch?: boolean },
 ): Promise<PipedriveSchoolLookup> {
   const cacheKey = buildPipedriveLookupCacheKey(params);
   const cached = pipedriveSchoolLookupCache.get(cacheKey);
@@ -11846,6 +12028,10 @@ async function lookupSchoolInPipedrive(
   const includePipedriveRaw = !!params.includePipedriveRaw;
   const ico = String(params.ico || '').trim();
   const name = String(params.name || '').trim();
+  /** strictIcoMatch: když je IČO zadané a v Pipedrive žádná organizace s tímhle IČO není,
+   *  vrátí se prázdný výsledek (status `new`) — zabrání to chybnému spárování s jinou
+   *  organizací stejného jména, jejíž IČO by se navíc v upsertu přepsalo novou hodnotou. */
+  const strictIcoMatch = !!params.strictIcoMatch;
   let items: any[] = [];
   let matchedBy: 'ico' | 'name' | null = null;
 
@@ -11853,7 +12039,7 @@ async function lookupSchoolInPipedrive(
     items = await searchPipedriveOrganizations(apiToken, ico, { fields: 'custom_fields' });
     if (items.length > 0) matchedBy = 'ico';
   }
-  if (!items.length && name) {
+  if (!items.length && name && !(strictIcoMatch && ico)) {
     items = await searchPipedriveOrganizations(apiToken, name);
     if (items.length > 0) matchedBy = 'name';
   }
@@ -11960,17 +12146,26 @@ async function lookupSchoolInPipedrive(
 
 async function upsertPipedriveSchoolOrganization(
   apiToken: string,
-  params: { schoolName: string; ico?: string; address?: string },
+  params: { schoolName: string; ico?: string; address?: string; strictIcoMatch?: boolean },
 ) {
   const ico = String(params.ico || '').trim();
   const schoolName = String(params.schoolName || '').trim();
   const address = String(params.address || '').trim();
-  const lookup = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName });
+  /** strictIcoMatch: pro objednávky z eshopu — když má objednávka IČO a v Pipedrive není
+   *  organizace s tímhle IČO, založí se nová z údajů objednávky (IČO + název školy + adresa),
+   *  místo aby se připlácla k existující organizaci stejného jména s jiným IČO. */
+  const strictIcoMatch = !!params.strictIcoMatch;
+  const lookup = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName, strictIcoMatch });
   if (lookup.orgId) {
     const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
     const updatePayload: Record<string, any> = {};
     if (address) updatePayload.address = address;
-    if (icoFieldKey && lookup.matchedBy !== 'ico') updatePayload[icoFieldKey] = ico;
+    /** IČO na existující organizaci doplníme jen pokud byla spárovaná podle jména
+     *  a strictIcoMatch je vypnutý (admin tooly). U strictIcoMatch by se sem ani
+     *  nemělo dostat — když IČO nematchne, lookup vrátí orgId=null a založí se nová. */
+    if (icoFieldKey && lookup.matchedBy !== 'ico' && !strictIcoMatch) {
+      updatePayload[icoFieldKey] = ico;
+    }
     if (Object.keys(updatePayload).length > 0) {
       try {
         await pipedriveRequest(apiToken, `/organizations/${lookup.orgId}`, {
@@ -11988,6 +12183,9 @@ async function upsertPipedriveSchoolOrganization(
   const payload: Record<string, any> = { name: schoolName };
   if (address) payload.address = address;
   if (icoFieldKey && ico) payload[icoFieldKey] = ico;
+  console.log(
+    `[Pipedrive] Org create (strictIco=${strictIcoMatch}): name="${schoolName}" ico="${ico || '(none)'}" address="${address || '(none)'}"`,
+  );
   const created = await pipedriveRequest<any>(apiToken, '/organizations', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -12032,12 +12230,16 @@ function readPipedrivePersonEmails(person: any) {
 
 async function findOrCreatePipedrivePerson(
   apiToken: string,
-  params: { orgId: number; name: string; email?: string; phone?: string },
+  params: { orgId: number; name: string; email?: string; phone?: string; position?: string },
 ) {
   const orgId = params.orgId;
   const name = String(params.name || '').trim();
   const email = String(params.email || '').trim().toLowerCase();
   const phone = String(params.phone || '').trim();
+  const position = String(params.position || '').trim();
+
+  /** Custom field key pro „pozici" se resolvuje jen když máme co zapsat — šetří `/personFields` request. */
+  const positionFieldKey = position ? await getPipedrivePersonPositionFieldKey(apiToken) : null;
 
   if (email) {
     const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
@@ -12047,6 +12249,9 @@ async function findOrCreatePipedrivePerson(
       if (existingOrgId !== orgId) patch.org_id = orgId;
       if (name && String(globalHit.name || '').trim() !== name) patch.name = name;
       if (phone) patch.phone = phone;
+      /** Pozici existující osoby zásadně nepřepisujeme — search response nevrací custom pole spolehlivě
+       *  a obchodník mohl pozici ručně doupřesnit (např. „ředitel" vs „učitel matematiky").
+       *  Pozice se zapisuje jen u nově zakládané osoby (níže `payload[positionFieldKey] = position`). */
       if (Object.keys(patch).length > 0) {
         try {
           await pipedriveRequest(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`, {
@@ -12071,9 +12276,26 @@ async function findOrCreatePipedrivePerson(
 
   if (existing?.id) return existing;
 
+  /** Nová osoba — z údajů objednávky / formuláře:
+   *   - name (jméno + příjmení v jednom poli, Pipedrive si first/last odvodí sám),
+   *   - email (primary), phone (primary),
+   *   - org_id = napojení na organizaci školy,
+   *   - position (custom field 9093, **enum** — namapuje string na option ID 159–274). */
   const payload: Record<string, any> = { name, org_id: orgId };
   if (email) payload.email = email;
   if (phone) payload.phone = phone;
+  let positionOptionId: number | null = null;
+  if (positionFieldKey && position) {
+    positionOptionId = mapPipedrivePersonPositionToOptionId(position);
+    if (positionOptionId) {
+      /** Pipedrive enum field očekává number (option_id), nikoli volný text — předchozí verze posílala
+       *  string a Pipedrive to tiše ignoroval. */
+      payload[positionFieldKey] = positionOptionId;
+    }
+  }
+  console.log(
+    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" position="${position || '(none)'}" → option_id=${positionOptionId ?? '(none)'} org_id=${orgId}`,
+  );
   const created = await pipedriveRequest<any>(apiToken, '/persons', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -12629,7 +12851,15 @@ app.post('/make-server-93a20b6f/admin/pipedrive/deals', async (c) => {
         }).catch(() => null)
       : null;
 
-    const ownerId = parsePipedriveNumericId(body.ownerId) || orgLookup?.ownerUserId || null;
+    /** Sjednocená logika výběru vlastníka: explicit `body.ownerId` (admin override) →
+     *  custom org pole „current deal owner" (ID 4056) → owner z existujících dealů org. */
+    const explicitOwnerId = parsePipedriveNumericId(body.ownerId);
+    const ownerId = await resolvePipedriveDealOwnerUserId(apiToken, {
+      orgId,
+      explicitOwnerUserId: explicitOwnerId,
+      lookupOwnerUserId: orgLookup?.ownerUserId ?? null,
+      contextLabel: 'Pipedrive admin manual deal',
+    });
 
     const deal = await createPipedriveDeal(apiToken, {
       title: String(body.title || '').trim() || `Deal ${new Date().toISOString().slice(0, 10)}`,
@@ -14661,6 +14891,25 @@ function getEshopProductCategoryPayload(): Record<string, unknown> {
   return { [key]: value };
 }
 
+/** Payload pro „Eshop ID" pole — naplnění `orders.order_number`. Zavolá se v create i refresh path; pokud
+ *  caller nepošle hodnotu, vrátí prázdný objekt (pole se přepisovat nebude).
+ *  Podporujeme nové (ORDER_NUMBER) i starší (ORDER_ID) env jméno – oba mapují na tutéž hodnotu. */
+function getEshopOrderIdPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  const value = String(orderNumber || '').trim();
+  if (!value) return {};
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_NUMBER_FIELD_KEY') || '').trim() ||
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY') || '').trim() ||
+    PIPEDRIVE_ESHOP_ORDER_NUMBER_FIELD_KEY_DEFAULT ||
+    PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
+  return { [key]: value };
+}
+
+/** Backward compatible alias pro interní použití. */
+function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  return getEshopOrderIdPayload(orderNumber);
+}
+
 /** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
 function getEshopCardPaidStatusPayload(): Record<string, unknown> {
   const key =
@@ -14670,6 +14919,17 @@ function getEshopCardPaidStatusPayload(): Record<string, unknown> {
     parsePipedriveNumericId(Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID'))
     ?? PIPEDRIVE_ESHOP_PAID_STATUS_OPTION_ID_DEFAULT;
   return { [key]: optId };
+}
+
+/** Payload pro pole „Eshop ID" — uloží `order_number` (např. „VB-2026-0123"). Prázdná hodnota
+ *  = nic neposíláme (Pipedrive by null neuložil tak, jak chceme). */
+function getEshopOrderIdPayload(orderNumber: string | null | undefined): Record<string, unknown> {
+  const key =
+    (Deno.env.get('PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY') || '').trim()
+    || PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
+  const value = String(orderNumber || '').trim();
+  if (!value) return {};
+  return { [key]: value };
 }
 
 function findPipedriveStatusOption(options: any[], wanted: 'open' | 'won'): any | null {
@@ -14951,12 +15211,75 @@ async function createPipedriveEshopDealAdvanced(
   return data?.data || null;
 }
 
+/** Mapování `orders.shipping_method` (lowercase enum z eshopu) → kód produktu v Pipedrive katalogu.
+ *  ENV override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_<METHOD>` (např. `_DPD`, `_PPL`, `_GLS`,
+ *  `_ZASILKOVNA`) přepíše default. Vrací `null`, když jde o neznámou nebo prázdnou metodu. */
+function getEshopShippingProductCode(shippingMethod: string | null | undefined): string | null {
+  const m = String(shippingMethod || '').trim().toLowerCase();
+  if (!m) return null;
+  const envKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_${m.toUpperCase()}`;
+  const fromEnv = (Deno.env.get(envKey) || '').trim();
+  if (fromEnv) return fromEnv.toUpperCase();
+  switch (m) {
+    case 'dpd': return 'DPD';
+    case 'ppl': return 'PPL';
+    case 'gls': return 'GLS';
+    case 'zasilkovna': return 'ZZ';
+    default: return null;
+  }
+}
+
+/** Přidá řádek s dopravou na Pipedrive deal — produkt z katalogu identifikovaný kódem
+ *  (PPL/DPD/GLS/ZZ). Když produkt v Pipedrivu pod tímto kódem neexistuje, jen zaloguje
+ *  warning a pokračuje (deal nepadne). Cena je `orders.shipping_price` v halířích → koruny. */
+async function addPipedriveDealShippingLineItem(
+  apiToken: string,
+  dealId: number,
+  shippingMethod: string | null | undefined,
+  shippingPriceHaler: number,
+  pickupPointName: string | null | undefined,
+  orderIndex: number,
+  codeToPdId: Map<string, number | null>,
+): Promise<void> {
+  const code = getEshopShippingProductCode(shippingMethod);
+  if (!code) {
+    console.log(`[Pipedrive eshop] skip shipping line: unknown method "${shippingMethod || ''}"`);
+    return;
+  }
+  const priceCzk = Math.max(0, Math.round((Number(shippingPriceHaler) || 0) / 100));
+  const pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  if (!pipedriveProductId) {
+    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code}" not found`);
+    return;
+  }
+  /** Poznámku „Z‑Point: Praha…" připíšeme do `comments`, aby obchodník v dealu hned viděl
+   *  konkrétní výdejnu (jen u Zásilkovny — ostatní dopravci ji nemají). */
+  const comments = String(pickupPointName || '').trim();
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealId}/products`, {
+      method: 'POST',
+      body: JSON.stringify({
+        product_id: pipedriveProductId,
+        quantity: 1,
+        item_price: priceCzk,
+        order: orderIndex,
+        ...(comments ? { comments } : {}),
+      }),
+    });
+    console.log(
+      `[Pipedrive eshop] shipping line added: code=${code} pd_product_id=${pipedriveProductId} price=${priceCzk}${comments ? ` pickup="${comments.slice(0, 60)}"` : ''}`,
+    );
+  } catch (error: any) {
+    console.log(`[Pipedrive eshop] shipping line ${pipedriveProductId} (${code}): ${error.message}`);
+  }
+}
+
 async function addPipedriveDealLineItemsFromOrder(
   apiToken: string,
   dealId: number,
   orderItems: any[],
   catalogById: Map<string, any>,
-) {
+): Promise<{ codeToPdId: Map<string, number | null>; lastOrder: number }> {
   /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
   const codeToPdId = new Map<string, number | null>();
   let ord = 0;
@@ -15005,6 +15328,9 @@ async function addPipedriveDealLineItemsFromOrder(
       console.log(`[Pipedrive eshop] deal product ${pipedriveProductId}: ${error.message}`);
     }
   }
+  /** Vrací sdílenou cache kódů (použije ji caller pro doplnění shipping line, ať se kód
+   *  nehledá podruhé) a poslední `order` index, aby další řádky pokračovaly. */
+  return { codeToPdId, lastOrder: ord };
 }
 
 async function persistPipedriveEshopOrderState(
@@ -15053,7 +15379,7 @@ async function refreshEshopPipedriveDealFromDb(
 
   const { data: row, error: rowErr } = await sb
     .from('orders')
-    .select('pipedrive_deal_id')
+    .select('pipedrive_deal_id, order_number')
     .eq('id', orderId)
     .single();
 
@@ -15071,6 +15397,8 @@ async function refreshEshopPipedriveDealFromDb(
     return await fail('invalid_deal_id', existing);
   }
 
+  const orderNumber = String((row as any).order_number || '').trim();
+
   const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
@@ -15082,6 +15410,7 @@ async function refreshEshopPipedriveDealFromDb(
   }
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
+  Object.assign(patchBody, getEshopOrderNumberPayload(String((row as any).order_number || '')));
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(patchBody, getEshopCardPaidStatusPayload());
   }
@@ -15137,7 +15466,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -15176,10 +15505,15 @@ async function syncEshopOrderToPipedriveFromDb(
   let orgLookupForTitle: { orgName: string | null } | null = null;
   if (isB2b) {
     const schoolName = schoolNameRaw || personName;
+    /** strictIcoMatch: pokud objednávka má IČO a v Pipedrive není organizace s tímhle IČO,
+     *  založí se nová organizace z údajů objednávky (IČO + název školy + adresa). Nepřilepí
+     *  se k jiné organizaci stejného jména s jiným IČO (a nepřepíše jí IČO). Pokud IČO není
+     *  vyplněné, lookup pokračuje fuzzy podle jména jako dřív. */
     const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
       schoolName,
       ico,
       address: [(order as any).street, (order as any).city, (order as any).zip].filter(Boolean).join(', '),
+      strictIcoMatch: ico.length > 0,
     });
     orgId = orgLookup.orgId;
     orgLookupForTitle = orgLookup;
@@ -15225,23 +15559,62 @@ async function syncEshopOrderToPipedriveFromDb(
   const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
   const printPayload = await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
-  const extraPayload: Record<string, unknown> = { ...printPayload, ...productCategoryPayload };
+  const orderNumberPayload = getEshopOrderNumberPayload(orderNumber);
+  const extraPayload: Record<string, unknown> = {
+    ...printPayload,
+    ...productCategoryPayload,
+    ...orderNumberPayload,
+  };
   if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
     Object.assign(extraPayload, getEshopCardPaidStatusPayload());
     console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
+  }
+  if (Object.keys(orderNumberPayload).length) {
+    console.log(`[Pipedrive eshop] eshop ID pole = ${orderNumber}`);
   }
   if (labelIds.length) {
     console.log(`[Pipedrive eshop] deal labels (${mode}): ${labelIds.join(',')}`);
   }
 
-  /** Pro B2B/e-shop deal taky převzít vlastníka z org pole „current deal owner" (4056). Pro B2C bez orgId zůstane API token vlastník. */
-  let dealOwnerUserId: number | null = null;
-  if (isB2b && orgId) {
-    dealOwnerUserId = await getOrganizationCurrentDealOwnerUserId(apiToken, orgId);
-    if (dealOwnerUserId) {
-      console.log(`[Pipedrive eshop] owner z org pole current_deal_owner: user_id=${dealOwnerUserId}`);
-    }
-  }
+  /** Pro e‑shop deal převzít vlastníka přes sjednocenou logiku — primárně z org pole
+   *  „current deal owner" (ID 4056), pak Daniel Ondrášek jako univerzální fallback.
+   *
+   *  Pravidla:
+   *    • **B2C jednotlivec** (bez IČO i bez školy) — vždy `b2c_card_won`, vlastník vždy
+   *      Daniel Ondrášek přes explicit override (`PIPEDRIVE_ESHOP_B2C_OWNER_ID` →
+   *      fallback na `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID`).
+   *      B2C nemá organizaci → org pole `current_deal_owner` se ani nečte.
+   *    • **B2B objednávka** (IČO nebo škola, kartová i převodová) — primárně org pole
+   *      `current_deal_owner` (ID 4056). Když je prázdné, **vždy Daniel Ondrášek**
+   *      (`PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID` → fallback na
+   *      `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` pro zpětnou kompatibilitu).
+   *      Dříve byl pro převody Gabriela Švédová (`PIPEDRIVE_ESHOP_TRANSFER_FALLBACK_OWNER_ID`),
+   *      tato cesta byla odstraněna — Daniel řeší všechny eshop B2B objednávky bez owner pole.
+   *  Když ani specifický fallback není nastaven, použije se obecný
+   *  `PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID`, jinak deal převezme vlastníka API tokenu. */
+  const isB2cOrder = !isB2b;
+  /** B2C explicit override: jednotlivec → Daniel Ondrášek vždy, bez ohledu na cokoliv. */
+  const b2cOwnerId = isB2cOrder
+    ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2C_OWNER_ID', 0)
+        || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
+    : 0;
+  /** Univerzální B2B fallback (kartová i převodová) — Daniel Ondrášek. Akceptuje historické
+   *  jméno `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` (Daniel je v něm nakonfigurovaný),
+   *  aby se nemusel měnit secret při deployi. */
+  const b2bFallbackOwnerId = isB2b
+    ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID', 0)
+        || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
+    : 0;
+  const eshopFallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
+  const dealOwnerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
+    orgId: isB2b ? orgId : null,
+    /** B2C jde explicit overridem (= 1. priorita, nezávisle na cokoliv). */
+    explicitOwnerUserId: b2cOwnerId > 0 ? b2cOwnerId : null,
+    fallbackOwnerUserId: b2bFallbackOwnerId > 0 ? b2bFallbackOwnerId : eshopFallbackOwnerId,
+    contextLabel: isB2cOrder
+      ? `Pipedrive eshop ${mode} (B2C jednotlivec → Daniel)`
+      : `Pipedrive eshop ${mode} (B2B → org pole / Daniel)`,
+  });
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
     title,
@@ -15263,9 +15636,24 @@ async function syncEshopOrderToPipedriveFromDb(
   const catalogProducts = await getAllProducts();
   const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p]));
   const lineItems = Array.isArray((order as any).order_items) ? (order as any).order_items : [];
+  let codeToPdIdShared: Map<string, number | null> = new Map();
+  let nextLineOrder = 0;
   if (lineItems.length) {
-    await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    const result = await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    codeToPdIdShared = result.codeToPdId;
+    nextLineOrder = result.lastOrder;
   }
+  /** Doprava jako samostatný produktový řádek na dealu (PPL / DPD / GLS / ZZ). Caller už zná
+   *  sdílenou cache code→pd_product_id, takže se nehledá podruhé. */
+  await addPipedriveDealShippingLineItem(
+    apiToken,
+    dealId,
+    String((order as any).shipping_method || ''),
+    Number((order as any).shipping_price) || 0,
+    String((order as any).pickup_point_name || '') || null,
+    nextLineOrder + 1,
+    codeToPdIdShared,
+  );
 
   const dealIdStr = String(dealId);
   const nowIso = new Date().toISOString();
@@ -15542,10 +15930,14 @@ async function syncSchoolOrderToPipedrive(
   if (!apiToken) return { skipped: true, reason: 'missing_api_token' as const };
 
   const ico = String(body?.customer?.ico || body?.customer?.vat || '').trim();
+  /** strictIcoMatch: pokud má objednávka IČO a v Pipedrive není organizace s tímhle IČO,
+   *  založí se nová organizace z údajů objednávky (IČO + název školy + adresa) místo
+   *  napojení na náhodnou stejnojmennou organizaci s jiným IČO. */
   const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
     schoolName: order.schoolName,
     ico,
     address: order.address,
+    strictIcoMatch: ico.length > 0,
   });
   if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' as const };
 
@@ -15557,36 +15949,30 @@ async function syncSchoolOrderToPipedrive(
   const pipelineId = isCustomerOrg ? pipelineUpsell : pipelineAkvizice;
   const stageId = isCustomerOrg ? stageUpsell : stageAkvizice;
 
-  /** Owner se primárně bere z custom pole organizace „current deal owner" (ID 4056). Teprve když není naplněno,
-   *  použije se vlastník z existujících dealů (lookup); jako poslední fallback ENV `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`.
+  /** Sjednocená logika: 1) explicit override (zde nemáme), 2) custom org pole „current deal owner" (ID 4056),
+   *  3) lookup z existujících dealů org, 4) ENV fallback `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`.
    *  Bez tohohle deal vždy patřil držiteli API tokenu (Daniel Ondrášek) místo přiděleného obchodníka. */
   const fallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
-  const ownerFromOrgField = await getOrganizationCurrentDealOwnerUserId(apiToken, orgLookup.orgId);
-  const ownerFromLookup = orgLookup.ownerUserId != null && orgLookup.ownerUserId > 0
-    ? orgLookup.ownerUserId
-    : null;
-  const ownerUserId = ownerFromOrgField
-    ?? ownerFromLookup
-    ?? (fallbackOwnerId > 0 ? fallbackOwnerId : null);
-  if (ownerFromOrgField) {
-    console.log(`[Pipedrive school order] owner z org pole current_deal_owner: user_id=${ownerFromOrgField}`);
-  } else if (ownerFromLookup) {
-    console.log(`[Pipedrive school order] owner z dealů org: user_id=${ownerFromLookup} (org pole prázdné)`);
-  } else if (fallbackOwnerId > 0) {
-    console.log(`[Pipedrive school order] owner z ENV fallbacku: user_id=${fallbackOwnerId}`);
-  } else {
-    console.log('[Pipedrive school order] Žádný owner z org pole / dealů a fallback ENV není — deal bez user_id (bude vlastník API tokenu).');
-  }
+  const ownerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
+    orgId: orgLookup.orgId,
+    lookupOwnerUserId: orgLookup.ownerUserId,
+    fallbackOwnerUserId: fallbackOwnerId,
+    contextLabel: 'Pipedrive school order',
+  });
 
   const orderFormFieldId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_FIELD_ID', 12463);
   const orderFormOptionId = pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FORM_LABEL_OPTION_ID', 48);
   const orderFormExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, orderFormFieldId, [orderFormOptionId]);
 
+  /** Pozice ze school_inquiry formuláře (např. „ředitelka", „učitel matematiky") — putuje do custom
+   *  pole na person v Pipedrivu, aby obchodník hned věděl, s kým jedná. */
+  const contactPosition = String(body?.customer?.position ?? body?.position ?? '').trim();
   const person = await findOrCreatePipedrivePerson(apiToken, {
     orgId: orgLookup.orgId,
     name: order.contactName,
     email: order.email,
     phone: order.phone,
+    position: contactPosition,
   }).catch((error: any) => {
     console.log(`[Pipedrive] Person sync error: ${error.message}`);
     return null;
@@ -15651,9 +16037,14 @@ async function syncSchoolOrderToPipedrive(
 app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
   try {
     const expected = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    /** Nový API-keys model: u sb_secret_… formátu Supabase gateway přepisuje/strippuje
+     *  Authorization Bearer mezi Edge funkcemi (zatímco legacy JWT projde nezměněn).
+     *  Akceptujeme proto obě varianty — Bearer v Authorization (legacy) i hodnotu v `apikey` headeru. */
     const auth = c.req.header('Authorization') || '';
-    const token = auth.replace(/^Bearer\s+/i, '').trim();
-    if (!expected || token !== expected) {
+    const tokenFromAuth = auth.replace(/^Bearer\s+/i, '').trim();
+    const tokenFromApikey = (c.req.header('apikey') || c.req.header('apiKey') || '').trim();
+    const matches = !!expected && (tokenFromAuth === expected || tokenFromApikey === expected);
+    if (!matches) {
       return c.json({ error: 'Unauthorized.' }, 401);
     }
     const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };

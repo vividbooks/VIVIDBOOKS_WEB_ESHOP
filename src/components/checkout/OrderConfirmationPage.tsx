@@ -5,6 +5,7 @@ import { SEOHead } from '../SEOHead';
 import { CartItem, useCart } from '../../contexts/CartContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { getPaymentIntentTrackingFromStorage } from '../../utils/checkoutThankYouRedirect';
+import { clearCheckoutDraftId } from '../../utils/checkoutDraftId';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
@@ -91,6 +92,7 @@ export function OrderConfirmationPage() {
       setError('');
       if (!clearedRef.current) {
         clearCart();
+        clearCheckoutDraftId();
         clearedRef.current = true;
       }
     },

@@ -84,6 +84,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `PIPEDRIVE_API_TOKEN` | Pipedrive API. |
 | `PIPEDRIVE_DEFAULT_STAGE_ID`, `PIPEDRIVE_DEFAULT_OWNER_ID`, … | Pipeline / deal logika. |
 | `PIPEDRIVE_ESHOP_*` | E‑shop dealy v Pipedrivu (viz `.env.example`). |
+| `PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY` | Hash custom pole „Eshop ID" (UI ID 12586) — eshop ho plní `orders.order_number` při založení dealu (`syncEshopOrderToPipedriveFromDb`) a refresh PUTu (`refreshEshopPipedriveDealFromDb`). Webhook `pipedrive-inbound-deal` ho čte pro lookup existující objednávky. Default v kódu: `26e4a2f8dc44e49f369c468ccc816ad668b37d92`. |
 | `PIPEDRIVE_PRODUCT_CODE_FIELD` | Volitelně jeden klíč (nebo tečková cesta) v KV produktu pro **kód** odpovídající poli *Product code* v Pipedrivu; řádky dealu se přidají přes `GET /api/v2/products/search` (`exact_match` na `code`). Bez nastavení se bere heuristika (`pipedriveProductCode`, metadata, `shoptetId`, `isbn`, …). **Řádky `bundle:`** se zatím do dealu nepřidávají (nutné rozvinutí z definice balíčku). |
 | `PIPEDRIVE_SCHOOL_ORDER_*`, `PIPEDRIVE_ORG_*` | Školní poptávka z webu → deal v Pipedrivu (pipeline podle štítku customer u org; `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID` = user_id při chybějícím owner z CRM). |
 | `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN` | Slack integrace. |
@@ -113,9 +114,18 @@ Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `stripe-webhook`, `create-payment-intent`, `resume-checkout` |
 | `BASECOM_API_TOKEN`, `BASECOM_ORDER_STATUS_ID`, `BASECOM_CUSTOM_SOURCE_ID`, `BASECOM_CANCELLED_ORDER_STATUS_ID`, `BASECOM_INVENTORY_FEED_URL` | Base.com, sklad, export |
 | `IDOKLAD_CLIENT_ID`, `IDOKLAD_CLIENT_SECRET`, číselníky `IDOKLAD_*` | Faktury po platbě (`process-export-queue`) |
-| `PIPEDRIVE_INBOUND_WEBHOOK_SECRET`, `PIPEDRIVE_INBOUND_PIPELINE_IDS`, … | `pipedrive-inbound-deal` |
+| `PIPEDRIVE_INBOUND_WEBHOOK_SECRET`, `PIPEDRIVE_INBOUND_PIPELINE_IDS`, `PIPEDRIVE_INBOUND_SHIPPING_METHOD` (default `ppl`), `PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER`, `PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD` | `pipedrive-inbound-deal` |
 
 Kompletní Stripe/Basecom/iDoklad tabulky: [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+### Pipedrive inbound webhook — chování
+
+Webhook `pipedrive-inbound-deal` volaný z Pipedrive po `won` rozlišuje dva scénáře přes pole „Eshop ID" (custom field UI ID 12586, hash `26e4a2f8…`):
+
+- **A) Pole prázdné** (deal vznikl ručně v CRM) → INSERT do `orders` s `source='pipedrive'`, doprava PPL, paid, push do `export_queue` (`basecom` + `idoklad`) a synchronní spuštění `process-export-queue`. V admin seznamu (`/admin/objednavky`) má badge „Pipedrive".
+- **B) Pole vyplněné** (deal vznikl synchronizací z e‑shopu — typicky platba převodem) NEBO existuje `orders.pipedrive_deal_id = <deal>` → UPDATE existující objednávky: `DELETE` + `INSERT` všech `order_items` z dealu, přepočet `subtotal`/`shipping`/`total`, `payment_status='paid'`, `paid_at = coalesce(paid_at, now())`. Pak push do `export_queue` jen pro service, kde ještě není `pending`/`processing`/`done` řádek (idempotence). Audit: `order_events.event_type = 'pipedrive_inbound_update'`. `source` zůstává `eshop`.
+
+Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`, default `eshop`). Filtr v admin seznamu: query `?source=eshop|pipedrive` na `admin-orders` Edge funkci.
 
 ---
 

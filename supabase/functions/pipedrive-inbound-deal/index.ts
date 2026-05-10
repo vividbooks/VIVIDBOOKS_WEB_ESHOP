@@ -1,16 +1,32 @@
 /**
  * Inbound: Pipedrive deal (typicky WON) → objednávka v Postgres + fronta exportu (Base.com / volitelně iDoklad).
  *
+ * Webhook rozlišuje dva scénáře podle pole „Eshop ID" (custom field 26e4a2f8…, UI ID 12586):
+ *
+ *   A) Pole je **prázdné** → deal byl ručně založený obchodníkem v CRM. Vytvoříme NOVOU
+ *      objednávku se zdrojem `pipedrive`, dopravou PPL a předáme rovnou do Base.com a iDokladu.
+ *
+ *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
+ *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
+ *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
+ *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at`, a teprve teď ji pošleme do Base
+ *      a iDokladu (eshop ji při převodu do Base nepouštěl). Re-export je idempotentní — pokud už
+ *      `done` řádek pro service existuje, druhý webhook ho znovu nezakládá.
+ *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
- *   Tělo = standardní JSON webhooku (meta.id / current.id = deal ID).
+ *   Tělo = standardní JSON webhooku (meta.entity_id / current.id / data.id = deal ID).
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
  * - GET/HEAD → vždy 200 (Pipedrive při kontrole často volá URL bez ?token=; s tokenem vracíme bohatší JSON).
- * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible“.
+ * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
- * Bez osoby / bez e-mailu / nulová hodnota: objednávka se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
- * Volitelně: PIPEDRIVE_INBOUND_PIPELINE_IDS (čárkou oddělená ID pipeline, prázdné = všechny).
+ * Bez osoby / bez e-mailu / nulová hodnota: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
+ * Volitelně:
+ *   - PIPEDRIVE_INBOUND_PIPELINE_IDS (čárkou oddělená ID pipeline, prázdné = všechny),
+ *   - PIPEDRIVE_INBOUND_SHIPPING_METHOD (default `ppl`),
+ *   - PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER (default 8900 = 89 Kč),
+ *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
  *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
@@ -24,8 +40,14 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
 };
 
-const DEFAULT_SHIPPING_METHOD = 'dpd';
+const DEFAULT_SHIPPING_METHOD = 'ppl';
 const DEFAULT_SHIPPING_PRICE_HALER = 8900;
+
+/** Custom pole „Eshop ID" na dealu (UI ID 12586). Při založení dealu z e‑shopu ho plní
+ *  `make-server-93a20b6f` přes `getEshopOrderIdPayload()` hodnotou `order_number`. Pokud je vyplněné,
+ *  webhook deal považuje za pokračování e‑shopové objednávky a místo nového INSERTu provede UPDATE +
+ *  re-export. Pokud je prázdné, deal je ručně založený v CRM → vznikne nová objednávka se zdrojem `pipedrive`. */
+const PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT = '26e4a2f8dc44e49f369c468ccc816ad668b37d92';
 
 const ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON =
   'Pipedrive import: u dealu chybí osoba i kontakt u organizace. Doplňte u objednávky e-mail a kontakt na zákazníka.';
@@ -171,6 +193,18 @@ function parsePipedriveEntityId(value: unknown): number | null {
     if (nested !== undefined && nested !== value) return parsePipedriveEntityId(nested);
   }
   return null;
+}
+
+/** Vyčte hodnotu pole „Eshop ID" z dealu. Hash klíče lze přepsat env `PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD`,
+ *  ale výchozí hodnota odpovídá produkčnímu poli na Pipedrive UI ID 12586. Pipedrive vrací custom textová pole
+ *  jako string s hash klíčem (čísla / čistě číselné stringy ignorujeme — Pipedrive je vrátil jen omylem). */
+function readEshopOrderNumberFromDeal(deal: Record<string, unknown>): string {
+  const fieldKey = (Deno.env.get('PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD') || '').trim()
+    || PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
+  const raw = (deal as Record<string, unknown>)[fieldKey];
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
+  return '';
 }
 
 function verifyInboundToken(req: Request, url: URL): boolean {
@@ -495,29 +529,217 @@ Deno.serve(async (req) => {
     ssl: 'require',
   });
 
+  /** Lookup mapování deal → existující eshop objednávka.
+   *
+   *  Priorita:
+   *    1) Pole „Eshop ID" (custom field 26e4a2f8…) → match přes `orders.order_number`.
+   *       Eshop hodnotu plní při zakládání dealu z webu (`syncEshopOrderToPipedriveFromDb` →
+   *       `getEshopOrderIdPayload`). Když je vyplněné, deal vznikl z eshopu a chceme UPDATE.
+   *    2) `pipedrive_deal_id` → match na `orders.pipedrive_deal_id` (záchranná síť pro deal,
+   *       kde někdo Eshop ID smazal, nebo pro re‑run webhooku po předchozím INSERTu z A scénáře).
+   *
+   *  Když ani jedno netrefí, deal je „ručně založený v CRM" → scénář A: nová objednávka
+   *  se zdrojem `pipedrive` a dopravou PPL.
+   */
+  const eshopOrderNumber = readEshopOrderNumberFromDeal(deal);
+
   try {
-    const existing = await sql<{ id: string }[]>`
-      select id from public.orders where pipedrive_deal_id = ${dealIdStr} limit 1
-    `;
+    let existing: { id: string; order_number: string; status: string; payment_status: string | null }[] = [];
+    if (eshopOrderNumber) {
+      existing = await sql<{ id: string; order_number: string; status: string; payment_status: string | null }[]>`
+        select id, order_number, status, payment_status
+          from public.orders
+         where order_number = ${eshopOrderNumber}
+         limit 1
+      `;
+    }
+    if (existing.length === 0) {
+      existing = await sql<{ id: string; order_number: string; status: string; payment_status: string | null }[]>`
+        select id, order_number, status, payment_status
+          from public.orders
+         where pipedrive_deal_id = ${dealIdStr}
+         limit 1
+      `;
+    }
+
+    /* ============================================================================ */
+    /* SCÉNÁŘ B — UPDATE existující objednávky (deal pochází z eshopu, byl `won`).   */
+    /* ============================================================================ */
     if (existing.length > 0) {
-      logInbound('skipped', {
-        dealId,
-        reason: 'already_imported',
-        orderId: existing[0].id,
+      const target = existing[0];
+
+      /* Idempotence pro re-export: když už jednou Base.com / iDoklad doběhly do `done`
+       * (nebo právě běží), nepřidáváme druhý pending řádek. */
+      const exportRows = await sql<{ service: string; status: string }[]>`
+        select service, status
+          from public.export_queue
+         where order_id = ${target.id}::uuid
+           and service in ('basecom', 'idoklad')
+      `;
+      const existingExportServices = new Set(
+        exportRows
+          .filter((r) => r.status === 'pending' || r.status === 'processing' || r.status === 'done')
+          .map((r) => r.service),
+      );
+
+      await sql.begin(async (tx) => {
+        await tx`delete from public.order_items where order_id = ${target.id}::uuid`;
+        for (const line of lines) {
+          await tx`
+            insert into public.order_items (
+              order_id,
+              product_id,
+              product_name,
+              variant,
+              quantity,
+              unit_price,
+              total_price
+            ) values (
+              ${target.id}::uuid,
+              ${line.productId},
+              ${line.productName},
+              null,
+              ${line.quantity},
+              ${line.unitPriceHaler},
+              ${line.unitPriceHaler * line.quantity}
+            )
+          `;
+        }
+
+        await tx`
+          update public.orders set
+            subtotal = ${subtotal},
+            total = ${total},
+            shipping_price = ${shippingPrice},
+            shipping_method = ${shipMethod},
+            payment_status = 'paid',
+            status = 'paid',
+            paid_at = coalesce(paid_at, now()),
+            pipedrive_deal_id = ${dealIdStr},
+            updated_at = now()
+          where id = ${target.id}::uuid
+        `;
+
+        await tx`
+          insert into public.order_events (
+            order_id,
+            event_type,
+            from_status,
+            to_status,
+            details,
+            actor
+          ) values (
+            ${target.id}::uuid,
+            'pipedrive_inbound_update',
+            ${target.status},
+            'paid',
+            ${JSON.stringify({
+              pipedriveDealId: dealId,
+              eshopOrderNumber: eshopOrderNumber || null,
+              replacedItems: lines.length,
+              prevPaymentStatus: target.payment_status,
+            })}::jsonb,
+            'pipedrive'
+          )
+        `;
       });
-      return jsonResponse({
-        skipped: true,
-        reason: 'already_imported',
+
+      const customerSnapshot = {
+        email: email.trim(),
+        name,
+        phone: phone.trim() || null,
+        schoolName,
+        ico: hasIco ? ico : null,
+        street: street.trim() || '—',
+        city: city.trim() || '—',
+        zip: zip.trim() || '—',
+      };
+      const shippingSnapshot = { method: shipMethod, price: shippingPrice };
+
+      const queuedServices: string[] = [];
+      const skippedServices: string[] = [];
+
+      if (!existingExportServices.has('basecom')) {
+        await sql`
+          insert into public.export_queue (order_id, service, status, payload)
+          values (
+            ${target.id}::uuid,
+            'basecom',
+            'pending',
+            ${JSON.stringify({
+              orderId: target.id,
+              pipedriveDealId: dealId,
+              items: lines.map((l) => ({
+                productId: l.productId,
+                productName: l.productName,
+                quantity: l.quantity,
+                unitPrice: l.unitPriceHaler,
+              })),
+              customer: customerSnapshot,
+              shipping: shippingSnapshot,
+            })}::jsonb
+          )
+        `;
+        queuedServices.push('basecom');
+      } else {
+        skippedServices.push('basecom');
+      }
+
+      if (!existingExportServices.has('idoklad')) {
+        await sql`
+          insert into public.export_queue (order_id, service, status, payload)
+          values (
+            ${target.id}::uuid,
+            'idoklad',
+            'pending',
+            ${JSON.stringify({ orderId: target.id, pipedriveDealId: dealId })}::jsonb
+          )
+        `;
+        queuedServices.push('idoklad');
+      } else {
+        skippedServices.push('idoklad');
+      }
+
+      if (queuedServices.length > 0) {
+        try {
+          await invokeProcessExportQueue(req.url);
+        } catch (e) {
+          console.error('[pipedrive-inbound] process-export-queue:', e);
+        }
+      }
+
+      logInbound('updated', {
         dealId,
-        orderId: existing[0].id,
+        orderId: target.id,
+        orderNumber: target.order_number,
+        eshopOrderNumber: eshopOrderNumber || null,
+        replacedItems: lines.length,
+        queuedServices,
+        skippedServices,
+      });
+
+      return jsonResponse({
+        success: true,
+        mode: 'updated',
+        orderId: target.id,
+        orderNumber: target.order_number,
+        dealId,
+        eshopOrderNumber: eshopOrderNumber || null,
+        replacedItems: lines.length,
+        queuedServices,
+        skippedServices,
       }, 200);
     }
 
+    /* ============================================================================ */
+    /* SCÉNÁŘ A — nová objednávka (ručně založený deal v CRM, bez Eshop ID matche).  */
+    /* ============================================================================ */
     let inserted: { id: string; order_number: string }[];
     try {
       inserted = await sql<{ id: string; order_number: string }[]>`
       insert into public.orders (
         status,
+        source,
         customer_email,
         customer_name,
         customer_phone,
@@ -541,6 +763,7 @@ Deno.serve(async (req) => {
         paid_at
       ) values (
         ${orderStatus},
+        'pipedrive',
         ${email.trim()},
         ${name},
         ${phone.trim() || null},
@@ -578,6 +801,7 @@ Deno.serve(async (req) => {
           });
           return jsonResponse({
             skipped: true,
+            mode: 'skipped',
             reason: 'already_imported',
             dealId,
             orderId: race[0].id,
@@ -687,7 +911,7 @@ Deno.serve(async (req) => {
       )
     `;
 
-    logInbound('success', {
+    logInbound('created', {
       dealId,
       orderNumber: row.order_number,
       orderId: row.id,
@@ -697,9 +921,11 @@ Deno.serve(async (req) => {
     });
     return jsonResponse({
       success: true,
+      mode: 'created',
       orderId: row.id,
       orderNumber: row.order_number,
       dealId,
+      eshopOrderNumber: eshopOrderNumber || null,
       ...(missingPipedriveContact
         ? {
           warning:

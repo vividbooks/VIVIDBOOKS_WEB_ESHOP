@@ -16,6 +16,7 @@ type OrderListRow = {
   tracking_number: string | null;
   items_summary: string | null;
   poster_fulfillment_status: string | null;
+  source: string;
 };
 
 type OrderDetailRow = {
@@ -847,6 +848,12 @@ Deno.serve(async (req) => {
     const search = (url.searchParams.get('search') || '').trim();
     const filter = normalizeFilter(url.searchParams.get('filter'));
     const posterOnly = url.searchParams.get('poster') === '1' || url.searchParams.get('poster') === 'true';
+    const includeSuperseded = url.searchParams.get('includeSuperseded') === '1'
+      || url.searchParams.get('includeSuperseded') === 'true';
+    /** `source=eshop|pipedrive|all` — filtr zdroje objednávky pro admin seznam. */
+    const sourceParam = (url.searchParams.get('source') || '').trim().toLowerCase();
+    const sourceFilter: 'eshop' | 'pipedrive' | null =
+      sourceParam === 'eshop' || sourceParam === 'pipedrive' ? sourceParam : null;
     const searchPattern = `%${search}%`;
 
     const searchClause = search
@@ -857,6 +864,10 @@ Deno.serve(async (req) => {
       ? sql`and o.poster_fulfillment_status is not null`
       : sql``;
 
+    const sourceClause = sourceFilter
+      ? sql`and o.source = ${sourceFilter}`
+      : sql``;
+
     const filterClause = filter === 'new'
       ? sql`and o.status in ('paid', 'processing', 'exported')`
       : filter === 'shipped'
@@ -864,6 +875,13 @@ Deno.serve(async (req) => {
         : filter === 'problem'
           ? sql`and o.status in ('failed', 'cancelled')`
           : sql``;
+
+    /** Skrýt audit-trail záznamy supersession (cancelled s reason 'Superseded by new checkout attempt')
+     *  z výchozího seznamu — admin v hlavním přehledu nepotřebuje vidět historické pokusy stejného
+     *  draftu. Filter 'problem' i explicit search/`includeSuperseded=1` je nadále zobrazí. */
+    const supersededClause = (filter === 'problem' || search || includeSuperseded)
+      ? sql``
+      : sql`and not (o.status = 'cancelled' and o.cancelled_reason = 'Superseded by new checkout attempt')`;
 
     const [countRows, items] = await Promise.all([
       sql<{ count: number }[]>`
@@ -873,6 +891,8 @@ Deno.serve(async (req) => {
         ${searchClause}
         ${posterClause}
         ${filterClause}
+        ${supersededClause}
+        ${sourceClause}
       `,
       sql<OrderListRow[]>`
         select
@@ -889,6 +909,7 @@ Deno.serve(async (req) => {
           o.shipping_method,
           o.tracking_number,
           o.poster_fulfillment_status,
+          o.source,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
         left join public.order_items oi on oi.order_id = o.id
@@ -896,6 +917,8 @@ Deno.serve(async (req) => {
         ${searchClause}
         ${posterClause}
         ${filterClause}
+        ${supersededClause}
+        ${sourceClause}
         group by o.id
         order by o.created_at desc
         limit ${pageSize}
@@ -911,6 +934,7 @@ Deno.serve(async (req) => {
       filter,
       search,
       posterOnly,
+      source: sourceFilter,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load admin orders.';
