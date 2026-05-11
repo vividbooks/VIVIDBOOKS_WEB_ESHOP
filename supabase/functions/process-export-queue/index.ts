@@ -71,9 +71,55 @@ type BaseInventoryProduct = {
 type BasecomResponse = {
   status?: string;
   order_id?: number | string;
+  /** Některé odpovědi / proxy mohou vnořovat payload. */
+  data?: { order_id?: number | string; OrderId?: number | string };
+  OrderId?: number | string;
   error_message?: string;
   warnings?: unknown;
 };
+
+/** BaseLinker `addOrder` vrací `order_id` (číslo nebo řetězec); tolerujeme vnoření a alternativní klíče. */
+function extractBaseLinkerOrderId(raw: Record<string, unknown>): string | null {
+  const fromObj = (o: Record<string, unknown>): unknown =>
+    o.order_id ?? o.OrderId ?? o.orderId;
+  let v: unknown = fromObj(raw);
+  const nested = raw.data;
+  if ((v == null || v === '') && nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    v = fromObj(nested as Record<string, unknown>);
+  }
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const n = Math.trunc(v);
+    return n > 0 ? String(n) : null;
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return /^\d+$/.test(t) ? t : null;
+  }
+  return null;
+}
+
+/** Zapíše Base ID do JSON `orders.note` (stejně jako u Pipedrive metadat), textovou poznámku nemění. */
+function tryMergeBasecomOrderIdIntoOrderNote(note: string | null, basecomOrderId: string): string | null {
+  const id = String(basecomOrderId || '').trim();
+  if (!id) return null;
+  const trimmed = String(note || '').trim();
+  if (!trimmed) {
+    return JSON.stringify({ basecomOrderId: id });
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const o = parsed as Record<string, unknown>;
+      o.basecomOrderId = id;
+      const s = JSON.stringify(o);
+      return s.length > 12000 ? s.slice(0, 12000) : s;
+    }
+  } catch {
+    /* poznámka není JSON objekt */
+  }
+  return null;
+}
 
 type IdokladTokenResponse = {
   access_token?: string;
@@ -700,6 +746,8 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     invoice_city: order.city || '',
     invoice_postcode: order.zip || '',
     invoice_country_code: 'CZ',
+    /** Doplňkové pole 1 v Base — číslo objednávky z e‑shopu (`orders.order_number`), max 50 znaků (limit API). */
+    extra_field_1: String(order.order_number || '').trim().slice(0, 50),
     products: orderItems.map((item) => {
       const product = productMap.get(item.product_id);
       const matchedBaseProduct = matchBaseInventoryProduct(product, item, baseInventory.products);
@@ -754,9 +802,19 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     throw new Error(`Base.com addOrder failed: ${details}`);
   }
 
+  const basecomOrderId = extractBaseLinkerOrderId(data as unknown as Record<string, unknown>);
+  if (!basecomOrderId) {
+    throw new Error(
+      `Base.com addOrder: chybí order_id v odpovědi: ${JSON.stringify(data).slice(0, 500)}`,
+    );
+  }
+
+  const orderNotePatch = tryMergeBasecomOrderIdIntoOrderNote(order.note, basecomOrderId);
+
   return {
-    orderId: data.order_id ? String(data.order_id) : '',
+    orderId: basecomOrderId,
     sourceOrderStatus: order.status,
+    orderNotePatch,
   };
 }
 
@@ -1327,6 +1385,9 @@ Deno.serve(async (req) => {
 
         if (queueItem.service === 'basecom') {
           const result = await handleBasecomExport(sql, queueItem.order_id);
+          const noteFragment = result.orderNotePatch != null
+            ? sql`, note = ${result.orderNotePatch}`
+            : sql``;
 
           await sql.begin(async (tx) => {
             await tx`
@@ -1345,6 +1406,7 @@ Deno.serve(async (req) => {
                 basecom_order_id = ${result.orderId},
                 status = 'exported',
                 retry_count = ${queueItem.retry_count}
+                ${noteFragment}
               where id = ${queueItem.order_id}::uuid
             `;
 
