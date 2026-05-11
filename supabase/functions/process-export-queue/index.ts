@@ -746,6 +746,8 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     invoice_city: order.city || '',
     invoice_postcode: order.zip || '',
     invoice_country_code: 'CZ',
+    /** Doplňkové pole 1 v Base — číslo objednávky z e‑shopu (`orders.order_number`), max 50 znaků (limit API). */
+    extra_field_1: String(order.order_number || '').trim().slice(0, 50),
     products: orderItems.map((item) => {
       const product = productMap.get(item.product_id);
       const matchedBaseProduct = matchBaseInventoryProduct(product, item, baseInventory.products);
