@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
@@ -124,18 +125,18 @@ type OrderAlertRow = {
   payload: unknown;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -675,11 +676,11 @@ async function enrichOrderItemsWithStock(items: OrderItemRow[]) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -689,7 +690,7 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -758,7 +759,7 @@ Deno.serve(async (req) => {
 
       const order = orderRows[0];
       if (!order) {
-        return jsonResponse({ error: 'Order not found.' }, 404);
+        return jsonResponse(req, { error: 'Order not found.' }, 404);
       }
 
       const [items, events, workflowSteps, alerts] = await Promise.all([
@@ -831,7 +832,7 @@ Deno.serve(async (req) => {
       const stockData = await enrichOrderItemsWithStock(items);
       const basecomFulfillment = await loadBasecomFulfillment(order.basecom_order_id);
 
-      return jsonResponse({
+      return jsonResponse(req, {
         order,
         items: stockData.items,
         events,
@@ -926,7 +927,7 @@ Deno.serve(async (req) => {
       `,
     ]);
 
-    return jsonResponse({
+    return jsonResponse(req, {
       items,
       total: countRows[0]?.count ?? 0,
       page,
@@ -938,7 +939,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load admin orders.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

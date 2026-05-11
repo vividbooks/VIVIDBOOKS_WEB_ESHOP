@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
@@ -23,18 +24,18 @@ type OrderStatusRow = {
   poster_fulfillment_status: string | null;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -143,11 +144,11 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -157,19 +158,19 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   let payload: ActionPayload;
   try {
     payload = await req.json();
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
   }
 
   const { action, orderId, cancelledReason, trackingNumber, refreshPipedrive, posterFulfillmentStatus } = payload;
   if (!action || !orderId) {
-    return jsonResponse({ error: 'Missing action or orderId.' }, 400);
+    return jsonResponse(req, { error: 'Missing action or orderId.' }, 400);
   }
 
   const sql = postgres(databaseUrl, {
@@ -190,15 +191,15 @@ Deno.serve(async (req) => {
 
     const order = orderRows[0];
     if (!order) {
-      return jsonResponse({ error: 'Order not found.' }, 404);
+      return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
     if (action === 'set_poster_fulfillment') {
       if (order.poster_fulfillment_status == null) {
-        return jsonResponse({ error: 'Tato objednávka není v režimu plakátů.' }, 400);
+        return jsonResponse(req, { error: 'Tato objednávka není v režimu plakátů.' }, 400);
       }
       if (posterFulfillmentStatus !== 'pending' && posterFulfillmentStatus !== 'done') {
-        return jsonResponse({ error: 'Chybí platný posterFulfillmentStatus (pending | done).' }, 400);
+        return jsonResponse(req, { error: 'Chybí platný posterFulfillmentStatus (pending | done).' }, 400);
       }
       await sql`
         update public.orders
@@ -227,15 +228,15 @@ Deno.serve(async (req) => {
           'admin'
         )
       `;
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     if (action === 'retry_export') {
       if (order.poster_fulfillment_status != null) {
-        return jsonResponse({ error: 'Objednávky plakátů se do Base.com neexportují.' }, 400);
+        return jsonResponse(req, { error: 'Objednávky plakátů se do Base.com neexportují.' }, 400);
       }
       if (order.basecom_status !== 'failed') {
-        return jsonResponse({ error: 'Retry export is only available for failed Base.com exports.' }, 400);
+        return jsonResponse(req, { error: 'Retry export is only available for failed Base.com exports.' }, 400);
       }
 
       await sql.begin(async (tx) => {
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
         console.error('[admin-order-action] process-export-queue invocation failed:', message);
       }
 
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     if (action === 'retry_idoklad_export') {
@@ -316,7 +317,7 @@ Deno.serve(async (req) => {
         limit 1
       `;
       if (idokladRetryable.length === 0) {
-        return jsonResponse(
+        return jsonResponse(req, 
           {
             error:
               'Žádný export do iDokladu k opakování (očekává se failed, processing, nebo pending s chybou ve frontě).',
@@ -387,12 +388,12 @@ Deno.serve(async (req) => {
         console.error('[admin-order-action] process-export-queue (idoklad retry) failed:', message);
       }
 
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     if (action === 'cancel_order') {
       if (!['paid', 'processing', 'exported'].includes(order.status)) {
-        return jsonResponse({ error: 'Cancellation is not allowed for this order status.' }, 400);
+        return jsonResponse(req, { error: 'Cancellation is not allowed for this order status.' }, 400);
       }
 
       await sql.begin(async (tx) => {
@@ -446,16 +447,16 @@ Deno.serve(async (req) => {
         console.error('[admin-order-action] order_cancelled email failed:', message);
       }
 
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     if (action === 'mark_shipped') {
       if (order.status !== 'exported') {
-        return jsonResponse({ error: 'Only exported orders can be marked as shipped.' }, 400);
+        return jsonResponse(req, { error: 'Only exported orders can be marked as shipped.' }, 400);
       }
 
       if (!trackingNumber?.trim()) {
-        return jsonResponse({ error: 'Tracking number is required.' }, 400);
+        return jsonResponse(req, { error: 'Tracking number is required.' }, 400);
       }
 
       await sql.begin(async (tx) => {
@@ -510,7 +511,7 @@ Deno.serve(async (req) => {
         console.error('[admin-order-action] order_shipped email failed:', message);
       }
 
-      return jsonResponse({ success: true });
+      return jsonResponse(req, { success: true });
     }
 
     if (action === 'sync_pipedrive') {
@@ -524,28 +525,28 @@ Deno.serve(async (req) => {
       `;
       const pd = pdRows[0];
       if (!pd) {
-        return jsonResponse({ error: 'Order not found.' }, 404);
+        return jsonResponse(req, { error: 'Order not found.' }, 404);
       }
       const existing = String(pd.pipedrive_deal_id || '').trim();
       const refresh = refreshPipedrive === true;
       if (existing && !refresh) {
-        return jsonResponse({ error: 'Tato objednávka už má propojený Pipedrive deal.' }, 400);
+        return jsonResponse(req, { error: 'Tato objednávka už má propojený Pipedrive deal.' }, 400);
       }
       if (!existing && refresh) {
-        return jsonResponse({ error: 'Deal v Pipedrive ještě neexistuje — použijte Vytvořit deal.' }, 400);
+        return jsonResponse(req, { error: 'Deal v Pipedrive ještě neexistuje — použijte Vytvořit deal.' }, 400);
       }
       if (!refresh && ['cancelled', 'refunded', 'failed', 'draft'].includes(pd.status)) {
-        return jsonResponse({ error: 'Pro tento stav objednávky nelze vytvořit deal.' }, 400);
+        return jsonResponse(req, { error: 'Pro tento stav objednávky nelze vytvořit deal.' }, 400);
       }
 
       const mode = inferPipedriveEshopMode(pd);
       const syncUrl = getEshopPipedriveSyncUrl(req.url);
       if (!syncUrl) {
-        return jsonResponse({ error: 'Missing SUPABASE_URL for Pipedrive sync.' }, 500);
+        return jsonResponse(req, { error: 'Missing SUPABASE_URL for Pipedrive sync.' }, 500);
       }
       const headers = getFunctionAuthHeaders();
       if (!headers.Authorization) {
-        return jsonResponse({ error: 'Missing SUPABASE_SERVICE_ROLE_KEY for internal call.' }, 500);
+        return jsonResponse(req, { error: 'Missing SUPABASE_SERVICE_ROLE_KEY for internal call.' }, 500);
       }
 
       const syncRes = await fetch(syncUrl, {
@@ -562,7 +563,7 @@ Deno.serve(async (req) => {
       }
 
       if (!syncRes.ok) {
-        return jsonResponse(
+        return jsonResponse(req, 
           {
             error: typeof syncJson.error === 'string' ? syncJson.error : `Pipedrive sync HTTP ${syncRes.status}`,
             detail: syncText.slice(0, 800),
@@ -573,7 +574,7 @@ Deno.serve(async (req) => {
 
       if (syncJson.skipped === true) {
         const reason = typeof syncJson.reason === 'string' ? syncJson.reason : 'unknown';
-        return jsonResponse(
+        return jsonResponse(req, 
           {
             success: false,
             skipped: true,
@@ -602,13 +603,13 @@ Deno.serve(async (req) => {
         )
       `;
 
-      return jsonResponse({ success: true, result: syncJson });
+      return jsonResponse(req, { success: true, result: syncJson });
     }
 
-    return jsonResponse({ error: 'Unsupported action.' }, 400);
+    return jsonResponse(req, { error: 'Unsupported action.' }, 400);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Order action failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

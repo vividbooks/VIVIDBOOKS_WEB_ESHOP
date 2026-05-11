@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
+﻿import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
   heroBooksFanZIndexForFan,
   heroBooksGridCoverRotationDeg,
@@ -20,15 +20,15 @@ type Props = {
   navigate: (path: string) => void;
   showEmptyHint?: boolean;
   emptyHint?: React.ReactNode;
-  /** Výchozí 6; např. náhled na mobilu jen 4. */
+  /** VÃ½chozÃ­ 6; napÅ™. nÃ¡hled na mobilu jen 4. */
   maxItems?: number;
-  /** První hero slidery na homepage — eager + vyšší priorita prohlížeče pro obálky. */
+  /** PrvnÃ­ hero slidery na homepage â€” eager + vyÅ¡Å¡Ã­ priorita prohlÃ­Å¾eÄe pro obÃ¡lky. */
   priorityImageLoading?: boolean;
-  /** Jen u vějíře: která část má být navrchu. */
+  /** Jen u vÄ›jÃ­Å™e: kterÃ¡ ÄÃ¡st mÃ¡ bÃ½t navrchu. */
   fanZOrder?: HeroBooksFanZOrder;
   /**
-   * Jen u mřížky: „náhodné“ lehké natočení obálek (deterministické).
-   * Předejte např. `titlePlayfulSeed` slidu — změna seedu = jiné úhly.
+   * Jen u mÅ™Ã­Å¾ky: â€žnÃ¡hodnÃ©â€œ lehkÃ© natoÄenÃ­ obÃ¡lek (deterministickÃ©).
+   * PÅ™edejte napÅ™. `titlePlayfulSeed` slidu â€” zmÄ›na seedu = jinÃ© Ãºhly.
    */
   gridRotationSeed?: number;
 };
@@ -68,14 +68,14 @@ function CoverTile({
   gridUseCssGap: boolean;
   fanZOrder: HeroBooksFanZOrder;
   gridRotationSeed: number;
-  /** Horizontální rozestup ve vějíři (px na krok od středu). */
+  /** HorizontÃ¡lnÃ­ rozestup ve vÄ›jÃ­Å™i (px na krok od stÅ™edu). */
   fanSpreadPx: number;
   priorityImageLoading?: boolean;
 }) {
   const mid = (total - 1) / 2;
   const d = bi - mid;
 
-  /** Úhel natočení obálky — bobánek protínáčíme, aby zůstal vodorovný jako bublina. */
+  /** Ãšhel natoÄenÃ­ obÃ¡lky â€” bobÃ¡nek protÃ­nÃ¡ÄÃ­me, aby zÅ¯stal vodorovnÃ½ jako bublina. */
   let coverTiltDeg = 0;
   const outerStyle: React.CSSProperties = { position: 'relative' };
   const tiltStyle: React.CSSProperties = {};
@@ -100,13 +100,13 @@ function CoverTile({
     outerStyle.alignSelf = 'flex-end';
   }
 
-  /** Hover = přednostně vyšší vrstva (z-index), bez posunu po obrazovce nahoru — ten usekával stín v hero. */
+  /** Hover = pÅ™ednostnÄ› vyÅ¡Å¡Ã­ vrstva (z-index), bez posunu po obrazovce nahoru â€” ten usekÃ¡val stÃ­n v hero. */
   const outerHoverZ =
     variant === 'catalog'
       ? 'hover:z-[75] focus-visible:z-[75]'
       : 'hover:z-30 focus-visible:z-30';
   const liftOriginClass = arrangement === 'grid' ? 'origin-center' : 'origin-bottom';
-  /** Lehké zvětšení při hoveru — z-index zůstává hlavní „pop“; bez translate, aby stín v hero zůstal celý. */
+  /** LehkÃ© zvÄ›tÅ¡enÃ­ pÅ™i hoveru â€” z-index zÅ¯stÃ¡vÃ¡ hlavnÃ­ â€žpopâ€œ; bez translate, aby stÃ­n v hero zÅ¯stal celÃ½. */
   const liftLayerClass = `inline-block ${liftOriginClass} transition-transform duration-200 ease-out will-change-transform group-hover:scale-[1.07] group-focus-within:scale-[1.07] motion-reduce:group-hover:scale-100 motion-reduce:group-focus-within:scale-100`;
 
   const tiltLayerStyle: React.CSSProperties =
@@ -147,7 +147,10 @@ function CoverTile({
             className="max-h-full max-w-full object-contain"
             style={{ filter: coverShadow }}
             loading={priorityImageLoading ? (bi < 4 ? 'eager' : 'lazy') : 'lazy'}
-            fetchPriority={priorityImageLoading ? (bi < 4 ? 'high' : 'low') : 'low'}
+            ref={(imgEl) => {
+              if (!imgEl) return;
+              imgEl.fetchPriority = priorityImageLoading ? (bi < 4 ? 'high' : 'low') : 'low';
+            }}
           />
         </div>
         {bobanekLabel != null && bobanekLabel !== '' && (
@@ -267,7 +270,7 @@ export function HeroBooksFanCovers({
     />
   ));
 
-  /* Rezerva nad řadou pro bobánky (absolute); jen uvnitř bloku obálek — ne posun celého slidu. */
+  /* Rezerva nad Å™adou pro bobÃ¡nky (absolute); jen uvnitÅ™ bloku obÃ¡lek â€” ne posun celÃ©ho slidu. */
   const padTopGrid = variant === 'catalog' ? 'pt-12 pb-0.5 md:pt-14' : 'pt-7 pb-0.5 md:pt-8';
   const padTopFan = variant === 'catalog' ? 'pt-14 pb-1 md:pt-16 md:pb-1' : 'pt-9 pb-1 md:pt-10';
   const padTopRow = variant === 'catalog' ? 'pt-12 pb-1 md:pt-14' : 'pt-8 pb-1 md:pt-9';
@@ -305,3 +308,4 @@ export function HeroBooksFanCovers({
     </div>,
   );
 }
+

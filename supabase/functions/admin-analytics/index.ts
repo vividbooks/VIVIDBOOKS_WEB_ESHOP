@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
@@ -46,18 +47,18 @@ type CatalogProduct = {
   type?: string | null;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -214,11 +215,11 @@ async function loadCatalogProducts(requestUrl: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -228,7 +229,7 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const requestUrl = new URL(req.url);
@@ -654,7 +655,7 @@ Deno.serve(async (req) => {
     const shipmentCount = orders.filter(shippedEligible).length;
     const totalUnits = revenueItems.reduce((sum, item) => sum + item.quantity, 0);
 
-    return jsonResponse({
+    return jsonResponse(req, {
       period: {
         days,
         label: days === null ? 'Celé období' : `Posledních ${days} dní`,
@@ -728,7 +729,7 @@ Deno.serve(async (req) => {
       },
     });
   } catch (error) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: error instanceof Error ? error.message : 'Failed to load admin analytics.',
     }, 500);
   } finally {

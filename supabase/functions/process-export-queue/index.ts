@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
@@ -92,11 +93,11 @@ type IdokladInvoiceResponse = {
   };
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+});
 
 const cronSecret = Deno.env.get('PROCESS_EXPORT_QUEUE_CRON_SECRET')?.trim();
 
@@ -350,11 +351,11 @@ async function idokladSendIssuedInvoiceToPurchaser(
 
 let idokladAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -1110,20 +1111,20 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (!isAuthorizedCronRequest(req)) {
-    return jsonResponse({ error: 'Unauthorized.' }, 401);
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   if (!['GET', 'POST'].includes(req.method)) {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -1632,10 +1633,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse(summary);
+    return jsonResponse(req, summary);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Queue processing failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

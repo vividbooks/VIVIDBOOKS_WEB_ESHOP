@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+﻿import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
@@ -77,10 +77,10 @@ function cmsHeroTextColor(raw: unknown): string | undefined {
   return typeof raw === 'string' && raw.startsWith('#') && raw.length >= 4 ? raw : undefined;
 }
 
-/** Okraj IO pro odemykání obálek v řádku katalogu — nejdřív nahoře, níže až při přiblížení viewportu. */
+/** Okraj IO pro odemykÃ¡nÃ­ obÃ¡lek v Å™Ã¡dku katalogu â€” nejdÅ™Ã­v nahoÅ™e, nÃ­Å¾e aÅ¾ pÅ™i pÅ™iblÃ­Å¾enÃ­ viewportu. */
 const CATALOG_GROUP_IMAGE_ROOT_MARGIN = '96px 0px 340px 0px';
 
-/** URL hlavního obrázku slidu + obálek (pro předběžné načtení prvních dvou sliderů). */
+/** URL hlavnÃ­ho obrÃ¡zku slidu + obÃ¡lek (pro pÅ™edbÄ›Å¾nÃ© naÄtenÃ­ prvnÃ­ch dvou sliderÅ¯). */
 function collectHeroSlideImageUrls(slide: unknown, maxBookCovers: number): string[] {
   const urls: string[] = [];
   if (!slide || typeof slide !== 'object') return urls;
@@ -100,7 +100,7 @@ function collectHeroSlideImageUrls(slide: unknown, maxBookCovers: number): strin
   return urls;
 }
 
-/** Nadpis hero slidu — pill zvýraznění, náklon uniform / playful (CMS / vizuální editor). */
+/** Nadpis hero slidu â€” pill zvÃ½raznÄ›nÃ­, nÃ¡klon uniform / playful (CMS / vizuÃ¡lnÃ­ editor). */
 function HeroSlideHeading({
   slide,
   preset,
@@ -152,10 +152,10 @@ function HeroSlideHeading({
   );
 }
 
-/** Fade + lehký posun obsahu slidu při příjezdu / odjezdu (rychlejší než posun pásu). */
+/** Fade + lehkÃ½ posun obsahu slidu pÅ™i pÅ™Ã­jezdu / odjezdu (rychlejÅ¡Ã­ neÅ¾ posun pÃ¡su). */
 const HERO_CONTENT_FADE_MS = 520;
 
-/** Volitelné CTA tlačítko u CMS / notifikačních slidů (center, left-image). */
+/** VolitelnÃ© CTA tlaÄÃ­tko u CMS / notifikaÄnÃ­ch slidÅ¯ (center, left-image). */
 function HeroSlideCtaButton({
   slide,
   navigate,
@@ -167,7 +167,7 @@ function HeroSlideCtaButton({
   navigate: ReturnType<typeof useNavigate>;
   align: 'left' | 'center';
   isLight?: boolean;
-  /** Barva ohraničení a textu CTA u tmavého textu (např. vlastní `heroTextColor`). */
+  /** Barva ohraniÄenÃ­ a textu CTA u tmavÃ©ho textu (napÅ™. vlastnÃ­ `heroTextColor`). */
   accentHex?: string;
 }) {
   if (!heroSlideShouldShowCta(slide)) return null;
@@ -225,7 +225,7 @@ function CheckBadge({ label, light, accentHex }: { label: string; light?: boolea
   );
 }
 
-/** Obal textu přes fullscreen fotku — šířka podle obsahu, podbarvení z CMS. */
+/** Obal textu pÅ™es fullscreen fotku â€” Å¡Ã­Å™ka podle obsahu, podbarvenÃ­ z CMS. */
 function HeroFullImageTextCard({
   slide,
   children,
@@ -253,7 +253,7 @@ function HeroFullImageTextCard({
   );
 }
 
-/** CMS hero: pořadí a viditelnost bloků (editor). */
+/** CMS hero: poÅ™adÃ­ a viditelnost blokÅ¯ (editor). */
 function CmsHeroOrderedBlocks({
   slide,
   variant,
@@ -266,7 +266,7 @@ function CmsHeroOrderedBlocks({
   slide: any;
   variant: 'center' | 'centerBelow' | 'leftImage' | 'booksFan' | 'fullImage';
   heroAlignStart: boolean;
-  /** U `leftImage` a `booksFan`: text vodorovně uprostřed sloupce (`heroImageColumnAlign` center). */
+  /** U `leftImage` a `booksFan`: text vodorovnÄ› uprostÅ™ed sloupce (`heroImageColumnAlign` center). */
   leftImageTextCenter?: boolean;
   isLight: boolean;
   accentForUi?: string;
@@ -479,7 +479,7 @@ const stripStupen = (text: string) => text.replace(/\s+\d+\.\s*stupe.*$/i, '');
 const secondGradeSubjects = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie'];
 const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka'];
 
-/* ── helpers ──────────────────────────────────────────────────── */
+/* â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const getCategoryLink = (category: string) => {
   const cat = (category || '').toLowerCase();
   if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/cs/matematika-1-stupen');
@@ -497,7 +497,7 @@ const getDefaultDescription = (product: any) => {
   const type = (product.type || '').toLowerCase();
   const isInteractive = ['online', 'vividboard', 'interactive', 'license'].includes(type);
   if ((cat.includes('fyzika') || cat.includes('chemie')) && isInteractive) {
-    return 'Digit\u00e1ln\u00ed u\u010debnice — rozs\u00e1hl\u00fd digit\u00e1ln\u00ed p\u0159\u00edstup s interaktivn\u00edmi lekcemi, badatelsk\u00fdmi listy, testy a procvi\u010dov\u00e1n\u00edm.';
+    return 'Digit\u00e1ln\u00ed u\u010debnice â€” rozs\u00e1hl\u00fd digit\u00e1ln\u00ed p\u0159\u00edstup s interaktivn\u00edmi lekcemi, badatelsk\u00fdmi listy, testy a procvi\u010dov\u00e1n\u00edm.';
   }
   if (cat.includes('p\u0159\u00edrodopis') && isInteractive) {
     return 'Digit\u00e1ln\u00ed u\u010debnice P\u0159\u00edrodopisu s 3D modely, interaktivn\u00edmi lekcemi a badatelsk\u00fdmi listy.';
@@ -505,11 +505,11 @@ const getDefaultDescription = (product: any) => {
   return '';
 };
 
-/** Základ pro gradient pozadí loaderu hero — neutrální světle modrošedá (ne závislé na CMS ani webináři). */
+/** ZÃ¡klad pro gradient pozadÃ­ loaderu hero â€” neutrÃ¡lnÃ­ svÄ›tle modroÅ¡edÃ¡ (ne zÃ¡vislÃ© na CMS ani webinÃ¡Å™i). */
 const CATALOG_HERO_LOADER_SURFACE_HEX = '#dfe8f2';
 
 /**
- * Prázdný skeleton během načítání hero z API — stejná výška a zaoblení; pozadí z `heroSkeletonGradientsFromSurfaceHex(surfaceHex)`.
+ * PrÃ¡zdnÃ½ skeleton bÄ›hem naÄÃ­tÃ¡nÃ­ hero z API â€” stejnÃ¡ vÃ½Å¡ka a zaoblenÃ­; pozadÃ­ z `heroSkeletonGradientsFromSurfaceHex(surfaceHex)`.
  */
 function CatalogHeroSliderSkeleton({
   isPeekMode,
@@ -520,7 +520,7 @@ function CatalogHeroSliderSkeleton({
   isPeekMode: boolean;
   slideWPercent: number;
   gapWPercent: number;
-  /** HEX pro výpočet jemného gradientu (loader používá `CATALOG_HERO_LOADER_SURFACE_HEX`). */
+  /** HEX pro vÃ½poÄet jemnÃ©ho gradientu (loader pouÅ¾Ã­vÃ¡ `CATALOG_HERO_LOADER_SURFACE_HEX`). */
   surfaceHex: string;
 }) {
   const { centerSurface, sideSurface } = heroSkeletonGradientsFromSurfaceHex(surfaceHex);
@@ -605,11 +605,11 @@ export default function CatalogGrid() {
   const { groupingMode, setActiveSection, isDistributorMode } = useCatalog();
   const { webinars } = useWebinars();
 
-  /* ── hero slider ─────────────────────────────────────────── */
+  /* â”€â”€ hero slider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const [heroSlide,   setHeroSlide]   = useState(1);
-  /** Po přechodu musí zase být false — jinak v peek režimu zůstanou „vedlejší“ slidery na opacity 0 → velké bílé plochy. */
+  /** Po pÅ™echodu musÃ­ zase bÃ½t false â€” jinak v peek reÅ¾imu zÅ¯stanou â€žvedlejÅ¡Ã­â€œ slidery na opacity 0 â†’ velkÃ© bÃ­lÃ© plochy. */
   const [heroAnimate, setHeroAnimate] = useState(false);
-  /** Index slidu, který právě opouští střed (peek) — během heroAnimate u něj nechat plný obsah kvůli útlumu opacity. */
+  /** Index slidu, kterÃ½ prÃ¡vÄ› opouÅ¡tÃ­ stÅ™ed (peek) â€” bÄ›hem heroAnimate u nÄ›j nechat plnÃ½ obsah kvÅ¯li Ãºtlumu opacity. */
   const [heroSlideOutgoing, setHeroSlideOutgoing] = useState<number | null>(null);
   const heroSlideRef = useRef(heroSlide);
   heroSlideRef.current = heroSlide;
@@ -619,23 +619,23 @@ export default function CatalogGrid() {
     typeof window !== 'undefined' ? window.innerWidth : 1200,
   );
 
-  /* ── notifications ───────────────────────────────────────── */
+  /* â”€â”€ notifications â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const [notifBobanak, setNotifBobanak] = useState<any>(null);
   const [notifSliders, setNotifSliders] = useState<any[]>([]);
-  /** Hero slidery uložené v CMS (KV) — doplnění za pevné slidery */
+  /** Hero slidery uloÅ¾enÃ© v CMS (KV) â€” doplnÄ›nÃ­ za pevnÃ© slidery */
   const [cmsHeroSlides, setCmsHeroSlides] = useState<any[]>([]);
-  /** Dokončený první pokus o stažení (úspěch/chyba) — mezitím skeleton slideru. */
+  /** DokonÄenÃ½ prvnÃ­ pokus o staÅ¾enÃ­ (ÃºspÄ›ch/chyba) â€” mezitÃ­m skeleton slideru. */
   const [cmsHeroFetchDone, setCmsHeroFetchDone] = useState(false);
   const [notifFetchDone, setNotifFetchDone] = useState(false);
 
-  /* ── webinar slide countdown ─────────────────────────────── */
+  /* â”€â”€ webinar slide countdown â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const [webinarCountdown, setWebinarCountdown] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
 
-  /* ── upcoming / live webinar slide ───────────────────────── */
+  /* â”€â”€ upcoming / live webinar slide â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const upcomingWebinarSlide = useMemo(() => {
     if (!webinars.length) return null;
     const now = Date.now();
-    // Dev mode: simulace "začíná za chvíli"
+    // Dev mode: simulace "zaÄÃ­nÃ¡ za chvÃ­li"
     const devImminentId = typeof localStorage !== 'undefined'
       ? localStorage.getItem('vvb_dev_imminent')
       : null;
@@ -672,7 +672,7 @@ export default function CatalogGrid() {
     if (!upcomingWebinarSlide?.showInSlider) return null;
     const w = upcomingWebinarSlide.webinar;
     if (upcomingWebinarSlide.isDevPreview) {
-      return new Date(Date.now() + 25 * 60 * 1000); // dev: 25 min odpočet pro vizuál
+      return new Date(Date.now() + 25 * 60 * 1000); // dev: 25 min odpoÄet pro vizuÃ¡l
     }
     return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1,
       ...((w.time || '18:00').split(':').map(Number) as [number, number]));
@@ -694,7 +694,7 @@ export default function CatalogGrid() {
     return () => clearInterval(id);
   }, [webinarSlideStart]);
 
-  // Nejbližší nadcházející webinář pro bobánek (bez omezení na čas)
+  // NejbliÅ¾Å¡Ã­ nadchÃ¡zejÃ­cÃ­ webinÃ¡Å™ pro bobÃ¡nek (bez omezenÃ­ na Äas)
   const nextWebinarForBobanak = useMemo(() => {
     if (!webinars.length) return null;
     const now = Date.now();
@@ -763,7 +763,7 @@ export default function CatalogGrid() {
     };
   }, []);
 
-  /* ── scroll-to on initial nav from sidebar ───────────────── */
+  /* â”€â”€ scroll-to on initial nav from sidebar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   useEffect(() => {
     const scrollTo = (location.state as any)?.scrollTo;
     if (scrollTo) {
@@ -783,18 +783,18 @@ export default function CatalogGrid() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  /** Úzké okno — hero může použít mobilní variantu z CMS (`phoneOverrides`). */
+  /** ÃšzkÃ© okno â€” hero mÅ¯Å¾e pouÅ¾Ã­t mobilnÃ­ variantu z CMS (`phoneOverrides`). */
   const heroNarrowViewport = useMatchMedia('(max-width: 767px)', false);
 
   const isPeekMode = windowWidth > 1200;
-  /** Peek slide ≈ o 5 % užší než dříve (83 % → 78,85 %). */
+  /** Peek slide â‰ˆ o 5 % uÅ¾Å¡Ã­ neÅ¾ dÅ™Ã­ve (83 % â†’ 78,85 %). */
   const SLIDE_W     = Number((83 * 0.95).toFixed(2));
   const GAP_W       = 2.5;
   const SLOT_W      = SLIDE_W + GAP_W;
   const INIT_OFFSET = (100 - SLIDE_W) / 2;
 
   const heroSlides = useMemo(() => {
-    /** Režim „distributor“ — varianty z CMS / seedu (`distributorTitle` …), ne hardcoded duplicitní slidery. */
+    /** ReÅ¾im â€ždistributorâ€œ â€” varianty z CMS / seedu (`distributorTitle` â€¦), ne hardcoded duplicitnÃ­ slidery. */
     const withDistributorVariant = (raw: any, mapped: Record<string, unknown>) => {
       if (!isDistributorMode) return mapped;
       const patch: Record<string, unknown> = {};
@@ -937,16 +937,16 @@ export default function CatalogGrid() {
     };
 
     return [
-      // ── Webinář slide — VŽDY PRVNÍ, když je aktivní ───────────
+      // â”€â”€ WebinÃ¡Å™ slide â€” VÅ½DY PRVNÃ, kdyÅ¾ je aktivnÃ­ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       ...(upcomingWebinarSlide?.showInSlider ? [{
         bg: upcomingWebinarSlide.isLive ? 'bg-[#dc2626]' : 'bg-[#1e3a8a]',
         bgStyle: upcomingWebinarSlide.isLive ? '#dc2626' : '#1e3a8a',
-        title: upcomingWebinarSlide.isLive ? 'Live webinář' : 'Webinář brzy',
+        title: upcomingWebinarSlide.isLive ? 'Live webinÃ¡Å™' : 'WebinÃ¡Å™ brzy',
         subtitle: upcomingWebinarSlide.webinar.title,
         badges: upcomingWebinarSlide.isLive
-          ? ['\uD83D\uDD34 Právě probíhá', upcomingWebinarSlide.webinar.lecturer]
+          ? ['\uD83D\uDD34 PrÃ¡vÄ› probÃ­hÃ¡', upcomingWebinarSlide.webinar.lecturer]
           : [`${upcomingWebinarSlide.webinar.day}. ${upcomingWebinarSlide.webinar.monthName} v ${upcomingWebinarSlide.webinar.time}`],
-        bottom: upcomingWebinarSlide.isLive ? 'Vstupte na živé vysílání →' : 'Připojte se — vysílání brzy začíná →',
+        bottom: upcomingWebinarSlide.isLive ? 'Vstupte na Å¾ivÃ© vysÃ­lÃ¡nÃ­ â†’' : 'PÅ™ipojte se â€” vysÃ­lÃ¡nÃ­ brzy zaÄÃ­nÃ¡ â†’',
         layout: 'webinar' as const,
         image: upcomingWebinarSlide.webinar.coverImage || 'https://images.unsplash.com/photo-1588196749597-9ff075ee6b5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
         link: `/webinar/${upcomingWebinarSlide.webinar.id}/live`,
@@ -976,10 +976,10 @@ export default function CatalogGrid() {
     REAL_N === 0 && (!cmsHeroFetchDone || !notifFetchDone);
   const extSlides =
     REAL_N > 0 ? [heroSlides[heroSlides.length - 1], ...heroSlides, heroSlides[0]] : [];
-  /** Poslední platný index v extSlides (ochrana proti intervalu/klikům mimo rozsah → bílý hero). */
+  /** PoslednÃ­ platnÃ½ index v extSlides (ochrana proti intervalu/klikÅ¯m mimo rozsah â†’ bÃ­lÃ½ hero). */
   const heroExtMaxIdx = extSlides.length > 0 ? extSlides.length - 1 : 0;
 
-  /* Přednostně stáhnout vizuály prvních dvou reálných slidů (indexy 1 a 2 v extSlides). */
+  /* PÅ™ednostnÄ› stÃ¡hnout vizuÃ¡ly prvnÃ­ch dvou reÃ¡lnÃ½ch slidÅ¯ (indexy 1 a 2 v extSlides). */
   useEffect(() => {
     if (heroSlides.length === 0) return;
     const urls = [
@@ -996,7 +996,7 @@ export default function CatalogGrid() {
     }
   }, [heroSlides]);
 
-  /** Délka posunu karuselu — sjednoceno s odkladem skrytí obsahu odjíždějícího slidu. */
+  /** DÃ©lka posunu karuselu â€” sjednoceno s odkladem skrytÃ­ obsahu odjÃ­Å¾dÄ›jÃ­cÃ­ho slidu. */
   const HERO_TRANSFORM_MS = 800;
 
   const startHeroTimer = () => {
@@ -1025,7 +1025,7 @@ export default function CatalogGrid() {
     };
   }, [REAL_N]);
 
-  // Reset pozice slideru na 1 pokaždé, když se změní počet slidů (asynchronní načítání dat)
+  // Reset pozice slideru na 1 pokaÅ¾dÃ©, kdyÅ¾ se zmÄ›nÃ­ poÄet slidÅ¯ (asynchronnÃ­ naÄÃ­tÃ¡nÃ­ dat)
   const prevRealN = useRef(0);
   useEffect(() => {
     if (prevRealN.current !== 0 && prevRealN.current !== REAL_N) {
@@ -1037,7 +1037,7 @@ export default function CatalogGrid() {
     prevRealN.current = REAL_N;
   }, [REAL_N]);
 
-  // Boundary reset — infinite loop (opravený stale closure přidáním extSlides.length a REAL_N do deps)
+  // Boundary reset â€” infinite loop (opravenÃ½ stale closure pÅ™idÃ¡nÃ­m extSlides.length a REAL_N do deps)
   useEffect(() => {
     if (heroSlide === 0 || heroSlide === extSlides.length - 1) {
       const t = setTimeout(() => {
@@ -1049,7 +1049,7 @@ export default function CatalogGrid() {
     }
   }, [heroSlide, extSlides.length, REAL_N]);
 
-  /** Ukončit přechod po animaci karuselu — bez toho zůstane heroAnimate=true a neaktivní slidery (viditelné v peek) jsou neviditelné. */
+  /** UkonÄit pÅ™echod po animaci karuselu â€” bez toho zÅ¯stane heroAnimate=true a neaktivnÃ­ slidery (viditelnÃ© v peek) jsou neviditelnÃ©. */
   useEffect(() => {
     if (REAL_N <= 0) return;
     const t = window.setTimeout(() => {
@@ -1067,14 +1067,14 @@ export default function CatalogGrid() {
     startHeroTimer();
   };
 
-  /* ── expanded groups ─────────────────────────────────────── */
+  /* â”€â”€ expanded groups â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const toggleGroup = (name: string) =>
     setExpandedGroups(prev => { const n = new Set(prev); n.has(name) ? n.delete(name) : n.add(name); return n; });
 
-  /* ── scroll positions per group ──────────────────────────── */
+  /* â”€â”€ scroll positions per group â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const [scrollPositions, setScrollPositions] = useState<Record<string, number>>({});
-  const CARD_SCROLL = 3 * (207 + 20); // 3 karty × (šířka + gap)
+  const CARD_SCROLL = 3 * (207 + 20); // 3 karty Ã— (Å¡Ã­Å™ka + gap)
 
   const handleGroupScroll = (group: string) => {
     const el = scrollRefs.current[group];
@@ -1082,7 +1082,7 @@ export default function CatalogGrid() {
     setScrollPositions(prev => ({ ...prev, [group]: el.scrollLeft }));
   };
 
-  /* ── intersection observer for active section ────────────── */
+  /* â”€â”€ intersection observer for active section â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   useEffect(() => {
     const opts: IntersectionObserverInit = { rootMargin: '-30% 0px -60% 0px', threshold: 0 };
     const obs = new IntersectionObserver(entries => {
@@ -1092,7 +1092,7 @@ export default function CatalogGrid() {
     return () => obs.disconnect();
   }, [groupingMode, products]);
 
-  /* ── grouping ────────────────────────────────────────────── */
+  /* â”€â”€ grouping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const workbooks = useMemo(() => products.filter(p => p.type === 'workbook'), [products]);
 
   const getDigitalLicenseForGroup = (mainGroup: string) => {
@@ -1183,7 +1183,7 @@ export default function CatalogGrid() {
     });
   }, [groupedWorkbooks, groupingMode]);
 
-  /** Skupiny katalogu (Matematika 2. stupeň, …): obálky stahovat až když je blok na obrazovce (+ rootMargin), shora dolů. */
+  /** Skupiny katalogu (Matematika 2. stupeÅˆ, â€¦): obÃ¡lky stahovat aÅ¾ kdyÅ¾ je blok na obrazovce (+ rootMargin), shora dolÅ¯. */
   const [catalogImgReadyGroups, setCatalogImgReadyGroups] = useState<Set<string>>(() => new Set());
   const catalogImgGateElsRef = useRef<Map<string, HTMLElement>>(new Map());
   const catalogImgGateObsRef = useRef<IntersectionObserver | null>(null);
@@ -1248,7 +1248,7 @@ export default function CatalogGrid() {
     };
   }, [sortedGroups]);
 
-  /* ── distributor download ────────────────────────────────── */
+  /* â”€â”€ distributor download â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const handleDownloadSingle = (e: React.MouseEvent, book: any) => {
     e.stopPropagation();
     const slug = book.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
@@ -1262,7 +1262,7 @@ export default function CatalogGrid() {
     }
   };
 
-  /* ── visible card count for collapsed rows ───────────────── */
+  /* â”€â”€ visible card count for collapsed rows â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const visibleCardCount = useMemo(() => {
     const sidebarW = 245;
     const paddingX = 64; // md:px-8 = 32px each side
@@ -1273,10 +1273,10 @@ export default function CatalogGrid() {
     return Math.max(2, Math.floor((contentW + gapW) / (cardW + gapW)));
   }, [windowWidth]);
 
-  /* ── scroll refs per group ───────────────────────────────── */
+  /* â”€â”€ scroll refs per group â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const scrollRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  /* ── render card ─────────────────────────────────────────── */
+  /* â”€â”€ render card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   const renderCard = (book: any, compact = false, mainGroupForDefer?: string) => (
     <UnifiedBookCard
       key={book.id}
@@ -1289,18 +1289,18 @@ export default function CatalogGrid() {
     />
   );
 
-  /* ── JSX ─────────────────────────────────────────────────── */
+  /* â”€â”€ JSX â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   return (
     <>
       {/* SEO */}
       <SEOHead
         path="/"
         description="Kompletn\u00ed katalog interaktivn\u00edch digit\u00e1ln\u00edch u\u010debnic a pracovn\u00edch se\u0161it\u016f Vividbooks pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed."
-        imageAlt="Katalog interaktivních učebnic a pracovních sešitů Vividbooks pro základní školy"
+        imageAlt="Katalog interaktivnÃ­ch uÄebnic a pracovnÃ­ch seÅ¡itÅ¯ Vividbooks pro zÃ¡kladnÃ­ Å¡koly"
         imageWidth={1200}
         imageHeight={630}
       />
-      {/* Hero Slider — šipky přes okrajové peek slidery (bez mezery); bez teček; jen pokud jsou slidery (CMS / webinář / notifikace) */}
+      {/* Hero Slider â€” Å¡ipky pÅ™es okrajovÃ© peek slidery (bez mezery); bez teÄek; jen pokud jsou slidery (CMS / webinÃ¡Å™ / notifikace) */}
       {REAL_N > 0 ? (
       <div className={isPeekMode ? 'pt-4 md:pt-8' : 'p-4 md:p-8'}>
         <div
@@ -1360,15 +1360,15 @@ export default function CatalogGrid() {
               );
               const collageTransformBelow = `translate(${collageOx}px, ${-collageOy}px)`;
               const collageTransformAbove = `translate(${collageOx}px, ${collageOy}px)`;
-              /** extSlides[0] = klon posledního; [1],[2] = první dva viditelné slidery nahoře. */
+              /** extSlides[0] = klon poslednÃ­ho; [1],[2] = prvnÃ­ dva viditelnÃ© slidery nahoÅ™e. */
               const heroSlideImagePriority = idx === 1 || idx === 2;
               const heroCoverHex = heroSurfaceHexFromSlide(slideView as any);
               const heroCoverShadowFull = heroBookCoverShadowFilter(heroCoverHex);
-              /** Boční peek: bez kliku. */
+              /** BoÄnÃ­ peek: bez kliku. */
               const heroPeekSideCard = isPeekMode && idx !== heroSlide;
               /**
-               * Boční peek = jen barevná plocha, kromě slidu který právě odjíždí ze středu — u něj nechat obsah,
-               * ať motion stihne opacity fade (jinak okamžitý placeholder = „skok“).
+               * BoÄnÃ­ peek = jen barevnÃ¡ plocha, kromÄ› slidu kterÃ½ prÃ¡vÄ› odjÃ­Å¾dÃ­ ze stÅ™edu â€” u nÄ›j nechat obsah,
+               * aÅ¥ motion stihne opacity fade (jinak okamÅ¾itÃ½ placeholder = â€žskokâ€œ).
                */
               const heroPeekPlaceholderOnly =
                 heroPeekSideCard && !(heroAnimate && heroSlideOutgoing === idx);
@@ -1393,7 +1393,7 @@ export default function CatalogGrid() {
                   heroFullImageLayout
                     ? 'p-0'
                     : leftImageBleed
-                      ? /* Bleed desktop: pl-8; na úzkém viewportu žádný horizontální padding — jinak „červený pruh“ vlevo u fotky. */
+                      ? /* Bleed desktop: pl-8; na ÃºzkÃ©m viewportu Å¾Ã¡dnÃ½ horizontÃ¡lnÃ­ padding â€” jinak â€žÄervenÃ½ pruhâ€œ vlevo u fotky. */
                         '@max-[767px]:px-0 @max-[767px]:pt-6 @max-[767px]:pb-0 @min-[768px]:py-0 @min-[768px]:pl-8 @min-[768px]:pr-0'
                       : slideIsBooksFan
                         ? 'py-0 pl-8 pr-0'
@@ -1433,20 +1433,20 @@ export default function CatalogGrid() {
                 ) : (
                 <>
                 {slideView.layout === 'webinar' ? (
-                  /* ── Webinář layout: pulsující kolečko + countdown + thumbnail ── */
+                  /* â”€â”€ WebinÃ¡Å™ layout: pulsujÃ­cÃ­ koleÄko + countdown + thumbnail â”€â”€ */
                   <div className="flex min-h-0 min-w-0 flex-1 items-center gap-4 z-10">
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-hidden pl-8 pr-8 md:pl-14 md:pr-10">
-                      {/* Pulsující kolečko + label */}
+                      {/* PulsujÃ­cÃ­ koleÄko + label */}
                       <div className="flex items-center gap-2.5 mb-3">
                         <span className="relative flex h-3.5 w-3.5 shrink-0">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-400"></span>
                         </span>
                         <span className="text-white/70 text-[11px] uppercase tracking-widest font-bold leading-none" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
-                          {(slideView as any)._isLive ? 'Právě probíhá' : 'Začíná za chvíli'}
+                          {(slideView as any)._isLive ? 'PrÃ¡vÄ› probÃ­hÃ¡' : 'ZaÄÃ­nÃ¡ za chvÃ­li'}
                         </span>
                       </div>
-                      {/* Nadpis (menší) */}
+                      {/* Nadpis (menÅ¡Ã­) */}
                       <h1
                         className="font-['Cooper_Light',serif] leading-[1.05] mb-1 tracking-tight break-words whitespace-pre-line"
                         style={{
@@ -1458,7 +1458,7 @@ export default function CatalogGrid() {
                       >
                         {slideView.title}
                       </h1>
-                      {/* Název webináře */}
+                      {/* NÃ¡zev webinÃ¡Å™e */}
                       <p
                         className="text-white/65 text-[13px] md:text-[15px] mb-3 whitespace-pre-line leading-snug break-words"
                         style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
@@ -1466,7 +1466,7 @@ export default function CatalogGrid() {
                       >
                         {slideView.subtitle}
                       </p>
-                      {/* Odpočítávání */}
+                      {/* OdpoÄÃ­tÃ¡vÃ¡nÃ­ */}
                       {!(slideView as any)._isLive && (
                         <div className="flex items-end gap-1.5 mb-5">
                           {[
@@ -1500,20 +1500,20 @@ export default function CatalogGrid() {
                         {slideView.bottom}
                       </p>
                     </div>
-                    {/* Thumbnail vpravo — jako WebinarCard dlaždice */}
+                    {/* Thumbnail vpravo â€” jako WebinarCard dlaÅ¾dice */}
                     <div className="hidden w-[40%] shrink-0 items-center justify-end py-4 pr-6 md:flex lg:pr-10">
                       <div
                         className="flex w-full max-w-[320px] flex-col overflow-hidden rounded-[20px] bg-[#F0F2F8] shadow-[0_8px_40px_rgba(0,0,0,0.4)] lg:max-w-[380px] xl:max-w-[440px] 2xl:max-w-[500px]"
                         onClick={e => { e.stopPropagation(); navigate(`/webinar/${(slideView as any)._webinar?.id}`); }}
                       >
-                        {/* Cover image — omezená výška, aby neroztahovala celý hero */}
+                        {/* Cover image â€” omezenÃ¡ vÃ½Å¡ka, aby neroztahovala celÃ½ hero */}
                         <div className="relative aspect-video max-h-[100px] w-full shrink-0 overflow-hidden rounded-t-[20px] sm:max-h-[110px] md:max-h-[125px] lg:max-h-[140px]">
                           <img
                             src={(slideView as any).image}
                             alt={slideView.title}
                             className="absolute inset-0 size-full object-cover"
                             loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                            fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                            ref={(imgEl) => { if (imgEl) imgEl.fetchPriority = heroSlideImagePriority ? 'high' : 'low'; }}
                           />
                         </div>
                         {/* Bottom info bar */}
@@ -1546,7 +1546,7 @@ export default function CatalogGrid() {
                     </div>
                   </div>
                 ) : (slideView as any).layout === 'books-fan-above' ? (
-                  /* ── Obálky nahoře + text pod: na úzkém slidu pod sebou bez překryvu; na širokém původní překryv. */
+                  /* â”€â”€ ObÃ¡lky nahoÅ™e + text pod: na ÃºzkÃ©m slidu pod sebou bez pÅ™ekryvu; na Å¡irokÃ©m pÅ¯vodnÃ­ pÅ™ekryv. */
                   <div className="relative z-10 h-full min-h-0 w-full flex-1 overflow-visible">
                     <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden px-3 pt-2 @min-[680px]:hidden">
                       <div
@@ -1568,8 +1568,8 @@ export default function CatalogGrid() {
                           showEmptyHint={Boolean((slideView as any).booksFanShowEmptyHint)}
                           emptyHint={
                             <>
-                              Vyberte produkty ve vizuálním editoru nebo doplňte ID v kolekci Hero slidy (max. 6 titulů;
-                              bez obálky se zobrazí placeholder).
+                              Vyberte produkty ve vizuÃ¡lnÃ­m editoru nebo doplÅˆte ID v kolekci Hero slidy (max. 6 titulÅ¯;
+                              bez obÃ¡lky se zobrazÃ­ placeholder).
                             </>
                           }
                         />
@@ -1616,8 +1616,8 @@ export default function CatalogGrid() {
                             showEmptyHint={Boolean((slideView as any).booksFanShowEmptyHint)}
                             emptyHint={
                               <>
-                                Vyberte produkty ve vizuálním editoru nebo doplňte ID v kolekci Hero slidy (max. 6 titulů;
-                                bez obálky se zobrazí placeholder).
+                                Vyberte produkty ve vizuÃ¡lnÃ­m editoru nebo doplÅˆte ID v kolekci Hero slidy (max. 6 titulÅ¯;
+                                bez obÃ¡lky se zobrazÃ­ placeholder).
                               </>
                             }
                           />
@@ -1641,7 +1641,7 @@ export default function CatalogGrid() {
                     </div>
                   </div>
                 ) : (slideView as any).layout === 'books-fan-below' ? (
-                  /* ── Text + obálky pod: úzký slide = sloupec bez překryvu; široký = překryv jako dřív. */
+                  /* â”€â”€ Text + obÃ¡lky pod: ÃºzkÃ½ slide = sloupec bez pÅ™ekryvu; Å¡irokÃ½ = pÅ™ekryv jako dÅ™Ã­v. */
                   <div className="relative z-10 h-full min-h-0 w-full flex-1 overflow-visible">
                     <div className="flex h-full min-h-0 flex-col gap-2 overflow-hidden px-3 pt-2 @min-[680px]:hidden">
                       <div
@@ -1678,8 +1678,8 @@ export default function CatalogGrid() {
                           showEmptyHint={Boolean((slideView as any).booksFanShowEmptyHint)}
                           emptyHint={
                             <>
-                              Vyberte produkty ve vizuálním editoru nebo doplňte ID v kolekci Hero slidy (max. 6 titulů;
-                              bez obálky se zobrazí placeholder).
+                              Vyberte produkty ve vizuÃ¡lnÃ­m editoru nebo doplÅˆte ID v kolekci Hero slidy (max. 6 titulÅ¯;
+                              bez obÃ¡lky se zobrazÃ­ placeholder).
                             </>
                           }
                         />
@@ -1726,8 +1726,8 @@ export default function CatalogGrid() {
                             showEmptyHint={Boolean((slideView as any).booksFanShowEmptyHint)}
                             emptyHint={
                               <>
-                                Vyberte produkty ve vizuálním editoru nebo doplňte ID v kolekci Hero slidy (max. 6 titulů;
-                                bez obálky se zobrazí placeholder).
+                                Vyberte produkty ve vizuÃ¡lnÃ­m editoru nebo doplÅˆte ID v kolekci Hero slidy (max. 6 titulÅ¯;
+                                bez obÃ¡lky se zobrazÃ­ placeholder).
                               </>
                             }
                           />
@@ -1736,7 +1736,7 @@ export default function CatalogGrid() {
                     </div>
                   </div>
                 ) : (slideView as any).layout === 'books-fan' ? (
-                  /* ── Text + obálky: úzký slide = celá šířka textu pak koláž; od ~720px dva sloupce. */
+                  /* â”€â”€ Text + obÃ¡lky: ÃºzkÃ½ slide = celÃ¡ Å¡Ã­Å™ka textu pak kolÃ¡Å¾; od ~720px dva sloupce. */
                   <div
                     className="z-10 flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-visible px-3 py-4 @min-[720px]:grid @min-[720px]:h-full @min-[720px]:grid-rows-1 @min-[720px]:gap-0 @min-[720px]:overflow-visible @min-[720px]:px-0 @min-[720px]:py-0"
                     style={{
@@ -1776,8 +1776,8 @@ export default function CatalogGrid() {
                           showEmptyHint={Boolean((slideView as any).booksFanShowEmptyHint)}
                           emptyHint={
                             <>
-                              Vyberte produkty ve vizuálním editoru nebo doplňte ID v kolekci Hero slidy (max. 6 titulů;
-                              bez obálky se zobrazí placeholder).
+                              Vyberte produkty ve vizuÃ¡lnÃ­m editoru nebo doplÅˆte ID v kolekci Hero slidy (max. 6 titulÅ¯;
+                              bez obÃ¡lky se zobrazÃ­ placeholder).
                             </>
                           }
                         />
@@ -1785,14 +1785,14 @@ export default function CatalogGrid() {
                     </div>
                   </div>
                 ) : heroFullImageLayout ? (
-                  /* ── Fullscreen fotka + text v zaoblených kartách (sklo). */
+                  /* â”€â”€ Fullscreen fotka + text v zaoblenÃ½ch kartÃ¡ch (sklo). */
                   <div className="relative z-10 h-full min-h-0 w-full flex-1 overflow-hidden">
                     <img
                       src={(slideView as any).image}
                       alt={slideView.title}
                       className="pointer-events-none absolute inset-0 z-0 size-full object-cover"
                       loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                      fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                      ref={(imgEl) => { if (imgEl) imgEl.fetchPriority = heroSlideImagePriority ? 'high' : 'low'; }}
                       style={heroLeftImageImgStyle(
                         (slideView as any).heroImageScalePct,
                         (slideView as any).heroImagePosXPct,
@@ -1817,7 +1817,7 @@ export default function CatalogGrid() {
                   </div>
                 ) : slideView.layout === 'left-image' && (slideView as any).image ? (
                   heroNarrowViewport ? (
-                    /* Úzký viewport: přesně ½ text (plná barva slidu) + ½ fotka na šířku; ve spodní zóně cover se středem ve svislé ose → ořez nahoře i dole. */
+                    /* ÃšzkÃ½ viewport: pÅ™esnÄ› Â½ text (plnÃ¡ barva slidu) + Â½ fotka na Å¡Ã­Å™ku; ve spodnÃ­ zÃ³nÄ› cover se stÅ™edem ve svislÃ© ose â†’ oÅ™ez nahoÅ™e i dole. */
                     <div className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden">
                       <div
                         className={`flex min-h-0 min-w-0 flex-1 basis-0 flex-col justify-center overflow-y-auto overscroll-y-contain px-5 py-3 ${
@@ -1843,7 +1843,7 @@ export default function CatalogGrid() {
                           alt={slideView.title}
                           className="absolute inset-0 size-full object-cover"
                           loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                          fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                          ref={(imgEl) => { if (imgEl) imgEl.fetchPriority = heroSlideImagePriority ? 'high' : 'low'; }}
                           style={heroLeftImageImgStyle(
                             (slideView as any).heroImageScalePct,
                             (slideView as any).heroImagePosXPct,
@@ -1853,7 +1853,7 @@ export default function CatalogGrid() {
                       </div>
                     </div>
                   ) : (
-                    /* ── Text + obrázek: úzký kontejner = text nahoře + fotka dole; od šířky kontejneru slidu (viz HERO_LEFT_IMAGE_SIDE_BY_SIDE_MIN_CONTAINER_PX) text vlevo | obrázek vpravo. */
+                    /* â”€â”€ Text + obrÃ¡zek: ÃºzkÃ½ kontejner = text nahoÅ™e + fotka dole; od Å¡Ã­Å™ky kontejneru slidu (viz HERO_LEFT_IMAGE_SIDE_BY_SIDE_MIN_CONTAINER_PX) text vlevo | obrÃ¡zek vpravo. */
                     <div
                       className="z-10 flex h-full min-h-0 min-w-0 w-full flex-1 flex-col gap-2 overflow-x-visible overflow-y-visible @min-[520px]:grid @min-[520px]:grid-rows-1 @min-[520px]:gap-0 @min-[520px]:overflow-hidden"
                       style={{ gridTemplateColumns: `minmax(0, 1fr) ${leftImageColPct}%` }}
@@ -1882,7 +1882,7 @@ export default function CatalogGrid() {
                           alt={slideView.title}
                           className="absolute inset-0 size-full"
                           loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                          fetchPriority={heroSlideImagePriority ? 'high' : 'low'}
+                          ref={(imgEl) => { if (imgEl) imgEl.fetchPriority = heroSlideImagePriority ? 'high' : 'low'; }}
                           style={heroLeftImageImgStyle(
                             (slideView as any).heroImageScalePct,
                             (slideView as any).heroImagePosXPct,
@@ -1893,9 +1893,9 @@ export default function CatalogGrid() {
                     </div>
                   )
                 ) : (
-                  /* ─ Centered text layout (default) ──
-                     Vnější řádek centruje blok svisle; uvnitř max-h-full bez interního scrollu.
-                     `heroTextAlign === 'start'` = text vlevo bez obrázku (vizuální editor). */
+                  /* â”€ Centered text layout (default) â”€â”€
+                     VnÄ›jÅ¡Ã­ Å™Ã¡dek centruje blok svisle; uvnitÅ™ max-h-full bez internÃ­ho scrollu.
+                     `heroTextAlign === 'start'` = text vlevo bez obrÃ¡zku (vizuÃ¡lnÃ­ editor). */
                   <div
                     className={`z-10 flex min-h-0 min-w-0 w-full flex-1 flex-col overflow-hidden px-2 py-1 ${
                       heroAlignStart ? 'items-start justify-center md:pl-4' : 'items-center justify-center'
@@ -1928,7 +1928,7 @@ export default function CatalogGrid() {
 
           <button
             type="button"
-            aria-label="Předchozí slide"
+            aria-label="PÅ™edchozÃ­ slide"
             onClick={(e) => {
               e.stopPropagation();
               goToSlide(heroSlide - 1);
@@ -1941,7 +1941,7 @@ export default function CatalogGrid() {
           </button>
           <button
             type="button"
-            aria-label="Následující slide"
+            aria-label="NÃ¡sledujÃ­cÃ­ slide"
             onClick={(e) => {
               e.stopPropagation();
               goToSlide(heroSlide + 1);
@@ -1963,7 +1963,7 @@ export default function CatalogGrid() {
       />
       ) : null}
 
-      {/* Webinar bobánek — vždy zobrazí nejbližší webinář */}
+      {/* Webinar bobÃ¡nek â€” vÅ¾dy zobrazÃ­ nejbliÅ¾Å¡Ã­ webinÃ¡Å™ */}
       {(nextWebinarForBobanak || notifBobanak) && (
       <div className="flex justify-center px-4 mt-5 mb-1">
         <div
@@ -1980,7 +1980,7 @@ export default function CatalogGrid() {
           </span>
           <div className="flex flex-col gap-0.5">
             <span className="font-['Fenomen_Sans',sans-serif] text-[10px] uppercase tracking-widest opacity-55 leading-none font-bold">
-              {notifBobanak?.type === 'custom' ? 'Upozorn\u011bn\u00ed' : 'Bl\u00ed\u017e\u00ed se webinář'}
+              {notifBobanak?.type === 'custom' ? 'Upozorn\u011bn\u00ed' : 'Bl\u00ed\u017e\u00ed se webinÃ¡Å™'}
             </span>
             <span className="font-['Fenomen_Sans',sans-serif] text-[13px] leading-snug opacity-85 font-bold">
               {notifBobanak
@@ -2042,7 +2042,7 @@ export default function CatalogGrid() {
                   </button>
                   {!isExpanded && (
                     <div className="flex items-center gap-2 shrink-0">
-                      {/* Šipka zpět — zobrazí se až po odscrollování */}
+                      {/* Å ipka zpÄ›t â€” zobrazÃ­ se aÅ¾ po odscrollovÃ¡nÃ­ */}
                       {(scrollPositions[mainGroup] ?? 0) > 10 && (
                         <button
                           onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: -CARD_SCROLL, behavior: 'smooth' })}
@@ -2054,7 +2054,7 @@ export default function CatalogGrid() {
                           </svg>
                         </button>
                       )}
-                      {/* Šipka doprava */}
+                      {/* Å ipka doprava */}
                       <button
                         onClick={() => scrollRefs.current[mainGroup]?.scrollBy({ left: CARD_SCROLL, behavior: 'smooth' })}
                         className="flex items-center justify-center size-9 rounded-full border-2 border-[#001161]/25 text-[#001161] hover:bg-[#001161] hover:text-white hover:border-[#001161] transition-all cursor-pointer active:scale-90"
@@ -2112,7 +2112,7 @@ export default function CatalogGrid() {
       </div>
       {/* Webinars section */}
       <WebinarsSection />
-      {/* Newsletter banner — hned pod webináři */}
+      {/* Newsletter banner â€” hned pod webinÃ¡Å™i */}
       <NewsletterBanner />
       {/* Blog section */}
       <BlogSection />

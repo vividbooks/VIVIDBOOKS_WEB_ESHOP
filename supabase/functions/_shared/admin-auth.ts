@@ -5,21 +5,27 @@
  * Secrets: ADMIN_ALLOWED_EMAILS (čárkou), volitelně ADMIN_ALLOWLIST_OFF=true pro lokální vývoj.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { resolveAllowedOrigin } from './cors.ts';
 
 /** Stejné CORS jako ostatní e-shop Edge funkce (admin volá z prohlížeče s anon + user JWT). */
-export const ADMIN_FUNCTION_CORS_HEADERS: Record<string, string> = {
-  'Access-Control-Allow-Origin': '*',
+function getAllowedFunctionOrigin(origin: string | null): string {
+  return resolveAllowedOrigin(origin);
+}
+
+const ADMIN_FUNCTION_CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': getAllowedFunctionOrigin(null),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 
-function json(body: unknown, status: number): Response {
+function json(body: unknown, status: number, req: Request): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'Content-Type': 'application/json',
       ...ADMIN_FUNCTION_CORS_HEADERS,
+      'Access-Control-Allow-Origin': getAllowedFunctionOrigin(req.headers.get('origin')),
     },
   });
 }
@@ -53,22 +59,22 @@ export async function requireAdminJwt(req: Request): Promise<{ email: string } |
   const url = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '');
   const anon = Deno.env.get('SUPABASE_ANON_KEY')?.trim();
   if (!url || !anon) {
-    return json({ error: 'Server misconfigured.' }, 500);
+    return json({ error: 'Server misconfigured.' }, 500, req);
   }
   const token = getUserAccessTokenFromRequest(req);
   if (!token) {
-    return json({ error: 'Unauthorized.' }, 401);
+    return json({ error: 'Unauthorized.' }, 401, req);
   }
   const supabase = createClient(url, anon, {
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error || !user?.email) {
-    return json({ error: 'Unauthorized.' }, 401);
+    return json({ error: 'Unauthorized.' }, 401, req);
   }
   const em = user.email.trim().toLowerCase();
   if (!isAdminEmailAllowed(em)) {
-    return json({ error: 'Forbidden.' }, 403);
+    return json({ error: 'Forbidden.' }, 403, req);
   }
   return { email: user.email };
 }

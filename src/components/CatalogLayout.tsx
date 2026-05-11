@@ -829,6 +829,7 @@ export default function CatalogLayout() {
             className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 ${
               isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
             }`}
+       
           >
             {location.pathname === '/' && !isCheckoutLikeSidebar && (
               <div className="md:hidden px-4 pt-2 pb-2 border-b border-gray-100/90 bg-white">

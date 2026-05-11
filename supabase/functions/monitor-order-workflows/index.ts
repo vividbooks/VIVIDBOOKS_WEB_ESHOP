@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import {
   openOrUpdateOrderAlert,
@@ -46,11 +47,11 @@ type ExistingAlertRow = {
   state: string;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+});
 
 const cronSecret = Deno.env.get('MONITOR_ORDER_WORKFLOWS_CRON_SECRET')?.trim();
 
@@ -72,11 +73,11 @@ const MONITORED_ALERT_TYPES = [
   'transfer_payment_stale',
 ] as const;
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -135,20 +136,20 @@ function dedupeKey(alertType: string, orderId: string, suffix?: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (!isAuthorizedCronRequest(req)) {
-    return jsonResponse({ error: 'Unauthorized.' }, 401);
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   if (!['GET', 'POST'].includes(req.method)) {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -183,7 +184,7 @@ Deno.serve(async (req) => {
     `;
 
     if (orders.length === 0) {
-      return jsonResponse({
+      return jsonResponse(req, {
         processedOrders: 0,
         openedOrUpdatedAlerts: 0,
         resolvedAlerts: 0,
@@ -552,14 +553,14 @@ Deno.serve(async (req) => {
       await resolveOrderAlerts(sql, { dedupeKeys: staleAlertKeys });
     }
 
-    return jsonResponse({
+    return jsonResponse(req, {
       processedOrders: orders.length,
       openedOrUpdatedAlerts,
       resolvedAlerts: staleAlertKeys.length,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Workflow monitoring failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

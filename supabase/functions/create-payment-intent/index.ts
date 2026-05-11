@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
 import {
@@ -67,11 +68,11 @@ type CheckoutCustomer = {
   zip: string;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 function getDatabaseUrl() {
   return (
@@ -81,11 +82,11 @@ function getDatabaseUrl() {
   );
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -180,18 +181,18 @@ function generateResumeToken(): string {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
   const databaseUrl = getDatabaseUrl();
 
   if (!stripeSecretKey || !databaseUrl) {
-    return jsonResponse({ error: 'Missing Stripe or database configuration.' }, 500);
+    return jsonResponse(req, { error: 'Missing Stripe or database configuration.' }, 500);
   }
 
   let payload: {
@@ -206,7 +207,7 @@ Deno.serve(async (req) => {
   try {
     payload = await req.json();
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
   }
 
   const { items, shipping, customer, schoolInquiry } = payload;
@@ -227,47 +228,47 @@ Deno.serve(async (req) => {
       : null;
 
   if (!validateItems(items)) {
-    return jsonResponse({ error: 'Neplatné položky košíku.' }, 400);
+    return jsonResponse(req, { error: 'Neplatné položky košíku.' }, 400);
   }
 
   if (!validateShipping(shipping)) {
-    return jsonResponse({ error: 'Neplatná doprava.' }, 400);
+    return jsonResponse(req, { error: 'Neplatná doprava.' }, 400);
   }
 
   if (!validateCustomer(customer)) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Neplatné zákaznické údaje (ulice včetně čísla domu, PSČ 5 číslic).',
     }, 400);
   }
 
   if (!validateSeparateDeliveryIfNeeded(shipping)) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
     }, 400);
   }
 
   const custEmail = normalizeEmail((customer as CheckoutCustomer).email);
   if (!isValidEmailFormat(custEmail)) {
-    return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
+    return jsonResponse(req, { error: EMAIL_FORMAT_HINT_CS }, 400);
   }
   const custDomain = custEmail.split('@')[1];
   if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
-    return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
+    return jsonResponse(req, { error: EMAIL_MX_REJECT_CS }, 400);
   }
 
   if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {
-    return jsonResponse({ error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
+    return jsonResponse(req, { error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
   }
 
   const shipPriceErr = validateShippingPriceHalers(shipping.method, shipping.price);
   if (shipPriceErr) {
-    return jsonResponse({ error: shipPriceErr }, 400);
+    return jsonResponse(req, { error: shipPriceErr }, 400);
   }
 
   const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
   const supabaseAnon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
   if (!supabaseUrl || !supabaseAnon) {
-    return jsonResponse({ error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
+    return jsonResponse(req, { error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
   }
   try {
     const { products, bundles } = await loadCheckoutCatalog(supabaseUrl, {
@@ -276,11 +277,11 @@ Deno.serve(async (req) => {
     });
     const priceErr = validateCheckoutPricing(items as CheckoutItemInput[], products, bundles);
     if (priceErr) {
-      return jsonResponse({ error: priceErr }, 400);
+      return jsonResponse(req, { error: priceErr }, 400);
     }
   } catch (e) {
     console.error('[create-payment-intent] catalog validation:', e);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Nepodařilo se ověřit košík vůči ceníku. Zkuste to prosím znovu.',
     }, 503);
   }
@@ -289,7 +290,7 @@ Deno.serve(async (req) => {
   const total = subtotal + shipping.price;
 
   if (subtotal <= 0 || total <= 0) {
-    return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
+    return jsonResponse(req, { error: 'Celková částka musí být kladná.' }, 400);
   }
 
   /** Hash košíku — bez `paymentMethod`. Card/APay/GPay přes `automatic_payment_methods=true` jdou na stejný PaymentIntent,
@@ -354,7 +355,7 @@ Deno.serve(async (req) => {
         }
 
         if (existingPi?.status === 'succeeded') {
-          return jsonResponse({
+          return jsonResponse(req, {
             error: 'Tato platba je již dokončená.',
             alreadyPaid: true,
           }, 409);
@@ -371,10 +372,10 @@ Deno.serve(async (req) => {
         ) {
           if (!existingPi.client_secret) {
             console.error('[create-payment-intent] Mid-flight PI missing client_secret.');
-            return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+            return jsonResponse(req, { error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
           }
           const tracking = await trackingTokenForOrder(draftOrderId);
-          return jsonResponse({
+          return jsonResponse(req, {
             clientSecret: existingPi.client_secret,
             paymentIntentId: existingPi.id,
             resumeToken: existingDraft.payment_resume_token || '',
@@ -393,10 +394,10 @@ Deno.serve(async (req) => {
         ) {
           if (!existingPi.client_secret) {
             console.error('[create-payment-intent] Same-config PI missing client_secret.');
-            return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+            return jsonResponse(req, { error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
           }
           const tracking = await trackingTokenForOrder(draftOrderId);
-          return jsonResponse({
+          return jsonResponse(req, {
             clientSecret: existingPi.client_secret,
             paymentIntentId: existingPi.id,
             resumeToken: existingDraft.payment_resume_token || '',
@@ -438,7 +439,7 @@ Deno.serve(async (req) => {
         } catch (e) {
           console.error('[create-payment-intent] New PI for draft update failed:', e);
           const message = e instanceof Error ? e.message : 'Stripe PaymentIntent creation failed.';
-          return jsonResponse({ error: message }, 500);
+          return jsonResponse(req, { error: message }, 500);
         }
 
         try {
@@ -510,19 +511,19 @@ Deno.serve(async (req) => {
             /* ignore */
           }
           const message = updateErr instanceof Error ? updateErr.message : 'Update objednávky selhal.';
-          return jsonResponse({ error: message }, 500);
+          return jsonResponse(req, { error: message }, 500);
         }
 
         if (!newPi.client_secret) {
           console.error('[create-payment-intent] New PI missing client_secret after draft update.');
-          return jsonResponse({ error: 'Nepodařilo se vytvořit platbu. Zkuste to znovu.' }, 500);
+          return jsonResponse(req, { error: 'Nepodařilo se vytvořit platbu. Zkuste to znovu.' }, 500);
         }
         console.log(
           `[create-payment-intent] Draft updated in-place: order=${draftOrderId.slice(0, 8)}… draft=${draftId.slice(0, 8)}… new_pi=${newPi.id} old_pi=${existingDraft.stripe_payment_intent_id || '(none)'}`,
         );
 
         const tracking = await trackingTokenForOrder(draftOrderId);
-        return jsonResponse({
+        return jsonResponse(req, {
           clientSecret: newPi.client_secret,
           paymentIntentId: newPi.id,
           resumeToken: existingDraft.payment_resume_token || '',
@@ -546,18 +547,18 @@ Deno.serve(async (req) => {
       });
       if (paymentIntent.currency !== 'czk' || paymentIntent.amount !== total) {
         console.warn('[create-payment-intent] Idempotent reuse: amount/currency mismatch, refusing reuse.');
-        return jsonResponse({
+        return jsonResponse(req, {
           error: 'Košík se změnil — obnovte stránku a zkuste platbu znovu.',
         }, 409);
       }
       if (paymentIntent.status === 'succeeded') {
-        return jsonResponse({
+        return jsonResponse(req, {
           error: 'Tato platba je již dokončená.',
           alreadyPaid: true,
         }, 409);
       }
       if (paymentIntent.status === 'canceled') {
-        return jsonResponse({
+        return jsonResponse(req, {
           error: 'Platba byla zrušena. Vytvořte prosím novou objednávku z košíku.',
         }, 409);
       }
@@ -572,7 +573,7 @@ Deno.serve(async (req) => {
       const reuseOrderId = ordRows[0]?.id;
       if (!resume || !paymentIntent.client_secret) {
         console.error('[create-payment-intent] Reuse path: missing resume token or client_secret.');
-        return jsonResponse({ error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
+        return jsonResponse(req, { error: 'Nepodařilo se obnovit platbu. Obnovte stránku.' }, 500);
       }
 
       // Reuse: i tady chceme zrušit ostatní pending záznamy téhož draftu (uživatel se vrátil
@@ -598,7 +599,7 @@ Deno.serve(async (req) => {
       }
 
       const reuseTracking = reuseOrderId ? await trackingTokenForOrder(reuseOrderId) : null;
-      return jsonResponse({
+      return jsonResponse(req, {
         clientSecret: paymentIntent.client_secret,
         paymentIntentId: paymentIntent.id,
         resumeToken: resume,
@@ -798,7 +799,7 @@ Deno.serve(async (req) => {
         /* best-effort */
       }
       const message = orderErr instanceof Error ? orderErr.message : 'Uložení objednávky selhalo.';
-      return jsonResponse({ error: message }, 500);
+      return jsonResponse(req, { error: message }, 500);
     }
 
     if (supersededOrders.length > 0) {
@@ -813,7 +814,7 @@ Deno.serve(async (req) => {
     }
 
     const thankYouTracking = persistedOrderId ? await trackingTokenForOrder(persistedOrderId) : null;
-    return jsonResponse({
+    return jsonResponse(req, {
       clientSecret: paymentIntent.client_secret,
       paymentIntentId: paymentIntent.id,
       resumeToken: persistedResumeToken,
@@ -833,7 +834,7 @@ Deno.serve(async (req) => {
     }
 
     const message = error instanceof Error ? error.message : 'Stripe PaymentIntent creation failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     try {
       await sql`select pg_advisory_unlock(hashtext(${lockKeyText}::text))`;

@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
  * Školní / B objednávka s platbou převodem (pouze s IČO). Bez Stripe PI, bez export_queue.
  */
@@ -78,11 +79,11 @@ type CheckoutCustomer = {
   zip: string;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
@@ -140,11 +141,11 @@ async function invokeEshopPipedriveTransferSync(orderId: string, fallbackRequest
   }
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -225,15 +226,15 @@ function validateSeparateDeliveryIfNeeded(shipping: unknown): boolean {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   let payload: {
@@ -246,7 +247,7 @@ Deno.serve(async (req) => {
   try {
     payload = await req.json();
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
   }
 
   const { items, shipping, customer, schoolInquiry } = payload;
@@ -256,50 +257,50 @@ Deno.serve(async (req) => {
     : '';
 
   if (!validateItems(items)) {
-    return jsonResponse({ error: 'Neplatné položky košíku.' }, 400);
+    return jsonResponse(req, { error: 'Neplatné položky košíku.' }, 400);
   }
   if (!validateShipping(shipping)) {
-    return jsonResponse({ error: 'Neplatná doprava.' }, 400);
+    return jsonResponse(req, { error: 'Neplatná doprava.' }, 400);
   }
   if (!validateCustomer(customer)) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Neplatné zákaznické údaje (ulice včetně čísla domu, PSČ 5 číslic).',
     }, 400);
   }
 
   if (!validateSeparateDeliveryIfNeeded(shipping)) {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
     }, 400);
   }
 
   const custEmail = normalizeEmail((customer as CheckoutCustomer).email);
   if (!isValidEmailFormat(custEmail)) {
-    return jsonResponse({ error: EMAIL_FORMAT_HINT_CS }, 400);
+    return jsonResponse(req, { error: EMAIL_FORMAT_HINT_CS }, 400);
   }
   const custDomain = custEmail.split('@')[1];
     if (!custDomain || !(await domainAcceptsMailForForms(custDomain))) {
-    return jsonResponse({ error: EMAIL_MX_REJECT_CS }, 400);
+    return jsonResponse(req, { error: EMAIL_MX_REJECT_CS }, 400);
   }
 
   const ico = String(customer.ico || '').trim().replace(/\s/g, '');
   if (!ico) {
-    return jsonResponse({ error: 'Pro platbu převodem vyplňte IČO.' }, 400);
+    return jsonResponse(req, { error: 'Pro platbu převodem vyplňte IČO.' }, 400);
   }
 
   if (shipping.method === 'zasilkovna' && !shipping.pickupPointId) {
-    return jsonResponse({ error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
+    return jsonResponse(req, { error: 'Pro Zásilkovnu musíte vybrat výdejní místo.' }, 400);
   }
 
   const shipPriceErr = validateShippingPriceHalers(shipping.method, shipping.price);
   if (shipPriceErr) {
-    return jsonResponse({ error: shipPriceErr }, 400);
+    return jsonResponse(req, { error: shipPriceErr }, 400);
   }
 
   const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
   const supabaseAnon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
   if (!supabaseUrl || !supabaseAnon) {
-    return jsonResponse({ error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
+    return jsonResponse(req, { error: 'Chybí SUPABASE_URL / SUPABASE_ANON_KEY pro ověření ceníku.' }, 500);
   }
   try {
     const { products, bundles } = await loadCheckoutCatalog(supabaseUrl, {
@@ -308,11 +309,11 @@ Deno.serve(async (req) => {
     });
     const priceErr = validateCheckoutPricing(items as CheckoutItemInput[], products, bundles);
     if (priceErr) {
-      return jsonResponse({ error: priceErr }, 400);
+      return jsonResponse(req, { error: priceErr }, 400);
     }
   } catch (e) {
     console.error('[submit-transfer-order] catalog validation:', e);
-    return jsonResponse({
+    return jsonResponse(req, {
       error: 'Nepodařilo se ověřit košík vůči ceníku. Zkuste to prosím znovu.',
     }, 503);
   }
@@ -320,7 +321,7 @@ Deno.serve(async (req) => {
   const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
   const total = subtotal + shipping.price;
   if (subtotal <= 0 || total <= 0) {
-    return jsonResponse({ error: 'Celková částka musí být kladná.' }, 400);
+    return jsonResponse(req, { error: 'Celková částka musí být kladná.' }, 400);
   }
 
   const noteText =
@@ -377,7 +378,7 @@ Deno.serve(async (req) => {
             select pipedrive_deal_id from public.orders where id = ${draftOrderId}::uuid limit 1
           `;
           if (finalizedRows[0]?.pipedrive_deal_id) {
-            return jsonResponse({
+            return jsonResponse(req, {
               success: true,
               orderId: draftOrderId,
               orderNumber: existingDraft.order_number,
@@ -427,7 +428,7 @@ Deno.serve(async (req) => {
           } catch (updateErr) {
             console.error('[submit-transfer-order] Draft UPDATE in-place failed:', updateErr);
             const message = updateErr instanceof Error ? updateErr.message : 'Update objednávky selhal.';
-            return jsonResponse({ error: message }, 500);
+            return jsonResponse(req, { error: message }, 500);
           }
 
           console.log(
@@ -438,7 +439,7 @@ Deno.serve(async (req) => {
            *  při UPDATE buď doplní deal, který se předtím nepovedl, nebo skip. */
           fireEshopPipedriveTransferSync(draftOrderId, req.url);
 
-          return jsonResponse({
+          return jsonResponse(req, {
             success: true,
             orderId: draftOrderId,
             orderNumber: existingDraft.order_number,
@@ -454,7 +455,7 @@ Deno.serve(async (req) => {
       `;
       if (existingEarly.length > 0) {
         // Existující objednávka stejného hashe (bez draftId, např. legacy session).
-        return jsonResponse({
+        return jsonResponse(req, {
           success: true,
           orderId: existingEarly[0].id,
           orderNumber: existingEarly[0].order_number,
@@ -595,7 +596,7 @@ Deno.serve(async (req) => {
       });
 
       if (outcome.kind === 'dup') {
-        return jsonResponse({
+        return jsonResponse(req, {
           success: true,
           orderId: outcome.row.id,
           orderNumber: outcome.row.order_number,
@@ -625,7 +626,7 @@ Deno.serve(async (req) => {
 
       await invokeEshopPipedriveTransferSync(orderRow.id, req.url);
 
-      return jsonResponse({
+      return jsonResponse(req, {
         success: true,
         orderId: orderRow.id,
         orderNumber: orderRow.order_number,
@@ -640,7 +641,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Submit failed.';
     console.error('[submit-transfer-order]', msg);
-    return jsonResponse({ error: msg }, 500);
+    return jsonResponse(req, { error: msg }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

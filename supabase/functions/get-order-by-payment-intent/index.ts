@@ -1,17 +1,18 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -182,7 +183,7 @@ async function buildOrderSummaryResponse(
   const fulfillment = buildFulfillmentPayload(order);
   const invoice_ready = order.invoice_status === 'done' && Boolean(order.idoklad_invoice_id?.trim());
 
-  return jsonResponse({
+  return jsonResponse(req, {
     order_number: order.order_number,
     total: order.total,
     subtotal: order.subtotal,
@@ -208,16 +209,16 @@ async function buildOrderSummaryResponse(
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing database configuration.' }, 500);
+    return jsonResponse(req, { error: 'Missing database configuration.' }, 500);
   }
 
   const url = new URL(req.url);
@@ -233,15 +234,15 @@ Deno.serve(async (req) => {
   const emailParamNorm = emailParamRaw.toLowerCase();
 
   if (!paymentIntentId && !orderNumber) {
-    return jsonResponse({ error: 'Missing payment_intent_id or order (order_number).' }, 400);
+    return jsonResponse(req, { error: 'Missing payment_intent_id or order (order_number).' }, 400);
   }
 
   if (paymentIntentId && orderNumber) {
-    return jsonResponse({ error: 'Provide only one of payment_intent_id or order.' }, 400);
+    return jsonResponse(req, { error: 'Provide only one of payment_intent_id or order.' }, 400);
   }
 
   if (orderNumber.length > 80) {
-    return jsonResponse({ error: 'Invalid order reference.' }, 400);
+    return jsonResponse(req, { error: 'Invalid order reference.' }, 400);
   }
 
   const sql = postgres(databaseUrl, {
@@ -309,7 +310,7 @@ Deno.serve(async (req) => {
 
     const order = rows[0];
     if (!order) {
-      return jsonResponse({ error: 'Order not found.' }, 404);
+      return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
     /**
@@ -328,7 +329,7 @@ Deno.serve(async (req) => {
         emailParamNorm.includes('@')
         && order.customer_email.trim().toLowerCase() === emailParamNorm;
       if (!tokenOk && !emailOk) {
-        return jsonResponse({
+        return jsonResponse(req, {
           error:
             'Neplatný odkaz ke sledování. Použijte celý odkaz z e-mailu, nebo zadejte e-mail z objednávky na stránce sledování.',
         }, 403);
@@ -342,13 +343,13 @@ Deno.serve(async (req) => {
       && order.status === 'pending_payment';
 
     if (!paidOk && !transferPending) {
-      return jsonResponse({ error: 'Order not found.' }, 404);
+      return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
     return await buildOrderSummaryResponse(sql, order, transferThankYou);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Order lookup failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

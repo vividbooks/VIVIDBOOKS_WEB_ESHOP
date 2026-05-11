@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
  * Inbound: Pipedrive deal (typicky WON) → objednávka v Postgres + fronta exportu (Base.com / volitelně iDoklad).
  *
@@ -33,12 +34,12 @@
 import postgres from 'npm:postgres';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-pipedrive-inbound-token',
   /** GET/HEAD: Pipedrive při kontrole dostupnosti webhooku volá URL v prohlížeči nebo HEAD requestem — dříve jen POST → 405 → „inaccessible“. */
   'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS',
-};
+});
 
 const DEFAULT_SHIPPING_METHOD = 'ppl';
 const DEFAULT_SHIPPING_PRICE_HALER = 8900;
@@ -62,10 +63,10 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
   });
 }
 
@@ -278,7 +279,7 @@ function isPostgresUniqueViolation(e: unknown): boolean {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   const url = new URL(req.url);
@@ -288,17 +289,17 @@ Deno.serve(async (req) => {
     if (req.method === 'HEAD') {
       return new Response(null, {
         status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
       });
     }
     if (verifyInboundToken(req, url)) {
-      return jsonResponse({
+      return jsonResponse(req, {
         ok: true,
         service: 'pipedrive-inbound-deal',
         hint: 'Webhook accepts POST with Pipedrive JSON or { "deal_id": number }.',
       }, 200);
     }
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: true,
       service: 'pipedrive-inbound-deal',
       probe: 'reachable',
@@ -307,18 +308,18 @@ Deno.serve(async (req) => {
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   if (!verifyInboundToken(req, url)) {
     logInbound('unauthorized', { hint: 'token v URL ?token= nebo hlavička x-pipedrive-inbound-token' });
-    return jsonResponse({ error: 'Unauthorized.' }, 401);
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   const rawBody = await req.text();
   const trimmed = rawBody.trim();
   if (!trimmed) {
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: true,
       accepted: false,
       hint: 'Empty body — no import. Send Pipedrive webhook JSON or { "deal_id": number }.',
@@ -329,17 +330,17 @@ Deno.serve(async (req) => {
   try {
     const parsed: unknown = JSON.parse(trimmed);
     if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return jsonResponse({ ok: true, accepted: false, hint: 'Body must be a JSON object.' }, 200);
+      return jsonResponse(req, { ok: true, accepted: false, hint: 'Body must be a JSON object.' }, 200);
     }
     payload = parsed as Record<string, unknown>;
   } catch {
-    return jsonResponse({ ok: true, accepted: false, hint: 'Invalid JSON — use Pipedrive webhook payload or { "deal_id": number }.' }, 200);
+    return jsonResponse(req, { ok: true, accepted: false, hint: 'Invalid JSON — use Pipedrive webhook payload or { "deal_id": number }.' }, 200);
   }
 
   const dealId = extractDealId(payload);
   if (!dealId) {
     logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20) });
-    return jsonResponse(
+    return jsonResponse(req, 
       {
         ok: true,
         skipped: true,
@@ -353,12 +354,12 @@ Deno.serve(async (req) => {
 
   const apiToken = (Deno.env.get('PIPEDRIVE_API_TOKEN') || '').trim();
   if (!apiToken) {
-    return jsonResponse({ error: 'PIPEDRIVE_API_TOKEN not configured.' }, 500);
+    return jsonResponse(req, { error: 'PIPEDRIVE_API_TOKEN not configured.' }, 500);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   logInbound('start', { dealId });
@@ -366,19 +367,19 @@ Deno.serve(async (req) => {
   const deal = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/deals/${dealId}`);
   if (!deal) {
     logInbound('skipped', { dealId, reason: 'deal_not_found' });
-    return jsonResponse({ skipped: true, reason: 'deal_not_found', dealId }, 200);
+    return jsonResponse(req, { skipped: true, reason: 'deal_not_found', dealId }, 200);
   }
 
   const status = String(deal.status || '').toLowerCase();
   if (status !== 'won') {
     logInbound('skipped', { dealId, reason: 'deal_not_won', status });
-    return jsonResponse({ skipped: true, reason: 'deal_not_won', dealId, status }, 200);
+    return jsonResponse(req, { skipped: true, reason: 'deal_not_won', dealId, status }, 200);
   }
 
   const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
   if (pipelineId != null && !pipelineAllowed(pipelineId)) {
     logInbound('skipped', { dealId, reason: 'pipeline_not_allowed', pipelineId });
-    return jsonResponse({ skipped: true, reason: 'pipeline_not_allowed', dealId, pipelineId }, 200);
+    return jsonResponse(req, { skipped: true, reason: 'pipeline_not_allowed', dealId, pipelineId }, 200);
   }
 
   const personIdFromDeal = parsePipedriveEntityId(deal.person_id);
@@ -718,7 +719,7 @@ Deno.serve(async (req) => {
         skippedServices,
       });
 
-      return jsonResponse({
+      return jsonResponse(req, {
         success: true,
         mode: 'updated',
         orderId: target.id,
@@ -799,7 +800,7 @@ Deno.serve(async (req) => {
             reason: 'already_imported_race',
             orderId: race[0].id,
           });
-          return jsonResponse({
+          return jsonResponse(req, {
             skipped: true,
             mode: 'skipped',
             reason: 'already_imported',
@@ -814,7 +815,7 @@ Deno.serve(async (req) => {
 
     const row = inserted[0];
     if (!row) {
-      return jsonResponse({ error: 'Insert failed.' }, 500);
+      return jsonResponse(req, { error: 'Insert failed.' }, 500);
     }
 
     for (const line of lines) {
@@ -919,7 +920,7 @@ Deno.serve(async (req) => {
       missingEmailOnly,
       usedZeroValueFallback,
     });
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       mode: 'created',
       orderId: row.id,
@@ -936,7 +937,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Import failed';
     console.error('[pipedrive-inbound]', msg);
-    return jsonResponse({ error: msg }, 500);
+    return jsonResponse(req, { error: msg }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

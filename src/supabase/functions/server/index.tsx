@@ -11,6 +11,7 @@ import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
+import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import {
   normalizeEmail,
   isValidEmailFormat,
@@ -152,7 +153,11 @@ function getPublicSiteOrigin(): string {
   return normalizePublicSiteOrigin(DEFAULT_PUBLIC_SITE_ORIGIN_FALLBACK);
 }
 
-app.use('*', cors());
+app.use('*', cors({
+  origin: ALLOWED_API_ORIGINS,
+  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'x-user-access-token'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+}));
 app.use('*', logger(console.log));
 
 /* ── Diagnostický endpoint — raw Webflow JSON ─────────────────── */
@@ -1166,10 +1171,39 @@ function buildMetaMarketingFeedCsv(items: MarketingFeedItem[]): string {
 
 const MARKETING_FEED_HEADERS = {
   'Cache-Control': 'public, max-age=300, s-maxage=300',
-  'Access-Control-Allow-Origin': '*',
 };
 
+function corsOrigin(origin: string | null): string {
+  return resolveAllowedOrigin(origin);
+}
+
+function buildMarketingFeedHeaders(origin: string | null) {
+  return {
+    ...MARKETING_FEED_HEADERS,
+    'Access-Control-Allow-Origin': corsOrigin(origin),
+  };
+}
+
 const MARKETING_FEED_VERSION = 'new-domain-20260505';
+
+const ALLOWED_API_ORIGINS = [
+  'https://new.vividbooks.com',
+  'https://project-e4jce.vercel.app',
+  'https://vividbooks.com',
+  'https://www.vividbooks.com',
+  'http://localhost:3000',
+  'https://localhost:3000',
+  'http://127.0.0.1:3000',
+  'https://127.0.0.1:3000',
+  'http://localhost:5173',
+  'https://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://127.0.0.1:5173',
+  'http://localhost',
+  'https://localhost',
+  'http://127.0.0.1',
+  'https://127.0.0.1',
+];
 
 function marketingFeedPublicUrl(filename: string, versioned = false): string {
   const publicBase = getPublicSiteOrigin().replace(/\/$/, '');
@@ -1316,7 +1350,7 @@ app.get('/make-server-93a20b6f/marketing-feed/google.xml', async (c) => {
   const products = await getAllProducts();
   const { items } = buildMarketingFeed(products);
   return c.body(buildGoogleMarketingFeedXml(items), 200, {
-    ...MARKETING_FEED_HEADERS,
+    ...buildMarketingFeedHeaders(c.req.header('origin')),
     'Content-Type': 'application/xml; charset=utf-8',
   });
 });
@@ -1325,7 +1359,7 @@ app.get('/make-server-93a20b6f/marketing-feed/meta.csv', async (c) => {
   const products = await getAllProducts();
   const { items } = buildMarketingFeed(products);
   return c.body(buildMetaMarketingFeedCsv(items), 200, {
-    ...MARKETING_FEED_HEADERS,
+    ...buildMarketingFeedHeaders(c.req.header('origin')),
     'Content-Type': 'text/csv; charset=utf-8',
   });
 });
@@ -1337,7 +1371,7 @@ app.get('/make-server-93a20b6f/marketing-feed/diagnostics', async (c) => {
     acc[row.reason] = (acc[row.reason] || 0) + 1;
     return acc;
   }, {});
-  for (const [key, value] of Object.entries(MARKETING_FEED_HEADERS)) c.header(key, value);
+  for (const [key, value] of Object.entries(buildMarketingFeedHeaders(c.req.header('origin')))) c.header(key, value);
   return c.json({
     generatedAt: new Date().toISOString(),
     sourceProducts: products.length,
@@ -13960,7 +13994,7 @@ app.get('/make-server-93a20b6f/rag/export', async (c) => {
         headers: {
           'Content-Type': 'application/x-ndjson',
           'Content-Disposition': `attachment; filename="vividbooks-rag-${exportedAt.slice(0,10)}.jsonl"`,
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': corsOrigin(c.req.header('origin')),
         },
       });
     }
@@ -13976,7 +14010,7 @@ app.get('/make-server-93a20b6f/rag/export', async (c) => {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': `attachment; filename="vividbooks-rag-${exportedAt.slice(0,10)}.csv"`,
-          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Origin': corsOrigin(c.req.header('origin')),
         },
       });
     }
@@ -13991,13 +14025,16 @@ app.get('/make-server-93a20b6f/rag/export', async (c) => {
       headers: {
         'Content-Type': 'application/json',
         'Content-Disposition': `attachment; filename="vividbooks-rag-${exportedAt.slice(0,10)}.json"`,
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': corsOrigin(c.req.header('origin')),
       },
     });
   } catch (e: any) {
     console.log(`[RAG export] CHYBA: ${e.message}`);
     return new Response(JSON.stringify({ error: `RAG export: ${e.message}` }), {
-      status: 500, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      status: 500, headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': corsOrigin(c.req.header('origin')),
+      },
     });
   }
 });

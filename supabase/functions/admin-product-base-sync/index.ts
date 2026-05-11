@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
 type SyncProductPayload = {
@@ -18,18 +19,18 @@ type SyncProductPayload = {
   } | null;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -170,11 +171,11 @@ function parsePrice(product: SyncProductPayload) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -185,7 +186,7 @@ Deno.serve(async (req) => {
   try {
     const { product } = await req.json().catch(() => ({ product: null })) as { product?: SyncProductPayload | null };
     if (!product) {
-      return jsonResponse({ error: 'Missing product payload.' }, 400);
+      return jsonResponse(req, { error: 'Missing product payload.' }, 400);
     }
 
     const productId = cleanString(product.id);
@@ -194,19 +195,19 @@ Deno.serve(async (req) => {
     const apiToken = cleanString(Deno.env.get('BASECOM_API_TOKEN'));
 
     if (!productId || !productName) {
-      return jsonResponse({ error: 'Produkt musí mít ID a název.' }, 400);
+      return jsonResponse(req, { error: 'Produkt musí mít ID a název.' }, 400);
     }
     if (!apiToken) {
-      return jsonResponse({ error: 'Missing BASECOM_API_TOKEN.' }, 500);
+      return jsonResponse(req, { error: 'Missing BASECOM_API_TOKEN.' }, 500);
     }
     if (productType === 'online' || productType === 'license') {
-      return jsonResponse({ error: 'Digitální produkty do Base.com skladu nesynchronizujeme.' }, 400);
+      return jsonResponse(req, { error: 'Digitální produkty do Base.com skladu nesynchronizujeme.' }, 400);
     }
 
     const inventoriesResponse = await callBasecomApi(apiToken, 'getInventories', {});
     const firstInventory = pickFirstInventory(normalizeInventories(inventoriesResponse));
     if (!firstInventory) {
-      return jsonResponse({ error: 'V Base.com nebyl nalezen žádný sklad.' }, 500);
+      return jsonResponse(req, { error: 'V Base.com nebyl nalezen žádný sklad.' }, 500);
     }
 
     const sku = pickSku(product);
@@ -235,7 +236,7 @@ Deno.serve(async (req) => {
     const syncResponse = await addOrUpdateInventoryProduct(apiToken, parameters, existingBasecomProductId);
     const syncedProductId = cleanString(syncResponse.product_id) || existingBasecomProductId;
 
-    return jsonResponse({
+    return jsonResponse(req, {
       ok: true,
       inventoryId: firstInventory.id,
       inventoryName: firstInventory.name,
@@ -248,6 +249,6 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Base.com sync failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   }
 });
