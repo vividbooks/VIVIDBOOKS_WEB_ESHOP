@@ -28,6 +28,8 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   - PIPEDRIVE_INBOUND_SHIPPING_METHOD (default `ppl`),
  *   - PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER (default 8900 = 89 Kč),
  *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
+ *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
+ *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená.
  *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
@@ -49,6 +51,10 @@ const DEFAULT_SHIPPING_PRICE_HALER = 8900;
  *  webhook deal považuje za pokračování e‑shopové objednávky a místo nového INSERTu provede UPDATE +
  *  re-export. Pokud je prázdné, deal je ručně založený v CRM → vznikne nová objednávka se zdrojem `pipedrive`. */
 const PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT = '26e4a2f8dc44e49f369c468ccc816ad668b37d92';
+
+/** Vlastní pole na dealu (Pipedrive UI ID 12530) — požadované číslo objednávky v e‑shopu pro scénář A. */
+const PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD_KEY_DEFAULT =
+  '3525a2dc77a0cfdaa1b4d15ac7d4175a4c6cb11c';
 
 const ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON =
   'Pipedrive import: u dealu chybí osoba i kontakt u organizace. Doplňte u objednávky e-mail a kontakt na zákazníka.';
@@ -206,6 +212,43 @@ function readEshopOrderNumberFromDeal(deal: Record<string, unknown>): string {
   if (typeof raw === 'string') return raw.trim();
   if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
   return '';
+}
+
+function pipedriveScalarCustomFieldToString(raw: unknown): string {
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.value === 'string') return o.value.trim();
+    if (typeof o.value === 'number' && Number.isFinite(o.value)) return String(o.value).trim();
+  }
+  return '';
+}
+
+/** Číslo objednávky ze dealu (jen scénář A) — pole hash / optional `custom_fields` / záloha UI ID 12530. */
+function readInboundDealExplicitOrderNumberFromDeal(deal: Record<string, unknown>): string {
+  const fieldKey = (Deno.env.get('PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD') || '').trim()
+    || PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD_KEY_DEFAULT;
+
+  let s = pipedriveScalarCustomFieldToString(deal[fieldKey]);
+  if (s) return s;
+  const cf = deal.custom_fields;
+  if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
+    const cfo = cf as Record<string, unknown>;
+    s = pipedriveScalarCustomFieldToString(cfo[fieldKey]);
+    if (s) return s;
+    s = pipedriveScalarCustomFieldToString(cfo['12530']);
+    if (s) return s;
+  }
+  s = pipedriveScalarCustomFieldToString(deal['12530']);
+  return s || '';
+}
+
+function normalizeInboundExplicitOrderNumber(raw: string): string | null {
+  const t = raw.replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 80) return null;
+  return t;
 }
 
 function verifyInboundToken(req: Request, url: URL): boolean {
@@ -513,6 +556,10 @@ Deno.serve(async (req) => {
       : ADMIN_NOTE_ZERO_VALUE_FALLBACK;
   }
 
+  const inboundExplicitOrderCandidate = normalizeInboundExplicitOrderNumber(
+    readInboundDealExplicitOrderNumberFromDeal(deal),
+  );
+
   const note = JSON.stringify({
     source: 'pipedrive_inbound',
     pipedriveDealId: dealId,
@@ -520,6 +567,7 @@ Deno.serve(async (req) => {
     missingPipedriveContact,
     missingEmailOnly,
     zeroValueFallback: usedZeroValueFallback,
+    pipedriveDealOrderNumberField: inboundExplicitOrderCandidate || undefined,
   }).slice(0, 12000);
 
   const sql = postgres(databaseUrl, {
@@ -735,6 +783,22 @@ Deno.serve(async (req) => {
     /* ============================================================================ */
     /* SCÉNÁŘ A — nová objednávka (ručně založený deal v CRM, bez Eshop ID matche).  */
     /* ============================================================================ */
+    let orderNumberForInsert: string | null = inboundExplicitOrderCandidate;
+    if (orderNumberForInsert) {
+      const clash = await sql<{ id: string }[]>`
+        select id from public.orders where order_number = ${orderNumberForInsert} limit 1
+      `;
+      if (clash.length > 0) {
+        logInbound('inbound_explicit_order_number_taken', {
+          dealId,
+          orderNumber: orderNumberForInsert,
+        });
+        orderNumberForInsert = null;
+      }
+    }
+
+    const hadExplicitOrderNumberAttempt = Boolean(orderNumberForInsert);
+
     let inserted: { id: string; order_number: string }[];
     try {
       inserted = await sql<{ id: string; order_number: string }[]>`
@@ -761,6 +825,7 @@ Deno.serve(async (req) => {
         note,
         admin_note,
         pipedrive_deal_id,
+        order_number,
         paid_at
       ) values (
         ${orderStatus},
@@ -785,6 +850,7 @@ Deno.serve(async (req) => {
         ${note},
         ${adminNote},
         ${dealIdStr},
+        ${orderNumberForInsert},
         ${missingPipedriveContact ? null : new Date()}
       )
       returning id, order_number
@@ -809,8 +875,68 @@ Deno.serve(async (req) => {
             orderNumber: race[0].order_number,
           }, 200);
         }
+        if (hadExplicitOrderNumberAttempt) {
+          logInbound('inbound_order_number_unique_fallback', { dealId });
+          inserted = await sql<{ id: string; order_number: string }[]>`
+      insert into public.orders (
+        status,
+        source,
+        customer_email,
+        customer_name,
+        customer_phone,
+        school_name,
+        ico,
+        street,
+        city,
+        zip,
+        country,
+        shipping_method,
+        shipping_price,
+        pickup_point_id,
+        pickup_point_name,
+        payment_method,
+        payment_status,
+        subtotal,
+        total,
+        note,
+        admin_note,
+        pipedrive_deal_id,
+        order_number,
+        paid_at
+      ) values (
+        ${orderStatus},
+        'pipedrive',
+        ${email.trim()},
+        ${name},
+        ${phone.trim() || null},
+        ${schoolName},
+        ${hasIco ? ico : null},
+        ${street.trim() || '—'},
+        ${city.trim() || '—'},
+        ${zip.trim() || '—'},
+        'CZ',
+        ${shipMethod},
+        ${shippingPrice},
+        null,
+        null,
+        'invoice',
+        ${paymentStatus},
+        ${subtotal},
+        ${total},
+        ${note},
+        ${adminNote},
+        ${dealIdStr},
+        ${null},
+        ${missingPipedriveContact ? null : new Date()}
+      )
+      returning id, order_number
+    `;
+        } else {
+          throw insertErr;
+        }
+      } else {
+        throw insertErr;
       }
-      throw insertErr;
     }
 
     const row = inserted[0];
