@@ -153,12 +153,7 @@ function getPublicSiteOrigin(): string {
   return normalizePublicSiteOrigin(DEFAULT_PUBLIC_SITE_ORIGIN_FALLBACK);
 }
 
-app.use('*', cors({
-  origin: ALLOWED_API_ORIGINS,
-  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'x-user-access-token'],
-  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-}));
-app.use('*', logger(console.log));
+// CORS and request logging are registered after ALLOWED_API_ORIGINS is defined.
 
 /* ── Diagnostický endpoint — raw Webflow JSON ─────────────────── */
 app.get('/make-server-93a20b6f/debug-webflow/:collectionId', async (c) => {
@@ -1204,6 +1199,34 @@ const ALLOWED_API_ORIGINS = [
   'http://127.0.0.1',
   'https://127.0.0.1',
 ];
+
+const corsOptions = {
+  origin: ALLOWED_API_ORIGINS,
+  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'x-user-access-token'],
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+};
+
+app.use('*', cors(corsOptions));
+app.use('/*', cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use('/*', logger(console.log));
+app.onError((err, c) => {
+  const origin = c.req.header('Origin');
+  const errorMessage = err instanceof Error ? err.message : 'Internal server error';
+  console.error('[make-server] unhandled error:', errorMessage);
+  return c.json(
+    { error: errorMessage },
+    500,
+    {
+      headers: {
+        'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-user-access-token',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Vary': 'Origin',
+      },
+    },
+  );
+});
 
 function marketingFeedPublicUrl(filename: string, versioned = false): string {
   const publicBase = getPublicSiteOrigin().replace(/\/$/, '');

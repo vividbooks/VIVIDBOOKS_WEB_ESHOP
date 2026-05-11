@@ -941,12 +941,12 @@ export default function CatalogGrid() {
       ...(upcomingWebinarSlide?.showInSlider ? [{
         bg: upcomingWebinarSlide.isLive ? 'bg-[#dc2626]' : 'bg-[#1e3a8a]',
         bgStyle: upcomingWebinarSlide.isLive ? '#dc2626' : '#1e3a8a',
-        title: upcomingWebinarSlide.isLive ? 'Live webinÃ¡Å™' : 'WebinÃ¡Å™ brzy',
+        title: upcomingWebinarSlide.isLive ? 'Live webinář' : 'Webinář brzy',
         subtitle: upcomingWebinarSlide.webinar.title,
         badges: upcomingWebinarSlide.isLive
-          ? ['\uD83D\uDD34 PrÃ¡vÄ› probÃ­hÃ¡', upcomingWebinarSlide.webinar.lecturer]
+          ? ['\uD83D\uDD34 Právě probíhá', upcomingWebinarSlide.webinar.lecturer]
           : [`${upcomingWebinarSlide.webinar.day}. ${upcomingWebinarSlide.webinar.monthName} v ${upcomingWebinarSlide.webinar.time}`],
-        bottom: upcomingWebinarSlide.isLive ? 'Vstupte na Å¾ivÃ© vysÃ­lÃ¡nÃ­ â†’' : 'PÅ™ipojte se â€” vysÃ­lÃ¡nÃ­ brzy zaÄÃ­nÃ¡ â†’',
+        bottom: upcomingWebinarSlide.isLive ? 'Vstupte na živé vysílání →' : 'Připojte se — vysílání brzy začíná →',
         layout: 'webinar' as const,
         image: upcomingWebinarSlide.webinar.coverImage || 'https://images.unsplash.com/photo-1588196749597-9ff075ee6b5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
         link: `/webinar/${upcomingWebinarSlide.webinar.id}/live`,
@@ -1458,7 +1458,7 @@ export default function CatalogGrid() {
                       >
                         {slideView.title}
                       </h1>
-                      {/* NÃ¡zev webinÃ¡Å™e */}
+                      {/* Název webináře */}
                       <p
                         className="text-white/65 text-[13px] md:text-[15px] mb-3 whitespace-pre-line leading-snug break-words"
                         style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
@@ -1928,7 +1928,7 @@ export default function CatalogGrid() {
 
           <button
             type="button"
-            aria-label="PÅ™edchozÃ­ slide"
+            aria-label="Předchozí slide"
             onClick={(e) => {
               e.stopPropagation();
               goToSlide(heroSlide - 1);
@@ -1941,7 +1941,7 @@ export default function CatalogGrid() {
           </button>
           <button
             type="button"
-            aria-label="NÃ¡sledujÃ­cÃ­ slide"
+            aria-label="Následující slide"
             onClick={(e) => {
               e.stopPropagation();
               goToSlide(heroSlide + 1);
@@ -1980,7 +1980,7 @@ export default function CatalogGrid() {
           </span>
           <div className="flex flex-col gap-0.5">
             <span className="font-['Fenomen_Sans',sans-serif] text-[10px] uppercase tracking-widest opacity-55 leading-none font-bold">
-              {notifBobanak?.type === 'custom' ? 'Upozorn\u011bn\u00ed' : 'Bl\u00ed\u017e\u00ed se webinÃ¡Å™'}
+              {notifBobanak?.type === 'custom' ? 'Upozornění' : 'Blíží se webinář'}
             </span>
             <span className="font-['Fenomen_Sans',sans-serif] text-[13px] leading-snug opacity-85 font-bold">
               {notifBobanak
