@@ -437,7 +437,7 @@ Deno.serve(async (req) => {
 
           /** Pipedrive sync je idempotentní (kontroluje `pipedrive_deal_id`), takže
            *  při UPDATE buď doplní deal, který se předtím nepovedl, nebo skip. */
-          fireEshopPipedriveTransferSync(draftOrderId, req.url);
+          invokeEshopPipedriveTransferSync(draftOrderId, req.url);
 
           return jsonResponse(req, {
             success: true,

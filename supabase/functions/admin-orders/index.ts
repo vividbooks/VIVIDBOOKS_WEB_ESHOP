@@ -920,7 +920,21 @@ Deno.serve(async (req) => {
         ${filterClause}
         ${supersededClause}
         ${sourceClause}
-        group by o.id
+        group by
+          o.id,
+          o.order_number,
+          o.created_at,
+          o.customer_name,
+          o.school_name,
+          o.customer_email,
+          o.total,
+          o.status,
+          o.basecom_status,
+          o.payment_status,
+          o.shipping_method,
+          o.tracking_number,
+          o.poster_fulfillment_status,
+          o.source
         order by o.created_at desc
         limit ${pageSize}
         offset ${offset}

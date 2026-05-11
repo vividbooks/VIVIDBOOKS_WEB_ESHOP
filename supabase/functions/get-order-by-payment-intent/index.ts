@@ -156,6 +156,7 @@ async function buildOrderSummaryResponse(
   sql: ReturnType<typeof postgres>,
   order: OrderHeadRow,
   transferThankYou: boolean,
+  req: Request,
 ) {
   const items = await sql<OrderItemRow[]>`
     select
@@ -346,7 +347,7 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
-    return await buildOrderSummaryResponse(sql, order, transferThankYou);
+  return await buildOrderSummaryResponse(sql, order, transferThankYou, req);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Order lookup failed.';
     return jsonResponse(req, { error: message }, 500);
