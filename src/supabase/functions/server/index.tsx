@@ -14914,13 +14914,40 @@ async function findOrCreatePipedrivePersonForEshopB2c(
   apiToken: string,
   params: { name: string; email: string; phone: string },
 ) {
-  const existing = await searchPipedrivePersonByEmail(apiToken, params.email);
-  if (existing?.id) return existing;
-  const payload: Record<string, any> = {
-    name: String(params.name || '').trim() || 'Zákazník',
-    email: String(params.email || '').trim(),
+  const name = String(params.name || '').trim() || 'Zákazník';
+  const email = String(params.email || '').trim();
+  const phone = String(params.phone || '').trim();
+
+  const existing = await searchPipedrivePersonByEmail(apiToken, email);
+  if (existing?.id) {
+    const personId = parsePipedriveNumericId(existing.id);
+    if (!personId) return existing;
+
+    const patch: Record<string, unknown> = {};
+    const currentName = String(existing.name || '').trim();
+    if (name && currentName !== name) patch.name = name;
+    if (phone) patch.phone = phone;
+
+    if (Object.keys(patch).length > 0) {
+      try {
+        await pipedriveRequest(apiToken, `/persons/${personId}`, {
+          method: 'PUT',
+          body: JSON.stringify(patch),
+        });
+        const refreshed = await pipedriveRequest<any>(apiToken, `/persons/${personId}`);
+        return refreshed?.data || existing;
+      } catch (e: any) {
+        console.log(`[Pipedrive eshop] person B2C PUT (sync z objednávky): ${e.message}`);
+      }
+    }
+    return existing;
+  }
+
+  const payload: Record<string, unknown> = {
+    name,
+    email,
   };
-  if (params.phone?.trim()) payload.phone = params.phone.trim();
+  if (phone) payload.phone = phone;
   const created = await pipedriveRequest<any>(apiToken, '/persons', {
     method: 'POST',
     body: JSON.stringify(payload),
