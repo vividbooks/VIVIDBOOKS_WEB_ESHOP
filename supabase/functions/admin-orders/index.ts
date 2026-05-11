@@ -869,7 +869,21 @@ Deno.serve(async (req) => {
     const includeSuperseded = url.searchParams.get('includeSuperseded') === '1'
       || url.searchParams.get('includeSuperseded') === 'true';
     const hasSourceColumn = await hasColumn(sql, 'orders', 'source');
-    const sourceProjection = hasSourceColumn ? sql`o.source` : sql`null::text`;
+    /** Objednávka z inbound webhooku (scénář A) — vždy `pipedrive_inbound`; sloupec `source` může na starší DB chybět. */
+    const pipedriveInboundOriginJoin = sql`
+      left join (
+        select distinct order_id
+        from public.order_events
+        where event_type = 'pipedrive_inbound'
+      ) pdi on pdi.order_id = o.id
+    `;
+    /** Jednotná definice „původ Pipedrive“: explicitní sloupec nebo audit událost (retroaktivně bez migrace). */
+    const pipedriveSourceMatch = hasSourceColumn
+      ? sql`(pdi.order_id is not null or o.source = 'pipedrive')`
+      : sql`(pdi.order_id is not null)`;
+    const sourceProjection = hasSourceColumn
+      ? sql`case when pdi.order_id is not null then 'pipedrive' else o.source end`
+      : sql`case when pdi.order_id is not null then 'pipedrive' else 'eshop' end`;
     /** `source=eshop|pipedrive|all` — filtr zdroje objednávky pro admin seznam. */
     const sourceParam = (url.searchParams.get('source') || '').trim().toLowerCase();
     const sourceFilter: 'eshop' | 'pipedrive' | null =
@@ -884,9 +898,11 @@ Deno.serve(async (req) => {
       ? sql`and o.poster_fulfillment_status is not null`
       : sql``;
 
-    const sourceClause = sourceFilter && hasSourceColumn
-      ? sql`and o.source = ${sourceFilter}`
-      : sql``;
+    const sourceClause = sourceFilter === 'pipedrive'
+      ? sql`and ${pipedriveSourceMatch}`
+      : sourceFilter === 'eshop'
+        ? sql`and not (${pipedriveSourceMatch})`
+        : sql``;
 
     const filterClause = filter === 'new'
       ? sql`and o.status in ('paid', 'processing', 'exported')`
@@ -907,6 +923,7 @@ Deno.serve(async (req) => {
       sql<{ count: number }[]>`
         select count(*)::int as count
         from public.orders o
+        ${pipedriveInboundOriginJoin}
         where true
         ${searchClause}
         ${posterClause}
@@ -932,6 +949,7 @@ Deno.serve(async (req) => {
           ${sourceProjection} as source,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
+        ${pipedriveInboundOriginJoin}
         left join public.order_items oi on oi.order_id = o.id
         where true
         ${searchClause}
@@ -952,7 +970,8 @@ Deno.serve(async (req) => {
           o.payment_status,
           o.shipping_method,
           o.tracking_number,
-          o.poster_fulfillment_status
+          o.poster_fulfillment_status,
+          pdi.order_id
           ${hasSourceColumn ? sql`, o.source` : sql``}
         order by o.created_at desc
         limit ${pageSize}
