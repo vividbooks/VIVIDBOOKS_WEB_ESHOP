@@ -22,7 +22,7 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
- * Bez osoby / bez e-mailu / nulová hodnota: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; export jen při kompletním kontaktu.
+ * Bez osoby / bez e-mailu: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; do Base.com se export pošle i tak (kvůli ručním dealům v CRM). iDoklad jen při kompletním kontaktu (fakturační e-mail).
  * Volitelně:
  *   - PIPEDRIVE_INBOUND_PIPELINE_IDS (čárkou oddělená ID pipeline, prázdné = všechny),
  *   - PIPEDRIVE_INBOUND_SHIPPING_METHOD (default `ppl`),
@@ -133,6 +133,10 @@ async function pipedriveApiGet<T>(
 
 function readPersonEmail(person: Record<string, unknown>): string {
   const raw = person?.email;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t) return t;
+  }
   if (!Array.isArray(raw)) return '';
   for (const entry of raw) {
     const v = typeof entry === 'object' && entry && 'value' in entry
@@ -145,6 +149,10 @@ function readPersonEmail(person: Record<string, unknown>): string {
 
 function readPersonPhone(person: Record<string, unknown>): string {
   const raw = person?.phone;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (t) return t;
+  }
   if (!Array.isArray(raw)) return '';
   for (const entry of raw) {
     const v = typeof entry === 'object' && entry && 'value' in entry
@@ -196,15 +204,48 @@ function parsePipedriveEntityId(value: unknown): number | null {
   return null;
 }
 
+/** Skalární vlastní pole Pipedrive: v1 API často přímo string/číslo, v2 / některé odpovědi `{ type, value }`. */
+function pipedriveScalarCustomFieldToString(raw: unknown): string {
+  if (raw == null) return '';
+  if (typeof raw === 'string') return raw.trim();
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    if (typeof o.value === 'string') return o.value.trim();
+    if (typeof o.value === 'number' && Number.isFinite(o.value)) return String(o.value).trim();
+  }
+  return '';
+}
+
 /** Vyčte hodnotu pole „Eshop ID" z dealu. Hash klíče lze přepsat env `PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD`,
- *  ale výchozí hodnota odpovídá produkčnímu poli na Pipedrive UI ID 12586. Pipedrive vrací custom textová pole
- *  jako string s hash klíčem (čísla / čistě číselné stringy ignorujeme — Pipedrive je vrátil jen omylem). */
+ *  ale výchozí hodnota odpovídá produkčnímu poli na Pipedrive UI ID 12586. Podporuje v1 plochý objekt dealu
+ *  i `data.custom_fields` z webhooků / novějších odpovědí. */
 function readEshopOrderNumberFromDeal(deal: Record<string, unknown>): string {
   const fieldKey = (Deno.env.get('PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD') || '').trim()
     || PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT;
-  const raw = (deal as Record<string, unknown>)[fieldKey];
-  if (typeof raw === 'string') return raw.trim();
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
+
+  let raw: unknown = deal[fieldKey];
+  let s = pipedriveScalarCustomFieldToString(raw);
+  if (s) return s;
+
+  const cf = deal.custom_fields;
+  if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
+    const nested = (cf as Record<string, unknown>)[fieldKey];
+    s = pipedriveScalarCustomFieldToString(nested);
+    if (s) return s;
+  }
+
+  /** Záloha: UI ID pole jako string klíče (JSON klíče jsou vždy stringy). */
+  const byUiId = deal['12586'];
+  s = pipedriveScalarCustomFieldToString(byUiId);
+  if (s) return s;
+
+  if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
+    const nestedUi = (cf as Record<string, unknown>)['12586'];
+    s = pipedriveScalarCustomFieldToString(nestedUi);
+    if (s) return s;
+  }
+
   return '';
 }
 
@@ -840,40 +881,41 @@ Deno.serve(async (req) => {
       `;
     }
 
+    const customerSnapshotA = {
+      email: email.trim(),
+      name,
+      phone: phone.trim() || null,
+      schoolName,
+      ico: hasIco ? ico : null,
+      street: street.trim() || '—',
+      city: city.trim() || '—',
+      zip: zip.trim() || '—',
+    };
+    const shippingSnapshotA = { method: shipMethod, price: shippingPrice };
+
+    /** Base.com i bez kompletního kontaktu v PD — ruční dealy musí do skladu; řádek v `orders` má placeholder e-mail + admin_note. */
+    await sql`
+      insert into public.export_queue (order_id, service, status, payload)
+      values (
+        ${row.id}::uuid,
+        'basecom',
+        'pending',
+        ${JSON.stringify({
+          orderId: row.id,
+          pipedriveDealId: dealId,
+          items: lines.map((l) => ({
+            productId: l.productId,
+            productName: l.productName,
+            quantity: l.quantity,
+            unitPrice: l.unitPriceHaler,
+          })),
+          customer: customerSnapshotA,
+          shipping: shippingSnapshotA,
+        })}::jsonb
+      )
+    `;
+
     if (!missingPipedriveContact) {
-      const customerSnapshot = {
-        email: email.trim(),
-        name,
-        phone: phone.trim() || null,
-        schoolName,
-        ico: hasIco ? ico : null,
-        street: street.trim() || '—',
-        city: city.trim() || '—',
-        zip: zip.trim() || '—',
-      };
-      const shippingSnapshot = { method: shipMethod, price: shippingPrice };
-
-      await sql`
-        insert into public.export_queue (order_id, service, status, payload)
-        values (
-          ${row.id}::uuid,
-          'basecom',
-          'pending',
-          ${JSON.stringify({
-            orderId: row.id,
-            pipedriveDealId: dealId,
-            items: lines.map((l) => ({
-              productId: l.productId,
-              productName: l.productName,
-              quantity: l.quantity,
-              unitPrice: l.unitPriceHaler,
-            })),
-            customer: customerSnapshot,
-            shipping: shippingSnapshot,
-          })}::jsonb
-        )
-      `;
-
       await sql`
         insert into public.export_queue (order_id, service, status, payload)
         values (
@@ -883,12 +925,12 @@ Deno.serve(async (req) => {
           ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
         )
       `;
+    }
 
-      try {
-        await invokeProcessExportQueue(req.url);
-      } catch (e) {
-        console.error('[pipedrive-inbound] process-export-queue:', e);
-      }
+    try {
+      await invokeProcessExportQueue(req.url);
+    } catch (e) {
+      console.error('[pipedrive-inbound] process-export-queue:', e);
     }
 
     await sql`
@@ -930,7 +972,7 @@ Deno.serve(async (req) => {
       ...(missingPipedriveContact
         ? {
           warning:
-            'Objednávka vytvořena bez kontaktu ve Pipedrive — v administraci doplňte zákazníka (admin poznámka + placeholder e-mail).',
+            'Objednávka vytvořena bez kompletního kontaktu ve Pipedrive — Base.com export byl zařazen (doplňte zákazníka v administraci). Faktura iDoklad jen pokud je u dealu platný e-mail.',
         }
         : {}),
     }, 200);
