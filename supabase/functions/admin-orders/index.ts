@@ -146,6 +146,23 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
+async function hasColumn(
+  sql: ReturnType<typeof postgres>,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
+  const rows = await sql<{ exists: boolean }[]>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as exists
+  `;
+  return Boolean(rows[0]?.exists);
+}
+
 function normalizeFilter(filter: string | null) {
   switch (filter) {
     case 'new':
@@ -851,6 +868,8 @@ Deno.serve(async (req) => {
     const posterOnly = url.searchParams.get('poster') === '1' || url.searchParams.get('poster') === 'true';
     const includeSuperseded = url.searchParams.get('includeSuperseded') === '1'
       || url.searchParams.get('includeSuperseded') === 'true';
+    const hasSourceColumn = await hasColumn(sql, 'orders', 'source');
+    const sourceProjection = hasSourceColumn ? sql`o.source` : sql`null::text`;
     /** `source=eshop|pipedrive|all` — filtr zdroje objednávky pro admin seznam. */
     const sourceParam = (url.searchParams.get('source') || '').trim().toLowerCase();
     const sourceFilter: 'eshop' | 'pipedrive' | null =
@@ -865,7 +884,7 @@ Deno.serve(async (req) => {
       ? sql`and o.poster_fulfillment_status is not null`
       : sql``;
 
-    const sourceClause = sourceFilter
+    const sourceClause = sourceFilter && hasSourceColumn
       ? sql`and o.source = ${sourceFilter}`
       : sql``;
 
@@ -910,7 +929,7 @@ Deno.serve(async (req) => {
           o.shipping_method,
           o.tracking_number,
           o.poster_fulfillment_status,
-          o.source,
+          ${sourceProjection} as source,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
         left join public.order_items oi on oi.order_id = o.id
@@ -933,8 +952,8 @@ Deno.serve(async (req) => {
           o.payment_status,
           o.shipping_method,
           o.tracking_number,
-          o.poster_fulfillment_status,
-          o.source
+          o.poster_fulfillment_status
+          ${hasSourceColumn ? sql`, o.source` : sql``}
         order by o.created_at desc
         limit ${pageSize}
         offset ${offset}

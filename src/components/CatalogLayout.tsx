@@ -826,7 +826,7 @@ export default function CatalogLayout() {
 
           {/* ── Main content area ───────────────────────────────── */}
           <main
-            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 ${
+            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 overflow-x-hidden ${
               isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
             }`}
        

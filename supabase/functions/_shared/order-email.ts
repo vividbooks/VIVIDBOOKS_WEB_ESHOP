@@ -113,7 +113,10 @@ function getPublicEshopBaseUrl(): string {
   return 'https://vividbooks.com';
 }
 
-async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string): Promise<string | null> {
+async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string, params?: {
+  paymentMethod?: string;
+  status?: string;
+}): Promise<string | null> {
   const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
   if (!secret) return null;
   try {
@@ -122,6 +125,12 @@ async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string)
     const u = new URL('objednavka/sledovani', `${site}/`);
     u.searchParams.set('order', orderNumber);
     u.searchParams.set('t', token);
+    if (
+      params?.paymentMethod === 'transfer'
+      && params?.status === 'pending_payment'
+    ) {
+      u.searchParams.set('transfer', '1');
+    }
     return u.toString();
   } catch {
     return null;
@@ -409,7 +418,10 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
 
   let trackingUrl: string | null = null;
   if (params.emailType === 'order_confirmed' || params.emailType === 'order_shipped') {
-    trackingUrl = await buildPublicOrderTrackingUrl(order.id, order.order_number);
+    trackingUrl = await buildPublicOrderTrackingUrl(order.id, order.order_number, {
+      paymentMethod: order.payment_method,
+      status: order.status,
+    });
   }
 
   let subject = '';

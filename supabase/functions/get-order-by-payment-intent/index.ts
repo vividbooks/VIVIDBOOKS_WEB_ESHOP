@@ -316,7 +316,8 @@ Deno.serve(async (req) => {
 
     /**
      * Stejné ověření jako u čísla objednávky — PI z URL nesmí stačit samo (uniká např. z přesměrování Stripe).
-     * Děkovná stránka u převodu (`transfer=1`) zůstává bez e-mailu/tokenu (jako dřív u order_number).
+     * Převod (transfer) je čitelný i bez `transfer=1` při validním tokenu z emailu,
+     * ale potvrzení přímého přístupu z checkoutu před přepsáním tokenu nadále používá `transfer=1`.
      */
     const needProof =
       (orderNumber && !paymentIntentId && !transferThankYou)
@@ -338,12 +339,11 @@ Deno.serve(async (req) => {
     }
 
     const paidOk = order.payment_status === 'paid';
-    const transferPending =
-      transferThankYou
-      && order.payment_method === 'transfer'
-      && order.status === 'pending_payment';
+  const transferPending =
+    order.payment_method === 'transfer'
+    && order.status === 'pending_payment';
 
-    if (!paidOk && !transferPending) {
+  if (!paidOk && !transferPending) {
       return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
