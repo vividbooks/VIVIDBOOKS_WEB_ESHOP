@@ -1702,7 +1702,7 @@ export default function CatalogGrid() {
                         />
                       </div>
                       <div
-                        className="absolute inset-x-0 bottom-0 z-20 flex min-w-0 items-end justify-center overflow-x-auto overflow-y-visible px-0 pb-2 md:pb-3"
+                        className="absolute inset-x-0 bottom-0 z-20 flex min-w-0 items-end justify-center overflow-hidden px-0 pb-2 md:pb-3"
                         style={{
                           minHeight: heroBooksFanBelowShelfMinPx((slideView as any).booksFanBelowShelfPercent),
                           paddingTop: heroBooksFanBelowCollageTopBleedPx(collageOy),
