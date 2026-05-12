@@ -29,7 +29,7 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   - PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER (default 8900 = 89 Kč),
  *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
  *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
- *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená.
+ *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená ani v kolizi s jinou objednávkou (čte se z plochého deal objektu, z mapy `custom_fields` i z pole záznamů stejných jako u některých webhooků).
  *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
@@ -255,35 +255,60 @@ function readEshopOrderNumberFromDeal(deal: Record<string, unknown>): string {
   return '';
 }
 
-function pipedriveScalarCustomFieldToString(raw: unknown): string {
-  if (raw == null) return '';
-  if (typeof raw === 'string') return raw.trim();
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
-  if (typeof raw === 'object' && !Array.isArray(raw)) {
-    const o = raw as Record<string, unknown>;
-    if (typeof o.value === 'string') return o.value.trim();
-    if (typeof o.value === 'number' && Number.isFinite(o.value)) return String(o.value).trim();
+/** Vyčtení vlastního pole dealu podle hash klíče z nastavení PD nebo podle UI ID (řetězec, např. `12530`).
+ *  Podporuje plochý objekt dealu, `custom_fields` jako mapu i pole záznamů (některé webhooky / novější payloady). */
+function extractPipedriveDealCustomScalar(
+  deal: Record<string, unknown>,
+  fieldKey: string,
+  uiIdStr: string,
+): string {
+  const tryContainer = (container: Record<string, unknown>): string => {
+    let v = pipedriveScalarCustomFieldToString(container[fieldKey]);
+    if (v) return v;
+    v = pipedriveScalarCustomFieldToString(container[uiIdStr]);
+    return v || '';
+  };
+
+  let s = tryContainer(deal);
+  if (s) return s;
+
+  const cf = deal.custom_fields;
+  if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
+    s = tryContainer(cf as Record<string, unknown>);
+    if (s) return s;
   }
+
+  if (Array.isArray(cf)) {
+    const uiNum = Number.parseInt(uiIdStr, 10);
+    for (const entry of cf) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const o = entry as Record<string, unknown>;
+      const idRaw = o.id ?? o.field_id ?? o.fieldId;
+      const idStr = idRaw != null ? String(idRaw).trim() : '';
+      const hashRaw = typeof o.key === 'string'
+        ? o.key.trim()
+        : typeof o.hash === 'string'
+        ? o.hash.trim()
+        : '';
+      const matches =
+        hashRaw === fieldKey ||
+        idStr === uiIdStr ||
+        (Number.isInteger(uiNum) && idStr === String(uiNum));
+      if (!matches) continue;
+      const rawVal = o.value ?? o.values ?? o;
+      s = pipedriveScalarCustomFieldToString(rawVal);
+      if (s) return s;
+    }
+  }
+
   return '';
 }
 
-/** Číslo objednávky ze dealu (jen scénář A) — pole hash / optional `custom_fields` / záloha UI ID 12530. */
+/** Číslo objednávky ze dealu (jen scénář A) — pole UI ID **12530**, hash **3525a2dc…** (`PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD`). */
 function readInboundDealExplicitOrderNumberFromDeal(deal: Record<string, unknown>): string {
   const fieldKey = (Deno.env.get('PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD') || '').trim()
     || PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD_KEY_DEFAULT;
-
-  let s = pipedriveScalarCustomFieldToString(deal[fieldKey]);
-  if (s) return s;
-  const cf = deal.custom_fields;
-  if (cf && typeof cf === 'object' && !Array.isArray(cf)) {
-    const cfo = cf as Record<string, unknown>;
-    s = pipedriveScalarCustomFieldToString(cfo[fieldKey]);
-    if (s) return s;
-    s = pipedriveScalarCustomFieldToString(cfo['12530']);
-    if (s) return s;
-  }
-  s = pipedriveScalarCustomFieldToString(deal['12530']);
-  return s || '';
+  return extractPipedriveDealCustomScalar(deal, fieldKey, '12530');
 }
 
 function normalizeInboundExplicitOrderNumber(raw: string): string | null {
