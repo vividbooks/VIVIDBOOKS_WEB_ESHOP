@@ -235,12 +235,47 @@ Deno.serve(async (req) => {
       if (order.poster_fulfillment_status != null) {
         return jsonResponse(req, { error: 'Objednávky plakátů se do Base.com neexportují.' }, 400);
       }
-      if (order.basecom_status !== 'failed') {
-        return jsonResponse(req, { error: 'Retry export is only available for failed Base.com exports.' }, 400);
+      if (order.basecom_status === 'done' || order.basecom_status === 'skipped') {
+        return jsonResponse(req, { error: 'Export do Base.com je již dokončen nebo přeskočen.' }, 400);
       }
 
-      await sql.begin(async (tx) => {
-        await tx`
+      const wfRows = await sql<{ status: string }[]>`
+        select status
+        from public.order_workflow_steps
+        where order_id = ${orderId}::uuid
+          and step_key = 'basecom_exported'
+        limit 1
+      `;
+      const basecomWfStatus = wfRows[0]?.status ?? null;
+      const queuePeek = await sql<{ status: string }[]>`
+        select status
+        from public.export_queue
+        where order_id = ${orderId}::uuid
+          and service = 'basecom'
+        limit 1
+      `;
+      const basecomQueueStatus = queuePeek[0]?.status ?? null;
+
+      const allowRetry =
+        order.basecom_status === 'failed' ||
+        basecomWfStatus === 'failed' ||
+        basecomQueueStatus === 'failed';
+      if (!allowRetry) {
+        return jsonResponse(req, {
+          error: 'Retry export je dostupné jen po selhání (stav objednávky, workflow nebo fronta Base.com).',
+        }, 400);
+      }
+
+      if (queuePeek.length === 0) {
+        return jsonResponse(req, { error: 'Chybí řádek ve frontě exportů (Base.com) — objednávku nelze tímto tlačítkem opravit.' }, 400);
+      }
+
+      /** Když fronta čeká jako pending, ale workflow už hlásí failed (typicky zamítnuté invoke bez běhu workeru). */
+      const resetPendingQueue = basecomWfStatus === 'failed' || order.basecom_status === 'failed';
+
+      try {
+        await sql.begin(async (tx) => {
+          const updatedRows = await tx<{ id: string }[]>`
           update public.export_queue
           set
             status = 'pending',
@@ -250,8 +285,21 @@ Deno.serve(async (req) => {
             completed_at = null
           where order_id = ${orderId}::uuid
             and service = 'basecom'
-            and status = 'failed'
+            and (
+              status in ('failed', 'processing')
+              or (
+                status = 'pending'
+                and ${resetPendingQueue}
+              )
+            )
+          returning id
         `;
+
+          if (updatedRows.length === 0) {
+            throw Object.assign(new Error('No matching Base.com export_queue row for retry_export.'), {
+              name: 'RetryExportQueueMissing',
+            });
+          }
 
         await tx`
           update public.orders
@@ -291,7 +339,16 @@ Deno.serve(async (req) => {
             action: 'retry_export',
           },
         });
-      });
+        });
+      } catch (beginErr: unknown) {
+        const name = beginErr instanceof Error ? beginErr.name : '';
+        if (name === 'RetryExportQueueMissing') {
+          return jsonResponse(req, {
+            error: 'Řádek fronty Base.com nelze vrátit do stavu „pending“ — zkontrolujte stav ve frontě.',
+          }, 400);
+        }
+        throw beginErr;
+      }
 
       try {
         await invokeProcessExportQueue(req.url);

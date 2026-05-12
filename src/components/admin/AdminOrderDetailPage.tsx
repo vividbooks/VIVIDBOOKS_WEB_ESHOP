@@ -189,7 +189,17 @@ export function AdminOrderDetailPage() {
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  const canRetryExport = order?.basecom_status === 'failed';
+  /** Stripe/webhook někdy označí jen workflow jako failed (`invoke` fronty), zatímco `basecom_status` zůstane pending — retry musí projít stejně. */
+  const basecomWorkflowStep = useMemo(
+    () => workflowSteps.find((s) => workflowStepKey(s) === 'basecom_exported'),
+    [workflowSteps],
+  );
+  const canRetryExport = useMemo(() => {
+    if (!order || order.poster_fulfillment_status != null) return false;
+    if (order.basecom_status === 'done' || order.basecom_status === 'skipped') return false;
+    return order.basecom_status === 'failed' || basecomWorkflowStep?.status === 'failed';
+  }, [order, basecomWorkflowStep]);
+
   const idokladWorkflowStep = useMemo(
     () => workflowSteps.find((s) => workflowStepKey(s) === 'idoklad_exported'),
     [workflowSteps],
@@ -413,8 +423,8 @@ export function AdminOrderDetailPage() {
               disabled={actionLoading !== null}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-100 text-amber-800 font-bold text-[12px] disabled:opacity-40"
             >
-              <RefreshCw className="w-4 h-4" />
-              {'Retry export'}
+              <RefreshCw className={`w-4 h-4 ${actionLoading === 'retry_export' ? 'animate-spin' : ''}`} />
+              {'Znovu export do Base.com'}
             </button>
           )}
           {canCancel && (
@@ -750,7 +760,21 @@ export function AdminOrderDetailPage() {
             <div className="space-y-2 text-[13px]">
               <div><span className="text-gray-400">{'Metoda: '}</span><span className="font-semibold text-[#001161]">{order.payment_method}</span></div>
               <div><span className="text-gray-400">{'Status platby: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.payment_status || 'pending')}`}>{order.payment_status || 'pending'}</span></div>
-              <div><span className="text-gray-400">{'Base.com: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.basecom_status || 'pending')}`}>{order.basecom_status || 'pending'}</span></div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-gray-400">{'Base.com: '}</span>
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.basecom_status || 'pending')}`}>{order.basecom_status || 'pending'}</span>
+                {canRetryExport && (
+                  <button
+                    type="button"
+                    title="Znovu zařadit řádek do fronty exportu (po selhání nebo zamítnutém volání fronty)"
+                    disabled={actionLoading !== null}
+                    onClick={() => void handleAction('retry_export')}
+                    className="inline-flex items-center justify-center rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <Repeat className={`w-3.5 h-3.5 ${actionLoading === 'retry_export' ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+              </div>
               <div><span className="text-gray-400">{'Zásilkovna: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.zasilkovna_status || 'pending')}`}>{order.zasilkovna_status || 'pending'}</span></div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-gray-400">{'Faktura: '}</span>
