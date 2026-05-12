@@ -106,7 +106,7 @@ export function DvppLeadMagnetPage() {
   const standaloneHost = isDvppStandaloneHost();
 
   return (
-    <main className="min-h-screen bg-[#F5F6FB] text-[#001161]" style={{ fontFamily: ff }}>
+    <main className="min-h-screen bg-white text-[#001161]" style={{ fontFamily: ff }}>
       <SEOHead
         title="DVPP webináře zdarma pro pedagogy ZŠ"
         path={standaloneHost ? '' : '/dvpp-webinare'}
