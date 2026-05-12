@@ -1,5 +1,5 @@
 /**
- * Kanonická marketingová doména (new.) + příprava na www / apex.
+ * Kanonická marketingová doména (www) + legacy/apex alternativy.
  * Build: VITE_PUBLIC_SITE_URL přepíše primární origin (canonical, OG, breadcrumbs).
  */
 

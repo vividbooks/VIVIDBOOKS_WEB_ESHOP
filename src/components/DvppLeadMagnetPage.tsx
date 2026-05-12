@@ -39,7 +39,7 @@ function scrollToRecordings() {
 }
 
 function mainSiteHref(path: string, standaloneHost: boolean) {
-  return standaloneHost ? `https://new.vividbooks.com${path}` : path;
+  return standaloneHost ? `https://www.vividbooks.com${path}` : path;
 }
 
 function normalizeRecordingTitle(value: string) {

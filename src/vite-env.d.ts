@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** Kanonická veřejná URL webu (canonical, OG); výchozí v kódu: https://new.vividbooks.com */
+  /** Kanonická veřejná URL webu (canonical, OG); výchozí v kódu: https://www.vividbooks.com */
   readonly VITE_PUBLIC_SITE_URL?: string;
   /** Doména aplikace učebnic (přesměrování např. z /cs/otevrit-ucebnice). Výchozí https://app.vividbooks.com */
   readonly VITE_APP_ORIGIN?: string;

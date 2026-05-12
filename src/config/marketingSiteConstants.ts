@@ -5,7 +5,7 @@
 /** Krátký popisek webu — výchozí meta description, titulek homepage, OG / schema. */
 export const MARKETING_SITE_TAGLINE_CS = 'Učení, které inspiruje a baví.';
 
-export const MARKETING_ORIGIN_PRIMARY_DEFAULT = 'https://new.vividbooks.com';
+export const MARKETING_ORIGIN_PRIMARY_DEFAULT = 'https://www.vividbooks.com';
 
 export const MARKETING_ORIGIN_WWW = 'https://www.vividbooks.com';
 

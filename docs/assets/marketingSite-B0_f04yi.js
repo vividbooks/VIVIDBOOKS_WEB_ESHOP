@@ -1,0 +1,1 @@
+const s="Učení, které inspiruje a baví.",n="https://www.vividbooks.com";function o(){try{const t="https://www.vividbooks.com";if(t?.trim())return t.trim().replace(/\/$/,"")}catch{}return n}function e(t){const i=o(),r=t.startsWith("/")?t:`/${t}`;return`${i}${r}`}export{s as M,o as g,e as m};

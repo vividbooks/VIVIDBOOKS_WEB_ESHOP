@@ -1,1 +1,0 @@
-import{k as o,h as i,j as a,N as s}from"./index-B-sLmH41.js";function u(){const{id:e}=o(),[t]=i();if(!e)return a.jsx(s,{to:"/webinare",replace:!0});const r=new URLSearchParams(t);r.set("dotaznik","1");const n=r.toString();return a.jsx(s,{to:`/webinar/${e}?${n}`,replace:!0})}export{u as WebinarSurveyRedirectRoute};

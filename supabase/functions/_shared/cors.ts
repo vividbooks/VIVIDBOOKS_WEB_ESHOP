@@ -24,5 +24,5 @@ function normalizeOrigin(origin: string | null | undefined): string {
 export function resolveAllowedOrigin(origin: string | null | undefined): string {
   const normalized = normalizeOrigin(origin);
   if (ALLOWED_ORIGINS.has(normalized)) return normalized;
-  return 'https://new.vividbooks.com';
+  return 'https://www.vividbooks.com';
 }
