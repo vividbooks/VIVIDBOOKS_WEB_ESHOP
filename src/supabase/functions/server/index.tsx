@@ -2998,13 +2998,35 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       webinarMonthName: bodyMonthName,
       /** Přesný název tagu v Mailchimp (jako v adminu u webináře), jinak webinar-{slug} */
       mailchimpTagName: bodyMailchimpTag,
+      notTeacher: bodyNotTeacher,
+      schoolName: bodySchoolName,
+      schoolAddress: bodySchoolAddress,
+      ico: bodyIco,
+      webinarMotivation: bodyMotivation,
+      webinarTopicInterest: bodyTopicInterest,
+      usesVividbooks: bodyUsesVividbooks,
     } = body;
+
+    const notTeacher = !!bodyNotTeacher;
+    const schoolName = String(bodySchoolName ?? '').trim();
+    const schoolAddress = String(bodySchoolAddress ?? '').trim();
+    const icoDigits = String(bodyIco ?? '').replace(/\D/g, '').slice(0, 10);
+    const webinarMotivation = String(bodyMotivation ?? '').trim();
+    const webinarTopicInterest = String(bodyTopicInterest ?? '').trim();
+    const usesVividbooksNorm =
+      bodyUsesVividbooks === 'yes' || bodyUsesVividbooks === 'no' ? bodyUsesVividbooks : null;
 
     if (!webinarId || !name || !email || !position) {
       return c.json({ error: 'Chybí povinná pole (webinarId, name, email, position).' }, 400);
     }
     if (!gdpr) {
       return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
+    }
+    if (!webinarMotivation || !webinarTopicInterest) {
+      return c.json({ error: 'Vyplňte motivaci registrace a téma, které vás zajímá.' }, 400);
+    }
+    if (!usesVividbooksNorm) {
+      return c.json({ error: 'Vyberte u položky „Používám Vividbooks“ možnost Ano nebo Ne.' }, 400);
     }
 
     const cleanEmail = email.toLowerCase().trim();
@@ -3032,6 +3054,13 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       registeredAt: new Date().toISOString(),
       attended: false,
       trialToken: token,
+      notTeacher,
+      schoolName,
+      schoolAddress,
+      ico: icoDigits,
+      webinarMotivation,
+      webinarTopicInterest,
+      usesVividbooks: usesVividbooksNorm,
     };
 
     await kv.set(key, registration);
@@ -3268,6 +3297,48 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       console.log(`[Mailchimp] Preskoceno - chybi API klic nebo audience ID`);
     }
 
+    type PipedriveWebinarSyncState = {
+      ok: boolean;
+      skipped?: boolean;
+      detail?: string;
+      leadId?: string;
+    };
+    let pipedriveSync: PipedriveWebinarSyncState = {
+      ok: false,
+      skipped: true,
+      detail: 'Chybí PIPEDRIVE_API_TOKEN v Supabase (Edge Functions → Secrets).',
+    };
+    const pipedriveToken = getPipedriveApiToken();
+    if (pipedriveToken) {
+      pipedriveSync = { ok: false, skipped: false };
+      try {
+        const pdResult = await syncWebinarRegistrationToPipedrive({
+          apiToken: pipedriveToken,
+          notTeacher,
+          schoolName,
+          schoolAddress,
+          icoDigits,
+          contactName: name.trim(),
+          email: cleanEmail,
+          phone: phone?.trim() || '',
+          positionLabel: String(position || '').trim(),
+          webinarTitle: webinarTitle || webinarId,
+          webinarId: String(webinarId),
+          registeredAtIso: registration.registeredAt,
+          webinarMotivation,
+          webinarTopicInterest,
+          usesVividbooks: usesVividbooksNorm,
+        });
+        pipedriveSync = pdResult.ok
+          ? { ok: true, skipped: false, leadId: pdResult.leadId }
+          : { ok: false, skipped: false, detail: pdResult.detail || 'Pipedrive sync selhal.' };
+      } catch (pdErr: any) {
+        const msg = pdErr?.message || String(pdErr);
+        pipedriveSync = { ok: false, skipped: false, detail: msg.slice(0, 400) };
+        console.log(`[Pipedrive] Webinar registrace: ${msg}`);
+      }
+    }
+
     const integrationReportAt = new Date().toISOString();
     type IntegrationPipelineStep = {
       key: string;
@@ -3315,19 +3386,27 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         detail: mailchimpSync.detail,
         at: integrationReportAt,
       },
+      {
+        key: 'pipedrive_lead',
+        label: 'Pipedrive (lead + poznámka)',
+        status: pipedriveSync.skipped ? 'skipped' : pipedriveSync.ok ? 'ok' : 'failed',
+        detail: pipedriveSync.detail,
+        at: integrationReportAt,
+      },
     ];
 
     const mandrillFailed = !mandrillSync.skipped && !mandrillSync.ok;
     const mailchimpFailed = !mailchimpSync.skipped && !mailchimpSync.ok;
+    const pipedriveFailed = !pipedriveSync.skipped && !pipedriveSync.ok;
     const integrationSummary = {
-      overall: (mandrillFailed || mailchimpFailed
+      overall: (mandrillFailed || mailchimpFailed || pipedriveFailed
         ? 'error'
-        : (mandrillSync.skipped || mailchimpSync.skipped)
+        : (mandrillSync.skipped || mailchimpSync.skipped || pipedriveSync.skipped)
           ? 'partial'
           : 'ok') as 'ok' | 'partial' | 'error',
-      headline: mandrillFailed || mailchimpFailed
+      headline: mandrillFailed || mailchimpFailed || pipedriveFailed
         ? 'Alespoň jedna externí integrace selhala — viz krok níže a Supabase Edge Logs.'
-        : (mandrillSync.skipped || mailchimpSync.skipped)
+        : (mandrillSync.skipped || mailchimpSync.skipped || pipedriveSync.skipped)
           ? 'Některý krok přeskočen (není nastaven klíč nebo audience).'
           : 'Všechny naplánované kroky proběhly v pořádku.',
     };
@@ -3370,6 +3449,24 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         contactEmail: cleanEmail,
       });
     }
+    if (pipedriveFailed) {
+      await upsertSiteIncident({
+        source: 'webinar_registration',
+        incidentType: 'pipedrive_lead_failed',
+        severity: 'warning',
+        dedupeKey: `webinar-pd-${webinarId}-${cleanEmail}`,
+        title: 'Webinář: synchronizace leadu do Pipedrive selhala',
+        message: pipedriveSync.detail || 'Pipedrive API vrátilo chybu.',
+        payload: {
+          webinarId,
+          webinarSlug: slug,
+          email: cleanEmail,
+        },
+        webinarId,
+        webinarTitle: webinarTitle || webinarId,
+        contactEmail: cleanEmail,
+      });
+    }
 
     const regStored = await kv.get(key);
     if (regStored && typeof regStored === 'object') {
@@ -3380,6 +3477,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         mailchimpSyncedAt: syncedAt,
         mandrillSync,
         mandrillSyncedAt: syncedAt,
+        pipedriveSync,
+        pipedriveSyncedAt: syncedAt,
         integrationPipeline,
         integrationSummary,
         integrationReportAt: syncedAt,
@@ -3400,6 +3499,7 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       sync: {
         mandrill: mandrillSync,
         mailchimp: mailchimpSync,
+        pipedrive: pipedriveSync,
       },
       integration: {
         summary: integrationSummary,
@@ -11775,6 +11875,176 @@ function mapPipedrivePersonPositionToOptionId(rawPosition: string): number | nul
   return 172;
 }
 
+/** Přesná mapa hodnot `<select>` pozice ve formuláři webináře → enum option ID pole osoby 9093 (Position). */
+const WEBINAR_REGISTRATION_POSITION_TO_PD_ENUM: Record<string, number> = {
+  'Učitel/ka na ZŠ': 164,
+  'Učitel/ka na SŠ': 164,
+  'Učitel/ka na VOŠ nebo VŠ': 164,
+  'Ředitel/ka školy': 159,
+  'Výchovný/á poradce/poradkyně': 172,
+  'Pedagogický pracovník/ce': 172,
+  'Rodič': 166,
+  'Jiné': 172,
+};
+
+function mapWebinarRegistrationPositionToPipedriveOptionId(rawPosition: string): number | null {
+  const key = String(rawPosition || '').trim();
+  if (!key) return null;
+  const id = WEBINAR_REGISTRATION_POSITION_TO_PD_ENUM[key];
+  return typeof id === 'number' ? id : null;
+}
+
+function parsePipedriveWebinarLeadLabelIdsFromEnv(): string[] {
+  const raw = (Deno.env.get('PIPEDRIVE_WEBINAR_LEAD_LABEL_IDS') || '').trim();
+  if (raw.length > 0) {
+    return raw.split(',').map((s) => s.trim()).filter(Boolean);
+  }
+  return ['340e4c40-b33b-11f0-9969-afaf54a6de3e'];
+}
+
+function buildWebinarRegistrationPipedriveNoteHtml(params: {
+  webinarTitle: string;
+  webinarId: string;
+  registeredAtIso: string;
+  webinarMotivation: string;
+  webinarTopicInterest: string;
+  usesVividbooks: 'yes' | 'no';
+}): string {
+  const vbLabel = params.usesVividbooks === 'yes' ? 'Ano' : 'Ne';
+  const br = (s: string) => escapePipedriveHtml(s).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>');
+  return (
+    `<p><strong>Webinář:</strong> ${escapePipedriveHtml(params.webinarTitle)} ` +
+    `<span style="color:#666">(${escapePipedriveHtml(params.webinarId)})</span></p>` +
+    `<p><strong>Čas registrace:</strong> ${escapePipedriveHtml(params.registeredAtIso)}</p>` +
+    `<hr/>` +
+    `<p><strong>S jakou motivací přicházíte na tento webinář?</strong></p>` +
+    `<p>${br(params.webinarMotivation)}</p>` +
+    `<p><strong>Co by vás u tématu nejvíce zajímalo?</strong></p>` +
+    `<p>${br(params.webinarTopicInterest)}</p>` +
+    `<p><strong>Používám Vividbooks</strong></p>` +
+    `<p>${escapePipedriveHtml(vbLabel)}</p>`
+  );
+}
+
+async function syncWebinarRegistrationToPipedrive(params: {
+  apiToken: string;
+  notTeacher: boolean;
+  schoolName: string;
+  schoolAddress: string;
+  icoDigits: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  positionLabel: string;
+  webinarTitle: string;
+  webinarId: string;
+  registeredAtIso: string;
+  webinarMotivation: string;
+  webinarTopicInterest: string;
+  usesVividbooks: 'yes' | 'no';
+}): Promise<{ ok: boolean; detail?: string; leadId?: string }> {
+  const apiToken = params.apiToken;
+  let organizationId: number | null = null;
+
+  if (!params.notTeacher && params.schoolName.trim() && params.icoDigits.length > 0) {
+    const lookup = await upsertPipedriveSchoolOrganization(apiToken, {
+      schoolName: params.schoolName.trim(),
+      ico: params.icoDigits,
+      address: params.schoolAddress.trim(),
+      strictIcoMatch: true,
+    });
+    organizationId = lookup.orgId ? parsePipedriveNumericId(lookup.orgId) : null;
+  }
+
+  const positionFieldKey = await getPipedrivePersonPositionFieldKey(apiToken);
+  let positionOptionId =
+    mapWebinarRegistrationPositionToPipedriveOptionId(params.positionLabel) ??
+    mapPipedrivePersonPositionToOptionId(params.positionLabel);
+
+  const emailLower = params.email.toLowerCase().trim();
+  const existing = await searchPipedrivePersonByEmailGlobal(apiToken, emailLower);
+  let personId: number | null = null;
+
+  if (existing?.id) {
+    personId = parsePipedriveNumericId(existing.id);
+    if (!personId) {
+      return { ok: false, detail: 'Pipedrive: neplatné ID nalezené osoby.' };
+    }
+    const patch: Record<string, unknown> = {};
+    const phoneTrim = params.phone.trim();
+    if (phoneTrim) patch.phone = phoneTrim;
+
+    const curOrgId = parsePipedriveNumericId(
+      existing.org_id?.id ?? existing.org_id?.value ?? existing.org_id,
+    );
+    if (organizationId && !curOrgId) patch.org_id = organizationId;
+
+    const trimmedName = params.contactName.trim();
+    if (trimmedName && String(existing.name || '').trim() !== trimmedName) patch.name = trimmedName;
+
+    if (positionFieldKey && positionOptionId != null) {
+      (patch as Record<string, unknown>)[positionFieldKey] = positionOptionId;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await pipedriveRequest(apiToken, `/persons/${personId}`, {
+        method: 'PUT',
+        body: JSON.stringify(patch),
+      });
+    }
+  } else {
+    const payload: Record<string, unknown> = { name: params.contactName.trim() };
+    if (emailLower) payload.email = emailLower;
+    const phoneTrim = params.phone.trim();
+    if (phoneTrim) payload.phone = phoneTrim;
+    if (organizationId) payload.org_id = organizationId;
+    if (positionFieldKey && positionOptionId != null) {
+      payload[positionFieldKey] = positionOptionId;
+    }
+    const created = await pipedriveRequest<any>(apiToken, '/persons', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    personId = parsePipedriveNumericId(created?.data?.id);
+    if (!personId) {
+      return { ok: false, detail: 'Pipedrive: vytvoření osoby nevrátilo ID.' };
+    }
+  }
+
+  const leadPayload: Record<string, unknown> = {
+    title: `Webinář: ${params.webinarTitle} — ${params.contactName.trim()}`,
+    person_id: personId,
+    label_ids: parsePipedriveWebinarLeadLabelIdsFromEnv(),
+  };
+  if (organizationId) leadPayload.organization_id = organizationId;
+
+  const webinarOwnerId =
+    pipedriveEnvInt('PIPEDRIVE_WEBINAR_LEAD_OWNER_ID', 0) ||
+    pipedriveEnvInt('PIPEDRIVE_DEFAULT_OWNER_ID', 0);
+  if (webinarOwnerId) leadPayload.owner_id = webinarOwnerId;
+
+  const leadRes = await pipedriveRequest<any>(apiToken, '/leads', {
+    method: 'POST',
+    body: JSON.stringify(leadPayload),
+  });
+  const leadId = leadRes?.data?.id != null ? String(leadRes.data.id).trim() : '';
+  if (!leadId) {
+    return { ok: false, detail: 'Pipedrive: vytvoření leadu nevrátilo ID.' };
+  }
+
+  const noteHtml = buildWebinarRegistrationPipedriveNoteHtml({
+    webinarTitle: params.webinarTitle,
+    webinarId: params.webinarId,
+    registeredAtIso: params.registeredAtIso,
+    webinarMotivation: params.webinarMotivation,
+    webinarTopicInterest: params.webinarTopicInterest,
+    usesVividbooks: params.usesVividbooks,
+  });
+  await createPipedriveNote(apiToken, { content: noteHtml, leadId });
+
+  return { ok: true, leadId };
+}
+
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
   if (pipedriveOrgFieldsMetaByIdCache) return pipedriveOrgFieldsMetaByIdCache;
   const map = new Map<number, { key: string; fieldType: string }>();
@@ -12400,9 +12670,17 @@ async function createPipedriveDeal(
 
 async function createPipedriveNote(
   apiToken: string,
-  params: { content: string; dealId?: number | null; orgId?: number | null; personId?: number | null },
+  params: {
+    content: string;
+    dealId?: number | null;
+    orgId?: number | null;
+    personId?: number | null;
+    /** UUID leadu (Lead Inbox) — viz POST /leads */
+    leadId?: string | null;
+  },
 ) {
   const payload: Record<string, any> = { content: params.content };
+  if (params.leadId) payload.lead_id = params.leadId;
   if (params.dealId) payload.deal_id = params.dealId;
   if (params.orgId) payload.org_id = params.orgId;
   if (params.personId) payload.person_id = params.personId;
