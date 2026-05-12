@@ -7594,6 +7594,20 @@ const stripePublishableKeyHandler = async (c: Context) => {
 app.get('/make-server-93a20b6f/stripe-publishable-key', stripePublishableKeyHandler);
 app.get('/stripe-publishable-key', stripePublishableKeyHandler);
 
+/**
+ * Veřejný API key pro Packeta widget.
+ * Supabase Secrets: PACKETA_API_KEY nebo VITE_PACKETA_API_KEY.
+ */
+const packetaApiKeyHandler = async (c: Context) => {
+  const apiKey =
+    (Deno.env.get('PACKETA_API_KEY')?.trim() ||
+      Deno.env.get('VITE_PACKETA_API_KEY')?.trim() ||
+      '');
+  return c.json({ apiKey: apiKey || null });
+};
+app.get('/make-server-93a20b6f/packeta-api-key', packetaApiKeyHandler);
+app.get('/packeta-api-key', packetaApiKeyHandler);
+
 /* ── Check trial email (dedup, 6mesicni cooldown) ──────────────── */
 app.get('/make-server-93a20b6f/check-trial-email', async (c) => {
   const email = c.req.query('email') || '';

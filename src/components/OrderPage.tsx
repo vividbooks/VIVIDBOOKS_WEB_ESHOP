@@ -69,6 +69,7 @@ import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/street
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
 import { appPath } from '../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
+import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -131,7 +132,6 @@ const SHIPPING_OPTIONS: Array<{ id: SchoolShippingMethod; label: string; price: 
 ];
 
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
-const PACKETA_API_KEY = import.meta.env.VITE_PACKETA_API_KEY ?? '';
 
 /** Info při kombinaci tiskovin + digitální licence (kroky s dopravou zůstávají). */
 const DIGITAL_WITH_PRINT_INFO =
@@ -393,6 +393,7 @@ export function OrderPage() {
   }, []);
 
   const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
+  const { packetaApiKey, packetaKeyLoading, ensurePacketaApiKey } = usePacketaApiKey();
 
   /* ── pre-select from location state / URL param ── */
   const preselectedCategory =
@@ -1727,10 +1728,15 @@ export function OrderPage() {
     setPacketaError('');
   }, []);
 
-  const handleSchoolPacketaPick = useCallback(() => {
+  const handleSchoolPacketaPick = useCallback(async () => {
     setPacketaError('');
-    if (!PACKETA_API_KEY) {
-      setPacketaError('Chybí VITE_PACKETA_API_KEY pro widget Zásilkovny.');
+    if (packetaKeyLoading) {
+      setPacketaError('Načítám klíč pro widget Zásilkovny. Zkuste to prosím za chvíli.');
+      return;
+    }
+    const apiKey = packetaApiKey || await ensurePacketaApiKey();
+    if (!apiKey) {
+      setPacketaError('Chybí Packeta API key pro widget Zásilkovny.');
       return;
     }
     setPacketaLoading(true);
@@ -1740,7 +1746,7 @@ export function OrderPage() {
       return;
     }
     window.Packeta.Widget.pick(
-      PACKETA_API_KEY,
+      apiKey,
       (point) => {
         setPacketaLoading(false);
         if (!point) return;
@@ -1756,7 +1762,7 @@ export function OrderPage() {
       },
       { country: 'cz' },
     );
-  }, []);
+  }, [ensurePacketaApiKey, packetaApiKey, packetaKeyLoading]);
 
   useEffect(() => {
     if (shipping.method !== 'zasilkovna') return;

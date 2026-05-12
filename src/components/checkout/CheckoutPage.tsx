@@ -51,6 +51,7 @@ import {
 import { loadSavedDvppContacts, type SavedDvppContact } from '../../utils/dvppSavedContacts';
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../../utils/streetHouseNumberCZ';
+import { usePacketaApiKey } from '../../utils/packeta/usePacketaApiKey';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
@@ -99,7 +100,6 @@ const SUBMIT_TRANSFER_ORDER_URL = `https://${projectId}.supabase.co/functions/v1
 const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resume-checkout`;
 const CONTACT_SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
-const PACKETA_API_KEY = import.meta.env.VITE_PACKETA_API_KEY ?? '';
 
 const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 1, label: 'Košík' },
@@ -188,6 +188,7 @@ function PlaceholderSection({ title, text = 'Bude doplněno' }: { title: string;
 
 export function CheckoutPage() {
   const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
+  const { packetaApiKey, packetaKeyLoading, ensurePacketaApiKey } = usePacketaApiKey();
   const { products } = useProducts();
   const { items, subtotal, itemCount, updateQuantity, removeItem, replaceUnitPrice } = useCart();
   const [currentStep, setCurrentStep] = useState<CheckoutStep>(1);
@@ -1122,10 +1123,15 @@ export function CheckoutPage() {
   const summarySlotMobile =
     typeof document !== 'undefined' ? document.getElementById('checkout-summary-slot-mobile') : null;
 
-  const handlePacketaPick = () => {
+  const handlePacketaPick = async () => {
     setPacketaError('');
-    if (!PACKETA_API_KEY) {
-      setPacketaError('Chybí VITE_PACKETA_API_KEY pro widget Zásilkovny.');
+    if (packetaKeyLoading) {
+      setPacketaError('Načítám klíč pro widget Zásilkovny. Zkuste to prosím za chvíli.');
+      return;
+    }
+    const apiKey = packetaApiKey || await ensurePacketaApiKey();
+    if (!apiKey) {
+      setPacketaError('Chybí Packeta API key pro widget Zásilkovny.');
       return;
     }
     setPacketaLoading(true);
@@ -1136,7 +1142,7 @@ export function CheckoutPage() {
       return;
     }
 
-    window.Packeta.Widget.pick(PACKETA_API_KEY, (point) => {
+    window.Packeta.Widget.pick(apiKey, (point) => {
       setPacketaLoading(false);
 
       if (!point) return;
