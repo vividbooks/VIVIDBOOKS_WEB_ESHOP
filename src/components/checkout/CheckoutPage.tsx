@@ -1911,6 +1911,7 @@ export function CheckoutPage() {
 
                   {showStripePaymentElement && stripePromise && (
                     <Elements
+                      key={clientSecret}
                       stripe={stripePromise}
                       options={{
                         clientSecret: clientSecret ?? undefined,

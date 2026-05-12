@@ -3176,6 +3176,7 @@ export function OrderPage() {
                     )}
                     {schoolShowStripePaymentElement && stripePromise && (
                       <Elements
+                        key={clientSecret}
                         stripe={stripePromise}
                         options={{
                           clientSecret,

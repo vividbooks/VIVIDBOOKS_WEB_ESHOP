@@ -168,6 +168,7 @@ export function ResumePaymentPage() {
 
           {showElement && clientSecret && (
             <Elements
+              key={clientSecret}
               stripe={stripePromise}
               options={{
                 clientSecret,
