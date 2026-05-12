@@ -5,12 +5,20 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 
 interface WebinarCardProps {
   webinar: Webinar;
+  openInNewTab?: boolean;
 }
 
-export function WebinarCard({ webinar }: WebinarCardProps) {
+export function WebinarCard({ webinar, openInNewTab = false }: WebinarCardProps) {
   const navigate = useNavigate();
 
-  const goToDetail = () => navigate(`/webinar/${webinar.slug || webinar.id}`);
+  const detailPath = `/webinar/${webinar.slug || webinar.id}`;
+  const goToDetail = () => {
+    if (openInNewTab) {
+      window.open(detailPath, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    navigate(detailPath);
+  };
 
   return (
     <div

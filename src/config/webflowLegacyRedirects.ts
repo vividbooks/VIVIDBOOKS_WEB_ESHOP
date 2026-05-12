@@ -35,7 +35,7 @@ type PrefixCollapseRule = { ruleId: string; prefix: string; target: string };
 const LEGACY_EXACT_INTERNAL: ExactRule[] = [
   { ruleId: 'exact.objednat.cs', path: '/cs/cenik', target: '/objednat' },
   { ruleId: 'exact.blog-index.cs', path: '/cs/blog', target: '/blog' },
-  { ruleId: 'exact.webinare.cs', path: '/cs/webinare', target: '/webinare' },
+  { ruleId: 'exact.webinare.cs', path: '/cs/webinare', target: '/dvpp-webinare' },
   { ruleId: 'exact.webinare.en', path: '/en/webinars', target: '/webinare' },
   { ruleId: 'exact.webinare.es', path: '/es/seminarios-web', target: '/webinare' },
   { ruleId: 'exact.kontakt.cs', path: '/cs/kontakt', target: '/kontakt' },
@@ -68,7 +68,7 @@ const LEGACY_EXACT_INTERNAL: ExactRule[] = [
   { ruleId: 'exact.interaktivni-licence', path: '/cs/interaktivni-licence', target: '/' },
   { ruleId: 'exact.jak-zacit', path: '/cs/jak-zacit-s-vividbooks', target: '/webinare' },
   { ruleId: 'exact.dvpp-kurz', path: '/cs/dvpp-akreditovany-kurz', target: '/webinare' },
-  { ruleId: 'exact.dvpp-webinare', path: '/cs/dvpp-webinare', target: '/webinare' },
+  { ruleId: 'exact.dvpp-webinare', path: '/cs/dvpp-webinare', target: '/dvpp-webinare' },
   { ruleId: 'exact.didakticke', path: '/cs/didakticke-obrazy-a-plakaty', target: '/dalsi-produkty' },
   { ruleId: 'exact.tistene', path: '/cs/unikatni-tistene-pracovni-sesity-a-ucebnice', target: '/dalsi-produkty' },
   { ruleId: 'exact.vividboard-root', path: '/cs/vividboard', target: '/vividboard' },
