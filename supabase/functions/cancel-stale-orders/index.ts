@@ -3,6 +3,7 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * Denní job: pending_payment starší 21 dní → zrušit, případně Base.com storno, e-mail zákazníkovi.
  */
 import postgres from 'npm:postgres';
+import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
 import { sendOrderEmail } from '../_shared/order-email.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -31,28 +32,6 @@ function verifyServiceAuth(req: Request): boolean {
   const match = auth.match(/^Bearer\s+(.+)$/i);
   const token = match ? match[1].trim() : '';
   return token === expected;
-}
-
-async function callBasecomSetOrderStatus(apiToken: string, orderId: number, statusId: number) {
-  const body = new URLSearchParams({
-    method: 'setOrderStatus',
-    parameters: JSON.stringify({ order_id: orderId, status_id: statusId }),
-  });
-  const response = await fetch('https://api.baselinker.com/connector.php', {
-    method: 'POST',
-    headers: {
-      'X-BLToken': apiToken,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Base.com setOrderStatus HTTP ${response.status}`);
-  }
-  if (data?.status !== 'SUCCESS') {
-    throw new Error(`Base.com setOrderStatus: ${data?.error_message || JSON.stringify(data)}`);
-  }
 }
 
 Deno.serve(async (req) => {
