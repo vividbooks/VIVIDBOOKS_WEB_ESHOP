@@ -55,6 +55,10 @@ interface FormState {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  schoolAddress: string;
+  webinarMotivation: string;
+  webinarTopicInterest: string;
+  usesVividbooks: '' | 'yes' | 'no';
   /** YYYY-MM-DD — brána DVPP dotazníku */
   birthDateIso: string;
 }
@@ -154,6 +158,10 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     newsletter: false,
     schoolName: '',
     ico: '',
+    schoolAddress: '',
+    webinarMotivation: '',
+    webinarTopicInterest: '',
+    usesVividbooks: '',
     birthDateIso: '',
   });
 
@@ -291,9 +299,15 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setError('');
   };
 
-  const handleSchoolSelect = (school: { ico: string; name: string }) => {
-    setForm(prev => ({ ...prev, schoolName: school.name, ico: school.ico }));
-    setSchoolOpen(false); setSchoolResults([]);
+  const handleSchoolSelect = (school: { ico: string; name: string; address?: string }) => {
+    setForm((prev) => ({
+      ...prev,
+      schoolName: school.name,
+      ico: school.ico,
+      schoolAddress: typeof school.address === 'string' ? school.address.trim() : '',
+    }));
+    setSchoolOpen(false);
+    setSchoolResults([]);
   };
 
   const handleIcoChange = (v: string) => {
@@ -309,6 +323,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       birthDateIso: c.birthDateIso,
       schoolName: c.schoolName,
       ico: c.ico,
+      schoolAddress: '',
     }));
     setSchoolOpen(false);
     setSchoolResults([]);
@@ -402,7 +417,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setNotTeacher((v) => {
       const next = !v;
       if (!v) {
-        setForm((prev) => ({ ...prev, schoolName: '', ico: '' }));
+        setForm((prev) => ({ ...prev, schoolName: '', ico: '', schoolAddress: '' }));
         setSchoolResults([]);
         setSchoolOpen(false);
       }
@@ -426,6 +441,16 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }
     if (!form.gdpr) {
       setError('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.');
+      return;
+    }
+    if (!form.webinarMotivation.trim() || !form.webinarTopicInterest.trim()) {
+      setError(
+        'Vypl\u0148te pros\u00edm motivaci registrace a to, co v\u00e1s u t\u00e9matu nejv\u00edce zaj\u00edm\u00e1.',
+      );
+      return;
+    }
+    if (form.usesVividbooks !== 'yes' && form.usesVividbooks !== 'no') {
+      setError('Vyberte pros\u00edm u polo\u017eky \u201ePou\u017e\u00edv\u00e1m Vividbooks\u201c mo\u017enost Ano nebo Ne.');
       return;
     }
     if (isSurveyFullPage && requireFullSurveyReg) {
