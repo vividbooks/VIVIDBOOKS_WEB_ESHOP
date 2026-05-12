@@ -243,6 +243,7 @@ export function InternalCartUpsellSection({
       quantity: 1,
       unitPrice: getProductUnitPriceInHaler(product),
       imageUrl: getProductImage(product),
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
     });
     if (openCartAfterAdd) openCart();
     setAddingId(null);

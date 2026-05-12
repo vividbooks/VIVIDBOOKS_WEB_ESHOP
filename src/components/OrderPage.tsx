@@ -892,6 +892,7 @@ export function OrderPage() {
       quantity: nextQuantity,
       unitPrice: getProductUnitPriceInHaler(product),
       imageUrl: product.image || undefined,
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
     });
   }, [items, addItem, updateCartQuantity, removeItem]);
 

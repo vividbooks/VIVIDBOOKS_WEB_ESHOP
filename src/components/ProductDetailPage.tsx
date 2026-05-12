@@ -31,6 +31,7 @@ import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
+import { dataLayerItemFromProduct, pushViewContent } from '../utils/dataLayerEcommerce';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
@@ -866,6 +867,26 @@ export function ProductDetailPage({
   }, [product.type, product.shopifyVariantId, selectedMerchVariant]);
 
   useEffect(() => {
+    const itemId = effectiveCartVariantId || String(product.id || '');
+    const unitPrice =
+      product.type === 'merch' && selectedMerchVariant
+        ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
+        : getUnitPriceInHaler(product);
+    const itemName =
+      product.type === 'merch' && selectedMerchVariant
+        ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
+        : product.name || 'Produkt';
+    pushViewContent(dataLayerItemFromProduct(product, {
+      itemId,
+      itemName,
+      itemGroup: product.category || product.merchCategory || product.type || 'product',
+      priceHaler: unitPrice,
+      quantity: 1,
+      variantName: product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.label : undefined,
+    }));
+  }, [product.id, product.name, product.category, product.type, product.merchCategory, effectiveCartVariantId, selectedMerchVariant]);
+
+  useEffect(() => {
     let cancelled = false;
 
     if (
@@ -1022,6 +1043,7 @@ export function ProductDetailPage({
       quantity: 1,
       unitPrice,
       imageUrl: product.image || undefined,
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
       ...(isPosterMerchHero ? { posterMerch: true as const } : {}),
     });
     openInternalCart();
@@ -1049,6 +1071,7 @@ export function ProductDetailPage({
         quantity: 1,
         unitPrice: bundleUnitPrice,
         imageUrl: product.image || undefined,
+        itemGroup: product.category || product.merchCategory || product.type || undefined,
       });
 
       for (const sibling of siblingDils) {
@@ -1059,6 +1082,7 @@ export function ProductDetailPage({
           quantity: 1,
           unitPrice: getUnitPriceInHaler(sibling),
           imageUrl: sibling.image || sibling.imageUrl || sibling.coverImage || undefined,
+          itemGroup: sibling.category || sibling.merchCategory || sibling.type || undefined,
         });
       }
 

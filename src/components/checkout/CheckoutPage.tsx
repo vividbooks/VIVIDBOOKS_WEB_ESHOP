@@ -43,6 +43,7 @@ import {
   EMAIL_MX_REJECT_CS,
 } from '../../utils/emailValidation';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
+import { pushCheckoutStep } from '../../utils/dataLayerEcommerce';
 import {
   loadSavedCheckoutAddresses,
   rememberCheckoutAddress,
@@ -108,6 +109,13 @@ const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 4, label: 'Platba' },
   { id: 5, label: 'Potvrzení' },
 ];
+
+const CHECKOUT_STEP_EVENT_NAMES: Record<CheckoutStep, string> = {
+  1: 'cart_review',
+  2: 'customer_details',
+  3: 'shipping',
+  4: 'payment',
+};
 
 const SHIPPING_OPTIONS: Array<{ id: ShippingMethod; label: string; price: number }> = [
   { id: 'dpd', label: 'DPD', price: 8900 },
@@ -493,6 +501,24 @@ export function CheckoutPage() {
   const summaryShowShipping = resumeFlowActive
     ? Boolean(resumedTotals)
     : showShippingInSummary;
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    const valueHaler = currentStep >= 3 ? summaryTotal : subtotal;
+    const checkoutOption =
+      currentStep === 3
+        ? shipping.method
+        : currentStep === 4
+          ? paymentMethod
+          : undefined;
+    pushCheckoutStep(
+      currentStep,
+      CHECKOUT_STEP_EVENT_NAMES[currentStep],
+      items,
+      valueHaler,
+      checkoutOption,
+    );
+  }, [currentStep, items, subtotal, summaryTotal, shipping.method, paymentMethod]);
 
   const canGoBack = currentStep > 1;
 

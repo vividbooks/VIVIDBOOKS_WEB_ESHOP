@@ -96,6 +96,10 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
         },
         {
+          path: 'app-uvod',
+          lazy: lazyNamed(() => import('./components/AppUvodPage'), 'AppUvodPage'),
+        },
+        {
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
           children: [
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },

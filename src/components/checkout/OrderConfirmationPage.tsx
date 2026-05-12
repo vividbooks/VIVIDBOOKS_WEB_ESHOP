@@ -7,11 +7,13 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { getPaymentIntentTrackingFromStorage } from '../../utils/checkoutThankYouRedirect';
 import { clearCheckoutDraftId } from '../../utils/checkoutDraftId';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
+import { pushPurchase } from '../../utils/dataLayerEcommerce';
 
 const GET_ORDER_FN = `https://${projectId}.supabase.co/functions/v1/get-order-by-payment-intent`;
 const INVOICE_FN = `https://${projectId}.supabase.co/functions/v1/idoklad-invoice-pdf`;
 const PAYMENT_INTENT_MAX_POLLS = 10;
 const PAYMENT_INTENT_POLL_MS = 3000;
+const PURCHASE_EVENT_STORAGE_PREFIX = 'vividbooks_purchase_event_sent:';
 
 interface OrderSummary {
   order_number: string;
@@ -55,6 +57,7 @@ export function OrderConfirmationPage() {
   const transferThankYou = searchParams.get('transfer') === '1';
   const { clearCart } = useCart();
   const clearedRef = useRef(false);
+  const purchasePushedRef = useRef<string | null>(null);
   const [order, setOrder] = useState<OrderSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -87,6 +90,30 @@ export function OrderConfirmationPage() {
 
   const applyOrderSuccess = useCallback(
     (data: OrderSummary) => {
+      const purchaseStorageKey = `${PURCHASE_EVENT_STORAGE_PREFIX}${data.order_number}`;
+      const purchaseAlreadyStored =
+        typeof window !== 'undefined' &&
+        window.sessionStorage.getItem(purchaseStorageKey) === '1';
+      if (purchasePushedRef.current !== data.order_number && !purchaseAlreadyStored) {
+        purchasePushedRef.current = data.order_number;
+        pushPurchase({
+          transactionId: data.order_number,
+          valueHaler: data.total,
+          shippingHaler: data.shipping_price ?? 0,
+          items: (data.items ?? []).map((item) => ({
+            item_id: item.product_id || item.product_name,
+            item_name: item.product_name,
+            currency: 'CZK',
+            item_group: item.variant || item.product_id || 'product',
+            price: Number((item.unit_price / 100).toFixed(2)),
+            quantity: item.quantity,
+            ...(item.variant ? { item_variant: item.variant } : {}),
+          })),
+        });
+        if (typeof window !== 'undefined') {
+          window.sessionStorage.setItem(purchaseStorageKey, '1');
+        }
+      }
       setOrder(data);
       setLoading(false);
       setPollExhausted(false);

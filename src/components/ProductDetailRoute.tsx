@@ -107,6 +107,7 @@ export function ProductDetailRoute() {
               quantity: 1,
               unitPrice: ctx ? ctx.unitPriceHaler : getProductUnitPriceInHaler(product),
               imageUrl: product.image || undefined,
+              itemGroup: product.category || product.merchCategory || product.type || undefined,
               ...(posterMerch ? { posterMerch: true as const } : {}),
             });
           }
