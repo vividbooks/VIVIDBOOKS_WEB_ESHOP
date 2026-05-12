@@ -1,4 +1,5 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
@@ -649,7 +650,50 @@ function resolveBasecomOrderStatusId(order: OrderRow): number {
   return Number.isInteger(schoolId) ? schoolId : defaultId;
 }
 
-async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
+/** Volitelný přepis `order_status_id` v Base z payloadu fronty (např. webhook `pipedrive-inbound-deal`). */
+function resolvePayloadBasecomOrderStatusId(payload: Record<string, unknown> | null | undefined): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = payload.basecomOrderStatusId;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string') {
+    const n = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+async function handleBasecomPipedriveInboundSetStatus(
+  sql: postgres.Sql,
+  queueItem: ExportQueueRow,
+): Promise<{ sourceOrderStatus: string }> {
+  const payload = queueItem.payload as Record<string, unknown> | null;
+  if (!payload || payload.pipedriveInboundSetStatus !== true) {
+    throw new Error('Invalid pipedrive inbound Base set-status payload.');
+  }
+  const statusId = resolvePayloadBasecomOrderStatusId(payload);
+  const rawBlId = payload.baseLinkerOrderId;
+  if (statusId == null || rawBlId == null || String(rawBlId).trim() === '') {
+    throw new Error('pipedrive inbound set-status: missing basecomOrderStatusId or baseLinkerOrderId.');
+  }
+  const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+  if (!apiToken) throw new Error('Missing Base.com environment configuration.');
+  const blNum = typeof rawBlId === 'number' ? rawBlId : Number.parseInt(String(rawBlId).trim(), 10);
+  if (!Number.isInteger(blNum) || blNum <= 0) {
+    throw new Error(`Invalid baseLinkerOrderId: ${String(rawBlId)}`);
+  }
+  await callBasecomSetOrderStatus(apiToken, blNum, statusId);
+
+  const rows = await sql<{ status: string }[]>`
+    select status from public.orders where id = ${queueItem.order_id}::uuid limit 1
+  `;
+  return { sourceOrderStatus: rows[0]?.status ?? 'unknown' };
+}
+
+async function handleBasecomExport(
+  sql: postgres.Sql,
+  orderId: string,
+  queuePayload?: Record<string, unknown> | null,
+) {
   const orderRows = await sql<OrderRow[]>`
     select
       o.id,
@@ -709,7 +753,8 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     throw new Error('Missing Base.com environment configuration.');
   }
 
-  const orderStatusId = resolveBasecomOrderStatusId(order);
+  const payloadOverrideId = resolvePayloadBasecomOrderStatusId(queuePayload ?? undefined);
+  const orderStatusId = payloadOverrideId ?? resolveBasecomOrderStatusId(order);
   const customSourceId = Number.parseInt(customSourceIdRaw, 10);
 
   if (!Number.isInteger(customSourceId)) {
@@ -1384,7 +1429,66 @@ Deno.serve(async (req) => {
         }
 
         if (queueItem.service === 'basecom') {
-          const result = await handleBasecomExport(sql, queueItem.order_id);
+          const bcPayload = queueItem.payload as Record<string, unknown> | null | undefined;
+
+          if (bcPayload?.pipedriveInboundSetStatus === true) {
+            const result = await handleBasecomPipedriveInboundSetStatus(sql, queueItem);
+            const rawBlId = bcPayload.baseLinkerOrderId;
+            const blIdStr = typeof rawBlId === 'number' ? String(rawBlId) : String(rawBlId ?? '').trim();
+
+            await sql.begin(async (tx) => {
+              await tx`
+                update public.export_queue
+                set
+                  status = 'done',
+                  completed_at = now(),
+                  last_error = null
+                where id = ${queueItem.id}::uuid
+              `;
+
+              await tx`
+                insert into public.order_events (
+                  order_id,
+                  event_type,
+                  from_status,
+                  to_status,
+                  details,
+                  actor
+                ) values (
+                  ${queueItem.order_id}::uuid,
+                  'export',
+                  ${result.sourceOrderStatus},
+                  ${result.sourceOrderStatus},
+                  ${JSON.stringify({
+                    service: 'basecom',
+                    queueItemId: queueItem.id,
+                    pipedriveInboundSetStatus: true,
+                    baseLinkerOrderId: blIdStr,
+                    basecomOrderStatusId: resolvePayloadBasecomOrderStatusId(bcPayload),
+                  })}::jsonb,
+                  'system'
+                )
+              `;
+
+              await upsertWorkflowStep(tx, {
+                orderId: queueItem.order_id,
+                stepKey: 'basecom_exported',
+                status: 'done',
+                attemptCount: queueItem.retry_count + 1,
+                lastError: null,
+                metadata: {
+                  queueItemId: queueItem.id,
+                  pipedriveInboundSetStatus: true,
+                  baseLinkerOrderId: blIdStr,
+                },
+              });
+            });
+
+            summary.succeeded += 1;
+            continue;
+          }
+
+          const result = await handleBasecomExport(sql, queueItem.order_id, bcPayload ?? null);
           const noteFragment = result.orderNotePatch != null
             ? sql`, note = ${result.orderNotePatch}`
             : sql``;
@@ -1601,14 +1705,18 @@ Deno.serve(async (req) => {
           `;
 
           if (queueItem.service === 'basecom') {
-            await tx`
-              update public.orders
-              set
-                basecom_status = ${shouldFail ? 'failed' : 'pending'},
-                status = ${shouldFail ? 'failed' : 'paid'},
-                retry_count = ${nextRetryCount}
-              where id = ${queueItem.order_id}::uuid
-            `;
+            const failPl = queueItem.payload as Record<string, unknown> | null | undefined;
+            const isPipedriveSetStatusOnly = failPl?.pipedriveInboundSetStatus === true;
+            if (!isPipedriveSetStatusOnly) {
+              await tx`
+                update public.orders
+                set
+                  basecom_status = ${shouldFail ? 'failed' : 'pending'},
+                  status = ${shouldFail ? 'failed' : 'paid'},
+                  retry_count = ${nextRetryCount}
+                where id = ${queueItem.order_id}::uuid
+              `;
+            }
 
             await upsertWorkflowStep(tx, {
               orderId: queueItem.order_id,
@@ -1621,6 +1729,7 @@ Deno.serve(async (req) => {
                 retryCount: nextRetryCount,
                 maxRetries: queueItem.max_retries,
                 nextRetryInMinutes: shouldFail ? null : backoffMinutes,
+                pipedriveInboundSetStatus: isPipedriveSetStatusOnly,
               },
             });
           }

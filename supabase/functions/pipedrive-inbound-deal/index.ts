@@ -1,18 +1,18 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
- * Inbound: Pipedrive deal (typicky WON) → objednávka v Postgres + fronta exportu (Base.com / volitelně iDoklad).
+ * Inbound: Pipedrive deal (typicky WON) → objednávka v Postgres + fronta exportu **jen Base.com**.
  *
  * Webhook rozlišuje dva scénáře podle pole „Eshop ID" (custom field 26e4a2f8…, UI ID 12586):
  *
  *   A) Pole je **prázdné** → deal byl ručně založený obchodníkem v CRM. Vytvoříme NOVOU
- *      objednávku se zdrojem `pipedrive`, dopravou PPL a předáme rovnou do Base.com a iDokladu.
+ *      objednávku se zdrojem `pipedrive`, dopravou z ENV (default PPL) a předáme do Base.com.
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
  *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at`, a teprve teď ji pošleme do Base
- *      a iDokladu (eshop ji při převodu do Base nepouštěl). Re-export je idempotentní — pokud už
- *      `done` řádek pro service existuje, druhý webhook ho znovu nezakládá.
+ *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at`, a exportujeme / aktualizujeme Base:
+ *      při prvním exportu `addOrder` se stavem z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`; pokud už
+ *      Base export proběhl (`orders.basecom_order_id`), zařadí se jen `setOrderStatus` na stejný stav.
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
@@ -22,17 +22,18 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
  *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
- * Bez osoby / bez e-mailu: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; do Base.com se export pošle i tak (kvůli ručním dealům v CRM). iDoklad jen při kompletním kontaktu (fakturační e-mail).
+ * Bez osoby / bez e-mailu: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; do Base.com se export pošle i tak (kvůli ručním dealům v CRM).
  * Volitelně:
  *   - PIPEDRIVE_INBOUND_PIPELINE_IDS (čárkou oddělená ID pipeline, prázdné = všechny),
  *   - PIPEDRIVE_INBOUND_SHIPPING_METHOD (default `ppl`),
  *   - PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER (default 8900 = 89 Kč),
+ *   - BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND (BaseLinker `order_status_id` — např. stav „Do expedice — manuálně"; bez hodnoty zůstane výchozí z `process-export-queue`),
  *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
  *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
  *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená.
  *
  * Spuštění `process-export-queue` po zápisu objednávky probíhá na pozadí (`EdgeRuntime.waitUntil`), aby odpověď
- * webhooku nepřesáhla časový limit kvůli dlouhému Base.com / iDoklad (jinak Pipedrive opakuje doručení).
+ * webhooku nepřesáhla časový limit kvůli dlouhému Base.com (jinak Pipedrive opakuje doručení).
  *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
@@ -67,6 +68,13 @@ const ADMIN_NOTE_MISSING_EMAIL =
 
 const ADMIN_NOTE_ZERO_VALUE_FALLBACK =
   'Pipedrive import: deal měl nulovou částku nebo nešly načíst produkty; použita minimální řádka 1 Kč — zkontrolujte položky.';
+
+/** Číslo stavu objednávky v BaseLinkeru pro inbound z Pipedrive (např. „Do expedice — manuálně"). */
+function inboundPipedriveBaseOrderStatusId(): number | null {
+  const raw = (Deno.env.get('BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND') || '').trim();
+  const n = Number.parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 
 function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
@@ -476,6 +484,8 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { skipped: true, reason: 'pipeline_not_allowed', dealId, pipelineId }, 200);
   }
 
+  const pdInboundBaseStatusId = inboundPipedriveBaseOrderStatusId();
+
   const personIdFromDeal = parsePipedriveEntityId(deal.person_id);
   let person: Record<string, unknown> | null = null;
 
@@ -668,13 +678,14 @@ Deno.serve(async (req) => {
     if (existing.length > 0) {
       const target = existing[0];
 
-      /* Idempotence pro re-export: když už jednou Base.com / iDoklad doběhly do `done`
-       * (nebo právě běží), nepřidáváme druhý pending řádek. */
+      /* Idempotence pro `addOrder`: když už jednou Base.com doběhl do `done` (nebo právě běží),
+       * druhý pending řádek pro nový export nepřidáváme. Pokud už známe `basecom_order_id`, zařadíme
+       * pouze `setOrderStatus` na stav z BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND. */
       const exportRows = await sql<{ service: string; status: string }[]>`
         select service, status
           from public.export_queue
          where order_id = ${target.id}::uuid
-           and service in ('basecom', 'idoklad')
+           and service = 'basecom'
       `;
       const existingExportServices = new Set(
         exportRows
@@ -756,10 +767,35 @@ Deno.serve(async (req) => {
       };
       const shippingSnapshot = { method: shipMethod, price: shippingPrice };
 
+      const baseMetaRows = await sql<{ basecom_order_id: string | null }[]>`
+        select basecom_order_id from public.orders where id = ${target.id}::uuid limit 1
+      `;
+      const savedBlOrderId = String(baseMetaRows[0]?.basecom_order_id || '').trim();
+
       const queuedServices: string[] = [];
       const skippedServices: string[] = [];
 
-      if (!existingExportServices.has('basecom')) {
+      const basePayloadFull = {
+        orderId: target.id,
+        pipedriveDealId: dealId,
+        items: lines.map((l) => ({
+          productId: l.productId,
+          productName: l.productName,
+          quantity: l.quantity,
+          unitPrice: l.unitPriceHaler,
+        })),
+        customer: customerSnapshot,
+        shipping: shippingSnapshot,
+        ...(pdInboundBaseStatusId != null ? { basecomOrderStatusId: pdInboundBaseStatusId } : {}),
+      };
+
+      let queuedExportKick = false;
+
+      if (
+        pdInboundBaseStatusId != null &&
+        savedBlOrderId &&
+        existingExportServices.has('basecom')
+      ) {
         await sql`
           insert into public.export_queue (order_id, service, status, payload)
           values (
@@ -767,40 +803,31 @@ Deno.serve(async (req) => {
             'basecom',
             'pending',
             ${JSON.stringify({
-              orderId: target.id,
-              pipedriveDealId: dealId,
-              items: lines.map((l) => ({
-                productId: l.productId,
-                productName: l.productName,
-                quantity: l.quantity,
-                unitPrice: l.unitPriceHaler,
-              })),
-              customer: customerSnapshot,
-              shipping: shippingSnapshot,
+              pipedriveInboundSetStatus: true,
+              baseLinkerOrderId: savedBlOrderId,
+              basecomOrderStatusId: pdInboundBaseStatusId,
             })}::jsonb
           )
         `;
-        queuedServices.push('basecom');
-      } else {
-        skippedServices.push('basecom');
-      }
-
-      if (!existingExportServices.has('idoklad')) {
+        queuedServices.push('basecom_set_status');
+        queuedExportKick = true;
+      } else if (!existingExportServices.has('basecom')) {
         await sql`
           insert into public.export_queue (order_id, service, status, payload)
           values (
             ${target.id}::uuid,
-            'idoklad',
+            'basecom',
             'pending',
-            ${JSON.stringify({ orderId: target.id, pipedriveDealId: dealId })}::jsonb
+            ${JSON.stringify(basePayloadFull)}::jsonb
           )
         `;
-        queuedServices.push('idoklad');
+        queuedServices.push('basecom');
+        queuedExportKick = true;
       } else {
-        skippedServices.push('idoklad');
+        skippedServices.push('basecom');
       }
 
-      if (queuedServices.length > 0) {
+      if (queuedExportKick) {
         scheduleProcessExportQueueKick(req.url);
       }
 
@@ -1043,21 +1070,10 @@ Deno.serve(async (req) => {
           })),
           customer: customerSnapshotA,
           shipping: shippingSnapshotA,
+          ...(pdInboundBaseStatusId != null ? { basecomOrderStatusId: pdInboundBaseStatusId } : {}),
         })}::jsonb
       )
     `;
-
-    if (!missingPipedriveContact) {
-      await sql`
-        insert into public.export_queue (order_id, service, status, payload)
-        values (
-          ${row.id}::uuid,
-          'idoklad',
-          'pending',
-          ${JSON.stringify({ orderId: row.id, pipedriveDealId: dealId })}::jsonb
-        )
-      `;
-    }
 
     scheduleProcessExportQueueKick(req.url);
 
