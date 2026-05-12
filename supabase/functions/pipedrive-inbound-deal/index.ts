@@ -31,6 +31,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
  *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená.
  *
+ * Spuštění `process-export-queue` po zápisu objednávky probíhá na pozadí (`EdgeRuntime.waitUntil`), aby odpověď
+ * webhooku nepřesáhla časový limit kvůli dlouhému Base.com / iDoklad (jinak Pipedrive opakuje doručení).
+ *
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
 import postgres from 'npm:postgres';
@@ -116,6 +119,25 @@ async function invokeProcessExportQueue(fallbackRequestUrl?: string) {
     const data = await response.json().catch(() => ({}));
     throw new Error((data as { error?: string }).error || `process-export-queue HTTP ${response.status}`);
   }
+}
+
+/** Po INSERT/UPDATE objednávky nesmí webhook čekat na celý běh `process-export-queue` (Base.com / iDoklad)
+ *  — často překročí limit času odpovědi → Pipedrive hlásí selhání a opakuje doručení. Dokončení úlohy naplánujeme
+ *  přes Edge `waitUntil` (stejný vzor jako u make-server slack/RAG). */
+function scheduleProcessExportQueueKick(fallbackRequestUrl?: string): void {
+  const task = invokeProcessExportQueue(fallbackRequestUrl).catch((e) => {
+    console.error('[pipedrive-inbound] process-export-queue:', e);
+  });
+  try {
+    const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+    if (typeof er?.waitUntil === 'function') {
+      er.waitUntil(task);
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
+  void task;
 }
 
 async function pipedriveApiGet<T>(
@@ -252,18 +274,6 @@ function readEshopOrderNumberFromDeal(deal: Record<string, unknown>): string {
     if (s) return s;
   }
 
-  return '';
-}
-
-function pipedriveScalarCustomFieldToString(raw: unknown): string {
-  if (raw == null) return '';
-  if (typeof raw === 'string') return raw.trim();
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw).trim();
-  if (typeof raw === 'object' && !Array.isArray(raw)) {
-    const o = raw as Record<string, unknown>;
-    if (typeof o.value === 'string') return o.value.trim();
-    if (typeof o.value === 'number' && Number.isFinite(o.value)) return String(o.value).trim();
-  }
   return '';
 }
 
@@ -791,11 +801,7 @@ Deno.serve(async (req) => {
       }
 
       if (queuedServices.length > 0) {
-        try {
-          await invokeProcessExportQueue(req.url);
-        } catch (e) {
-          console.error('[pipedrive-inbound] process-export-queue:', e);
-        }
+        scheduleProcessExportQueueKick(req.url);
       }
 
       logInbound('updated', {
@@ -1053,11 +1059,7 @@ Deno.serve(async (req) => {
       `;
     }
 
-    try {
-      await invokeProcessExportQueue(req.url);
-    } catch (e) {
-      console.error('[pipedrive-inbound] process-export-queue:', e);
-    }
+    scheduleProcessExportQueueKick(req.url);
 
     await sql`
       insert into public.order_events (
