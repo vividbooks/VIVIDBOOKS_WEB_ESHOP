@@ -14,7 +14,6 @@ import { AdminPanel } from './AdminPanel';
 import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
 import { CookieConsentBar } from './CookieConsentBar';
-import { GoogleAnalyticsBridge } from './GoogleAnalyticsBridge';
 import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
 
 function ScrollToTop() {
@@ -56,7 +55,6 @@ function RootInner() {
       {/* Popup Manager renderer */}
       <PopupRenderer />
       <CookieConsentBar />
-      <GoogleAnalyticsBridge />
       <Outlet />
     </>
   );

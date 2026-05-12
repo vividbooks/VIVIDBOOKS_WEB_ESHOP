@@ -9,8 +9,6 @@ interface ImportMetaEnv {
   readonly VITE_MARKETING_SITE_ORIGINS_EXTRA?: string;
   readonly VITE_STRIPE_PUBLISHABLE_KEY?: string;
   readonly VITE_PACKETA_API_KEY?: string;
-  /** GA4 Measurement ID (např. G-XXXXXXXX). Bez nastavení se analytics nenačítá. */
-  readonly VITE_GA_MEASUREMENT_ID?: string;
 }
 
 interface ImportMeta {
@@ -38,6 +36,4 @@ interface Window {
   Packeta?: {
     Widget: PacketaWidgetApi;
   };
-  dataLayer?: unknown[];
-  gtag?: (...args: unknown[]) => void;
 }
