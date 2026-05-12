@@ -91,12 +91,12 @@ export function AppUvodPage() {
     webinars.find((webinar) => isTodayWebinar(webinar.day, webinar.monthNum, webinar.year)) ?? null
   ), [webinars]);
 
-  const upcomingWebinars = useMemo(() => {
+  const displayedWebinars = useMemo(() => {
     if (!activeWebinarTopic) return upcoming;
     const topic = topics.find((item) => item.id === activeWebinarTopic);
-    if (!topic) return upcoming;
-    return upcoming.filter((webinar) => webinarMatchesTopic(webinar, topic));
-  }, [activeWebinarTopic, topics, upcoming]);
+    if (!topic) return webinars;
+    return webinars.filter((webinar) => webinarMatchesTopic(webinar, topic));
+  }, [activeWebinarTopic, topics, upcoming, webinars]);
 
   const firstBlogPosts = useMemo(() => blogPosts.slice(0, 3), [blogPosts]);
 
@@ -325,7 +325,7 @@ export function AppUvodPage() {
 
         <div className="mt-12 text-left">
           <h3 className={`${cooper} mb-8 text-center text-[28px] leading-none text-black md:text-[36px]`}>
-            Blížící se webináře
+            {activeWebinarTopic ? 'Všechny webináře' : 'Blížící se webináře'}
           </h3>
 
           {webinarsLoading ? (
@@ -333,13 +333,15 @@ export function AppUvodPage() {
               <Loader2 className="h-5 w-5 animate-spin" />
               <span className="text-[14px] font-bold" style={{ fontFamily: ff }}>Načítám webináře…</span>
             </div>
-          ) : upcomingWebinars.length === 0 ? (
+          ) : displayedWebinars.length === 0 ? (
             <p className="rounded-[24px] bg-[#F5F6FB] px-6 py-12 text-center text-[14px] font-bold text-[#001161]/45" style={{ fontFamily: ff }}>
-              Pro vybrané téma teď nejsou vypsané žádné blížící se webináře.
+              {activeWebinarTopic
+                ? 'Pro vybrané téma tu zatím nejsou žádné webináře.'
+                : 'Teď nejsou vypsané žádné blížící se webináře.'}
             </p>
           ) : (
             <div className="grid grid-cols-1 gap-5 md:grid-cols-3 md:gap-6">
-              {upcomingWebinars.slice(0, 6).map((webinar) => (
+              {displayedWebinars.slice(0, 6).map((webinar) => (
                 <WebinarCard key={webinar.id} webinar={webinar} openInNewTab />
               ))}
             </div>
