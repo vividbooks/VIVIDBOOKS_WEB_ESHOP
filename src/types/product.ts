@@ -2,6 +2,8 @@ import type { MerchVariantOption } from './merchVariants';
 
 export interface Product {
   id: string;
+  /** Externí ID položky pro marketingové feedy (`g:id` / CSV `id`). Bez vyplnění se použije interní `id`. */
+  item_id?: string;
   name: string;
   price: string;
   priceAmount?: number;

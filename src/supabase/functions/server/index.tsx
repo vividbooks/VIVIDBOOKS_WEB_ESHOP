@@ -897,6 +897,7 @@ function applyProductNoteSync<T extends Record<string, unknown>>(product: T, not
 
 type MarketingFeedItem = {
   id: string;
+  itemId: string;
   title: string;
   description: string;
   availabilityMeta: 'in stock' | 'out of stock';
@@ -1030,6 +1031,7 @@ function marketingFeedCategory(product: any): string {
 
 function productToMarketingFeedItem(product: any, allProducts: readonly any[]): { item?: MarketingFeedItem; skip?: MarketingFeedSkip } {
   const id = String(product?.id ?? '').trim();
+  const itemId = String(product?.item_id ?? product?.itemId ?? id).trim();
   const name = stripMarketingFeedText(product?.name, 200);
   const type = String(product?.type ?? '').trim().toLowerCase();
   const baseSkip = { id, name, type };
@@ -1056,6 +1058,7 @@ function productToMarketingFeedItem(product: any, allProducts: readonly any[]): 
   return {
     item: {
       id: id.slice(0, 100),
+      itemId: itemId.slice(0, 100),
       title: name,
       description,
       availabilityMeta: 'in stock',
@@ -1104,7 +1107,7 @@ function buildGoogleMarketingFeedXml(items: MarketingFeedItem[]): string {
       ? `      <g:gtin>${escapeXml(item.gtin)}</g:gtin>`
       : `      <g:mpn>${escapeXml(item.mpn)}</g:mpn>`;
     return `    <item>
-      <g:id>${escapeXml(item.id)}</g:id>
+      <g:id>${escapeXml(item.itemId)}</g:id>
       <g:title>${escapeXml(item.title)}</g:title>
       <g:description>${escapeXml(item.description)}</g:description>
       <g:link>${escapeXml(item.link)}</g:link>
@@ -1147,7 +1150,7 @@ function buildMetaMarketingFeedCsv(items: MarketingFeedItem[]): string {
     'product_type',
   ];
   const rows = items.map((item) => [
-    item.id,
+    item.itemId,
     item.title,
     item.description,
     item.availabilityMeta,
@@ -1407,6 +1410,7 @@ app.get('/make-server-93a20b6f/marketing-feed/diagnostics', async (c) => {
     },
     items: items.map((item) => ({
       id: item.id,
+      item_id: item.itemId,
       title: item.title,
       price: item.price,
       link: item.link,
@@ -18819,7 +18823,7 @@ app.post('/make-server-93a20b6f/generate-collage-ai', async (c) => {
 ═══════════════════════════════════════════════════════════════════ */
 
 function slimProductForAgent(p: any): any {
-  const keys = ['id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'previewVideoLink', 'appLink', 'shopifyVariantId', 'shopifyProductId', 'shoptetId'];
+  const keys = ['id', 'item_id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'previewVideoLink', 'appLink', 'shopifyVariantId', 'shopifyProductId', 'shoptetId'];
   const o: any = {};
   for (const k of keys) {
     const v = p[k];
@@ -18834,8 +18838,8 @@ function slimProductForAgent(p: any): any {
 const ADMIN_AGENT_TOOLS = [
   // ── Produkty ──────────────────────────────────────────────────────
   { name: 'get_products', description: 'Načte seznam produktů z katalogu. Výchozí (full_fields false): krátký přehled polí (id, name, type, category, ceny, ročník, doložka, odkazy, obrázek…) — šetří paměť edge workeru. full_fields true: všechna pole, ale max ~60 položek — použij jen když opravdu potřebuješ dlouhé description/obsah/metadata.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', description: 'workbook | online | vividboard | all', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', description: 'Substring v názvu, diakritika OK', nullable: true }, full_fields: { type: 'BOOLEAN', description: 'true = celé záznamy (max ~60), false = lehké záznamy (max ~250)', nullable: true } } } },
-   { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shopifyVariantId: { type: 'STRING', nullable: true }, shopifyProductId: { type: 'STRING', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, previewVideoLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
-  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, category, price, priceAmount, description, autori, rocnik, dolozka, image, shopifyVariantId, shopifyProductId, shoptetId, flipbookLink, previewLink, previewVideoLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "price": "299 Kč", "shopifyVariantId": "123", "description": "..." }' } }, required: ['id', 'fields'] } },
+   { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, item_id: { type: 'STRING', description: 'Externí ID položky pro marketingové XML/CSV feedy; pokud chybí, použije se interní id.', nullable: true }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shopifyVariantId: { type: 'STRING', nullable: true }, shopifyProductId: { type: 'STRING', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, previewVideoLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
+  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, item_id, category, price, priceAmount, description, autori, rocnik, dolozka, image, shopifyVariantId, shopifyProductId, shoptetId, flipbookLink, previewLink, previewVideoLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "item_id": "6978...", "price": "299 Kč", "shopifyVariantId": "123", "description": "..." }' } }, required: ['id', 'fields'] } },
   { name: 'bulk_update_products', description: 'Hromadně přepíše pole u skupiny produktů. Okamžitě uloží.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true }, fields: { type: 'OBJECT' } }, required: ['fields'] } },
   { name: 'bulk_update_prices_percentage', description: 'Změní ceny skupiny produktů o procento. Kladné = zdražení, záporné = zlevnění. Zaokrouhlení na desítky.', parameters: { type: 'OBJECT', properties: { percentage: { type: 'NUMBER', description: 'např. 10 = +10%, -5 = -5%' }, filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true } }, required: ['percentage'] } },
   { name: 'delete_product', description: 'Smaže produkt z katalogu.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },

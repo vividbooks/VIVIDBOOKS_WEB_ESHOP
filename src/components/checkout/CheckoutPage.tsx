@@ -110,12 +110,29 @@ const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 5, label: 'Potvrzení' },
 ];
 
+const CHECKOUT_STEP_SLUGS: Record<CheckoutStep, string> = {
+  1: 'cart',
+  2: 'details',
+  3: 'shipping',
+  4: 'payment',
+  5: 'confirmation',
+};
+
 const CHECKOUT_STEP_EVENT_NAMES: Record<CheckoutStep, string> = {
   1: 'cart_review',
   2: 'customer_details',
   3: 'shipping',
   4: 'payment',
 };
+
+function checkoutStepFromUrl(): CheckoutStep {
+  if (typeof window === 'undefined') return 1;
+  const raw = new URLSearchParams(window.location.search).get('step')?.trim().toLowerCase();
+  if (!raw) return 1;
+  if (/^[1-5]$/.test(raw)) return Number(raw) as CheckoutStep;
+  const entry = Object.entries(CHECKOUT_STEP_SLUGS).find(([, slug]) => slug === raw);
+  return entry ? (Number(entry[0]) as CheckoutStep) : 1;
+}
 
 const SHIPPING_OPTIONS: Array<{ id: ShippingMethod; label: string; price: number }> = [
   { id: 'dpd', label: 'DPD', price: 8900 },
@@ -199,7 +216,7 @@ export function CheckoutPage() {
   const { packetaApiKey, packetaKeyLoading, ensurePacketaApiKey } = usePacketaApiKey();
   const { products } = useProducts();
   const { items, subtotal, itemCount, updateQuantity, removeItem, replaceUnitPrice } = useCart();
-  const [currentStep, setCurrentStep] = useState<CheckoutStep>(1);
+  const [currentStep, setCurrentStep] = useState<CheckoutStep>(() => checkoutStepFromUrl());
   const [customerType, setCustomerType] = useState<CustomerType>('school');
   const [customer, setCustomer] = useState<CustomerFormState>(INITIAL_CUSTOMER);
   const [hasSeparateDeliveryAddress, setHasSeparateDeliveryAddress] = useState(false);
@@ -406,7 +423,7 @@ export function CheckoutPage() {
           total: Number(data.total) || 0,
         });
         setCurrentStep(4);
-        window.history.replaceState({}, '', window.location.pathname);
+        window.history.replaceState({}, '', `${window.location.pathname}?step=${CHECKOUT_STEP_SLUGS[4]}`);
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -421,6 +438,20 @@ export function CheckoutPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('resume')) return;
+
+    const stepSlug = CHECKOUT_STEP_SLUGS[currentStep];
+    if (params.get('step') === stepSlug) return;
+
+    params.set('step', stepSlug);
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [currentStep]);
 
   useEffect(() => {
     setSavedAddresses(loadSavedCheckoutAddresses());

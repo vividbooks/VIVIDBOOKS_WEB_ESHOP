@@ -70,6 +70,7 @@ import { checkoutTextInputClass } from '../utils/formFieldClasses';
 import { appPath } from '../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
 import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
+import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -85,6 +86,34 @@ const SCHOOL_ORDER_STEPS = [
   { id: 5 as const, label: 'Platba' },
   { id: 6 as const, label: 'Potvrzen\u00ed' },
 ];
+
+type SchoolOrderStep = typeof SCHOOL_ORDER_STEPS[number]['id'];
+
+const SCHOOL_ORDER_STEP_SLUGS: Record<SchoolOrderStep, string> = {
+  1: 'selection',
+  2: 'counts',
+  3: 'details',
+  4: 'shipping',
+  5: 'payment',
+  6: 'confirmation',
+};
+
+const SCHOOL_ORDER_STEP_EVENT_NAMES: Record<SchoolOrderStep, string> = {
+  1: 'school_order_selection',
+  2: 'school_order_counts',
+  3: 'school_details',
+  4: 'shipping',
+  5: 'payment',
+  6: 'confirmation',
+};
+
+function schoolOrderStepFromSearch(search: URLSearchParams): SchoolOrderStep | null {
+  const raw = search.get('step')?.trim().toLowerCase();
+  if (!raw) return null;
+  if (/^[1-6]$/.test(raw)) return Number(raw) as SchoolOrderStep;
+  const entry = Object.entries(SCHOOL_ORDER_STEP_SLUGS).find(([, slug]) => slug === raw);
+  return entry ? (Number(entry[0]) as SchoolOrderStep) : null;
+}
 
 /* ── Subject definitions ─────────────────────────────────────── */
 const SUBJECTS_2 = [
@@ -369,13 +398,24 @@ export function OrderPage() {
   const prevPathRef = useRef<string>('');
   useEffect(() => {
     if (location.pathname === '/objednat' && prevPathRef.current !== '/objednat') {
-      const requestedStep = searchParams.get('step') === '2';
+      const requestedStep = schoolOrderStepFromSearch(searchParams);
       const savedDraft = readSchoolOrderDraft();
-      const shouldOpenCounts = requestedStep && (items.length > 0 || hasSchoolOrderDraft(savedDraft));
-      setStep(shouldOpenCounts ? 2 : 1);
+      const canOpenRequestedStep =
+        requestedStep != null &&
+        (requestedStep === 1 || items.length > 0 || hasSchoolOrderDraft(savedDraft));
+      setStep(canOpenRequestedStep ? requestedStep : 1);
     }
     prevPathRef.current = location.pathname;
   }, [items.length, location.pathname, searchParams, setStep]);
+
+  useEffect(() => {
+    if (location.pathname !== '/objednat') return;
+    const stepSlug = SCHOOL_ORDER_STEP_SLUGS[step];
+    if (searchParams.get('step') === stepSlug) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('step', stepSlug);
+    navigate(`${location.pathname}?${next.toString()}${location.hash}`, { replace: true });
+  }, [location.hash, location.pathname, navigate, searchParams, step]);
 
   const [flowError, setFlowError] = useState('');
 
@@ -1013,6 +1053,67 @@ export function OrderPage() {
   const showShippingInOrderSummary = step >= 4 && !isDigitalServicesOnly;
   const orderSummaryShippingHalers = showShippingInOrderSummary ? shipping.price : 0;
   const orderSummaryGrandHalers = orderSummaryWorkbookSubtotalHalers + orderSummaryShippingHalers;
+  const schoolTrackingItems = useMemo(() => {
+    const workbookCartItems = items.filter((item) => workbookProductIds.has(String(item.productId)));
+    const bundleItems = Object.entries(schoolBundleQtyById)
+      .filter(([, qty]) => (qty || 0) > 0)
+      .map(([bundleId, quantity]) => {
+        const bundle = productBundlesById[bundleId];
+        if (!bundle) return null;
+        const selection = schoolSubjectBundleSelectionsById[bundleId];
+        const unitPrice = bundleIsNxPlusOneSubject(bundle) && selection
+          ? Math.max(1, subjectBundleSelectionPaidListSumHaler(products, bundle, selection))
+          : Math.max(1, Math.round(bundle.bundlePriceHaler));
+        return {
+          productId: `bundle:${bundleId}`,
+          productName: bundle.title,
+          quantity,
+          unitPrice,
+          itemGroup: 'school_bundle',
+          bundleId: bundle.id,
+          bundleTitle: bundle.title,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+    return [...workbookCartItems, ...bundleItems];
+  }, [
+    items,
+    productBundlesById,
+    products,
+    schoolBundleQtyById,
+    schoolSubjectBundleSelectionsById,
+    workbookProductIds,
+  ]);
+
+  useEffect(() => {
+    const checkoutOption =
+      step === 1
+        ? selTypes.join(',') || undefined
+        : step === 3
+          ? (form.ico.trim() ? 'school' : undefined)
+          : step === 4
+            ? shipping.method
+            : step === 5
+              ? paymentMethod
+              : undefined;
+    const valueHaler = step >= 4 ? orderSummaryGrandHalers : orderSummaryWorkbookSubtotalHalers;
+    pushSchoolOrderStep({
+      step,
+      stepName: SCHOOL_ORDER_STEP_EVENT_NAMES[step],
+      items: schoolTrackingItems,
+      valueHaler,
+      checkoutOption,
+    });
+  }, [
+    form.ico,
+    orderSummaryGrandHalers,
+    orderSummaryWorkbookSubtotalHalers,
+    paymentMethod,
+    schoolTrackingItems,
+    selTypes,
+    shipping.method,
+    step,
+  ]);
 
   const canPrepareSchoolCardPayment = useMemo(() => {
     if (isDigitalServicesOnly || !hasSchoolWorkbookSelection) return false;

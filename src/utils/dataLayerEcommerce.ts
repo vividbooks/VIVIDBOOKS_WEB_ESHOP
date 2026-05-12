@@ -141,6 +141,13 @@ export function pushAddToCart(item: CartItem): void {
   });
 }
 
+function checkoutEventName(step: number): string {
+  if (step === 1) return 'begin_checkout';
+  if (step === 3) return 'add_shipping_info';
+  if (step === 4) return 'add_payment_info';
+  return `checkout_step${step}`;
+}
+
 export function pushCheckoutStep(
   step: number,
   stepName: string,
@@ -149,7 +156,7 @@ export function pushCheckoutStep(
   checkoutOption?: string,
 ): void {
   pushDataLayerEvent({
-    event: 'checkout_step',
+    event: checkoutEventName(step),
     checkout_step: step,
     checkout_step_name: stepName,
     ...(checkoutOption ? { checkout_option: checkoutOption } : {}),
@@ -157,6 +164,33 @@ export function pushCheckoutStep(
       currency: CURRENCY,
       value: priceFromHaler(valueHaler),
       items: items.map(dataLayerItemFromCartItem),
+    },
+  });
+}
+
+function schoolOrderEventName(step: number): string {
+  if (step === 1) return 'school_order_start';
+  if (step === 4) return 'add_shipping_info';
+  if (step === 5) return 'add_payment_info';
+  return `school_order_step${step}`;
+}
+
+export function pushSchoolOrderStep(params: {
+  step: number;
+  stepName: string;
+  items: CartItem[];
+  valueHaler: number;
+  checkoutOption?: string;
+}): void {
+  pushDataLayerEvent({
+    event: schoolOrderEventName(params.step),
+    checkout_step: params.step,
+    checkout_step_name: params.stepName,
+    ...(params.checkoutOption ? { checkout_option: params.checkoutOption } : {}),
+    ecommerce: {
+      currency: CURRENCY,
+      value: priceFromHaler(params.valueHaler),
+      items: params.items.map(dataLayerItemFromCartItem),
     },
   });
 }
