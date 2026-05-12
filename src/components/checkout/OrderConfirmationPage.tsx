@@ -68,6 +68,7 @@ export function OrderConfirmationPage() {
     if (paymentIntentTrimmed) {
       const u = new URL(GET_ORDER_FN);
       u.searchParams.set('payment_intent_id', paymentIntentTrimmed);
+      u.searchParams.set('pending_status', '202');
       const t =
         (trackingFromUrl?.trim() || getPaymentIntentTrackingFromStorage(paymentIntentTrimmed)) || '';
       if (t) u.searchParams.set('t', t);
@@ -133,6 +134,17 @@ export function OrderConfirmationPage() {
       if (cancelled) return 'done';
 
       if (response.ok) {
+        if (response.status === 202 && data.pending === true && isPaymentIntentMode) {
+          attempt += 1;
+          if (attempt >= PAYMENT_INTENT_MAX_POLLS) {
+            setPollExhausted(true);
+            setLoading(false);
+            stopPolling();
+            return 'done';
+          }
+          return 'continue';
+        }
+
         if (typeof data.order_number === 'string') {
           applyOrderSuccess(data as unknown as OrderSummary);
           stopPolling();

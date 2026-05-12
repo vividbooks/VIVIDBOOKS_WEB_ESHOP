@@ -230,6 +230,7 @@ Deno.serve(async (req) => {
     || ''
   );
   const transferThankYou = url.searchParams.get('transfer') === '1';
+  const preferPendingResponse = url.searchParams.get('pending_status') === '202';
   const trackingTokenParam = (url.searchParams.get('t') || '').trim();
   const emailParamRaw = (url.searchParams.get('email') || '').trim();
   const emailParamNorm = emailParamRaw.toLowerCase();
@@ -311,6 +312,9 @@ Deno.serve(async (req) => {
 
     const order = rows[0];
     if (!order) {
+      if (paymentIntentId && preferPendingResponse) {
+        return jsonResponse(req, { pending: true }, 202);
+      }
       return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
@@ -344,6 +348,9 @@ Deno.serve(async (req) => {
     && order.status === 'pending_payment';
 
   if (!paidOk && !transferPending) {
+      if (paymentIntentId && preferPendingResponse) {
+        return jsonResponse(req, { pending: true }, 202);
+      }
       return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
 
