@@ -20,7 +20,7 @@ export const LEGACY_SHORT_LINK_TARGETS: Record<string, LegacyLinkResolution> = {
   '/links/letni-vzdelavani-reditelu-zs-balicek': { kind: 'internal', path: '/webinare' },
 
   '/links/katalog-2025': { kind: 'external', url: `${ESHOP}/` },
-  '/links/katalog-2026': { kind: 'external', url: `${ESHOP}/` },
+  '/links/katalog-2026': { kind: 'external', url: 'https://expert-rotate-11549946.figma.site/?view=catalog' },
   '/links/katalog-plakaty': { kind: 'external', url: `${ESHOP}/` },
   '/links/katalog-pro-distributory': { kind: 'external', url: `${ESHOP}/` },
   '/links/prolistovat': { kind: 'external', url: `${ESHOP}/` },
