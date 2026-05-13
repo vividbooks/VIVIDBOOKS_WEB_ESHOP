@@ -1,6 +1,11 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
- * Inbound: Pipedrive deal (typicky WON) → objednávka v Postgres + fronta exportu **jen Base.com**.
+ * Inbound: Pipedrive deal → objednávka v Postgres + fronta exportu **jen Base.com**.
+ *
+ * Webhook v Pipedrive je nakonfigurován tak, že **chodí pouze pro `won` dealy**. Z toho důvodu se
+ * každé doručení považuje za platné — nezahazujeme volání na základě API stavu dealu (REST API může
+ * krátce po výhře ještě vracet `open`). Defenzivně přeskočíme jen `lost` / `deleted` (ruční úprava
+ * po doručení webhooku).
  *
  * Webhook rozlišuje dva scénáře podle pole „Eshop ID" (custom field 26e4a2f8…, UI ID 12586):
  *
@@ -10,9 +15,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
  *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at`, a exportujeme / aktualizujeme Base:
- *      při prvním exportu `addOrder` se stavem z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`; pokud už
- *      Base export proběhl (`orders.basecom_order_id`), zařadí se jen `setOrderStatus` na stejný stav.
+ *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at` a **vždy** zařadíme Base export:
+ *      pokud máme `basecom_order_id` → `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`,
+ *      fallback `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
@@ -72,11 +77,15 @@ const ADMIN_NOTE_MISSING_EMAIL =
 const ADMIN_NOTE_ZERO_VALUE_FALLBACK =
   'Pipedrive import: deal měl nulovou částku nebo nešly načíst produkty; použita minimální řádka 1 Kč — zkontrolujte položky.';
 
-/** Číslo stavu objednávky v BaseLinkeru pro inbound z Pipedrive (např. „Do expedice — manuálně"). */
+/** Číslo stavu objednávky v BaseLinkeru pro inbound z Pipedrive (např. „Do expedice — manuálně“).
+ *  Preferuje dedikovaný `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`; pokud chybí, fallback na výchozí
+ *  `BASECOM_ORDER_STATUS_ID` (stejný, který používá běžný eshop export přes `process-export-queue`). */
 function inboundPipedriveBaseOrderStatusId(): number | null {
   const raw = (Deno.env.get('BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND') || '').trim();
   const n = Number.parseInt(raw, 10);
-  return Number.isInteger(n) && n > 0 ? n : null;
+  if (Number.isInteger(n) && n > 0) return n;
+  const fallback = Number.parseInt((Deno.env.get('BASECOM_ORDER_STATUS_ID') || '').trim(), 10);
+  return Number.isInteger(fallback) && fallback > 0 ? fallback : null;
 }
 
 function getDatabaseUrl() {
@@ -415,9 +424,13 @@ function readWebhookDealStatus(payload: Record<string, unknown>): string {
 }
 
 /**
- * Zpracovat jako výherní deal, pokud to dovolí API nebo samotný webhook.
- * GET /deals krátce po `won` občas ještě vrací `open` → webhook v2 už má `data.status: "won"`.
- * Proti předběžnému zpracování ztracených dealů: `lost` / `deleted` z API má přednost.
+ * Webhook se v Pipedrive registruje **jen pro won dealy** (filtr v UI nastavení webhooku) —
+ * pokud sem request dorazí, zpracujeme ho jako won, i kdyby GET /deals/{id} ještě vrátilo `open`
+ * (občas malá prodleva v REST API krátce po výhře, zatímco data.status v payloadu už je `won`).
+ *
+ * Defenzivně přesto neimportujeme deal, který je v REST API explicitně ve stavu `lost` / `deleted` —
+ * to může znamenat ruční úpravu po doručení webhooku (špatný stav před nedopatřením). Logujeme apiStatus
+ * a webhookStatus do logu, ať je v Edge Function Logs auditní stopa.
  */
 function resolveInboundDealWonState(
   deal: Record<string, unknown>,
@@ -428,8 +441,7 @@ function resolveInboundDealWonState(
   if (apiStatus === 'lost' || apiStatus === 'deleted') {
     return { treatAsWon: false, apiStatus, webhookStatus };
   }
-  const treatAsWon = apiStatus === 'won' || webhookStatus === 'won';
-  return { treatAsWon, apiStatus, webhookStatus };
+  return { treatAsWon: true, apiStatus, webhookStatus };
 }
 
 function pipelineAllowed(pipelineId: number): boolean {
@@ -561,22 +573,22 @@ Deno.serve(async (req) => {
   if (!treatAsWon) {
     logInbound('skipped', {
       dealId,
-      reason: 'deal_not_won',
+      reason: 'deal_lost_or_deleted',
       apiStatus,
       ...(webhookStatus ? { webhookStatus } : {}),
     });
     return jsonResponse(req, {
       skipped: true,
-      reason: 'deal_not_won',
+      reason: 'deal_lost_or_deleted',
       dealId,
       apiStatus,
       ...(webhookStatus ? { webhookStatus } : {}),
       hint:
-        'Deal není ve stavu won podle GET /deals ani podle webhook payload data.status — často stačí znovu spustit webhook po chvilce (prodleva API).',
+        'Deal je v Pipedrive ve stavu lost/deleted — webhook se neimportuje, aby se neimplikoval omylem ručně přepnutý stav.',
     }, 200);
   }
-  if (apiStatus !== 'won' && webhookStatus === 'won') {
-    logInbound('won_via_webhook_payload', { dealId, apiStatus, webhookStatus });
+  if (apiStatus !== 'won') {
+    logInbound('proceeding_without_api_won', { dealId, apiStatus, webhookStatus });
   }
 
   const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
@@ -779,21 +791,6 @@ Deno.serve(async (req) => {
     if (existing.length > 0) {
       const target = existing[0];
 
-      /* Idempotence pro `addOrder`: když už jednou Base.com doběhl do `done` (nebo právě běží),
-       * druhý pending řádek pro nový export nepřidáváme. Pokud už známe `basecom_order_id`, zařadíme
-       * pouze `setOrderStatus` na stav z BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND. */
-      const exportRows = await sql<{ service: string; status: string }[]>`
-        select service, status
-          from public.export_queue
-         where order_id = ${target.id}::uuid
-           and service = 'basecom'
-      `;
-      const existingExportServices = new Set(
-        exportRows
-          .filter((r) => r.status === 'pending' || r.status === 'processing' || r.status === 'done')
-          .map((r) => r.service),
-      );
-
       await sql.begin(async (tx) => {
         await tx`delete from public.order_items where order_id = ${target.id}::uuid`;
         for (const line of lines) {
@@ -874,29 +871,63 @@ Deno.serve(async (req) => {
       const savedBlOrderId = String(baseMetaRows[0]?.basecom_order_id || '').trim();
 
       const queuedServices: string[] = [];
-      const skippedServices: string[] = [];
 
-      const basePayloadFull = {
-        orderId: target.id,
-        pipedriveDealId: dealId,
-        items: lines.map((l) => ({
-          productId: l.productId,
-          productName: l.productName,
-          quantity: l.quantity,
-          unitPrice: l.unitPriceHaler,
-        })),
-        customer: customerSnapshot,
-        shipping: shippingSnapshot,
-        ...(pdInboundBaseStatusId != null ? { basecomOrderStatusId: pdInboundBaseStatusId } : {}),
-      };
-
-      let queuedExportKick = false;
-
-      if (
-        pdInboundBaseStatusId != null &&
-        savedBlOrderId &&
-        existingExportServices.has('basecom')
-      ) {
+      /* Pravidlo zadané obchodem: každé doručení webhooku z PD musí výslednou objednávku znovu
+       * propsat do Base. PD webhook je nakonfigurován tak, že chodí jen pro `won` dealy, takže
+       * každé volání = další pokus o expedici. Proto:
+       *   - když už existuje `basecom_order_id` → zařadíme `setOrderStatus` (Base aktualizuje stav),
+       *   - jinak zařadíme plný `addOrder`.
+       * Nepřeskakujeme kvůli pending/processing/done řádkům ve frontě — duplicity řeší `process-export-queue`
+       * se svojí logikou idempotence (mj. `cancel-superseded-orders`). */
+      if (savedBlOrderId) {
+        const statusIdForSet = pdInboundBaseStatusId;
+        if (statusIdForSet == null) {
+          /* Pokud chybí i fallback `BASECOM_ORDER_STATUS_ID`, nemůžeme spustit setOrderStatus —
+           * zařadíme plný `addOrder` znovu (Base v praxi vytvoří nový záznam; alespoň expedice doběhne). */
+          await sql`
+            insert into public.export_queue (order_id, service, status, payload)
+            values (
+              ${target.id}::uuid,
+              'basecom',
+              'pending',
+              ${JSON.stringify({
+                orderId: target.id,
+                pipedriveDealId: dealId,
+                items: lines.map((l) => ({
+                  productId: l.productId,
+                  productName: l.productName,
+                  quantity: l.quantity,
+                  unitPrice: l.unitPriceHaler,
+                })),
+                customer: customerSnapshot,
+                shipping: shippingSnapshot,
+              })}::jsonb
+            )
+          `;
+          queuedServices.push('basecom_addorder_fallback');
+          logInbound('base_addorder_fallback_no_status_id', {
+            dealId,
+            orderId: target.id,
+            hint:
+              'Chybí BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND i BASECOM_ORDER_STATUS_ID — setOrderStatus nelze spustit, fallback na addOrder.',
+          });
+        } else {
+          await sql`
+            insert into public.export_queue (order_id, service, status, payload)
+            values (
+              ${target.id}::uuid,
+              'basecom',
+              'pending',
+              ${JSON.stringify({
+                pipedriveInboundSetStatus: true,
+                baseLinkerOrderId: savedBlOrderId,
+                basecomOrderStatusId: statusIdForSet,
+              })}::jsonb
+            )
+          `;
+          queuedServices.push('basecom_set_status');
+        }
+      } else {
         await sql`
           insert into public.export_queue (order_id, service, status, payload)
           values (
@@ -904,44 +935,24 @@ Deno.serve(async (req) => {
             'basecom',
             'pending',
             ${JSON.stringify({
-              pipedriveInboundSetStatus: true,
-              baseLinkerOrderId: savedBlOrderId,
-              basecomOrderStatusId: pdInboundBaseStatusId,
+              orderId: target.id,
+              pipedriveDealId: dealId,
+              items: lines.map((l) => ({
+                productId: l.productId,
+                productName: l.productName,
+                quantity: l.quantity,
+                unitPrice: l.unitPriceHaler,
+              })),
+              customer: customerSnapshot,
+              shipping: shippingSnapshot,
+              ...(pdInboundBaseStatusId != null ? { basecomOrderStatusId: pdInboundBaseStatusId } : {}),
             })}::jsonb
           )
         `;
-        queuedServices.push('basecom_set_status');
-        queuedExportKick = true;
-      } else if (!existingExportServices.has('basecom')) {
-        await sql`
-          insert into public.export_queue (order_id, service, status, payload)
-          values (
-            ${target.id}::uuid,
-            'basecom',
-            'pending',
-            ${JSON.stringify(basePayloadFull)}::jsonb
-          )
-        `;
         queuedServices.push('basecom');
-        queuedExportKick = true;
-      } else {
-        skippedServices.push('basecom');
-        const skipReason =
-          !savedBlOrderId
-            ? 'missing_basecom_order_id_on_order'
-            : pdInboundBaseStatusId == null
-            ? 'missing_BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND'
-            : 'unexpected_existing_basecom_export';
-        logInbound('basecom_skipped_after_update', {
-          dealId,
-          orderId: target.id,
-          skipReason,
-        });
       }
 
-      if (queuedExportKick) {
-        scheduleProcessExportQueueKick(req.url);
-      }
+      scheduleProcessExportQueueKick(req.url);
 
       logInbound('updated', {
         dealId,
@@ -950,7 +961,8 @@ Deno.serve(async (req) => {
         eshopOrderNumber: eshopOrderNumber || null,
         replacedItems: lines.length,
         queuedServices,
-        skippedServices,
+        hasBasecomOrderId: Boolean(savedBlOrderId),
+        baseStatusIdResolved: pdInboundBaseStatusId,
       });
 
       return jsonResponse(req, {
@@ -962,7 +974,6 @@ Deno.serve(async (req) => {
         eshopOrderNumber: eshopOrderNumber || null,
         replacedItems: lines.length,
         queuedServices,
-        skippedServices,
       }, 200);
     }
 
