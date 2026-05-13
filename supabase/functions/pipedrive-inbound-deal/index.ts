@@ -16,7 +16,7 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
- *   Tělo = standardní JSON webhooku (meta.entity_id / current.id / data.id = deal ID).
+ *   Tělo = standardní JSON webhooku (jen **deal** — `meta.entity`/`meta.object` === deal; ID z `data.id` / `meta.entity_id` / legacy polí).
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
  * - GET/HEAD → vždy 200 (Pipedrive při kontrole často volá URL bez ?token=; s tokenem vracíme bohatší JSON).
  * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
@@ -31,6 +31,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
  *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
  *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená ani v kolizi s jinou objednávkou (čte se z plochého deal objektu, z mapy `custom_fields` i z pole záznamů stejných jako u některých webhooků).
+ *
+ * Won-detekce: kromě `status === won` bereme i vyplněné `won_time` / `first_won_time` z API a záložně
+ * `data.status` z webhooku (v2), pokud GET dealu ještě vrací `open` v okamžiku doručení.
  *
  * Spuštění `process-export-queue` po zápisu objednávky probíhá na pozadí (`EdgeRuntime.waitUntil`), aby odpověď
  * webhooku nepřesáhla časový limit kvůli dlouhému Base.com (jinak Pipedrive opakuje doručení).
@@ -364,14 +367,27 @@ function extractDealId(body: Record<string, unknown>): number | null {
     if (Number.isInteger(n) && n > 0) return n;
   }
 
-  /** Webhooks v2: deal ID je v meta.entity_id; objekt dealu je `data` (ne `current`). */
   const meta = body.meta as Record<string, unknown> | undefined;
+  const entityStr = typeof meta?.entity === 'string' ? meta.entity.toLowerCase() : '';
+  const dataObj = body.data as Record<string, unknown> | undefined;
+
+  /** Webhooks v2 — deal: `data.id` je ID dealu; u `delete` bývá `data` null → `meta.entity_id`. */
+  if (entityStr === 'deal') {
+    if (dataObj) {
+      const fromDataDeal = parsePipedriveEntityId(dataObj.id);
+      if (fromDataDeal != null) return fromDataDeal;
+    }
+    if (meta) {
+      const fromMetaDeal = parsePipedriveEntityId(meta.entity_id ?? meta.entityId);
+      if (fromMetaDeal != null) return fromMetaDeal;
+    }
+  }
+
   if (meta) {
     const fromEntity = parsePipedriveEntityId(meta.entity_id ?? meta.entityId);
     if (fromEntity != null) return fromEntity;
   }
 
-  const dataObj = body.data as Record<string, unknown> | undefined;
   if (dataObj) {
     const fromData = parsePipedriveEntityId(dataObj.id);
     if (fromData != null) return fromData;
@@ -394,6 +410,22 @@ function extractDealId(body: Record<string, unknown>): number | null {
   }
 
   return null;
+}
+
+/** Rozhodnutí „won“ pro inbound: API občas vrací open i po výhře; webhook `data.status` může být napřed. */
+function dealLooksWon(deal: Record<string, unknown>, payload: Record<string, unknown>): boolean {
+  const apiStatus = String(deal.status || '').toLowerCase();
+  if (apiStatus === 'lost' || apiStatus === 'deleted') return false;
+  if (apiStatus === 'won') return true;
+
+  const wonTime = deal.won_time ?? deal.first_won_time;
+  if (wonTime != null && String(wonTime).trim() !== '') return true;
+
+  const dataObj = payload.data as Record<string, unknown> | undefined;
+  const hookStatus = typeof dataObj?.status === 'string' ? dataObj.status.toLowerCase() : '';
+  if (hookStatus === 'won') return true;
+
+  return false;
 }
 
 function pipelineAllowed(pipelineId: number): boolean {
@@ -476,6 +508,26 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { ok: true, accepted: false, hint: 'Invalid JSON — use Pipedrive webhook payload or { "deal_id": number }.' }, 200);
   }
 
+  /** Webhooks v2: meta.entity; v1: meta.object — jiný objekt než deal má špatné meta.entity_id / meta.id. */
+  const metaEarly = payload.meta as Record<string, unknown> | undefined;
+  const entityKind =
+    typeof metaEarly?.entity === 'string'
+      ? metaEarly.entity.toLowerCase()
+      : typeof metaEarly?.object === 'string'
+      ? String(metaEarly.object).toLowerCase()
+      : '';
+  if (entityKind && entityKind !== 'deal') {
+    logInbound('skipped', { reason: 'webhook_entity_not_deal', entity: entityKind });
+    return jsonResponse(req, {
+      ok: true,
+      skipped: true,
+      reason: 'webhook_entity_not_deal',
+      entity: metaEarly?.entity ?? metaEarly?.object ?? null,
+      hint:
+        'Endpoint očekává webhook nad objektem deal (např. změna / výhra dealu). Jiný typ události ignorujeme.',
+    }, 200);
+  }
+
   const dealId = extractDealId(payload);
   if (!dealId) {
     logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20) });
@@ -509,10 +561,24 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { skipped: true, reason: 'deal_not_found', dealId }, 200);
   }
 
-  const status = String(deal.status || '').toLowerCase();
-  if (status !== 'won') {
-    logInbound('skipped', { dealId, reason: 'deal_not_won', status });
-    return jsonResponse(req, { skipped: true, reason: 'deal_not_won', dealId, status }, 200);
+  const apiStatus = String(deal.status || '').toLowerCase();
+  const dataSnap = payload.data as Record<string, unknown> | undefined;
+  const hookStatusSnap = typeof dataSnap?.status === 'string' ? dataSnap.status.toLowerCase() : '';
+  if (!dealLooksWon(deal, payload)) {
+    logInbound('skipped', {
+      dealId,
+      reason: 'deal_not_won',
+      apiStatus,
+      hookStatus: hookStatusSnap || undefined,
+      won_time: deal.won_time ?? undefined,
+    });
+    return jsonResponse(req, {
+      skipped: true,
+      reason: 'deal_not_won',
+      dealId,
+      apiStatus,
+      hookStatus: hookStatusSnap || undefined,
+    }, 200);
   }
 
   const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
