@@ -10,17 +10,25 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * Webhook rozlišuje dva scénáře podle pole „Eshop ID" (custom field 26e4a2f8…, UI ID 12586):
  *
  *   A) Pole je **prázdné** → deal byl ručně založený obchodníkem v CRM. Vytvoříme NOVOU
- *      objednávku se zdrojem `pipedrive`, dopravou z ENV (default PPL), **platbou převodem**
- *      (`payment_method = 'transfer'`) a předáme do Base.com — díky tomu se i v BL/Base
- *      objednávka založí se způsobem platby „Bankovní převod“ (viz `paymentMethodLabel` v
- *      `process-export-queue`).
+ *      objednávku se zdrojem `pipedrive`, dopravou vždy `ppl` (Base export: „PPL"),
+ *      **platbou převodem** (`payment_method = 'transfer'`) a předáme do Base.com — díky tomu se
+ *      i v BL/Base objednávka založí se způsobem platby „Bankovní převod“ a dopravou „PPL"
+ *      (viz `paymentMethodLabel` a `deliveryMethodLabel` v `process-export-queue`).
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
  *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu**, nastavíme `payment_status = 'paid'` + `paid_at` a **vždy** zařadíme Base export:
- *      pokud máme `basecom_order_id` → `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`,
- *      fallback `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
+ *      dealu** (původní `shipping_method` zachováme), nastavíme `payment_status = 'paid'` +
+ *      `paid_at` a **vždy** zařadíme Base export: pokud máme `basecom_order_id` →
+ *      `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`, fallback
+ *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
+ *
+ * Produkty v `order_items` se v obou scénářích plní podle PD pole **„Product code" (UI ID 19,
+ * key `code`)** — handler pro každý `product_id` z `/deals/{id}/products` načte
+ * `GET /products/{productId}` a vezme `code`. Tento kód se uloží jako `order_items.product_id` a
+ * `process-export-queue` ho pak v Base inventáři páruje přes SKU (`chooseBasecomSku`/`matchBaseInventoryProduct`).
+ * Pokud PD produkt nemá vyplněný `code`, použije se fallback `pipedrive:<id>` + log
+ * `pd_product_code_missing` v Logflare.
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
@@ -800,25 +808,79 @@ Deno.serve(async (req) => {
   }
 
   const products = await pipedriveApiGet<unknown[]>(apiToken, `/deals/${dealId}/products`, { limit: 100 });
-  const lines: Array<{ productId: string; productName: string; quantity: number; unitPriceHaler: number }> = [];
+
+  /**
+   * Pipedrive deal_products vrací jen `product_id` a `name` — pro spárování s eshop / Base katalogem
+   * potřebujeme `code` (Pipedrive product field UI ID **19**, key `code`). Stahujeme ho přes
+   * `GET /products/{id}` a cache v rámci jednoho requestu (víc položek se stejným ID neopakovat).
+   */
+  const productCodeCache = new Map<number, string>();
+  async function resolvePipedriveProductCode(productId: number): Promise<string> {
+    if (productCodeCache.has(productId)) return productCodeCache.get(productId) || '';
+    try {
+      const prod = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/products/${productId}`);
+      const code = String((prod && typeof prod === 'object' ? (prod as Record<string, unknown>).code : '') || '').trim();
+      productCodeCache.set(productId, code);
+      return code;
+    } catch {
+      productCodeCache.set(productId, '');
+      return '';
+    }
+  }
+
+  const lines: Array<{
+    productId: string;
+    productName: string;
+    quantity: number;
+    unitPriceHaler: number;
+    /** Záznam pro audit/log v admin_note: PD interní ID, PD product code (Product code, UI ID 19). */
+    pipedriveProductId: number | null;
+    pipedriveProductCode: string;
+  }> = [];
   if (Array.isArray(products)) {
     for (const raw of products) {
       const p = raw as Record<string, unknown>;
       const qty = typeof p.quantity === 'number' ? Math.max(1, Math.floor(p.quantity)) : 1;
       const unit = moneyToHaler(p.item_price ?? p.sum);
-      const prId = p.product_id != null ? String(p.product_id) : 'unknown';
-      const prName = String(p.name || `Produkt ${prId}`).trim() || `Produkt ${prId}`;
+      const pdProductId = parsePipedriveEntityId(p.product_id);
+      const prIdStr = pdProductId != null ? String(pdProductId) : 'unknown';
+      const prName = String(p.name || `Produkt ${prIdStr}`).trim() || `Produkt ${prIdStr}`;
+      const code = pdProductId != null ? await resolvePipedriveProductCode(pdProductId) : '';
+      /**
+       * Když má PD produkt vyplněný `code`, použijeme ho jako SKU v `order_items.product_id` —
+       * `process-export-queue` ho pak najde v Base inventáři přes SKU. Bez `code` (např. import,
+       * který obchodník přidal ručně) zachováme prefix `pipedrive:<id>` jako fallback —
+       * vidí se v adminu a `chooseBasecomSku` ho stejně použije jako SKU.
+       */
+      const orderItemProductId = code || `pipedrive:${prIdStr}`;
       lines.push({
-        productId: `pipedrive:${prId}`,
+        productId: orderItemProductId,
         productName: prName,
         quantity: qty,
         unitPriceHaler: unit > 0 ? unit : moneyToHaler((Number(deal.value) || 0) / Math.max(1, qty)),
+        pipedriveProductId: pdProductId,
+        pipedriveProductCode: code,
       });
     }
   }
 
+  const linesWithoutPdCode = lines.filter((l) => l.pipedriveProductId != null && !l.pipedriveProductCode);
+  if (linesWithoutPdCode.length > 0) {
+    logInbound('pd_product_code_missing', {
+      dealId,
+      missingCount: linesWithoutPdCode.length,
+      productIds: linesWithoutPdCode.map((l) => l.pipedriveProductId).slice(0, 10),
+    });
+  }
+
   const dealValueHaler = moneyToHaler(deal.value);
-  const shipMethod = (Deno.env.get('PIPEDRIVE_INBOUND_SHIPPING_METHOD') || DEFAULT_SHIPPING_METHOD).trim();
+  /**
+   * Doprava: pro **scénář A (nová objednávka z PD)** je doprava vždy `ppl` — obchod si to tak přeje
+   * (Base export pak vidí „PPL"). Cena se bere z `PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER`
+   * (default 8900 = 89 Kč). Scénář B (update existující eshop objednávky) si níže přebírá vlastní
+   * `shipping_method` z `orders` — tam dopravu neměníme.
+   */
+  const shipMethod = DEFAULT_SHIPPING_METHOD;
   const shipPrice = Number.parseInt(Deno.env.get('PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER') || '', 10);
   const shippingPrice = Number.isInteger(shipPrice) && shipPrice >= 0 ? shipPrice : DEFAULT_SHIPPING_PRICE_HALER;
 
@@ -829,6 +891,8 @@ Deno.serve(async (req) => {
       productName: String(deal.title || `Deal ${dealId}`),
       quantity: 1,
       unitPriceHaler: dealValueHaler,
+      pipedriveProductId: null,
+      pipedriveProductCode: '',
     });
     subtotal = dealValueHaler;
   }
@@ -842,6 +906,8 @@ Deno.serve(async (req) => {
       productName: String(deal.title || `Deal ${dealId}`),
       quantity: 1,
       unitPriceHaler: 100,
+      pipedriveProductId: null,
+      pipedriveProductCode: '',
     });
     subtotal = 100;
   }
@@ -945,12 +1011,21 @@ Deno.serve(async (req) => {
           `;
         }
 
+        /**
+         * `shipping_method` u scénáře B (update existující eshop objednávky) **nepřepisujeme** —
+         * eshop checkout už dopravu zvolil a obchodník v PD jen mění produkty/stav. `subtotal`
+         * a `total` přepočítáme z PD položek + původní dopravy uložené v `orders.shipping_price`.
+         */
+        const existingShippingRows = await tx<{ shipping_price: number | null; shipping_method: string | null }[]>`
+          select shipping_price, shipping_method from public.orders where id = ${target.id}::uuid limit 1
+        `;
+        const existingShippingPrice = Number(existingShippingRows[0]?.shipping_price ?? 0);
+        const updateTotal = subtotal + (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+
         await tx`
           update public.orders set
             subtotal = ${subtotal},
-            total = ${total},
-            shipping_price = ${shippingPrice},
-            shipping_method = ${shipMethod},
+            total = ${updateTotal},
             payment_status = 'paid',
             status = 'paid',
             paid_at = coalesce(paid_at, now()),
@@ -993,12 +1068,21 @@ Deno.serve(async (req) => {
         city: city.trim() || '—',
         zip: zip.trim() || '—',
       };
-      const shippingSnapshot = { method: shipMethod, price: shippingPrice };
-
-      const baseMetaRows = await sql<{ basecom_order_id: string | null }[]>`
-        select basecom_order_id from public.orders where id = ${target.id}::uuid limit 1
+      const baseMetaRows = await sql<{
+        basecom_order_id: string | null;
+        shipping_method: string | null;
+        shipping_price: number | null;
+      }[]>`
+        select basecom_order_id, shipping_method, shipping_price
+          from public.orders where id = ${target.id}::uuid limit 1
       `;
       const savedBlOrderId = String(baseMetaRows[0]?.basecom_order_id || '').trim();
+      const existingShipMethodForBase = String(baseMetaRows[0]?.shipping_method || '').trim() || shipMethod;
+      const existingShipPriceForBase = Number(baseMetaRows[0]?.shipping_price ?? shippingPrice);
+      const shippingSnapshot = {
+        method: existingShipMethodForBase,
+        price: Number.isFinite(existingShipPriceForBase) ? existingShipPriceForBase : shippingPrice,
+      };
 
       const queuedServices: string[] = [];
 
