@@ -3312,6 +3312,12 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     if (pipedriveToken) {
       pipedriveSync = { ok: false, skipped: false };
       try {
+        const webinarDateIsoForPd =
+          Number.isFinite(merged.day) &&
+          Number.isFinite(merged.monthNum) &&
+          Number.isFinite(merged.year)
+            ? `${merged.year}-${String(merged.monthNum).padStart(2, '0')}-${String(merged.day).padStart(2, '0')}`
+            : undefined;
         const pdResult = await syncWebinarRegistrationToPipedrive({
           apiToken: pipedriveToken,
           notTeacher,
@@ -3324,6 +3330,7 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
           positionLabel: String(position || '').trim(),
           webinarTitle: webinarTitle || webinarId,
           webinarId: String(webinarId),
+          webinarDateIso: webinarDateIsoForPd,
           registeredAtIso: registration.registeredAt,
           webinarMotivation,
           webinarTopicInterest,
@@ -11902,6 +11909,23 @@ function parsePipedriveWebinarLeadLabelIdsFromEnv(): string[] {
   return ['340e4c40-b33b-11f0-9969-afaf54a6de3e'];
 }
 
+/** Lead „Webinar type date“ (Pipedrive field id 109) — datum akce ve formátu YYYY-MM-DD. */
+const PIPEDRIVE_WEBINAR_LEAD_DATE_FIELD_KEY =
+  (Deno.env.get('PIPEDRIVE_WEBINAR_LEAD_DATE_FIELD_KEY') || '').trim() ||
+  '8976f7b413ab99e922f16b0cdb3e6ffdc607974d';
+/** Lead „Lead source“ enum (field id 24) — možnost „Webinar“. */
+const PIPEDRIVE_WEBINAR_LEAD_SOURCE_FIELD_KEY =
+  (Deno.env.get('PIPEDRIVE_WEBINAR_LEAD_SOURCE_FIELD_KEY') || '').trim() ||
+  'c2d2ebe76afd5450600f5758b824064bac4b0609';
+/** Lead „Webinar – název webináře“ (field id 62). */
+const PIPEDRIVE_WEBINAR_LEAD_WEBINAR_TITLE_FIELD_KEY =
+  (Deno.env.get('PIPEDRIVE_WEBINAR_LEAD_WEBINAR_TITLE_FIELD_KEY') || '').trim() ||
+  '4dbf52bb2606a467bced2401f51c751336490a49';
+
+function pipedriveWebinarLeadSourceWebinarOptionId(): number {
+  return pipedriveEnvInt('PIPEDRIVE_WEBINAR_LEAD_SOURCE_WEBINAR_OPTION_ID', 28);
+}
+
 function buildWebinarRegistrationPipedriveNoteHtml(params: {
   webinarTitle: string;
   webinarId: string;
@@ -11938,6 +11962,8 @@ async function syncWebinarRegistrationToPipedrive(params: {
   positionLabel: string;
   webinarTitle: string;
   webinarId: string;
+  /** Datum konání webináře YYYY-MM-DD (z KV / těla formuláře); bez termínu se neposílá. */
+  webinarDateIso?: string;
   registeredAtIso: string;
   webinarMotivation: string;
   webinarTopicInterest: string;
@@ -12017,6 +12043,17 @@ async function syncWebinarRegistrationToPipedrive(params: {
     label_ids: parsePipedriveWebinarLeadLabelIdsFromEnv(),
   };
   if (organizationId) leadPayload.organization_id = organizationId;
+
+  const dateIso = String(params.webinarDateIso || '').trim();
+  if (dateIso && PIPEDRIVE_WEBINAR_LEAD_DATE_FIELD_KEY) {
+    leadPayload[PIPEDRIVE_WEBINAR_LEAD_DATE_FIELD_KEY] = dateIso;
+  }
+  if (PIPEDRIVE_WEBINAR_LEAD_SOURCE_FIELD_KEY) {
+    leadPayload[PIPEDRIVE_WEBINAR_LEAD_SOURCE_FIELD_KEY] = pipedriveWebinarLeadSourceWebinarOptionId();
+  }
+  if (PIPEDRIVE_WEBINAR_LEAD_WEBINAR_TITLE_FIELD_KEY) {
+    leadPayload[PIPEDRIVE_WEBINAR_LEAD_WEBINAR_TITLE_FIELD_KEY] = params.webinarTitle.trim();
+  }
 
   const webinarOwnerId =
     pipedriveEnvInt('PIPEDRIVE_WEBINAR_LEAD_OWNER_ID', 0) ||
