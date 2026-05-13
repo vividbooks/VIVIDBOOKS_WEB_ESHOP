@@ -38,6 +38,11 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * (doprava v Base přijde jako `delivery_method` z `orders.shipping_*`). Pokud po filtraci
  * nezbude **žádná** položka, webhook se odbavuje jako `skipped: no_valid_products`.
  *
+ * Adresa zákazníka se skládá ze strukturovaných polí PD Person (`postal_address.route`,
+ * `street_number`, `subpremise`, `locality`, `postal_code`, …) a doplní se z Org (`address_*`
+ * v PD v1, nested `address` v v2, případně z plain‑text `org.address`). Pokud zůstane neúplná,
+ * loguje se `address_incomplete` a do `admin_note` se přidá upozornění.
+ *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
  *   Tělo = standardní JSON webhooku (meta.entity_id / current.id / data.id = deal ID).
@@ -95,6 +100,9 @@ const ADMIN_NOTE_MISSING_EMAIL =
 
 const ADMIN_NOTE_ZERO_VALUE_FALLBACK =
   'Pipedrive import: deal měl nulovou částku nebo nešly načíst produkty; použita minimální řádka 1 Kč — zkontrolujte položky.';
+
+const ADMIN_NOTE_ADDRESS_INCOMPLETE =
+  'Pipedrive import: adresa není kompletní (chybí ulice / město / PSČ). Doplňte v PD u Person nebo Organization a aktualizujte objednávku.';
 
 /** Číslo stavu objednávky v BaseLinkeru pro inbound z Pipedrive (např. „Do expedice — manuálně“).
  *  Preferuje dedikovaný `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`; pokud chybí, fallback na výchozí
@@ -273,17 +281,130 @@ function readPersonPhone(person: Record<string, unknown>): string {
   return '';
 }
 
-function personPostalLine(person: Record<string, unknown>): { street: string; city: string; zip: string } {
-  const a = person?.postal_address;
-  if (a && typeof a === 'object') {
-    const o = a as Record<string, string | undefined>;
-    return {
-      street: String(o.formatted_address || o.value || `${o.route || ''} ${o.street_number || ''}` || '').trim(),
-      city: String(o.locality || o.sublocality || '').trim(),
-      zip: String(o.postal_code || '').trim(),
-    };
+/**
+ * Strukturovaný formát adresy stejný jako v eshop checkoutu (`orders.street/city/zip`).
+ * Street = ulice + číslo (případně subpremise / vchod), city = obec, zip = PSČ bez mezer (5 znaků).
+ */
+type AddressParts = { street: string; city: string; zip: string };
+
+function normalizeCzechZip(value: string | undefined | null): string {
+  const digitsOnly = String(value ?? '').replace(/\D/g, '');
+  return digitsOnly.length === 5 ? digitsOnly : '';
+}
+
+/**
+ * Parsuje plain‑text adresu (typicky `postal_address.formatted_address` z PD nebo `org.address`)
+ * na strukturované části. Funguje pro běžné české formáty:
+ *   - „Karlova 5, 120 00 Praha"
+ *   - „Karlova 5, 12000 Praha, Czech Republic"
+ *   - „Karlova 5, Praha, 120 00, Česká republika"
+ *   - „120 00 Praha, Karlova 5"
+ * Vrací prázdné stringy, pokud se z textu nedá nic vyčíst (volající má pak svůj fallback).
+ */
+function parseFreeFormAddress(rawInput: string | undefined | null): AddressParts {
+  const raw = String(rawInput ?? '').replace(/\s+/g, ' ').trim();
+  if (!raw) return { street: '', city: '', zip: '' };
+  /** Země na konci („Czech Republic" / „Česká republika" / „Czechia" / „CZ") oříznout. */
+  const noCountry = raw
+    .replace(/,?\s*(czech\s*republic|czechia|česká\s*republika|slovakia|slovensk[áo]\s*republika|cz|sk)\s*\.?\s*$/i, '')
+    .trim();
+  /** Najít PSČ — 5 číslic, případně s mezerou mezi 3. a 4. */
+  const zipMatch = noCountry.match(/\b(\d{3})\s?(\d{2})\b/);
+  const zip = zipMatch ? `${zipMatch[1]}${zipMatch[2]}` : '';
+
+  /** Odstranit PSČ z textu, abychom mohli rozdělit zbytek na ulici + město. */
+  const withoutZip = zipMatch
+    ? (noCountry.slice(0, zipMatch.index) + ' ' + noCountry.slice((zipMatch.index || 0) + zipMatch[0].length))
+      .replace(/\s+/g, ' ')
+      .trim()
+    : noCountry;
+  const parts = withoutZip.split(/,/).map((p) => p.trim()).filter(Boolean);
+
+  let street = '';
+  let city = '';
+  if (parts.length === 1) {
+    /** Bez čárky — pokud je tam zip, předpokládáme „<ulice> <zip> <město>" → město = poslední „slovo(a)". */
+    if (zipMatch) {
+      /** Část před PSČ = ulice, část za PSČ = město. Tu už máme v `withoutZip` jen splácaná dohromady,
+       *  vrátíme se proto k původnímu textu s PSČ a rozdělíme okolo něj. */
+      const before = noCountry.slice(0, zipMatch.index || 0).replace(/[,\s]+$/, '').trim();
+      const after = noCountry.slice((zipMatch.index || 0) + zipMatch[0].length).replace(/^[,\s]+/, '').trim();
+      street = before;
+      city = after;
+    } else {
+      street = parts[0];
+    }
+  } else {
+    /** Vícekomponentový řetězec: nejdřív zkusíme heuristiku „ulice je první, město je část obsahující PSČ
+     *  (nebo poslední část bez země)". */
+    street = parts[0];
+    const cityPart = parts.slice(1).find((p) => /[a-zA-ZáčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/.test(p)) || '';
+    city = cityPart;
   }
-  return { street: '', city: '', zip: '' };
+
+  street = street.replace(/[,;]+$/, '').trim();
+  city = city.replace(/[,;]+$/, '').trim();
+  return { street, city, zip };
+}
+
+function structuredFieldsFromObject(obj: Record<string, unknown> | null | undefined, prefix = ''): AddressParts {
+  if (!obj || typeof obj !== 'object') return { street: '', city: '', zip: '' };
+  const o = obj as Record<string, unknown>;
+  const pick = (key: string) => String(o[prefix ? `${prefix}${key}` : key] ?? '').trim();
+  const route = pick('route');
+  const streetNumber = pick('street_number');
+  const subpremise = pick('subpremise');
+  const locality = pick('locality');
+  const sublocality = pick('sublocality');
+  const postalCode = pick('postal_code');
+  const composedStreet = [route, streetNumber, subpremise].filter(Boolean).join(' ').trim();
+  return {
+    street: composedStreet,
+    city: locality || sublocality,
+    zip: normalizeCzechZip(postalCode),
+  };
+}
+
+/**
+ * Adresa Person z PD. Priorita:
+ *   1) strukturovaná podpole z `postal_address` (route, street_number, locality, postal_code, …)
+ *   2) parse `postal_address.formatted_address` (resp. `value`) pro chybějící části
+ */
+function personPostalLine(person: Record<string, unknown>): AddressParts {
+  const a = person?.postal_address;
+  if (!a || typeof a !== 'object') return { street: '', city: '', zip: '' };
+  const o = a as Record<string, unknown>;
+  const structured = structuredFieldsFromObject(o);
+  if (structured.street && structured.city && structured.zip) return structured;
+  const raw = String(o.formatted_address || o.value || '').trim();
+  const parsed = parseFreeFormAddress(raw);
+  return {
+    street: structured.street || parsed.street,
+    city: structured.city || parsed.city,
+    zip: structured.zip || parsed.zip,
+  };
+}
+
+/**
+ * Adresa Org z PD. PD v1 zploští adresu do polí `address_route`, `address_street_number`,
+ * `address_locality`, `address_postal_code` … (každé sub‑pole s prefixem `address_`).
+ * Hodnota `org.address` je `formatted_address`. PD v2 / starší vrátí `address` jako objekt.
+ */
+function orgAddressLine(org: Record<string, unknown>): AddressParts {
+  /** v1 — flat `address_*` pole. */
+  const flat = structuredFieldsFromObject(org, 'address_');
+  /** v2 / jiný layout — `address` jako objekt. */
+  const nested = org.address && typeof org.address === 'object' && !Array.isArray(org.address)
+    ? structuredFieldsFromObject(org.address as Record<string, unknown>)
+    : { street: '', city: '', zip: '' };
+  /** Plain string `org.address`. */
+  const stringAddr = typeof org.address === 'string' ? org.address.trim() : '';
+  const parsedString = stringAddr ? parseFreeFormAddress(stringAddr) : { street: '', city: '', zip: '' };
+  return {
+    street: flat.street || nested.street || parsedString.street,
+    city: flat.city || nested.city || parsedString.city,
+    zip: flat.zip || nested.zip || parsedString.zip,
+  };
 }
 
 function moneyToHaler(value: unknown): number {
@@ -808,11 +929,31 @@ Deno.serve(async (req) => {
       if (typeof vat === 'string' && vat.trim()) {
         ico = vat.trim().replace(/\s/g, '');
       }
-      if (!street && org.address) {
-        const addr = String(org.address || '').trim();
-        if (addr) street = addr;
-      }
+      /**
+       * Doplnit adresu z Org tam, kde Person sub‑pole nestačí — strukturovaná podpole `address_*`
+       * (PD v1), nested `address` (PD v2) nebo plain text `org.address`. Po‑komponentově: jen co
+       * v `street`/`city`/`zip` chybí.
+       */
+      const orgAddr = orgAddressLine(org);
+      if (!street) street = orgAddr.street;
+      if (!city) city = orgAddr.city;
+      if (!zip) zip = orgAddr.zip;
     }
+  }
+
+  /** PSČ normalizujeme jednotně bez ohledu na zdroj (Person/Org) — Base i iDoklad to chtějí bez mezer. */
+  zip = normalizeCzechZip(zip);
+
+  const addressIncomplete = !street.trim() || !city.trim() || !zip.trim();
+  if (addressIncomplete) {
+    logInbound('address_incomplete', {
+      dealId,
+      personId: personIdFromDeal,
+      orgId,
+      hasStreet: Boolean(street.trim()),
+      hasCity: Boolean(city.trim()),
+      hasZip: Boolean(zip.trim()),
+    });
   }
 
   const products = await pipedriveApiGet<unknown[]>(apiToken, `/deals/${dealId}/products`, { limit: 100 });
@@ -950,6 +1091,11 @@ Deno.serve(async (req) => {
     adminNote = adminNote
       ? `${adminNote}\n\n${ADMIN_NOTE_ZERO_VALUE_FALLBACK}`
       : ADMIN_NOTE_ZERO_VALUE_FALLBACK;
+  }
+  if (addressIncomplete) {
+    adminNote = adminNote
+      ? `${adminNote}\n\n${ADMIN_NOTE_ADDRESS_INCOMPLETE}`
+      : ADMIN_NOTE_ADDRESS_INCOMPLETE;
   }
 
   const inboundExplicitOrderCandidate = normalizeInboundExplicitOrderNumber(
