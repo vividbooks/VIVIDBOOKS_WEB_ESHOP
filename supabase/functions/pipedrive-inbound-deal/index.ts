@@ -92,11 +92,48 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
-function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
+function jsonResponse(
+  req: Request,
+  body: Record<string, unknown>,
+  status = 200,
+  extraHeaders?: Record<string, string>,
+) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
+    headers: {
+      ...corsHeaders(req.headers.get('origin')),
+      'Content-Type': 'application/json',
+      ...(extraHeaders || {}),
+    },
   });
+}
+
+/** Krátký echo z těla webhooku — uvidíme v PD delivery historii bez nutnosti chodit do Logflare. */
+function buildWebhookDiagEcho(
+  payload: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') return { received: false };
+  const meta = (payload.meta as Record<string, unknown> | undefined) || undefined;
+  const data = (payload.data as Record<string, unknown> | undefined) || undefined;
+  const current = (payload.current as Record<string, unknown> | undefined) || undefined;
+  return {
+    received: true,
+    topLevelKeys: Object.keys(payload).slice(0, 16),
+    metaAction: typeof meta?.action === 'string' ? meta.action : null,
+    metaEntity: typeof meta?.entity === 'string' ? meta.entity : (typeof meta?.object === 'string' ? meta.object : null),
+    metaEntityId: meta?.entity_id ?? meta?.entityId ?? meta?.id ?? null,
+    dataId: data?.id ?? null,
+    dataStatus: typeof data?.status === 'string' ? data.status : null,
+    currentId: current?.id ?? null,
+    currentStatus: typeof current?.status === 'string' ? current.status : null,
+  };
+}
+
+/** Hlavička `X-Pipedrive-Inbound-Mode` umožní v PD UI rychle vidět výsledek bez parsování body. */
+function inboundModeHeaders(mode: string, reason?: string): Record<string, string> {
+  const h: Record<string, string> = { 'X-Pipedrive-Inbound-Mode': mode };
+  if (reason) h['X-Pipedrive-Inbound-Reason'] = reason;
+  return h;
 }
 
 function getFunctionBaseUrl(fallbackRequestUrl?: string) {
@@ -524,18 +561,21 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { ok: true, accepted: false, hint: 'Invalid JSON — use Pipedrive webhook payload or { "deal_id": number }.' }, 200);
   }
 
+  const diagEcho = buildWebhookDiagEcho(payload);
   const dealId = extractDealId(payload);
   if (!dealId) {
-    logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20) });
-    return jsonResponse(req, 
+    logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20), diagEcho });
+    return jsonResponse(req,
       {
         ok: true,
         skipped: true,
         reason: 'no_deal_id',
         hint:
           'Could not resolve deal id from payload (expected meta.entity_id / data.id — Webhooks v2 — or legacy meta.id / current.id / deal_id).',
+        diag: diagEcho,
       },
       200,
+      inboundModeHeaders('skipped', 'no_deal_id'),
     );
   }
 
@@ -549,24 +589,35 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
-  logInbound('start', { dealId });
+  logInbound('start', { dealId, diagEcho });
 
   const deal = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/deals/${dealId}`);
   if (!deal) {
-    logInbound('skipped', { dealId, reason: 'deal_not_found' });
-    return jsonResponse(req, { skipped: true, reason: 'deal_not_found', dealId }, 200);
+    logInbound('skipped', { dealId, reason: 'deal_not_found', diagEcho });
+    return jsonResponse(
+      req,
+      { skipped: true, reason: 'deal_not_found', dealId, diag: diagEcho },
+      200,
+      inboundModeHeaders('skipped', 'deal_not_found'),
+    );
   }
 
   const webhookEntity = readWebhookEntityType(payload);
   if (webhookEntity && webhookEntity !== 'deal') {
-    logInbound('skipped', { dealId, reason: 'wrong_webhook_entity', webhookEntity });
-    return jsonResponse(req, {
-      skipped: true,
-      reason: 'wrong_webhook_entity',
-      dealId,
-      webhookEntity,
-      hint: 'Webhook není typu deal — zkontrolujte konfiguraci v Pipedrive (meta.entity).',
-    }, 200);
+    logInbound('skipped', { dealId, reason: 'wrong_webhook_entity', webhookEntity, diagEcho });
+    return jsonResponse(
+      req,
+      {
+        skipped: true,
+        reason: 'wrong_webhook_entity',
+        dealId,
+        webhookEntity,
+        hint: 'Webhook není typu deal — zkontrolujte konfiguraci v Pipedrive (meta.entity).',
+        diag: diagEcho,
+      },
+      200,
+      inboundModeHeaders('skipped', 'wrong_webhook_entity'),
+    );
   }
 
   const { treatAsWon, apiStatus, webhookStatus } = resolveInboundDealWonState(deal, payload);
@@ -576,16 +627,23 @@ Deno.serve(async (req) => {
       reason: 'deal_lost_or_deleted',
       apiStatus,
       ...(webhookStatus ? { webhookStatus } : {}),
+      diagEcho,
     });
-    return jsonResponse(req, {
-      skipped: true,
-      reason: 'deal_lost_or_deleted',
-      dealId,
-      apiStatus,
-      ...(webhookStatus ? { webhookStatus } : {}),
-      hint:
-        'Deal je v Pipedrive ve stavu lost/deleted — webhook se neimportuje, aby se neimplikoval omylem ručně přepnutý stav.',
-    }, 200);
+    return jsonResponse(
+      req,
+      {
+        skipped: true,
+        reason: 'deal_lost_or_deleted',
+        dealId,
+        apiStatus,
+        ...(webhookStatus ? { webhookStatus } : {}),
+        hint:
+          'Deal je v Pipedrive ve stavu lost/deleted — webhook se neimportuje, aby se neimplikoval omylem ručně přepnutý stav.',
+        diag: diagEcho,
+      },
+      200,
+      inboundModeHeaders('skipped', 'deal_lost_or_deleted'),
+    );
   }
   if (apiStatus !== 'won') {
     logInbound('proceeding_without_api_won', { dealId, apiStatus, webhookStatus });
@@ -593,8 +651,21 @@ Deno.serve(async (req) => {
 
   const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
   if (pipelineId != null && !pipelineAllowed(pipelineId)) {
-    logInbound('skipped', { dealId, reason: 'pipeline_not_allowed', pipelineId });
-    return jsonResponse(req, { skipped: true, reason: 'pipeline_not_allowed', dealId, pipelineId }, 200);
+    logInbound('skipped', { dealId, reason: 'pipeline_not_allowed', pipelineId, diagEcho });
+    return jsonResponse(
+      req,
+      {
+        skipped: true,
+        reason: 'pipeline_not_allowed',
+        dealId,
+        pipelineId,
+        hint:
+          'Deal je v pipeline mimo seznam PIPEDRIVE_INBOUND_PIPELINE_IDS — nastavte secret nebo přesuňte deal do povolené pipeline.',
+        diag: diagEcho,
+      },
+      200,
+      inboundModeHeaders('skipped', 'pipeline_not_allowed'),
+    );
   }
 
   const pdInboundBaseStatusId = inboundPipedriveBaseOrderStatusId();
@@ -965,16 +1036,22 @@ Deno.serve(async (req) => {
         baseStatusIdResolved: pdInboundBaseStatusId,
       });
 
-      return jsonResponse(req, {
-        success: true,
-        mode: 'updated',
-        orderId: target.id,
-        orderNumber: target.order_number,
-        dealId,
-        eshopOrderNumber: eshopOrderNumber || null,
-        replacedItems: lines.length,
-        queuedServices,
-      }, 200);
+      return jsonResponse(
+        req,
+        {
+          success: true,
+          mode: 'updated',
+          orderId: target.id,
+          orderNumber: target.order_number,
+          dealId,
+          eshopOrderNumber: eshopOrderNumber || null,
+          replacedItems: lines.length,
+          queuedServices,
+          hasBasecomOrderId: Boolean(savedBlOrderId),
+        },
+        200,
+        inboundModeHeaders('updated'),
+      );
     }
 
     /* ============================================================================ */
@@ -1063,14 +1140,19 @@ Deno.serve(async (req) => {
             reason: 'already_imported_race',
             orderId: race[0].id,
           });
-          return jsonResponse(req, {
-            skipped: true,
-            mode: 'skipped',
-            reason: 'already_imported',
-            dealId,
-            orderId: race[0].id,
-            orderNumber: race[0].order_number,
-          }, 200);
+          return jsonResponse(
+            req,
+            {
+              skipped: true,
+              mode: 'skipped',
+              reason: 'already_imported',
+              dealId,
+              orderId: race[0].id,
+              orderNumber: race[0].order_number,
+            },
+            200,
+            inboundModeHeaders('skipped', 'already_imported'),
+          );
         }
         if (hadExplicitOrderNumberAttempt) {
           logInbound('inbound_order_number_unique_fallback', { dealId });
@@ -1229,24 +1311,34 @@ Deno.serve(async (req) => {
       missingEmailOnly,
       usedZeroValueFallback,
     });
-    return jsonResponse(req, {
-      success: true,
-      mode: 'created',
-      orderId: row.id,
-      orderNumber: row.order_number,
-      dealId,
-      eshopOrderNumber: eshopOrderNumber || null,
-      ...(missingPipedriveContact
-        ? {
-          warning:
-            'Objednávka vytvořena bez kompletního kontaktu ve Pipedrive — Base.com export byl zařazen (doplňte zákazníka v administraci). Faktura iDoklad jen pokud je u dealu platný e-mail.',
-        }
-        : {}),
-    }, 200);
+    return jsonResponse(
+      req,
+      {
+        success: true,
+        mode: 'created',
+        orderId: row.id,
+        orderNumber: row.order_number,
+        dealId,
+        eshopOrderNumber: eshopOrderNumber || null,
+        ...(missingPipedriveContact
+          ? {
+            warning:
+              'Objednávka vytvořena bez kompletního kontaktu ve Pipedrive — Base.com export byl zařazen (doplňte zákazníka v administraci). Faktura iDoklad jen pokud je u dealu platný e-mail.',
+          }
+          : {}),
+      },
+      200,
+      inboundModeHeaders('created'),
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Import failed';
-    console.error('[pipedrive-inbound]', msg);
-    return jsonResponse(req, { error: msg }, 500);
+    console.error('[pipedrive-inbound]', msg, { dealId, diagEcho });
+    return jsonResponse(
+      req,
+      { error: msg, dealId, diag: diagEcho },
+      500,
+      inboundModeHeaders('error', 'exception'),
+    );
   } finally {
     await sql.end({ timeout: 5 });
   }
