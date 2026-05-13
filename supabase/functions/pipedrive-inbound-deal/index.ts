@@ -10,7 +10,10 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * Webhook rozlišuje dva scénáře podle pole „Eshop ID" (custom field 26e4a2f8…, UI ID 12586):
  *
  *   A) Pole je **prázdné** → deal byl ručně založený obchodníkem v CRM. Vytvoříme NOVOU
- *      objednávku se zdrojem `pipedrive`, dopravou z ENV (default PPL) a předáme do Base.com.
+ *      objednávku se zdrojem `pipedrive`, dopravou z ENV (default PPL), **platbou převodem**
+ *      (`payment_method = 'transfer'`) a předáme do Base.com — díky tomu se i v BL/Base
+ *      objednávka založí se způsobem platby „Bankovní převod“ (viz `paymentMethodLabel` v
+ *      `process-export-queue`).
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
@@ -1173,7 +1176,7 @@ Deno.serve(async (req) => {
         ${shippingPrice},
         null,
         null,
-        'invoice',
+        'transfer',
         ${paymentStatus},
         ${subtotal},
         ${total},
@@ -1254,7 +1257,7 @@ Deno.serve(async (req) => {
         ${shippingPrice},
         null,
         null,
-        'invoice',
+        'transfer',
         ${paymentStatus},
         ${subtotal},
         ${total},
