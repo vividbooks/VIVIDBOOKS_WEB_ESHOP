@@ -18,10 +18,15 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
  *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu** (původní `shipping_method` zachováme), nastavíme `payment_status = 'paid'` +
- *      `paid_at` a **vždy** zařadíme Base export: pokud máme `basecom_order_id` →
+ *      dealu** (původní `shipping_method`, `payment_status`, `status` i `paid_at` zachováme —
+ *      platba převodem ještě nemusí být na účtě, webhook je jen signál pro Base re-export)
+ *      a **vždy** zařadíme Base export: pokud máme `basecom_order_id` →
  *      `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`, fallback
  *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
+ *
+ * Status u nově vytvořené objednávky (scénář A) je vždy:
+ *   `status = 'processing'`, `payment_status = 'pending'`, `paid_at = null`
+ * — převod není automaticky paid; reálné zaplacení se v eshopu eviduje až po doručení peněz.
  *
  * Produkty v `order_items` se v obou scénářích plní podle PD pole **„Product code" (UI ID 19,
  * key `code`)** — handler pro každý `product_id` z `/deals/{id}/products` načte
@@ -927,8 +932,17 @@ Deno.serve(async (req) => {
   const total = subtotal + shippingPrice;
   const hasIco = Boolean(ico && ico.replace(/\D/g, '').length > 0);
   const dealIdStr = String(dealId);
-  const orderStatus = missingPipedriveContact ? 'processing' : 'paid';
-  const paymentStatus = missingPipedriveContact ? 'pending' : 'paid';
+  /**
+   * Objednávky z PD inbound jsou vždy s platbou převodem (`payment_method = 'transfer'`,
+   * viz INSERT níže). Platba převodem **není** automaticky `paid` — reálné zaplacení teprve
+   * přichází (převod z účtu) a obchodník si ho v Base / iDoklad / adminu označí ručně až po
+   * doručení peněz. Proto:
+   *   - `status = 'processing'` (objednávka se zpracovává)
+   *   - `payment_status = 'pending'`
+   *   - `paid_at = null` (nastaví se až při ručním přepnutí na zaplaceno)
+   */
+  const orderStatus: 'processing' = 'processing';
+  const paymentStatus: 'pending' = 'pending';
   let adminNote: string | null = missingPipedriveContact
     ? (missingEmailOnly ? ADMIN_NOTE_MISSING_EMAIL : ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON)
     : null;
@@ -1024,9 +1038,14 @@ Deno.serve(async (req) => {
         }
 
         /**
-         * `shipping_method` u scénáře B (update existující eshop objednávky) **nepřepisujeme** —
-         * eshop checkout už dopravu zvolil a obchodník v PD jen mění produkty/stav. `subtotal`
-         * a `total` přepočítáme z PD položek + původní dopravy uložené v `orders.shipping_price`.
+         * Scénář B (update existující eshop objednávky):
+         *   - `shipping_method` a `shipping_price` **nepřepisujeme** — eshop checkout dopravu zvolil
+         *     a obchodník v PD jen mění produkty/stav. `subtotal` a `total` přepočítáme z PD
+         *     položek + původní `shipping_price` z `orders`.
+         *   - `payment_status`, `status`, `paid_at` rovněž **nepřepisujeme**. Webhook „deal won"
+         *     v PD je jen signál pro Base re-export, není to potvrzení o platbě převodu (peníze
+         *     teprve dorazí). Skutečný `payment_status='paid'` nastavuje až bankovní integrace
+         *     nebo admin ručně. U Stripe objednávek je `paid_at` už uložené z `stripe-webhook`.
          */
         const existingShippingRows = await tx<{ shipping_price: number | null; shipping_method: string | null }[]>`
           select shipping_price, shipping_method from public.orders where id = ${target.id}::uuid limit 1
@@ -1038,9 +1057,6 @@ Deno.serve(async (req) => {
           update public.orders set
             subtotal = ${subtotal},
             total = ${updateTotal},
-            payment_status = 'paid',
-            status = 'paid',
-            paid_at = coalesce(paid_at, now()),
             pipedrive_deal_id = ${dealIdStr},
             updated_at = now()
           where id = ${target.id}::uuid
@@ -1058,7 +1074,7 @@ Deno.serve(async (req) => {
             ${target.id}::uuid,
             'pipedrive_inbound_update',
             ${target.status},
-            'paid',
+            ${target.status},
             ${JSON.stringify({
               pipedriveDealId: dealId,
               eshopOrderNumber: eshopOrderNumber || null,
@@ -1280,7 +1296,7 @@ Deno.serve(async (req) => {
         ${adminNote},
         ${dealIdStr},
         ${orderNumberForInsert},
-        ${missingPipedriveContact ? null : new Date()}
+        ${null}
       )
       returning id, order_number
     `;
@@ -1361,7 +1377,7 @@ Deno.serve(async (req) => {
         ${adminNote},
         ${dealIdStr},
         ${null},
-        ${missingPipedriveContact ? null : new Date()}
+        ${null}
       )
       returning id, order_number
     `;
