@@ -14,6 +14,8 @@ export type EcommerceDataLayerItem = {
 
 type ProductLike = {
   id?: string | number;
+  item_id?: string | number;
+  itemId?: string | number;
   productId?: string | number;
   name?: string;
   title?: string;
@@ -79,15 +81,14 @@ export function dataLayerItemFromProduct(
     variantName?: string;
   } = {},
 ): EcommerceDataLayerItem {
-  const itemId = String(
+  const feedItemId =
     options.itemId ||
-    product.shopifyVariantId ||
-    product.variantId ||
-    product.shoptetId ||
-    product.shoptetProductId ||
+    product.item_id ||
+    product.itemId ||
     product.id ||
-    product.productId ||
-    '',
+    product.productId;
+  const itemId = String(
+    feedItemId || '',
   );
   const priceHaler =
     typeof options.priceHaler === 'number'
@@ -108,7 +109,7 @@ export function dataLayerItemFromProduct(
 
 export function dataLayerItemFromCartItem(item: CartItem): EcommerceDataLayerItem {
   return {
-    item_id: item.variantId || item.productId || 'unknown',
+    item_id: item.productId || 'unknown',
     item_name: item.productName,
     currency: CURRENCY,
     item_group: itemGroupFromCartItem(item) || 'product',

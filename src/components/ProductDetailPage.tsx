@@ -867,7 +867,7 @@ export function ProductDetailPage({
   }, [product.type, product.shopifyVariantId, selectedMerchVariant]);
 
   useEffect(() => {
-    const itemId = effectiveCartVariantId || String(product.id || '');
+    const itemId = String(product.item_id || product.itemId || product.id || '');
     const unitPrice =
       product.type === 'merch' && selectedMerchVariant
         ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
