@@ -765,18 +765,20 @@ async function handleBasecomExport(
   const baseInventory = await loadBaseInventoryMap(apiToken);
 
   /**
-   * Objednávky pocházející z webhooku `pipedrive-inbound-deal` (poznáme to podle
-   * `pipedriveDealId` v payloadu fronty) musí v Base/BaseLinkeru vždy:
-   *   - mít způsob platby „Bankovní převod",
-   *   - mít `paid = false` (i když v Postgres je `payment_status = 'paid'` — interní logika eshopu;
-   *     v Base obchodník teprve eviduje doručení peněz a sám si stav zaplaceno přepne).
-   * Tyto override platí jak pro scénář A (nově vzniklá objednávka z dealu v CRM) tak pro scénář B
-   * (UPDATE existující eshop objednávky, kterou obchodník v PD přepnul na won).
+   * Pravidla pro `payment_method` a `paid` v Base addOrder:
+   *
+   *   - **Platba převodem (`payment_method = 'transfer'`) NIKDY není `paid: true`.** Bez ohledu
+   *     na původ (běžný eshop checkout, který přejde do PD a obchodník překlapne na won, nebo
+   *     ručně založený deal v CRM). Reálné zaplacení převodem si obchodník v BaseLinkeru eviduje
+   *     sám (resp. přes bankovní integraci), takže import musí přijít jako nezaplaceno.
+   *
+   *   - Karta / Apple Pay / Google Pay (Stripe) jdou do Base s `paid: true` (peníze už jsou zúčtované).
+   *
+   *   - `payment_method = 'invoice'` → `paid: false` (fakturace na splatnost, eviduje se po úhradě).
+   *
+   *   - Payload může explicitně přepsat `basecomPaymentMethodLabel` (string) nebo `basecomPaid`
+   *     (bool) — má přednost (ručně zařazené exporty, speciální případy).
    */
-  const fromPipedriveInbound = Boolean(
-    queuePayload && typeof queuePayload === 'object'
-      && (queuePayload as Record<string, unknown>).pipedriveDealId,
-  );
   const payloadPaymentMethodLabel = (() => {
     const raw = queuePayload && typeof queuePayload === 'object'
       ? (queuePayload as Record<string, unknown>).basecomPaymentMethodLabel
@@ -788,13 +790,13 @@ async function handleBasecomExport(
     : undefined;
   const payloadPaidIsBool = typeof payloadPaidRaw === 'boolean';
 
+  const isStripeCardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+
   const effectivePaymentMethod = payloadPaymentMethodLabel
-    || (fromPipedriveInbound ? 'Bankovní převod' : paymentMethodLabel(order.payment_method));
+    || paymentMethodLabel(order.payment_method);
   const effectivePaid = payloadPaidIsBool
     ? (payloadPaidRaw as boolean)
-    : fromPipedriveInbound
-      ? false
-      : true;
+    : isStripeCardLike;
 
   const parameters: Record<string, unknown> = {
     order_status_id: orderStatusId,
