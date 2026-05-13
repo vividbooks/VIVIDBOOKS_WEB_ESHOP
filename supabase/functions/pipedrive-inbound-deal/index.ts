@@ -1379,8 +1379,9 @@ Deno.serve(async (req) => {
         basecom_order_id: string | null;
         shipping_method: string | null;
         shipping_price: number | null;
+        note: string | null;
       }[]>`
-        select basecom_order_id, shipping_method, shipping_price
+        select basecom_order_id, shipping_method, shipping_price, note
           from public.orders where id = ${target.id}::uuid limit 1
       `;
       const savedBlOrderId = String(baseMetaRows[0]?.basecom_order_id || '').trim();
@@ -1390,6 +1391,22 @@ Deno.serve(async (req) => {
         method: existingShipMethodForBase,
         price: Number.isFinite(existingShipPriceForBase) ? existingShipPriceForBase : shippingPrice,
       };
+
+      /**
+       * `orders.note` v scénáři B (eshop checkout) **nepřepisujeme** — zákazníkovi tam může být
+       * uložená poznámka z checkoutu. Pro Base `addOrder` ale potřebujeme do `user_comments`
+       * doplnit i **Číslo faktury** z PD pole UI ID 12530. Sestavíme tedy přepis v rámci
+       * payloadu fronty (`basecomUserComments`) — `process-export-queue` ho použije místo
+       * `order.note`. Pro `setOrderStatus` je to irelevantní (Base addOrder už proběhl dříve).
+       */
+      const existingOrderNote = String(baseMetaRows[0]?.note || '').trim();
+      const invoiceLine = inboundExplicitOrderCandidate
+        ? `Číslo faktury: ${inboundExplicitOrderCandidate}`
+        : '';
+      const basecomUserCommentsForUpdate = [existingOrderNote, invoiceLine]
+        .filter((s) => s && s.trim().length > 0)
+        .join('\n')
+        .slice(0, 12000);
 
       const queuedServices: string[] = [];
 
@@ -1422,6 +1439,7 @@ Deno.serve(async (req) => {
                 })),
                 customer: customerSnapshot,
                 shipping: shippingSnapshot,
+                ...(basecomUserCommentsForUpdate ? { basecomUserComments: basecomUserCommentsForUpdate } : {}),
               })}::jsonb
             )
           `;
@@ -1467,6 +1485,7 @@ Deno.serve(async (req) => {
               customer: customerSnapshot,
               shipping: shippingSnapshot,
               ...(pdInboundBaseStatusId != null ? { basecomOrderStatusId: pdInboundBaseStatusId } : {}),
+              ...(basecomUserCommentsForUpdate ? { basecomUserComments: basecomUserCommentsForUpdate } : {}),
             })}::jsonb
           )
         `;
