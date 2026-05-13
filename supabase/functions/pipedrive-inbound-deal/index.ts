@@ -51,7 +51,7 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
- *   Tělo = standardní JSON webhooku (meta.entity_id / current.id / data.id = deal ID).
+ *   Tělo = standardní JSON webhooku (jen **deal** — `meta.entity`/`meta.object` === deal; ID z `data.id` / `meta.entity_id` / legacy polí).
  * - Test ručně: POST stejná URL, stejný token, JSON { "deal_id": 12345 }
  * - GET/HEAD → vždy 200 (Pipedrive při kontrole často volá URL bez ?token=; s tokenem vracíme bohatší JSON).
  * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
@@ -69,6 +69,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *   - PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD (override hash custom pole „Eshop ID" pro lookup).
  *   - PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD (override hash pole „číslo objednávky" na dealu, UI ID 12530,
  *     default 3525a2dc…) — u scénáře A (nová objednávka z PD) se hodnota uloží do `orders.order_number`, není-li obsazená ani v kolizi s jinou objednávkou (čte se z plochého deal objektu, z mapy `custom_fields` i z pole záznamů stejných jako u některých webhooků).
+ *
+ * Won-detekce: kromě `status === won` bereme i vyplněné `won_time` / `first_won_time` z API a záložně
+ * `data.status` z webhooku (v2), pokud GET dealu ještě vrací `open` v okamžiku doručení.
  *
  * Spuštění `process-export-queue` po zápisu objednávky probíhá na pozadí (`EdgeRuntime.waitUntil`), aby odpověď
  * webhooku nepřesáhla časový limit kvůli dlouhému Base.com (jinak Pipedrive opakuje doručení).
@@ -632,14 +635,28 @@ function extractDealId(body: Record<string, unknown>): number | null {
     if (Number.isInteger(n) && n > 0) return n;
   }
 
-  /** Webhooks v2: deal ID je v meta.entity_id; objekt dealu je `data` (ne `current`). */
   const meta = body.meta as Record<string, unknown> | undefined;
+  const entityRaw = meta?.entity ?? meta?.object;
+  const entityStr = typeof entityRaw === 'string' ? entityRaw.toLowerCase() : '';
+  const dataObj = body.data as Record<string, unknown> | undefined;
+
+  /** Webhooks v2 (`meta.entity`) i v1 (`meta.object`) — deal: `data.id`; u `delete` často `data` null → `meta.entity_id`. */
+  if (entityStr === 'deal') {
+    if (dataObj) {
+      const fromDataDeal = parsePipedriveEntityId(dataObj.id);
+      if (fromDataDeal != null) return fromDataDeal;
+    }
+    if (meta) {
+      const fromMetaDeal = parsePipedriveEntityId(meta.entity_id ?? meta.entityId);
+      if (fromMetaDeal != null) return fromMetaDeal;
+    }
+  }
+
   if (meta) {
     const fromEntity = parsePipedriveEntityId(meta.entity_id ?? meta.entityId);
     if (fromEntity != null) return fromEntity;
   }
 
-  const dataObj = body.data as Record<string, unknown> | undefined;
   if (dataObj) {
     const fromData = parsePipedriveEntityId(dataObj.id);
     if (fromData != null) return fromData;
