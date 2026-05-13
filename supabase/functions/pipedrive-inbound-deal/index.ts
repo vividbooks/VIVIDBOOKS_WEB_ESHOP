@@ -1220,15 +1220,30 @@ Deno.serve(async (req) => {
     readInboundDealExplicitOrderNumberFromDeal(deal),
   );
 
-  const note = JSON.stringify({
-    source: 'pipedrive_inbound',
-    pipedriveDealId: dealId,
-    dealTitle: deal.title,
-    missingPipedriveContact,
-    missingEmailOnly,
-    zeroValueFallback: usedZeroValueFallback,
-    pipedriveDealOrderNumberField: inboundExplicitOrderCandidate || undefined,
-  }).slice(0, 12000);
+  /**
+   * `orders.note` se v Base/BL posílá jako `user_comments` (viditelné v Base UI / na fakturách).
+   * Proto sem patří jen čitelná, krátká poznámka — pokud má deal vyplněné „číslo faktury"
+   * (PD pole UI ID 12530, key `3525a2dc…`), uložíme **„Číslo faktury: <hodnota>"**. Jinak prázdné.
+   * Strojová metadata (pipedriveDealId, dealTitle, missingPipedriveContact, …) jdou do `admin_note`,
+   * kde jsou viditelná jen v naší administraci, ne v Base ani na fakturách.
+   */
+  const note = inboundExplicitOrderCandidate
+    ? `Číslo faktury: ${inboundExplicitOrderCandidate}`.slice(0, 12000)
+    : '';
+
+  const pipedriveMetadataLines = [
+    `[Pipedrive inbound] deal ${dealId}${deal.title ? ` — ${String(deal.title).slice(0, 200)}` : ''}`,
+    inboundExplicitOrderCandidate ? `Číslo faktury (PD pole 12530): ${inboundExplicitOrderCandidate}` : null,
+    missingPipedriveContact
+      ? `Kontakt z PD: chybí${missingEmailOnly ? ' (jen e‑mail)' : ''}`
+      : null,
+    usedZeroValueFallback ? 'Cenový fallback: 1 Kč (deal měl nulovou částku).' : null,
+  ].filter(Boolean).join('\n');
+  if (pipedriveMetadataLines) {
+    adminNote = adminNote
+      ? `${adminNote}\n\n${pipedriveMetadataLines}`
+      : pipedriveMetadataLines;
+  }
 
   const sql = postgres(databaseUrl, {
     prepare: false,
