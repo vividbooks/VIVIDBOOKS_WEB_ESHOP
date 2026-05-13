@@ -27,8 +27,11 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * key `code`)** — handler pro každý `product_id` z `/deals/{id}/products` načte
  * `GET /products/{productId}` a vezme `code`. Tento kód se uloží jako `order_items.product_id` a
  * `process-export-queue` ho pak v Base inventáři páruje přes SKU (`chooseBasecomSku`/`matchBaseInventoryProduct`).
- * Pokud PD produkt nemá vyplněný `code`, použije se fallback `pipedrive:<id>` + log
- * `pd_product_code_missing` v Logflare.
+ *
+ * **PD položky bez `code` se ignorují** — typicky doprava ručně dotažená obchodníkem do PD dealu
+ * jako řádek bez SKU. Do `order_items` se nezapisují, do Base se neposílají jako produkt
+ * (doprava v Base přijde jako `delivery_method` z `orders.shipping_*`). Pokud po filtraci
+ * nezbude **žádná** položka, webhook se odbavuje jako `skipped: no_valid_products`.
  *
  * Volání:
  * - Webhook z Pipedrive: POST …/pipedrive-inbound-deal?token=<PIPEDRIVE_INBOUND_WEBHOOK_SECRET>
@@ -837,6 +840,13 @@ Deno.serve(async (req) => {
     pipedriveProductId: number | null;
     pipedriveProductCode: string;
   }> = [];
+  /**
+   * PD `deal_products` často obsahuje i položku „doprava" (ručně přidaná obchodníkem)
+   * bez `code`. Takové položky **ignorujeme** — nezapisují se do `order_items` ani se
+   * neposílají do Base jako produkt. Doprava v Base přijde jen jako `delivery_method` /
+   * `delivery_price` z `orders.shipping_*`. Logujeme přeskočené položky kvůli auditu.
+   */
+  const skippedItems: Array<{ pipedriveProductId: number | null; name: string }> = [];
   if (Array.isArray(products)) {
     for (const raw of products) {
       const p = raw as Record<string, unknown>;
@@ -846,15 +856,12 @@ Deno.serve(async (req) => {
       const prIdStr = pdProductId != null ? String(pdProductId) : 'unknown';
       const prName = String(p.name || `Produkt ${prIdStr}`).trim() || `Produkt ${prIdStr}`;
       const code = pdProductId != null ? await resolvePipedriveProductCode(pdProductId) : '';
-      /**
-       * Když má PD produkt vyplněný `code`, použijeme ho jako SKU v `order_items.product_id` —
-       * `process-export-queue` ho pak najde v Base inventáři přes SKU. Bez `code` (např. import,
-       * který obchodník přidal ručně) zachováme prefix `pipedrive:<id>` jako fallback —
-       * vidí se v adminu a `chooseBasecomSku` ho stejně použije jako SKU.
-       */
-      const orderItemProductId = code || `pipedrive:${prIdStr}`;
+      if (!code) {
+        skippedItems.push({ pipedriveProductId: pdProductId, name: prName });
+        continue;
+      }
       lines.push({
-        productId: orderItemProductId,
+        productId: code,
         productName: prName,
         quantity: qty,
         unitPriceHaler: unit > 0 ? unit : moneyToHaler((Number(deal.value) || 0) / Math.max(1, qty)),
@@ -864,16 +871,14 @@ Deno.serve(async (req) => {
     }
   }
 
-  const linesWithoutPdCode = lines.filter((l) => l.pipedriveProductId != null && !l.pipedriveProductCode);
-  if (linesWithoutPdCode.length > 0) {
-    logInbound('pd_product_code_missing', {
+  if (skippedItems.length > 0) {
+    logInbound('pd_items_skipped_no_code', {
       dealId,
-      missingCount: linesWithoutPdCode.length,
-      productIds: linesWithoutPdCode.map((l) => l.pipedriveProductId).slice(0, 10),
+      skippedCount: skippedItems.length,
+      items: skippedItems.slice(0, 10),
     });
   }
 
-  const dealValueHaler = moneyToHaler(deal.value);
   /**
    * Doprava: pro **scénář A (nová objednávka z PD)** je doprava vždy `ppl` — obchod si to tak přeje
    * (Base export pak vidí „PPL"). Cena se bere z `PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER`
@@ -884,32 +889,39 @@ Deno.serve(async (req) => {
   const shipPrice = Number.parseInt(Deno.env.get('PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER') || '', 10);
   const shippingPrice = Number.isInteger(shipPrice) && shipPrice >= 0 ? shipPrice : DEFAULT_SHIPPING_PRICE_HALER;
 
-  let subtotal = lines.reduce((s, l) => s + l.unitPriceHaler * l.quantity, 0);
-  if (lines.length === 0 && dealValueHaler > 0) {
-    lines.push({
-      productId: `pipedrive-deal:${dealId}`,
-      productName: String(deal.title || `Deal ${dealId}`),
-      quantity: 1,
-      unitPriceHaler: dealValueHaler,
-      pipedriveProductId: null,
-      pipedriveProductCode: '',
+  /**
+   * Pokud po filtraci položek bez `code` nezbude žádná, není co aktualizovat / vytvořit.
+   * Vrátíme `skipped` — webhook se k DB i Base nedotkne, obchodník musí v PD dealu doplnit
+   * produkty s vyplněným Product code (pole id 19).
+   */
+  if (lines.length === 0) {
+    logInbound('skipped', {
+      dealId,
+      reason: 'no_valid_products',
+      skippedItems: skippedItems.slice(0, 10),
     });
-    subtotal = dealValueHaler;
+    return jsonResponse(
+      req,
+      {
+        skipped: true,
+        reason: 'no_valid_products',
+        dealId,
+        hint: 'V Pipedrive dealu žádná položka nemá vyplněný Product code (UI ID 19). Doplňte kódy u produktů a webhook pošlete znovu.',
+        skippedItems: skippedItems.slice(0, 10),
+        diag: diagEcho,
+      },
+      200,
+      inboundModeHeaders('skipped', 'no_valid_products'),
+    );
   }
-  /** Nulová hodnota / prázdné produkty — minimální řádek 1 Kč, ať import nespadne na 400. */
+
+  let subtotal = lines.reduce((s, l) => s + l.unitPriceHaler * l.quantity, 0);
+  /** Nulová hodnota položek — minimální řádek 1 Kč, ať import nespadne na 400 (extrémní edge case). */
   let usedZeroValueFallback = false;
   if (subtotal <= 0) {
     usedZeroValueFallback = true;
-    lines.length = 0;
-    lines.push({
-      productId: `pipedrive-deal:${dealId}`,
-      productName: String(deal.title || `Deal ${dealId}`),
-      quantity: 1,
-      unitPriceHaler: 100,
-      pipedriveProductId: null,
-      pipedriveProductCode: '',
-    });
-    subtotal = 100;
+    lines[0].unitPriceHaler = 100;
+    subtotal = 100 * (lines[0].quantity || 1);
   }
 
   const total = subtotal + shippingPrice;
