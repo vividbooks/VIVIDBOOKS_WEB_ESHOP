@@ -36,6 +36,7 @@ import {
   cancelSupersededPendingOrders,
   type SupersededOrder,
 } from '../_shared/cancel-superseded-orders.ts';
+import { normalizeCzechPhone, PHONE_CZ_HINT } from '../_shared/phone-cz.ts';
 
 function isPostgresUniqueViolation(e: unknown): boolean {
   return Boolean(
@@ -268,6 +269,11 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
+  const normalizedCustomerPhone = normalizeCzechPhone((customer as CheckoutCustomer).phone);
+  if (!normalizedCustomerPhone) {
+    return jsonResponse(req, { error: PHONE_CZ_HINT }, 400);
+  }
+
   if (!validateSeparateDeliveryIfNeeded(shipping)) {
     return jsonResponse(req, {
       error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
@@ -337,7 +343,7 @@ Deno.serve(async (req) => {
   const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
     items as IdempotencyItem[],
     shipping as IdempotencyShipping,
-    customer as IdempotencyCustomer,
+    { ...(customer as IdempotencyCustomer), phone: normalizedCustomerPhone },
     'transfer' as const,
     schoolInquiryJson,
   );
@@ -393,7 +399,7 @@ Deno.serve(async (req) => {
                 set
                   customer_email = ${customer.email.trim()},
                   customer_name = ${customer.name.trim()},
-                  customer_phone = ${customer.phone.trim()},
+                  customer_phone = ${normalizedCustomerPhone},
                   school_name = ${customer.schoolName?.trim() || null},
                   ico = ${ico},
                   street = ${customer.street.trim()},
@@ -497,7 +503,7 @@ Deno.serve(async (req) => {
               'pending_payment',
               ${customer.email.trim()},
               ${customer.name.trim()},
-              ${customer.phone.trim()},
+              ${normalizedCustomerPhone},
               ${customer.schoolName?.trim() || null},
               ${ico},
               ${customer.street.trim()},

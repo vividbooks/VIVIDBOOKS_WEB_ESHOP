@@ -4,6 +4,7 @@ import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
+import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -769,7 +770,7 @@ async function handleBasecomExport(
     date_add: Math.floor(new Date(order.created_at).getTime() / 1000),
     user_comments: order.note || '',
     admin_comments: `VB order: ${order.order_number}`,
-    phone: order.customer_phone || '',
+    phone: normalizeCzechPhone(order.customer_phone) || order.customer_phone || '',
     email: order.customer_email,
     user_login: order.customer_email,
     currency: 'CZK',

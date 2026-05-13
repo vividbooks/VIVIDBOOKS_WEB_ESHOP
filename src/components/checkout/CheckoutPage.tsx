@@ -52,6 +52,7 @@ import {
 import { loadSavedDvppContacts, type SavedDvppContact } from '../../utils/dvppSavedContacts';
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../../utils/streetHouseNumberCZ';
+import { isValidCzechPhone, PHONE_CZ_HINT } from '../../utils/phoneCZ';
 import { usePacketaApiKey } from '../../utils/packeta/usePacketaApiKey';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
@@ -556,7 +557,7 @@ export function CheckoutPage() {
   const isCustomerStepValid = useMemo(() => (
     customer.name.trim().length > 0 &&
     isValidEmailFormat(customer.email.trim()) &&
-    customer.phone.trim().length > 0 &&
+    isValidCzechPhone(customer.phone) &&
     (customerType === 'individual' || (
       customer.schoolName.trim().length > 0 &&
       customer.ico.trim().length > 0
@@ -972,6 +973,7 @@ export function CheckoutPage() {
     if (!customer.name.trim()) nextErrors.name = 'Vyplňte jméno.';
     if (!isValidEmailFormat(customer.email.trim())) nextErrors.email = EMAIL_FORMAT_HINT_CS;
     if (!customer.phone.trim()) nextErrors.phone = 'Vyplňte telefon.';
+    else if (!isValidCzechPhone(customer.phone)) nextErrors.phone = PHONE_CZ_HINT;
     if (customerType === 'school' && !customer.schoolName.trim()) nextErrors.schoolName = 'Vyberte školu.';
     if (customerType === 'school' && !customer.ico.trim()) nextErrors.ico = 'Vyplňte IČO školy.';
     if (!customer.street.trim()) nextErrors.street = 'Vyplňte ulici a číslo.';

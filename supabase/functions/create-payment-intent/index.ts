@@ -31,6 +31,7 @@ import {
   recordDraftUpdatedEvent,
   replaceDraftOrderItems,
 } from '../_shared/update-draft-order.ts';
+import { normalizeCzechPhone, PHONE_CZ_HINT } from '../_shared/phone-cz.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -241,6 +242,11 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
+  const normalizedCustomerPhone = normalizeCzechPhone((customer as CheckoutCustomer).phone);
+  if (!normalizedCustomerPhone) {
+    return jsonResponse(req, { error: PHONE_CZ_HINT }, 400);
+  }
+
   if (!validateSeparateDeliveryIfNeeded(shipping)) {
     return jsonResponse(req, {
       error: 'Vyplňte doručovací ulici včetně čísla a platné PSČ (5 číslic).',
@@ -298,7 +304,7 @@ Deno.serve(async (req) => {
   const idempotencyCanonical = buildPaymentIntentIdempotencyPayload(
     items,
     shipping,
-    customer,
+    { ...customer, phone: normalizedCustomerPhone },
     'stripe',
     schoolInquiryJson,
   );
@@ -451,7 +457,7 @@ Deno.serve(async (req) => {
               set
                 customer_email = ${customer.email.trim()},
                 customer_name = ${customer.name.trim()},
-                customer_phone = ${customer.phone.trim()},
+                customer_phone = ${normalizedCustomerPhone},
                 school_name = ${customer.schoolName?.trim() || null},
                 ico = ${customer.ico?.trim() || null},
                 street = ${customer.street.trim()},
@@ -494,7 +500,7 @@ Deno.serve(async (req) => {
               update public.checkout_sessions
               set
                 cart_data = ${JSON.stringify(items)}::jsonb,
-                customer_data = ${JSON.stringify(customer)}::jsonb,
+                customer_data = ${JSON.stringify({ ...customer, phone: normalizedCustomerPhone })}::jsonb,
                 shipping_data = ${JSON.stringify(shipping)}::jsonb,
                 school_inquiry = ${schoolInquiryJson}::jsonb,
                 idempotency_key = ${idempotencyKey},
@@ -628,7 +634,7 @@ Deno.serve(async (req) => {
       ) values (
         ${checkoutSessionId}::uuid,
         ${JSON.stringify(items)}::jsonb,
-        ${JSON.stringify(customer)}::jsonb,
+        ${JSON.stringify({ ...customer, phone: normalizedCustomerPhone })}::jsonb,
         ${JSON.stringify(shipping)}::jsonb,
         ${schoolInquiryJson}::jsonb,
         ${idempotencyKey}
@@ -694,7 +700,7 @@ Deno.serve(async (req) => {
               'pending_payment',
               ${customer.email.trim()},
               ${customer.name.trim()},
-              ${customer.phone.trim()},
+              ${normalizedCustomerPhone},
               ${customer.schoolName?.trim() || null},
               ${customer.ico?.trim() || null},
               ${customer.street.trim()},

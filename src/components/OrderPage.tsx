@@ -71,6 +71,7 @@ import { appPath } from '../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
 import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
 import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
+import { isValidCzechPhone, PHONE_CZ_HINT } from '../utils/phoneCZ';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -1118,7 +1119,7 @@ export function OrderPage() {
   const canPrepareSchoolCardPayment = useMemo(() => {
     if (isDigitalServicesOnly || !hasSchoolWorkbookSelection) return false;
     if (!form.schoolName.trim() || !form.ico.trim()) return false;
-    if (!form.name.trim() || !form.phone.trim()) return false;
+    if (!form.name.trim() || !isValidCzechPhone(form.phone)) return false;
     if (!form.email.trim() || !isValidEmailFormat(form.email.trim())) return false;
     if (
       !hasStreetWithHouseNumber(form.street)
@@ -1185,6 +1186,7 @@ export function OrderPage() {
     if (!form.email.trim()) return fail('Vypl\u0148te e-mail.', 'order-field-email');
     if (!isValidEmailFormat(form.email.trim())) return fail(EMAIL_FORMAT_HINT_CS, 'order-field-email');
     if (!form.phone.trim()) return fail('Vypl\u0148te telefon.', 'order-field-phone');
+    if (!isValidCzechPhone(form.phone)) return fail(PHONE_CZ_HINT, 'order-field-phone');
     if (!form.position.trim()) return fail('Vyberte funkci / pozici u \u0161koly.', 'order-field-position');
     if (!form.street.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-street');
     if (!hasStreetWithHouseNumber(form.street)) return fail(STREET_NUMBER_HINT_CS, 'order-field-street');
