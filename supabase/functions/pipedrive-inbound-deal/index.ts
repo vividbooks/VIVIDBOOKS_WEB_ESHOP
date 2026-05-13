@@ -116,9 +116,14 @@ function buildWebhookDiagEcho(
   const meta = (payload.meta as Record<string, unknown> | undefined) || undefined;
   const data = (payload.data as Record<string, unknown> | undefined) || undefined;
   const current = (payload.current as Record<string, unknown> | undefined) || undefined;
+  const topLevelKeys = Object.keys(payload).slice(0, 16);
+  /** Náznak, že payload je „Workflow Automation custom body" — tj. jediný top-level klíč je
+   *  číselný (např. `{"25523": ...}`), což není standardní PD webhook formát. */
+  const onlyKeyIsNumeric =
+    topLevelKeys.length === 1 && /^\d+$/.test(topLevelKeys[0]);
   return {
     received: true,
-    topLevelKeys: Object.keys(payload).slice(0, 16),
+    topLevelKeys,
     metaAction: typeof meta?.action === 'string' ? meta.action : null,
     metaEntity: typeof meta?.entity === 'string' ? meta.entity : (typeof meta?.object === 'string' ? meta.object : null),
     metaEntityId: meta?.entity_id ?? meta?.entityId ?? meta?.id ?? null,
@@ -126,6 +131,7 @@ function buildWebhookDiagEcho(
     dataStatus: typeof data?.status === 'string' ? data.status : null,
     currentId: current?.id ?? null,
     currentStatus: typeof current?.status === 'string' ? current.status : null,
+    onlyTopKeyIsNumeric: onlyKeyIsNumeric || undefined,
   };
 }
 
@@ -442,6 +448,35 @@ function extractDealId(body: Record<string, unknown>): number | null {
     if (fromCurrent != null) return fromCurrent;
   }
 
+  /** Pipedrive Workflow Automation „Send webhook" v některých případech posílá body, kde
+   *  jediný top-level klíč je samotné deal ID jako string (`{"25523": <hodnota>}`). Není to oficiální
+   *  v1 ani v2 formát, ale v praxi se objevuje při ručně sestavovaných webhoocích. */
+  const topKeys = Object.keys(body);
+  if (topKeys.length === 1) {
+    const onlyKey = topKeys[0];
+    if (/^\d+$/.test(onlyKey)) {
+      const n = Number.parseInt(onlyKey, 10);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+    const onlyVal = body[onlyKey];
+    if (typeof onlyVal === 'string' && /^\d+$/.test(onlyVal.trim())) {
+      const n = Number.parseInt(onlyVal.trim(), 10);
+      if (Number.isInteger(n) && n > 0) return n;
+    }
+    if (typeof onlyVal === 'number' && Number.isInteger(onlyVal) && onlyVal > 0) {
+      return onlyVal;
+    }
+  }
+
+  /** Pokud má payload vícero klíčů, ale jeden z nich je čistě číselný string (deal id přidaný
+   *  k běžnému payloadu), pokus se ho použít až úplně nakonec — méně agresivní než předchozí
+   *  jednoznačné větve. */
+  for (const k of topKeys) {
+    if (!/^\d+$/.test(k)) continue;
+    const n = Number.parseInt(k, 10);
+    if (Number.isInteger(n) && n > 0) return n;
+  }
+
   return null;
 }
 
@@ -563,6 +598,27 @@ Deno.serve(async (req) => {
 
   const diagEcho = buildWebhookDiagEcho(payload);
   const dealId = extractDealId(payload);
+  if (dealId) {
+    /** Diagnostika: pokud deal id pochází z numerického top-level klíče (Pipedrive Workflow
+     *  Automation „Send webhook" custom body), zalogujme, ať je v logu jasné, že to není ze standardu. */
+    const stdMatch =
+      (typeof payload.deal_id !== 'undefined' || typeof payload.dealId !== 'undefined') ||
+      (() => {
+        const meta = payload.meta as Record<string, unknown> | undefined;
+        if (meta) {
+          if (typeof meta.entity_id !== 'undefined' || typeof meta.entityId !== 'undefined') return true;
+          if (typeof meta.id !== 'undefined') return true;
+        }
+        const data = payload.data as Record<string, unknown> | undefined;
+        if (data && typeof data.id !== 'undefined') return true;
+        const current = payload.current as Record<string, unknown> | undefined;
+        if (current && typeof current.id !== 'undefined') return true;
+        return false;
+      })();
+    if (!stdMatch) {
+      logInbound('deal_id_from_numeric_key', { dealId, topKeys: Object.keys(payload).slice(0, 10) });
+    }
+  }
   if (!dealId) {
     logInbound('no_deal_id', { keys: Object.keys(payload).slice(0, 20), diagEcho });
     return jsonResponse(req,
