@@ -38,9 +38,15 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * (doprava v Base přijde jako `delivery_method` z `orders.shipping_*`). Pokud po filtraci
  * nezbude **žádná** položka, webhook se odbavuje jako `skipped: no_valid_products`.
  *
- * Adresa zákazníka se skládá ze strukturovaných polí PD Person (`postal_address.route`,
- * `street_number`, `subpremise`, `locality`, `postal_code`, …) a doplní se z Org (`address_*`
- * v PD v1, nested `address` v v2, případně z plain‑text `org.address`). Pokud zůstane neúplná,
+ * Adresa zákazníka se skládá ve třech fázích, stejně jako u manuálního zadání v eshop checkoutu:
+ *   1) strukturovaná pole PD Person (`postal_address.route`, `street_number`, `subpremise`,
+ *      `locality`, `postal_code`, …),
+ *   2) strukturovaná / textová pole PD Org (`address_*` v v1, nested `address` v v2,
+ *      případně plain‑text `org.address`) doplní chybějící komponenty,
+ *   3) pokud něco stále chybí, server‑to‑server **Google Geocoding API** (klíč
+ *      `GOOGLE_MAPS_API_KEY` v Edge Secrets — stejný, jaký používá `make-server-93a20b6f`
+ *      pro `/address-autocomplete` + `/place-details` na webu) přepíše chybějící části.
+ * Vypnutí geocodingu: `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`. Pokud zůstane adresa neúplná,
  * loguje se `address_incomplete` a do `admin_note` se přidá upozornění.
  *
  * Volání:
@@ -345,6 +351,73 @@ function parseFreeFormAddress(rawInput: string | undefined | null): AddressParts
   street = street.replace(/[,;]+$/, '').trim();
   city = city.replace(/[,;]+$/, '').trim();
   return { street, city, zip };
+}
+
+/**
+ * Server‑side geocoding přes Google Geocoding API — stejný princip, jaký používá eshop checkout
+ * přes Place Details (`make-server-93a20b6f /address-autocomplete` + `/place-details`). Klíč je
+ * `GOOGLE_MAPS_API_KEY` (resp. `GOOGLE_PLACES_API_KEY`) v Edge Secrets.
+ * Vstupem je volná věta z PD (např. „Karlova 5, Praha 1"), výstupem rozparsované `street/city/zip`.
+ * Když klíč chybí nebo Google nevrátí výsledek, vrátí `null` a volající zachová původní hodnoty.
+ */
+async function geocodeFreeFormAddressViaGoogle(rawAddress: string): Promise<AddressParts | null> {
+  const key = (Deno.env.get('GOOGLE_MAPS_API_KEY') || Deno.env.get('GOOGLE_PLACES_API_KEY') || '').trim();
+  if (!key) return null;
+  const cleanedInput = String(rawAddress || '').replace(/\s+/g, ' ').trim();
+  if (!cleanedInput) return null;
+  const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
+  url.searchParams.set('address', cleanedInput);
+  url.searchParams.set('key', key);
+  url.searchParams.set('language', 'cs');
+  url.searchParams.set('region', 'cz');
+  url.searchParams.set('components', 'country:CZ|country:SK');
+  try {
+    const res = await fetch(url.toString());
+    const data = (await res.json()) as {
+      status?: string;
+      results?: Array<{
+        address_components?: Array<{ long_name: string; short_name: string; types: string[] }>;
+        formatted_address?: string;
+      }>;
+      error_message?: string;
+    };
+    if (data.status !== 'OK' || !Array.isArray(data.results) || data.results.length === 0) {
+      console.log('[pipedrive-inbound] geocode_failed', data.status, data.error_message || '');
+      return null;
+    }
+    const components = data.results[0].address_components || [];
+    let streetNumber = '';
+    let route = '';
+    let city = '';
+    let zip = '';
+    for (const c of components) {
+      const t = c.types || [];
+      if (t.includes('street_number')) streetNumber = c.long_name;
+      if (t.includes('route')) route = c.long_name;
+      if (t.includes('locality')) city = c.long_name;
+      if (!city && t.includes('postal_town')) city = c.long_name;
+      if (t.includes('postal_code')) zip = String(c.long_name || '').replace(/\s/g, '');
+    }
+    if (!city) {
+      for (const c of components) {
+        if ((c.types || []).includes('administrative_area_level_2')) {
+          city = c.long_name;
+          break;
+        }
+      }
+    }
+    let street = [route, streetNumber].filter(Boolean).join(' ').trim();
+    /** Pokud street je prázdný (Google nevrátil route+number), zkusíme první segment formatted_address. */
+    if (!street && data.results[0].formatted_address) {
+      const first = String(data.results[0].formatted_address).split(',')[0]?.trim() || '';
+      if (first) street = first;
+    }
+    return { street, city, zip: normalizeCzechZip(zip) };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log('[pipedrive-inbound] geocode_error', msg);
+    return null;
+  }
 }
 
 function structuredFieldsFromObject(obj: Record<string, unknown> | null | undefined, prefix = ''): AddressParts {
@@ -919,6 +992,7 @@ Deno.serve(async (req) => {
 
   let schoolName: string | null = null;
   let ico: string | null = null;
+  let orgRawAddressForGeocode = '';
 
   const orgId = parsePipedriveEntityId(deal.org_id);
   if (orgId != null && orgId > 0) {
@@ -938,11 +1012,55 @@ Deno.serve(async (req) => {
       if (!street) street = orgAddr.street;
       if (!city) city = orgAddr.city;
       if (!zip) zip = orgAddr.zip;
+      if (typeof org.address === 'string' && org.address.trim()) {
+        orgRawAddressForGeocode = org.address.trim();
+      }
     }
   }
 
   /** PSČ normalizujeme jednotně bez ohledu na zdroj (Person/Org) — Base i iDoklad to chtějí bez mezer. */
   zip = normalizeCzechZip(zip);
+
+  /**
+   * Trojí fallback při neúplné adrese — stejně, jako to dělá eshop checkout přes
+   * Google Places autocomplete + details. Tady jdeme přímo na Geocoding API:
+   *   1) Server-to-server volání s tím, co máme (`street, city, zip` joined; pokud chybí, jen org/person).
+   *   2) Strukturovaná odpověď Google přepíše chybějící části (street/city/zip).
+   *   3) `GOOGLE_MAPS_API_KEY` v Edge Secrets se sdílí s `make-server-93a20b6f` (eshop)
+   *      — výsledky tak budou konzistentní s manuálním zadáním na webu.
+   * Vypnutí přes `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`.
+   */
+  const geocodeDisabled = String(Deno.env.get('PIPEDRIVE_INBOUND_DISABLE_GEOCODE') || '').trim() === '1';
+  if (!geocodeDisabled && (!street.trim() || !city.trim() || !zip.trim())) {
+    /** Sestavíme nejvýstižnější vstup pro geocoder. */
+    const geocodeQueryParts = [
+      street.trim(),
+      [zip, city.trim()].filter(Boolean).join(' ').trim(),
+    ].filter(Boolean);
+    let geocodeQuery = geocodeQueryParts.join(', ').trim();
+    if (!geocodeQuery) {
+      const personRaw = person && typeof person === 'object'
+        ? String((person.postal_address as Record<string, unknown> | undefined)?.formatted_address || '').trim()
+        : '';
+      geocodeQuery = personRaw || orgRawAddressForGeocode || '';
+    }
+    if (geocodeQuery) {
+      const geocoded = await geocodeFreeFormAddressViaGoogle(geocodeQuery);
+      if (geocoded && (geocoded.street || geocoded.city || geocoded.zip)) {
+        const before = { street, city, zip };
+        if (!street.trim() && geocoded.street) street = geocoded.street;
+        if (!city.trim() && geocoded.city) city = geocoded.city;
+        if (!zip.trim() && geocoded.zip) zip = geocoded.zip;
+        zip = normalizeCzechZip(zip);
+        logInbound('address_geocoded', {
+          dealId,
+          before,
+          after: { street, city, zip },
+          query: geocodeQuery,
+        });
+      }
+    }
+  }
 
   const addressIncomplete = !street.trim() || !city.trim() || !zip.trim();
   if (addressIncomplete) {
