@@ -21,6 +21,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * - GET/HEAD → vždy 200 (Pipedrive při kontrole často volá URL bez ?token=; s tokenem vracíme bohatší JSON).
  * - POST s platným tokenem a prázdným / neúplným tělem → 200 (ping / test), ne 400 — jinak Pipedrive hlásí „inaccessible".
  *
+ * Stav „won": kontroluje se REST GET /deals/{id} i zprostředkovaně `data.status` z webhooku v2 — předejde tomu,
+ * že krátce po označení výhry API ještě vrátí `open` (prodleva) a import by byl vyhodnocen jako přeskočený.
+ *
  * Vyžaduje: PIPEDRIVE_API_TOKEN, PIPEDRIVE_INBOUND_WEBHOOK_SECRET.
  * Bez osoby / bez e-mailu: objednávka (scénář A) se vytvoří s poznámkou a placeholdery; do Base.com se export pošle i tak (kvůli ručním dealům v CRM).
  * Volitelně:
@@ -396,6 +399,39 @@ function extractDealId(body: Record<string, unknown>): number | null {
   return null;
 }
 
+/** Webhooks v2: `meta.entity`; v1: `meta.object`. Prázdné = neurčité (např. ruční POST). */
+function readWebhookEntityType(payload: Record<string, unknown>): string {
+  const meta = payload.meta as Record<string, unknown> | undefined;
+  if (!meta || typeof meta !== 'object') return '';
+  const raw = meta.entity ?? meta.object;
+  return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+}
+
+/** Stav dealu z těla webhooku (`data.status`), pokud je k dispozici — používá se jako doplněk k GET /deals při krátké prodlevě API. */
+function readWebhookDealStatus(payload: Record<string, unknown>): string {
+  const data = payload.data;
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return '';
+  return String((data as Record<string, unknown>).status || '').trim().toLowerCase();
+}
+
+/**
+ * Zpracovat jako výherní deal, pokud to dovolí API nebo samotný webhook.
+ * GET /deals krátce po `won` občas ještě vrací `open` → webhook v2 už má `data.status: "won"`.
+ * Proti předběžnému zpracování ztracených dealů: `lost` / `deleted` z API má přednost.
+ */
+function resolveInboundDealWonState(
+  deal: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): { treatAsWon: boolean; apiStatus: string; webhookStatus: string } {
+  const apiStatus = String(deal.status || '').trim().toLowerCase();
+  const webhookStatus = readWebhookDealStatus(payload);
+  if (apiStatus === 'lost' || apiStatus === 'deleted') {
+    return { treatAsWon: false, apiStatus, webhookStatus };
+  }
+  const treatAsWon = apiStatus === 'won' || webhookStatus === 'won';
+  return { treatAsWon, apiStatus, webhookStatus };
+}
+
 function pipelineAllowed(pipelineId: number): boolean {
   const raw = (Deno.env.get('PIPEDRIVE_INBOUND_PIPELINE_IDS') || '').trim();
   if (!raw) return true;
@@ -509,10 +545,38 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { skipped: true, reason: 'deal_not_found', dealId }, 200);
   }
 
-  const status = String(deal.status || '').toLowerCase();
-  if (status !== 'won') {
-    logInbound('skipped', { dealId, reason: 'deal_not_won', status });
-    return jsonResponse(req, { skipped: true, reason: 'deal_not_won', dealId, status }, 200);
+  const webhookEntity = readWebhookEntityType(payload);
+  if (webhookEntity && webhookEntity !== 'deal') {
+    logInbound('skipped', { dealId, reason: 'wrong_webhook_entity', webhookEntity });
+    return jsonResponse(req, {
+      skipped: true,
+      reason: 'wrong_webhook_entity',
+      dealId,
+      webhookEntity,
+      hint: 'Webhook není typu deal — zkontrolujte konfiguraci v Pipedrive (meta.entity).',
+    }, 200);
+  }
+
+  const { treatAsWon, apiStatus, webhookStatus } = resolveInboundDealWonState(deal, payload);
+  if (!treatAsWon) {
+    logInbound('skipped', {
+      dealId,
+      reason: 'deal_not_won',
+      apiStatus,
+      ...(webhookStatus ? { webhookStatus } : {}),
+    });
+    return jsonResponse(req, {
+      skipped: true,
+      reason: 'deal_not_won',
+      dealId,
+      apiStatus,
+      ...(webhookStatus ? { webhookStatus } : {}),
+      hint:
+        'Deal není ve stavu won podle GET /deals ani podle webhook payload data.status — často stačí znovu spustit webhook po chvilce (prodleva API).',
+    }, 200);
+  }
+  if (apiStatus !== 'won' && webhookStatus === 'won') {
+    logInbound('won_via_webhook_payload', { dealId, apiStatus, webhookStatus });
   }
 
   const pipelineId = parsePipedriveEntityId(deal.pipeline_id);
@@ -862,6 +926,17 @@ Deno.serve(async (req) => {
         queuedExportKick = true;
       } else {
         skippedServices.push('basecom');
+        const skipReason =
+          !savedBlOrderId
+            ? 'missing_basecom_order_id_on_order'
+            : pdInboundBaseStatusId == null
+            ? 'missing_BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND'
+            : 'unexpected_existing_basecom_export';
+        logInbound('basecom_skipped_after_update', {
+          dealId,
+          orderId: target.id,
+          skipReason,
+        });
       }
 
       if (queuedExportKick) {
