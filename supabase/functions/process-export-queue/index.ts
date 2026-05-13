@@ -798,11 +798,25 @@ async function handleBasecomExport(
     ? (payloadPaidRaw as boolean)
     : isStripeCardLike;
 
+  /**
+   * Override pro `user_comments` v Base addOrder (viditelné v Base UI i na fakturách).
+   * `pipedrive-inbound-deal` scénář B ho používá pro doplnění „Číslo faktury: X" (PD pole 12530)
+   * vedle původní poznámky zákazníka z eshop checkoutu. Pokud override není, použije se
+   * `order.note` (default chování).
+   */
+  const payloadUserComments = (() => {
+    const raw = queuePayload && typeof queuePayload === 'object'
+      ? (queuePayload as Record<string, unknown>).basecomUserComments
+      : undefined;
+    return typeof raw === 'string' ? raw : '';
+  })();
+  const effectiveUserComments = payloadUserComments || order.note || '';
+
   const parameters: Record<string, unknown> = {
     order_status_id: orderStatusId,
     custom_source_id: customSourceId,
     date_add: Math.floor(new Date(order.created_at).getTime() / 1000),
-    user_comments: order.note || '',
+    user_comments: effectiveUserComments,
     admin_comments: `VB order: ${order.order_number}`,
     phone: normalizeCzechPhone(order.customer_phone) || order.customer_phone || '',
     email: order.customer_email,
