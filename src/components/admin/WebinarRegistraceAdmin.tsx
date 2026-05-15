@@ -247,6 +247,9 @@ interface Registration {
   phone: string;
   position: string;
   newsletter: boolean;
+  webinarMotivation?: string;
+  webinarTopicInterest?: string;
+  usesVividbooks?: 'yes' | 'no' | string;
   registeredAt: string;
   attended: boolean;
   attendedAt?: string;
@@ -501,9 +504,27 @@ export default function WebinarRegistraceAdmin() {
   const totalTrial = data.reduce((s, w) => s + w.withTrial, 0);
 
   const exportCsv = (webinar: WebinarStat) => {
-    const headers = ['Jméno', 'E-mail', 'Telefon', 'Pozice', 'Newsletter', 'Registrace', 'Byl/a', 'Trial'];
+    const headers = [
+      'Jméno',
+      'E-mail',
+      'Telefon',
+      'Pozice',
+      'Používá Vividbooks',
+      'Motivace',
+      'Co zajímá',
+      'Newsletter',
+      'Registrace',
+      'Byl/a',
+      'Trial',
+    ];
     const rows = webinar.registrations.map(r => [
-      r.name, r.email, r.phone, r.position,
+      r.name,
+      r.email,
+      r.phone,
+      r.position,
+      r.usesVividbooks === 'yes' ? 'Ano' : r.usesVividbooks === 'no' ? 'Ne' : '',
+      r.webinarMotivation || '',
+      r.webinarTopicInterest || '',
       r.newsletter ? 'Ano' : 'Ne',
       new Date(r.registeredAt).toLocaleString('cs-CZ'),
       r.attended ? 'Ano' : 'Ne',
@@ -794,6 +815,11 @@ export default function WebinarRegistraceAdmin() {
                                   {mailchimpSyncBadge(reg)}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-2 pl-0 sm:pl-0">
+                                  {reg.usesVividbooks === 'yes' || reg.usesVividbooks === 'no' ? (
+                                    <span className="inline-flex items-center rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-800">
+                                      {`Vividbooks: ${reg.usesVividbooks === 'yes' ? 'Ano' : 'Ne'}`}
+                                    </span>
+                                  ) : null}
                                   <button
                                     type="button"
                                     onClick={() => setPipelineExpanded(openPipe ? null : pipelineKey)}
@@ -816,6 +842,30 @@ export default function WebinarRegistraceAdmin() {
                                 </div>
                               </div>
                             </div>
+                            {(reg.webinarMotivation || reg.webinarTopicInterest) ? (
+                              <div className="ml-0 grid gap-2 sm:ml-9 sm:grid-cols-2">
+                                {reg.webinarMotivation ? (
+                                  <div className="rounded-xl border border-gray-100 bg-[#f8fafc] px-3 py-2">
+                                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                      {'Motivace'}
+                                    </p>
+                                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#001161]/85">
+                                      {reg.webinarMotivation}
+                                    </p>
+                                  </div>
+                                ) : null}
+                                {reg.webinarTopicInterest ? (
+                                  <div className="rounded-xl border border-gray-100 bg-[#f8fafc] px-3 py-2">
+                                    <p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+                                      {'Co zajímá'}
+                                    </p>
+                                    <p className="whitespace-pre-wrap break-words text-[12px] leading-relaxed text-[#001161]/85">
+                                      {reg.webinarTopicInterest}
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
                             {openPipe ? (
                               <div className="ml-0 sm:ml-9 rounded-xl border border-gray-100 bg-[#f8fafc] p-3 space-y-2.5">
                                 {(reg.integrationPipeline && reg.integrationPipeline.length > 0

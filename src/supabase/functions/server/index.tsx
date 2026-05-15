@@ -3022,9 +3022,6 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     if (!gdpr) {
       return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
     }
-    if (!webinarMotivation || !webinarTopicInterest) {
-      return c.json({ error: 'Vyplňte motivaci registrace a téma, které vás zajímá.' }, 400);
-    }
     if (!usesVividbooksNorm) {
       return c.json({ error: 'Vyberte u položky „Používám Vividbooks“ možnost Ano nebo Ne.' }, 400);
     }
@@ -3058,9 +3055,9 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       schoolName,
       schoolAddress,
       ico: icoDigits,
-      webinarMotivation,
-      webinarTopicInterest,
       usesVividbooks: usesVividbooksNorm,
+      ...(webinarMotivation ? { webinarMotivation } : {}),
+      ...(webinarTopicInterest ? { webinarTopicInterest } : {}),
     };
 
     await kv.set(key, registration);
@@ -7145,6 +7142,25 @@ app.get('/make-server-93a20b6f/admin/registrace', async (c) => {
     for (const w of webinars) {
       const prefix = `webinar_reg_${w.id}_`;
       const regs = await kv.getByPrefix(prefix);
+      const surveyRows = await kv.getByPrefix(`webinar_survey_${w.id}_`);
+      const surveyByEmail = new Map<string, Record<string, string>>();
+      for (const row of surveyRows as any[]) {
+        const email = String(row?.email || '').toLowerCase().trim();
+        const answers = row?.answers && typeof row.answers === 'object' ? row.answers : null;
+        if (!email || !answers) continue;
+        surveyByEmail.set(email, answers as Record<string, string>);
+      }
+      const registrations = regs.map((reg: any) => {
+        const email = String(reg?.email || '').toLowerCase().trim();
+        const answers = email ? surveyByEmail.get(email) : undefined;
+        if (!answers) return reg;
+        return {
+          ...reg,
+          webinarMotivation: reg.webinarMotivation || answers.motivation || '',
+          webinarTopicInterest: reg.webinarTopicInterest || answers.topic_interest || '',
+          usesVividbooks: reg.usesVividbooks || answers.uses_vividbooks || '',
+        };
+      });
       const attended = regs.filter((r: any) => r.attended).length;
       const withTrial = regs.filter((r: any) => r.trialToken).length;
       const slug = String(w.slug || w.id || '').trim() || w.id;
@@ -7169,7 +7185,7 @@ app.get('/make-server-93a20b6f/admin/registrace', async (c) => {
         total: regs.length,
         attended,
         withTrial,
-        registrations: regs,
+        registrations,
         mailchimpTag,
         mailchimpTagCount,
       });

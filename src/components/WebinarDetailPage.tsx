@@ -443,12 +443,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       setError('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.');
       return;
     }
-    if (!form.webinarMotivation.trim() || !form.webinarTopicInterest.trim()) {
-      setError(
-        'Vypl\u0148te pros\u00edm motivaci registrace a to, co v\u00e1s u t\u00e9matu nejv\u00edce zaj\u00edm\u00e1.',
-      );
-      return;
-    }
     if (form.usesVividbooks !== 'yes' && form.usesVividbooks !== 'no') {
       setError('Vyberte pros\u00edm u polo\u017eky \u201ePou\u017e\u00edv\u00e1m Vividbooks\u201c mo\u017enost Ano nebo Ne.');
       return;
