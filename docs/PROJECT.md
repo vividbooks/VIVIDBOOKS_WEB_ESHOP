@@ -118,6 +118,15 @@ Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_
 
 Kompletní Stripe/Basecom/iDoklad tabulky: [DEPLOYMENT.md](./DEPLOYMENT.md).
 
+### E‑shop kartová platba s IČO — open deal jako u převodu
+
+Když zákazník na e‑shopu vyplní **IČO (nebo název školy)** a zvolí platbu kartou (Stripe Payment Element), `create-payment-intent` ihned po založení pending objednávky volá `eshop/pipedrive-sync` s režimem `b2b_card_open` — vznikne tedy **otevřený B2B deal** v Pipedrive (`status='open'`, štítky / org / person / line items / shipping jako u zaplacené karty), stejně jako u převodu (`b2b_transfer_open`).
+
+- Pokud zákazník platbu dokončí, `stripe-webhook` (`payment_intent.succeeded`) zavolá sync s `b2b_card_won`. Sync detekuje existující `pipedrive_deal_id` a místo skipu provede **upgrade open → won**: PUT /deals/:id s `status=won` + custom „paid status" pole + reaplikace štítků / PRINT / order ID.
+- Pokud platbu nikdy nedokončí, deal v Pipedrive zůstane jako otevřený lead (obchod ho doprodá).
+- B2C jednotlivec (bez IČO i bez školy) zůstává beze změny — deal se zakládá až po úspěšné platbě jako `b2c_card_won`.
+- Admin tlačítko „Vytvořit deal" pro pending_payment + IČO + karta posílá nově `b2b_card_open` (dříve `b2b_card_won`).
+
 ### Pipedrive inbound webhook — chování
 
 Webhook `pipedrive-inbound-deal` volaný z Pipedrive po `won` rozlišuje dva scénáře přes pole „Eshop ID" (custom field UI ID 12586, hash `26e4a2f8…`):

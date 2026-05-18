@@ -75,11 +75,16 @@ function getEshopPipedriveSyncUrl(fallbackRequestUrl?: string) {
   return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
 }
 
-function inferPipedriveEshopMode(row: { ico: string | null; payment_method: string }):
-  'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open' {
+function inferPipedriveEshopMode(row: { ico: string | null; payment_method: string; status?: string | null }):
+  'b2c_card_won' | 'b2b_card_won' | 'b2b_card_open' | 'b2b_transfer_open' {
   const ico = String(row.ico || '').trim().replace(/\s/g, '');
   if (row.payment_method === 'transfer') {
     return ico ? 'b2b_transfer_open' : 'b2c_card_won';
+  }
+  /** Kartová objednávka s IČO, která ještě nebyla zaplacena (pending_payment) — chceme open deal,
+   *  ne won. Po úspěšné platbě stripe-webhook zavolá sync s `b2b_card_won`, který deal upgradne. */
+  if (ico && row.status === 'pending_payment') {
+    return 'b2b_card_open';
   }
   return ico ? 'b2b_card_won' : 'b2c_card_won';
 }

@@ -15350,7 +15350,33 @@ function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Rec
   return getEshopOrderIdPayload(orderNumber);
 }
 
-/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
+/**
+ * Sjednocený typ režimu pro e‑shop deal v Pipedrive.
+ *
+ *   - `b2c_card_won`        — B2C (bez IČO i bez školy), kartová platba úspěšně dokončena. Deal = won, paid status set.
+ *   - `b2b_card_won`        — B2B (s IČO nebo školou), kartová platba úspěšně dokončena. Deal = won, paid status set.
+ *   - `b2b_card_open`       — **NOVÝ**: B2B (s IČO/školou) zvolil platbu kartou, ale platbu ještě nedokončil. Pushneme open deal jako lead, ať obchod
+ *                             vidí poptávku stejně jako u převodu. Pokud platba později projde, sync (`b2b_card_won`) deal upgradne na won.
+ *   - `b2b_transfer_open`   — B2B platba převodem; deal vždy vzniká jako open (zaplacení obchod řeší ručně / přes pipedrive-inbound-deal webhook).
+ */
+type EshopPipedriveMode =
+  | 'b2c_card_won'
+  | 'b2b_card_won'
+  | 'b2b_card_open'
+  | 'b2b_transfer_open';
+
+const ESHOP_PIPEDRIVE_MODES: readonly EshopPipedriveMode[] = [
+  'b2c_card_won',
+  'b2b_card_won',
+  'b2b_card_open',
+  'b2b_transfer_open',
+] as const;
+
+function isEshopPipedriveWonMode(mode: EshopPipedriveMode): boolean {
+  return mode === 'b2c_card_won' || mode === 'b2b_card_won';
+}
+
+/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro open režimy). */
 function getEshopCardPaidStatusPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY') || '').trim()
@@ -15437,7 +15463,7 @@ function parseCommaSeparatedPipedriveIds(raw: string | undefined): number[] {
  */
 async function resolveEshopDealLabelIds(
   apiToken: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<number[]> {
   const fromEnvB2c = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2C'));
   const fromEnvB2b = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2B'));
@@ -15786,7 +15812,7 @@ async function persistPipedriveEshopOrderState(
 /** PUT /deals/:id — znovu propsat štítky + PRINT u už existujícího dealu (admin „obnovit“). */
 async function refreshEshopPipedriveDealFromDb(
   orderId: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
   const sb = getServiceSupabaseClient();
@@ -15840,7 +15866,7 @@ async function refreshEshopPipedriveDealFromDb(
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
   Object.assign(patchBody, getEshopOrderNumberPayload(String((row as any).order_number || '')));
-  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+  if (isEshopPipedriveWonMode(mode)) {
     Object.assign(patchBody, getEshopCardPaidStatusPayload());
   }
 
@@ -15870,9 +15896,80 @@ async function refreshEshopPipedriveDealFromDb(
   return { skipped: false, dealId: String(dealIdNum), refreshed: true };
 }
 
+/**
+ * Upgrade už existujícího open dealu (`b2b_card_open` z create-payment-intent)
+ * na won po úspěšné kartové platbě. Volá se z `syncEshopOrderToPipedriveFromDb`,
+ * když mode = `_card_won` a `orders.pipedrive_deal_id` už existuje.
+ *
+ * Provádí jediný PUT /deals/:id: status='won' (přes /dealFields) + paid status custom field
+ * + bezpečně reaplikuje labely / PRINT / product category / order ID (aby případné dřív neúspěšné
+ * doplnění proběhlo). Line items se nepřidávají (otevřený deal už je má z initial sync).
+ */
+async function upgradeEshopPipedriveOpenDealToWon(
+  apiToken: string,
+  dealIdNum: number,
+  orderId: string,
+  orderNumber: string,
+  mode: 'b2c_card_won' | 'b2b_card_won',
+  sb: NonNullable<ReturnType<typeof getServiceSupabaseClient>>,
+): Promise<Record<string, unknown>> {
+  const fail = async (reason: string, detail?: string) => {
+    const msg = detail ? `${reason}: ${detail}` : reason;
+    await persistPipedriveEshopOrderState(sb, orderId, {
+      pipedrive_sync_status: 'failed',
+      pipedrive_sync_error: msg.slice(0, 2000),
+      pipedrive_synced_at: null,
+    });
+    return { skipped: true, reason, detail, dealId: String(dealIdNum), upgraded: false };
+  };
+
+  const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
+  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  const statusPayload = await resolveDealStatusPayloadFromFields(apiToken, 'won');
+
+  const patchBody: Record<string, unknown> = {};
+  Object.assign(patchBody, statusPayload);
+  Object.assign(patchBody, getEshopCardPaidStatusPayload());
+  if (labelIds.length) {
+    const v = await resolvePipedriveDealLabelPayloadValue(apiToken, labelFieldKey, labelIds);
+    if (v !== undefined) patchBody[labelFieldKey] = v;
+  }
+  Object.assign(patchBody, printPayload);
+  Object.assign(patchBody, getEshopProductCategoryPayload());
+  Object.assign(patchBody, getEshopOrderNumberPayload(orderNumber));
+
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealIdNum}`, {
+      method: 'PUT',
+      body: JSON.stringify(patchBody),
+    });
+  } catch (e: any) {
+    return await fail('pipedrive_upgrade_put_failed', e.message);
+  }
+
+  console.log(
+    `[Pipedrive eshop] upgrade open→won deal ${dealIdNum} OK (${Object.keys(patchBody).join(',')})`,
+  );
+
+  const nowIso = new Date().toISOString();
+  await persistPipedriveEshopOrderState(sb, orderId, {
+    pipedrive_sync_status: 'done',
+    pipedrive_sync_error: null,
+    pipedrive_synced_at: nowIso,
+  });
+
+  return {
+    skipped: false,
+    dealId: String(dealIdNum),
+    upgraded: true,
+    mode,
+  };
+}
+
 async function syncEshopOrderToPipedriveFromDb(
   orderId: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
   const sb = getServiceSupabaseClient();
@@ -15906,6 +16003,27 @@ async function syncEshopOrderToPipedriveFromDb(
 
   const existingDeal = String((order as any).pipedrive_deal_id || '').trim();
   if (existingDeal) {
+    /**
+     * `b2b_card_open` zakládá deal už při create-payment-intent (ještě před úhradou).
+     * Když pak Stripe webhook po úspěšné platbě zavolá sync s `b2b_card_won` (resp. `b2c_card_won`),
+     * deal už existuje — místo no‑op skipu provedeme upgrade open→won (status + paid status field).
+     * Pro převody (`b2b_transfer_open`) upgrade neděláme: zaplacení se eviduje přes admin / pipedrive-inbound-deal.
+     */
+    if (isEshopPipedriveWonMode(mode)) {
+      const dealIdNum = parsePipedriveNumericId(existingDeal);
+      if (!dealIdNum) {
+        return { skipped: true, reason: 'invalid_deal_id', dealId: existingDeal };
+      }
+      const orderNumber = String((order as any).order_number || '').trim();
+      return await upgradeEshopPipedriveOpenDealToWon(
+        apiToken,
+        dealIdNum,
+        orderId,
+        orderNumber,
+        mode as 'b2c_card_won' | 'b2b_card_won',
+        sb,
+      );
+    }
     return { skipped: true, reason: 'already_synced', dealId: existingDeal };
   }
 
@@ -15970,8 +16088,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const personId = parsePipedriveNumericId(person?.id);
   if (!personId) return await fail('missing_person');
 
-  const status: 'open' | 'won' =
-    mode === 'b2c_card_won' || mode === 'b2b_card_won' ? 'won' : 'open';
+  const status: 'open' | 'won' = isEshopPipedriveWonMode(mode) ? 'won' : 'open';
 
   const orderNumber = String((order as any).order_number || '');
   const schoolNameOnly = String((order as any).school_name || '').trim();
@@ -15994,7 +16111,7 @@ async function syncEshopOrderToPipedriveFromDb(
     ...productCategoryPayload,
     ...orderNumberPayload,
   };
-  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+  if (isEshopPipedriveWonMode(mode)) {
     Object.assign(extraPayload, getEshopCardPaidStatusPayload());
     console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
   }
@@ -16479,13 +16596,10 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
     const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };
     const orderId = String(body.orderId || '').trim();
     const mode = String(body.mode || '').trim();
-    if (
-      !orderId
-      || !['b2c_card_won', 'b2b_card_won', 'b2b_transfer_open'].includes(mode)
-    ) {
+    if (!orderId || !ESHOP_PIPEDRIVE_MODES.includes(mode as EshopPipedriveMode)) {
       return c.json({ error: 'Invalid orderId or mode.' }, 400);
     }
-    const m = mode as 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open';
+    const m = mode as EshopPipedriveMode;
     const result = body.refreshOnly === true
       ? await refreshEshopPipedriveDealFromDb(orderId, m)
       : await syncEshopOrderToPipedriveFromDb(orderId, m);
