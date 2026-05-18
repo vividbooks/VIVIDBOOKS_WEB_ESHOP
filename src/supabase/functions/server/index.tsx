@@ -15661,6 +15661,21 @@ function getEshopShippingProductCode(shippingMethod: string | null | undefined):
 /** Přidá řádek s dopravou na Pipedrive deal — produkt z katalogu identifikovaný kódem
  *  (PPL/DPD/GLS/ZZ). Když produkt v Pipedrivu pod tímto kódem neexistuje, jen zaloguje
  *  warning a pokračuje (deal nepadne). Cena je `orders.shipping_price` v halířích → koruny. */
+/**
+ * Pipedrive `product_id` pro řádek dopravy.
+ * Pořadí priority:
+ *   1) Env override **přímo na ID**: `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>` (např. `_PPL=12345`).
+ *      Záchranná brzda, když produkt v Pipedrive katalogu nemá vyplněné pole `code` — ID se vždy najde,
+ *      nemusí proběhnout `/products/search` (a tedy ani exact_match na code).
+ *   2) Lookup přes kód (`getEshopShippingProductCode` + `resolvePipedriveProductIdByCode`).
+ */
+function getEshopShippingProductIdOverride(shippingMethod: string | null | undefined): number | null {
+  const m = String(shippingMethod || '').trim().toUpperCase();
+  if (!m) return null;
+  const raw = (Deno.env.get(`PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${m}`) || '').trim();
+  return raw ? parsePipedriveNumericId(raw) : null;
+}
+
 async function addPipedriveDealShippingLineItem(
   apiToken: string,
   dealId: number,
@@ -15671,14 +15686,18 @@ async function addPipedriveDealShippingLineItem(
   codeToPdId: Map<string, number | null>,
 ): Promise<void> {
   const code = getEshopShippingProductCode(shippingMethod);
-  if (!code) {
+  const overrideId = getEshopShippingProductIdOverride(shippingMethod);
+  if (!code && !overrideId) {
     console.log(`[Pipedrive eshop] skip shipping line: unknown method "${shippingMethod || ''}"`);
     return;
   }
   const priceCzk = Math.max(0, Math.round((Number(shippingPriceHaler) || 0) / 100));
-  const pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  let pipedriveProductId: number | null = overrideId;
+  if (!pipedriveProductId && code) {
+    pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  }
   if (!pipedriveProductId) {
-    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code}" not found`);
+    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code || ''}" not found (set PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${String(shippingMethod || '').toUpperCase()}=<pd_product_id> as override)`);
     return;
   }
   /** Poznámku „Z‑Point: Praha…" připíšeme do `comments`, aby obchodník v dealu hned viděl
@@ -16493,6 +16512,111 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
   } catch (err: any) {
     console.log(`[eshop/pipedrive-sync] ${err.message}`);
     return c.json({ error: err.message || 'sync failed' }, 500);
+  }
+});
+
+/**
+ * Diagnostika dopravních produktů v Pipedrive (jen service role).
+ *
+ *   GET …/admin/pipedrive-eshop-shipping-products
+ *
+ * Pro každou metodu (ppl/dpd/gls/zasilkovna) vrátí:
+ *   - resolvedCode    — kód, který sync hledá (z `getEshopShippingProductCode`, případně env override)
+ *   - productIdOverride — případné `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>` z env
+ *   - searchResults   — výsledky `GET /api/v2/products/search?term=<code>&fields=code&exact_match=true`
+ *                       (vrací co Pipedrive na exact_match doopravdy najde)
+ *   - status          — `ok` (1 přesný hit), `missing` (0 hitů), `ambiguous` (víc hitů), `override` (přímý ID)
+ *
+ * Pokud `searchResults` je prázdné → produkt s tímto `code` v Pipedrive neexistuje a doprava se
+ * v dealu nepřidává (sync jen zaloguje warning a pokračuje). Řešení: doplnit pole `code` u Pipedrive
+ * produktu na hodnotu PPL/DPD/GLS/ZZ, nebo nastavit env override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>=<id>`.
+ */
+app.get('/make-server-93a20b6f/admin/pipedrive-eshop-shipping-products', async (c) => {
+  try {
+    const expected = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    const auth = c.req.header('Authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '').trim();
+    if (!expected || token !== expected) {
+      return c.json({ error: 'Unauthorized.' }, 401);
+    }
+    const apiToken = getPipedriveApiToken();
+    if (!apiToken) {
+      return c.json({ error: 'PIPEDRIVE_API_TOKEN not set in Edge secrets.' }, 500);
+    }
+
+    const methods: Array<'ppl' | 'dpd' | 'gls' | 'zasilkovna'> = ['ppl', 'dpd', 'gls', 'zasilkovna'];
+    const cache = new Map<string, number | null>();
+    const out: Record<string, unknown>[] = [];
+
+    for (const m of methods) {
+      const codeEnvKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_${m.toUpperCase()}`;
+      const idEnvKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${m.toUpperCase()}`;
+      const codeFromEnv = (Deno.env.get(codeEnvKey) || '').trim();
+      const resolvedCode = getEshopShippingProductCode(m);
+      const idOverride = getEshopShippingProductIdOverride(m);
+
+      let searchResults: { id: number | null; code: string | null; name: string | null }[] = [];
+      let searchError: string | null = null;
+      let status: 'ok' | 'missing' | 'ambiguous' | 'override' | 'no_code' = 'no_code';
+
+      if (idOverride) {
+        status = 'override';
+      } else if (resolvedCode) {
+        try {
+          const json = await pipedriveV2Request<any>(apiToken, '/products/search', {
+            term: resolvedCode,
+            fields: 'code',
+            exact_match: true,
+            limit: 50,
+          });
+          const raw = json?.data;
+          const rows: any[] = Array.isArray(raw?.items)
+            ? raw.items
+            : Array.isArray(raw)
+              ? raw
+              : [];
+          searchResults = rows.map((row) => {
+            const item = row?.item && typeof row.item === 'object' ? row.item : row;
+            return {
+              id: parsePipedriveNumericId(item?.id),
+              code: item?.code != null ? String(item.code) : null,
+              name: item?.name != null ? String(item.name) : null,
+            };
+          });
+          const exactHits = searchResults.filter((r) => {
+            const wanted = resolvedCode.trim().toLowerCase();
+            return r.id && r.code && r.code.trim().toLowerCase() === wanted;
+          });
+          if (exactHits.length === 1) status = 'ok';
+          else if (exactHits.length > 1) status = 'ambiguous';
+          else status = 'missing';
+        } catch (e: any) {
+          searchError = e?.message || String(e);
+          status = 'missing';
+        }
+        cache.clear();
+      }
+
+      out.push({
+        method: m,
+        codeEnvKey,
+        codeFromEnv: codeFromEnv || null,
+        idEnvKey,
+        productIdOverride: idOverride,
+        resolvedCode,
+        status,
+        searchResults,
+        searchError,
+      });
+    }
+
+    return c.json({
+      help: 'Status: ok=1 přesný hit, missing=žádný hit (sync přeskočí dopravu), ambiguous=víc hitů (přeskočí), override=přímé ID (vždy přidá). Fix: doplnit code v Pipedrive katalogu, nebo PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>=<id>.',
+      results: out,
+    });
+  } catch (err: any) {
+    console.log(`[pipedrive-eshop-shipping-products] ${err.message}`);
+    return c.json({ error: err.message || 'shipping products lookup failed' }, 502);
   }
 });
 
