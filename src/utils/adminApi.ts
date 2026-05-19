@@ -668,13 +668,18 @@ export async function runAdminOrderAction(payload: {
     | 'cancel_order'
     | 'mark_shipped'
     | 'sync_pipedrive'
-    | 'set_poster_fulfillment';
+    | 'set_poster_fulfillment'
+    | 'delete_order';
   orderId: string;
   cancelledReason?: string;
   trackingNumber?: string;
   /** true = jen aktualizace štítků/PRINT u existujícího dealu */
   refreshPipedrive?: boolean;
   posterFulfillmentStatus?: 'pending' | 'done';
+  /** Vyžadováno pro `delete_order` — admin musí v dialogu opsat order_number objednávky. */
+  confirmOrderNumber?: string;
+  /** Pro `delete_order` u finálních stavů (paid / processing / exported / shipped / delivered) — bez force backend vrátí 409. */
+  force?: boolean;
 }) {
   const res = await fetch(ADMIN_ORDER_ACTION_BASE, {
     method: 'POST',
@@ -683,8 +688,20 @@ export async function runAdminOrderAction(payload: {
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Admin order action failed: ${err}`);
+    /** Edge funkce vrací JSON `{ error, requiresForce?, ... }` — zkusíme ho dekódovat, jinak fallback na raw text.
+     *  `requiresForce` u 409 vyhazuje speciální chybu, kterou UI rozezná a nabídne force-delete. */
+    const text = await res.text();
+    let data: { error?: string; requiresForce?: boolean } = {};
+    try {
+      data = JSON.parse(text) as { error?: string; requiresForce?: boolean };
+    } catch {
+      /* keep text fallback */
+    }
+    const message = (data.error && data.error.trim()) || `Admin order action failed: ${text || res.status}`;
+    const err = new Error(message) as Error & { requiresForce?: boolean; httpStatus?: number };
+    err.requiresForce = data.requiresForce === true;
+    err.httpStatus = res.status;
+    throw err;
   }
 
   return res.json();

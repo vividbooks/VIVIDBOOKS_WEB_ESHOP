@@ -13,8 +13,9 @@ import {
   Circle,
   GraduationCap,
   School,
+  Trash2,
 } from 'lucide-react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   fetchAdminOrderDetail,
@@ -30,6 +31,7 @@ import {
 } from '../../utils/adminApi';
 import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
 import { incidentResolutionStateLabelCs, incidentSeverityLabelCs } from '../../utils/incidentLabels';
+import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -199,6 +201,7 @@ function basecomStepSourceHint(source: string): string {
 
 export function AdminOrderDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [order, setOrder] = useState<AdminOrderDetail | null>(null);
   const [items, setItems] = useState<AdminOrderItem[]>([]);
   const [events, setEvents] = useState<AdminOrderEvent[]>([]);
@@ -209,6 +212,9 @@ export function AdminOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  /** Backend vrátí `requiresForce: true` u finálních stavů — předáme do dialogu, ať checkbox přednastaví. */
+  const [deleteRequiresForce, setDeleteRequiresForce] = useState(false);
 
   /** Stripe/webhook někdy označí jen workflow jako failed (`invoke` fronty), zatímco `basecom_status` zůstane pending — retry musí projít stejně. */
   const basecomWorkflowStep = useMemo(
@@ -470,8 +476,47 @@ export function AdminOrderDetailPage() {
               {'Označit jako odesláno'}
             </button>
           )}
+          <button
+            onClick={() => {
+              setDeleteRequiresForce(false);
+              setDeleteDialogOpen(true);
+            }}
+            disabled={actionLoading !== null}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white font-bold text-[12px] disabled:opacity-40 hover:bg-red-700"
+            title="Trvale smaže objednávku z databáze (vyžaduje potvrzení)."
+          >
+            <Trash2 className="w-4 h-4" />
+            {'Smazat objednávku'}
+          </button>
         </div>
       </div>
+
+      {order && (
+        <DeleteOrderDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          orderNumber={order.order_number}
+          status={order.status}
+          paymentStatus={order.payment_status}
+          initialRequiresForce={deleteRequiresForce}
+          onConfirm={async ({ force }) => {
+            try {
+              await runAdminOrderAction({
+                action: 'delete_order',
+                orderId: order.id,
+                confirmOrderNumber: order.order_number,
+                force,
+              });
+              toast.success(`Objednávka ${order.order_number} byla smazána.`);
+              navigate('/admin/objednavky');
+            } catch (err) {
+              const e = err as Error & { requiresForce?: boolean };
+              if (e?.requiresForce) setDeleteRequiresForce(true);
+              throw err;
+            }
+          }}
+        />
+      )}
 
       {order.admin_note ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950">

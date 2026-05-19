@@ -1182,7 +1182,7 @@ function buildMarketingFeedHeaders(origin: string | null) {
   };
 }
 
-const MARKETING_FEED_VERSION = 'new-domain-20260505';
+const MARKETING_FEED_VERSION = 'feed-20260519';
 
 const ALLOWED_API_ORIGINS = [
   'https://new.vividbooks.com',
@@ -1870,6 +1870,72 @@ app.get('/make-server-93a20b6f/public/hero-slidy', async (c) => {
   } catch (e: any) {
     console.log(`[public/hero-slidy] ${e.message}`);
     return c.json({ error: e.message }, 500);
+  }
+});
+
+const YT_PLAYLIST_CACHE = new Map<string, { at: number; data: Record<string, unknown> }>();
+const YT_PLAYLIST_TTL_MS = 60 * 60 * 1000;
+
+function decodeXmlText(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function parseYoutubePlaylistRss(xml: string): { title: string; videos: Array<{ id: string; title: string; thumbnail: string; url: string; published: string }> } {
+  const feedTitle = decodeXmlText(xml.match(/<feed[\s\S]*?<title>([^<]*)<\/title>/)?.[1]?.trim() || '');
+  const videos: Array<{ id: string; title: string; thumbnail: string; url: string; published: string }> = [];
+  for (const entry of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const block = entry[1];
+    const id = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]?.trim();
+    if (!id) continue;
+    const title =
+      decodeXmlText(block.match(/<media:title>([^<]*)<\/media:title>/)?.[1]?.trim() || '') ||
+      decodeXmlText(block.match(/<title>([^<]*)<\/title>/)?.[1]?.trim() || '');
+    const thumbnail =
+      block.match(/<media:thumbnail url="([^"]+)"/)?.[1] ||
+      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    const published = block.match(/<published>([^<]+)<\/published>/)?.[1]?.trim() || '';
+    videos.push({
+      id,
+      title,
+      thumbnail,
+      url: `https://www.youtube.com/watch?v=${id}`,
+      published,
+    });
+  }
+  return { title: feedTitle, videos };
+}
+
+/** GET /public/youtube-playlist — veřejná videa z YouTube playlistu (RSS, cache 1 h) */
+app.get('/make-server-93a20b6f/public/youtube-playlist', async (c) => {
+  const playlistId = (c.req.query('playlistId') || '').trim();
+  if (!playlistId || !/^[\w-]+$/.test(playlistId)) {
+    return c.json({ error: 'Chybí nebo neplatné playlistId' }, 400);
+  }
+  const cached = YT_PLAYLIST_CACHE.get(playlistId);
+  if (cached && Date.now() - cached.at < YT_PLAYLIST_TTL_MS) {
+    return c.json(cached.data);
+  }
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(playlistId)}`,
+      { headers: { 'User-Agent': 'VividbooksSite/1.0' } },
+    );
+    if (!res.ok) {
+      return c.json({ error: `YouTube RSS HTTP ${res.status}` }, 502);
+    }
+    const xml = await res.text();
+    const parsed = parseYoutubePlaylistRss(xml);
+    const data = { playlistId, ...parsed };
+    YT_PLAYLIST_CACHE.set(playlistId, { at: Date.now(), data });
+    return c.json(data);
+  } catch (e: any) {
+    console.log(`[public/youtube-playlist] ${e.message}`);
+    return c.json({ error: e.message || 'Nepodařilo se načíst playlist' }, 502);
   }
 });
 
@@ -10566,7 +10632,7 @@ function buildNewsletterSubscribeConfirmationHtml(): string {
 </td></tr>
 <tr><td style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
 <p style="margin:0 0 1em;">Dobrý den,</p>
-<p style="margin:0 0 1em;">děkujeme za váš zájem o náš newsletter. Moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — těší nás, že vám můžeme přinášet inspiraci do výuky.</p>
+<p style="margin:0 0 1em;">Děkujeme za váš zájem o náš newsletter. Moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — těší nás, že vám můžeme přinášet inspiraci do výuky.</p>
 <p style="margin:0 0 1em;">Brzy vám budeme posílat vybrané novinky: metodické tipy, novinky o titulech a pozvánky. Žádný spam — jen to, co dává smysl ve škole.</p>
 <p style="margin:0 0 1.25em;">Když budete chtít napsat zpětnou vazbu, stačí odpovědět na tento e-mail.</p>
 <p style="margin:0 0 0.25em;color:#001161;font-weight:bold;font-size:15px;">Co můžete čekat</p>
@@ -10580,7 +10646,7 @@ function buildNewsletterSubscribeConfirmationHtml(): string {
 <a href="${site}" style="display:inline-block;padding:14px 28px;background:#E8942A;color:#ffffff !important;text-decoration:none;font-weight:bold;font-size:15px;border-radius:10px;">Přejít na Vividbooks</a>
 </td></tr>
 <tr><td style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
-<p style="margin:0 0 1em;">Tento e-mail vám posíláme, protože jste na <a href="${site}" style="color:#001161;">webu</a> vyjádřili zájem o odběr. Zpracování e-mailu probíhá v souladu s <a href="${privacyUrl}" style="color:#001161;">zásadami ochrany osobních údajů</a>. Odběr můžete kdykoli zrušit — napište nám na <a href="${unsubHref}" style="color:#001161;">hello@vividbooks.com</a> nebo odpovězte na tuto zprávu.</p>
+<p style="margin:0 0 1em;">Tento e-mail vám posíláme, protože jste na <a href="${site}" style="color:#001161;">webu</a> vyjádřili zájem o odběr. Zpracování e-mailu probíhá v souladu se <a href="${privacyUrl}" style="color:#001161;">zásadami ochrany osobních údajů</a>. Odběr můžete kdykoli zrušit — napište nám na <a href="${unsubHref}" style="color:#001161;">hello@vividbooks.com</a> nebo odpovězte na tuto zprávu.</p>
 <p style="margin:0;">© ${year} Vividbooks · <a href="mailto:hello@vividbooks.com" style="color:#6b7280;">hello@vividbooks.com</a></p>
 </td></tr>
 </table>
@@ -15350,7 +15416,33 @@ function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Rec
   return getEshopOrderIdPayload(orderNumber);
 }
 
-/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro převod open). */
+/**
+ * Sjednocený typ režimu pro e‑shop deal v Pipedrive.
+ *
+ *   - `b2c_card_won`        — B2C (bez IČO i bez školy), kartová platba úspěšně dokončena. Deal = won, paid status set.
+ *   - `b2b_card_won`        — B2B (s IČO nebo školou), kartová platba úspěšně dokončena. Deal = won, paid status set.
+ *   - `b2b_card_open`       — **NOVÝ**: B2B (s IČO/školou) zvolil platbu kartou, ale platbu ještě nedokončil. Pushneme open deal jako lead, ať obchod
+ *                             vidí poptávku stejně jako u převodu. Pokud platba později projde, sync (`b2b_card_won`) deal upgradne na won.
+ *   - `b2b_transfer_open`   — B2B platba převodem; deal vždy vzniká jako open (zaplacení obchod řeší ručně / přes pipedrive-inbound-deal webhook).
+ */
+type EshopPipedriveMode =
+  | 'b2c_card_won'
+  | 'b2b_card_won'
+  | 'b2b_card_open'
+  | 'b2b_transfer_open';
+
+const ESHOP_PIPEDRIVE_MODES: readonly EshopPipedriveMode[] = [
+  'b2c_card_won',
+  'b2b_card_won',
+  'b2b_card_open',
+  'b2b_transfer_open',
+] as const;
+
+function isEshopPipedriveWonMode(mode: EshopPipedriveMode): boolean {
+  return mode === 'b2c_card_won' || mode === 'b2b_card_won';
+}
+
+/** Stav úhrady na dealu pro `b2c_card_won` / `b2b_card_won` (ne pro open režimy). */
 function getEshopCardPaidStatusPayload(): Record<string, unknown> {
   const key =
     (Deno.env.get('PIPEDRIVE_ESHOP_PAID_STATUS_FIELD_KEY') || '').trim()
@@ -15437,7 +15529,7 @@ function parseCommaSeparatedPipedriveIds(raw: string | undefined): number[] {
  */
 async function resolveEshopDealLabelIds(
   apiToken: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<number[]> {
   const fromEnvB2c = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2C'));
   const fromEnvB2b = parseCommaSeparatedPipedriveIds(Deno.env.get('PIPEDRIVE_ESHOP_LABEL_IDS_B2B'));
@@ -15661,6 +15753,111 @@ function getEshopShippingProductCode(shippingMethod: string | null | undefined):
 /** Přidá řádek s dopravou na Pipedrive deal — produkt z katalogu identifikovaný kódem
  *  (PPL/DPD/GLS/ZZ). Když produkt v Pipedrivu pod tímto kódem neexistuje, jen zaloguje
  *  warning a pokračuje (deal nepadne). Cena je `orders.shipping_price` v halířích → koruny. */
+/**
+ * Pipedrive `product_id` pro řádek dopravy.
+ * Pořadí priority:
+ *   1) Env override **přímo na ID**: `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>` (např. `_PPL=12345`).
+ *      Záchranná brzda, když produkt v Pipedrive katalogu nemá vyplněné pole `code` ani konzistentní název.
+ *   2) Lookup podle **názvu** (`getEshopShippingProductNames` + `resolvePipedriveProductIdByName`),
+ *      kde se zkouší env override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_<METHOD>` (může být víc názvů
+ *      oddělených `|`), pak rozumné defaults (`Doprava PPL` / `PPL` apod.).
+ *   3) Lookup podle **kódu** (`getEshopShippingProductCode` + `resolvePipedriveProductIdByCode`) — původní cesta.
+ */
+function getEshopShippingProductIdOverride(shippingMethod: string | null | undefined): number | null {
+  const m = String(shippingMethod || '').trim().toUpperCase();
+  if (!m) return null;
+  const raw = (Deno.env.get(`PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${m}`) || '').trim();
+  return raw ? parsePipedriveNumericId(raw) : null;
+}
+
+/**
+ * Kandidáti pro hledání Pipedrive produktu dopravy podle jména. Env override
+ * `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_<METHOD>` může obsahovat i víc názvů oddělených `|`
+ * (např. `"PPL Doprava|PPL"`) — zkouší se v pořadí. Bez env se použijí default kandidáti
+ * podle reálného pojmenování v Pipedrive katalogu Vividbooks.
+ */
+function getEshopShippingProductNames(shippingMethod: string | null | undefined): string[] {
+  const m = String(shippingMethod || '').trim().toLowerCase();
+  if (!m) return [];
+  const envKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_${m.toUpperCase()}`;
+  const fromEnv = (Deno.env.get(envKey) || '').trim();
+  if (fromEnv) {
+    return fromEnv
+      .split('|')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  switch (m) {
+    case 'ppl': return ['Doprava PPL', 'PPL'];
+    case 'dpd': return ['Doprava DPD', 'DPD'];
+    case 'gls': return ['Doprava GLS', 'GLS'];
+    case 'zasilkovna': return ['Doprava Zásilkovna', 'Zásilkovna', 'Zasilkovna', 'ZZ'];
+    default: return [];
+  }
+}
+
+/**
+ * Vyhledá numerické product_id v Pipedrive podle (přesné) shody **jména** (API v2 products/search,
+ * `fields=name`). Postupně zkouší všechny kandidáty z `names` — vrátí první přesný hit.
+ * Výsledky cachujeme v rámci jedné synchronizace dealu (klíč = normalizované jméno).
+ */
+async function resolvePipedriveProductIdByName(
+  apiToken: string,
+  names: string[],
+  cache: Map<string, number | null>,
+): Promise<number | null> {
+  for (const raw of names) {
+    const term = String(raw ?? '').trim();
+    if (!term) continue;
+    const wanted = normalizePipedriveSearchText(term).toLowerCase();
+    const cacheKey = `name:${wanted}`;
+    if (cache.has(cacheKey)) {
+      const cached = cache.get(cacheKey);
+      if (cached) return cached;
+      continue;
+    }
+    try {
+      const json = await pipedriveV2Request<any>(apiToken, '/products/search', {
+        term,
+        fields: 'name',
+        exact_match: true,
+        limit: 50,
+      });
+      const raw2 = json?.data;
+      const rows: any[] = Array.isArray(raw2?.items)
+        ? raw2.items
+        : Array.isArray(raw2)
+          ? raw2
+          : [];
+
+      const exactHits: number[] = [];
+      for (const row of rows) {
+        const item = row?.item && typeof row.item === 'object' ? row.item : row;
+        const itemName = item?.name != null ? String(item.name) : '';
+        const id = parsePipedriveNumericId(item?.id);
+        if (id && itemName && normalizePipedriveSearchText(itemName).toLowerCase() === wanted) {
+          exactHits.push(id);
+        }
+      }
+      if (exactHits.length === 1) {
+        cache.set(cacheKey, exactHits[0]);
+        return exactHits[0];
+      }
+      if (exactHits.length > 1) {
+        console.log(
+          `[Pipedrive eshop] product name ambiguous: name="${term}" ids=${exactHits.slice(0, 5).join(',')}${exactHits.length > 5 ? '…' : ''}`,
+        );
+        cache.set(cacheKey, null);
+        continue;
+      }
+    } catch (e: any) {
+      console.log(`[Pipedrive eshop] product name lookup failed name="${term}": ${e.message}`);
+    }
+    cache.set(cacheKey, null);
+  }
+  return null;
+}
+
 async function addPipedriveDealShippingLineItem(
   apiToken: string,
   dealId: number,
@@ -15671,14 +15868,30 @@ async function addPipedriveDealShippingLineItem(
   codeToPdId: Map<string, number | null>,
 ): Promise<void> {
   const code = getEshopShippingProductCode(shippingMethod);
-  if (!code) {
+  const overrideId = getEshopShippingProductIdOverride(shippingMethod);
+  const names = getEshopShippingProductNames(shippingMethod);
+  if (!code && !overrideId && names.length === 0) {
     console.log(`[Pipedrive eshop] skip shipping line: unknown method "${shippingMethod || ''}"`);
     return;
   }
   const priceCzk = Math.max(0, Math.round((Number(shippingPriceHaler) || 0) / 100));
-  const pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+  /** Pořadí: ID override → název (env nebo default) → kód. Sdílíme cache `codeToPdId`
+   *  pro úsporu HTTP volání (klíče pro name jsou prefixované `name:`). */
+  let pipedriveProductId: number | null = overrideId;
+  let resolvedBy: 'override' | 'name' | 'code' | null = overrideId ? 'override' : null;
+  if (!pipedriveProductId && names.length) {
+    pipedriveProductId = await resolvePipedriveProductIdByName(apiToken, names, codeToPdId);
+    if (pipedriveProductId) resolvedBy = 'name';
+  }
+  if (!pipedriveProductId && code) {
+    pipedriveProductId = await resolvePipedriveProductIdByCode(apiToken, code, codeToPdId);
+    if (pipedriveProductId) resolvedBy = 'code';
+  }
   if (!pipedriveProductId) {
-    console.log(`[Pipedrive eshop] skip shipping line: Pipedrive product code="${code}" not found`);
+    const methodUpper = String(shippingMethod || '').toUpperCase();
+    console.log(
+      `[Pipedrive eshop] skip shipping line: Pipedrive product code="${code || ''}" not found, tried names=[${names.map((n) => `"${n}"`).join(',')}] (override options: PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${methodUpper}=<id>, PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_${methodUpper}=<name>)`,
+    );
     return;
   }
   /** Poznámku „Z‑Point: Praha…" připíšeme do `comments`, aby obchodník v dealu hned viděl
@@ -15696,7 +15909,7 @@ async function addPipedriveDealShippingLineItem(
       }),
     });
     console.log(
-      `[Pipedrive eshop] shipping line added: code=${code} pd_product_id=${pipedriveProductId} price=${priceCzk}${comments ? ` pickup="${comments.slice(0, 60)}"` : ''}`,
+      `[Pipedrive eshop] shipping line added: code=${code || ''} resolved_by=${resolvedBy || '?'} pd_product_id=${pipedriveProductId} price=${priceCzk}${comments ? ` pickup="${comments.slice(0, 60)}"` : ''}`,
     );
   } catch (error: any) {
     console.log(`[Pipedrive eshop] shipping line ${pipedriveProductId} (${code}): ${error.message}`);
@@ -15786,7 +15999,7 @@ async function persistPipedriveEshopOrderState(
 /** PUT /deals/:id — znovu propsat štítky + PRINT u už existujícího dealu (admin „obnovit“). */
 async function refreshEshopPipedriveDealFromDb(
   orderId: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
   const sb = getServiceSupabaseClient();
@@ -15840,7 +16053,7 @@ async function refreshEshopPipedriveDealFromDb(
   Object.assign(patchBody, printPayload);
   Object.assign(patchBody, getEshopProductCategoryPayload());
   Object.assign(patchBody, getEshopOrderNumberPayload(String((row as any).order_number || '')));
-  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+  if (isEshopPipedriveWonMode(mode)) {
     Object.assign(patchBody, getEshopCardPaidStatusPayload());
   }
 
@@ -15870,9 +16083,80 @@ async function refreshEshopPipedriveDealFromDb(
   return { skipped: false, dealId: String(dealIdNum), refreshed: true };
 }
 
+/**
+ * Upgrade už existujícího open dealu (`b2b_card_open` z create-payment-intent)
+ * na won po úspěšné kartové platbě. Volá se z `syncEshopOrderToPipedriveFromDb`,
+ * když mode = `_card_won` a `orders.pipedrive_deal_id` už existuje.
+ *
+ * Provádí jediný PUT /deals/:id: status='won' (přes /dealFields) + paid status custom field
+ * + bezpečně reaplikuje labely / PRINT / product category / order ID (aby případné dřív neúspěšné
+ * doplnění proběhlo). Line items se nepřidávají (otevřený deal už je má z initial sync).
+ */
+async function upgradeEshopPipedriveOpenDealToWon(
+  apiToken: string,
+  dealIdNum: number,
+  orderId: string,
+  orderNumber: string,
+  mode: 'b2c_card_won' | 'b2b_card_won',
+  sb: NonNullable<ReturnType<typeof getServiceSupabaseClient>>,
+): Promise<Record<string, unknown>> {
+  const fail = async (reason: string, detail?: string) => {
+    const msg = detail ? `${reason}: ${detail}` : reason;
+    await persistPipedriveEshopOrderState(sb, orderId, {
+      pipedrive_sync_status: 'failed',
+      pipedrive_sync_error: msg.slice(0, 2000),
+      pipedrive_synced_at: null,
+    });
+    return { skipped: true, reason, detail, dealId: String(dealIdNum), upgraded: false };
+  };
+
+  const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
+  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  const statusPayload = await resolveDealStatusPayloadFromFields(apiToken, 'won');
+
+  const patchBody: Record<string, unknown> = {};
+  Object.assign(patchBody, statusPayload);
+  Object.assign(patchBody, getEshopCardPaidStatusPayload());
+  if (labelIds.length) {
+    const v = await resolvePipedriveDealLabelPayloadValue(apiToken, labelFieldKey, labelIds);
+    if (v !== undefined) patchBody[labelFieldKey] = v;
+  }
+  Object.assign(patchBody, printPayload);
+  Object.assign(patchBody, getEshopProductCategoryPayload());
+  Object.assign(patchBody, getEshopOrderNumberPayload(orderNumber));
+
+  try {
+    await pipedriveRequest(apiToken, `/deals/${dealIdNum}`, {
+      method: 'PUT',
+      body: JSON.stringify(patchBody),
+    });
+  } catch (e: any) {
+    return await fail('pipedrive_upgrade_put_failed', e.message);
+  }
+
+  console.log(
+    `[Pipedrive eshop] upgrade open→won deal ${dealIdNum} OK (${Object.keys(patchBody).join(',')})`,
+  );
+
+  const nowIso = new Date().toISOString();
+  await persistPipedriveEshopOrderState(sb, orderId, {
+    pipedrive_sync_status: 'done',
+    pipedrive_sync_error: null,
+    pipedrive_synced_at: nowIso,
+  });
+
+  return {
+    skipped: false,
+    dealId: String(dealIdNum),
+    upgraded: true,
+    mode,
+  };
+}
+
 async function syncEshopOrderToPipedriveFromDb(
   orderId: string,
-  mode: 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open',
+  mode: EshopPipedriveMode,
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
   const sb = getServiceSupabaseClient();
@@ -15906,6 +16190,27 @@ async function syncEshopOrderToPipedriveFromDb(
 
   const existingDeal = String((order as any).pipedrive_deal_id || '').trim();
   if (existingDeal) {
+    /**
+     * `b2b_card_open` zakládá deal už při create-payment-intent (ještě před úhradou).
+     * Když pak Stripe webhook po úspěšné platbě zavolá sync s `b2b_card_won` (resp. `b2c_card_won`),
+     * deal už existuje — místo no‑op skipu provedeme upgrade open→won (status + paid status field).
+     * Pro převody (`b2b_transfer_open`) upgrade neděláme: zaplacení se eviduje přes admin / pipedrive-inbound-deal.
+     */
+    if (isEshopPipedriveWonMode(mode)) {
+      const dealIdNum = parsePipedriveNumericId(existingDeal);
+      if (!dealIdNum) {
+        return { skipped: true, reason: 'invalid_deal_id', dealId: existingDeal };
+      }
+      const orderNumber = String((order as any).order_number || '').trim();
+      return await upgradeEshopPipedriveOpenDealToWon(
+        apiToken,
+        dealIdNum,
+        orderId,
+        orderNumber,
+        mode as 'b2c_card_won' | 'b2b_card_won',
+        sb,
+      );
+    }
     return { skipped: true, reason: 'already_synced', dealId: existingDeal };
   }
 
@@ -15970,8 +16275,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const personId = parsePipedriveNumericId(person?.id);
   if (!personId) return await fail('missing_person');
 
-  const status: 'open' | 'won' =
-    mode === 'b2c_card_won' || mode === 'b2b_card_won' ? 'won' : 'open';
+  const status: 'open' | 'won' = isEshopPipedriveWonMode(mode) ? 'won' : 'open';
 
   const orderNumber = String((order as any).order_number || '');
   const schoolNameOnly = String((order as any).school_name || '').trim();
@@ -15994,7 +16298,7 @@ async function syncEshopOrderToPipedriveFromDb(
     ...productCategoryPayload,
     ...orderNumberPayload,
   };
-  if (mode === 'b2c_card_won' || mode === 'b2b_card_won') {
+  if (isEshopPipedriveWonMode(mode)) {
     Object.assign(extraPayload, getEshopCardPaidStatusPayload());
     console.log('[Pipedrive eshop] custom paid status (won card order) nastaveno na Zaplaceno');
   }
@@ -16479,13 +16783,10 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
     const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };
     const orderId = String(body.orderId || '').trim();
     const mode = String(body.mode || '').trim();
-    if (
-      !orderId
-      || !['b2c_card_won', 'b2b_card_won', 'b2b_transfer_open'].includes(mode)
-    ) {
+    if (!orderId || !ESHOP_PIPEDRIVE_MODES.includes(mode as EshopPipedriveMode)) {
       return c.json({ error: 'Invalid orderId or mode.' }, 400);
     }
-    const m = mode as 'b2c_card_won' | 'b2b_card_won' | 'b2b_transfer_open';
+    const m = mode as EshopPipedriveMode;
     const result = body.refreshOnly === true
       ? await refreshEshopPipedriveDealFromDb(orderId, m)
       : await syncEshopOrderToPipedriveFromDb(orderId, m);
@@ -16493,6 +16794,188 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
   } catch (err: any) {
     console.log(`[eshop/pipedrive-sync] ${err.message}`);
     return c.json({ error: err.message || 'sync failed' }, 500);
+  }
+});
+
+/**
+ * Diagnostika dopravních produktů v Pipedrive (jen service role).
+ *
+ *   GET …/admin/pipedrive-eshop-shipping-products
+ *
+ * Pro každou metodu (ppl/dpd/gls/zasilkovna) vrátí:
+ *   - resolvedCode    — kód, který sync hledá (z `getEshopShippingProductCode`, případně env override)
+ *   - productIdOverride — případné `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>` z env
+ *   - searchResults   — výsledky `GET /api/v2/products/search?term=<code>&fields=code&exact_match=true`
+ *                       (vrací co Pipedrive na exact_match doopravdy najde)
+ *   - status          — `ok` (1 přesný hit), `missing` (0 hitů), `ambiguous` (víc hitů), `override` (přímý ID)
+ *
+ * Pokud `searchResults` je prázdné → produkt s tímto `code` v Pipedrive neexistuje a doprava se
+ * v dealu nepřidává (sync jen zaloguje warning a pokračuje). Řešení: doplnit pole `code` u Pipedrive
+ * produktu na hodnotu PPL/DPD/GLS/ZZ, nebo nastavit env override `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>=<id>`.
+ */
+app.get('/make-server-93a20b6f/admin/pipedrive-eshop-shipping-products', async (c) => {
+  try {
+    const expected = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    const auth = c.req.header('Authorization') || '';
+    const token = auth.replace(/^Bearer\s+/i, '').trim();
+    if (!expected || token !== expected) {
+      return c.json({ error: 'Unauthorized.' }, 401);
+    }
+    const apiToken = getPipedriveApiToken();
+    if (!apiToken) {
+      return c.json({ error: 'PIPEDRIVE_API_TOKEN not set in Edge secrets.' }, 500);
+    }
+
+    const methods: Array<'ppl' | 'dpd' | 'gls' | 'zasilkovna'> = ['ppl', 'dpd', 'gls', 'zasilkovna'];
+    const out: Record<string, unknown>[] = [];
+
+    type SearchHit = { id: number | null; code: string | null; name: string | null };
+    type FieldResult = {
+      attempted: boolean;
+      term: string | null;
+      results: SearchHit[];
+      exactHitCount: number;
+      resolvedId: number | null;
+      error: string | null;
+    };
+    const newFieldResult = (): FieldResult => ({
+      attempted: false,
+      term: null,
+      results: [],
+      exactHitCount: 0,
+      resolvedId: null,
+      error: null,
+    });
+
+    async function searchByField(
+      term: string,
+      field: 'code' | 'name',
+    ): Promise<{ results: SearchHit[]; exactHits: number[]; error: string | null }> {
+      try {
+        const json = await pipedriveV2Request<any>(apiToken, '/products/search', {
+          term,
+          fields: field,
+          exact_match: true,
+          limit: 50,
+        });
+        const raw = json?.data;
+        const rows: any[] = Array.isArray(raw?.items)
+          ? raw.items
+          : Array.isArray(raw)
+            ? raw
+            : [];
+        const results: SearchHit[] = rows.map((row) => {
+          const item = row?.item && typeof row.item === 'object' ? row.item : row;
+          return {
+            id: parsePipedriveNumericId(item?.id),
+            code: item?.code != null ? String(item.code) : null,
+            name: item?.name != null ? String(item.name) : null,
+          };
+        });
+        const wanted = (field === 'code' ? term.trim().toLowerCase() : normalizePipedriveSearchText(term).toLowerCase());
+        const exactHits: number[] = [];
+        for (const r of results) {
+          const value = field === 'code' ? r.code : r.name;
+          const valueNorm = field === 'code'
+            ? String(value || '').trim().toLowerCase()
+            : normalizePipedriveSearchText(String(value || '')).toLowerCase();
+          if (r.id && value && valueNorm === wanted) exactHits.push(r.id);
+        }
+        return { results, exactHits, error: null };
+      } catch (e: any) {
+        return { results: [], exactHits: [], error: e?.message || String(e) };
+      }
+    }
+
+    for (const m of methods) {
+      const codeEnvKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_CODE_${m.toUpperCase()}`;
+      const nameEnvKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_${m.toUpperCase()}`;
+      const idEnvKey = `PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_${m.toUpperCase()}`;
+      const codeFromEnv = (Deno.env.get(codeEnvKey) || '').trim();
+      const nameFromEnv = (Deno.env.get(nameEnvKey) || '').trim();
+      const resolvedCode = getEshopShippingProductCode(m);
+      const candidateNames = getEshopShippingProductNames(m);
+      const idOverride = getEshopShippingProductIdOverride(m);
+
+      const codeSearch: FieldResult = newFieldResult();
+      const nameSearches: Array<FieldResult & { name: string }> = [];
+
+      let resolvedBy: 'override' | 'name' | 'code' | null = null;
+      let resolvedProductId: number | null = null;
+      let resolvedName: string | null = null;
+
+      if (idOverride) {
+        resolvedBy = 'override';
+        resolvedProductId = idOverride;
+      } else {
+        for (const candidate of candidateNames) {
+          const r = newFieldResult();
+          r.attempted = true;
+          r.term = candidate;
+          const { results, exactHits, error } = await searchByField(candidate, 'name');
+          r.results = results;
+          r.exactHitCount = exactHits.length;
+          r.error = error;
+          if (exactHits.length === 1) {
+            r.resolvedId = exactHits[0];
+            if (!resolvedProductId) {
+              resolvedProductId = exactHits[0];
+              resolvedBy = 'name';
+              resolvedName = candidate;
+            }
+          }
+          nameSearches.push({ ...r, name: candidate });
+          if (resolvedProductId) break;
+        }
+        if (!resolvedProductId && resolvedCode) {
+          codeSearch.attempted = true;
+          codeSearch.term = resolvedCode;
+          const { results, exactHits, error } = await searchByField(resolvedCode, 'code');
+          codeSearch.results = results;
+          codeSearch.exactHitCount = exactHits.length;
+          codeSearch.error = error;
+          if (exactHits.length === 1) {
+            codeSearch.resolvedId = exactHits[0];
+            resolvedProductId = exactHits[0];
+            resolvedBy = 'code';
+          }
+        }
+      }
+
+      let status: 'ok' | 'missing' | 'ambiguous' | 'override' = 'missing';
+      if (resolvedBy === 'override') status = 'override';
+      else if (resolvedProductId) status = 'ok';
+      else if (
+        nameSearches.some((s) => s.exactHitCount > 1) ||
+        codeSearch.exactHitCount > 1
+      ) status = 'ambiguous';
+
+      out.push({
+        method: m,
+        codeEnvKey,
+        codeFromEnv: codeFromEnv || null,
+        nameEnvKey,
+        nameFromEnv: nameFromEnv || null,
+        idEnvKey,
+        productIdOverride: idOverride,
+        resolvedCode,
+        candidateNames,
+        status,
+        resolvedBy,
+        resolvedProductId,
+        resolvedName,
+        nameSearches,
+        codeSearch,
+      });
+    }
+
+    return c.json({
+      help: 'Pořadí lookupu: ID override → name (env nebo defaults) → code. status: ok=1 přesný hit, missing=0 hitů (sync přeskočí dopravu), ambiguous=víc hitů (přeskočí), override=přímé ID. Fix: nastav PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_NAME_<METHOD>=<přesný název produktu v Pipedrive> (víc názvů odděl `|`), případně PIPEDRIVE_ESHOP_SHIPPING_PRODUCT_ID_<METHOD>=<id>.',
+      results: out,
+    });
+  } catch (err: any) {
+    console.log(`[pipedrive-eshop-shipping-products] ${err.message}`);
+    return c.json({ error: err.message || 'shipping products lookup failed' }, 502);
   }
 });
 
