@@ -914,6 +914,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             participantSchoolIco={form.ico.replace(/\D/g, '')}
             onAnswersChange={onPostSurveyAnswersChange}
             scope="post"
+            certificateKindOverride="dvpp"
             variant="fullscreen"
           />
         </div>
@@ -940,7 +941,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         })}
       />
 
-      {/* Breadcrumb — na mobilu v toku stránky, na desktopu pod horní lištou */}
+      {/* Back link — na mobilu v toku stránky, na desktopu pod horní lištou */}
       <div className="relative z-30 border-b border-[#001161]/6 bg-white md:sticky md:top-14 md:bg-white/90 md:backdrop-blur-md">
         <div className="max-w-[900px] mx-auto px-6 h-14 flex items-center gap-2">
           <button
@@ -948,12 +949,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             className="flex items-center gap-1.5 text-[#001161]/60 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] transition-colors cursor-pointer group"
           >
             <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            {'Webin\u00e1\u0159e'}
+            {'Zobrazit v\u0161echny webin\u00e1\u0159e'}
           </button>
-          <span className="text-[#001161]/20 text-[13px]">/</span>
-          <span className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold truncate max-w-[300px]">
-            {webinar.title}
-          </span>
         </div>
       </div>
 
