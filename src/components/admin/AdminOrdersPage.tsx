@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Truck, AlertTriangle } from 'lucide-react';
+import { Search, Trash2, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { fetchAdminOrders, type AdminOrderListItem } from '../../utils/adminApi';
+import { toast } from 'sonner@2.0.3';
+import { fetchAdminOrders, runAdminOrderAction, type AdminOrderListItem } from '../../utils/adminApi';
+import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 const FILTERS = [
   { id: 'all', label: 'Všechny' },
@@ -79,6 +81,11 @@ export function AdminOrdersPage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const pageSize = 20;
+  /** Otevřený dialog pro mazání — `null` = zavřeno. Klik na ikonu řádku otevře dialog pro tu objednávku. */
+  const [deleteTarget, setDeleteTarget] = useState<AdminOrderListItem | null>(null);
+  const [deleteRequiresForce, setDeleteRequiresForce] = useState(false);
+  /** Bumpne se po úspěšném smazání — useEffect refetchne seznam s aktuálními filtry. */
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -112,7 +119,7 @@ export function AdminOrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, search, page, sourceFilter]);
+  }, [filter, search, page, sourceFilter, refreshTick]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
@@ -198,26 +205,27 @@ export function AdminOrdersPage() {
                 <th className="px-3 py-2.5">{'Base.com'}</th>
                 <th className="px-3 py-2.5">{'Platba'}</th>
                 <th className="px-3 py-2.5">{'Doprava'}</th>
+                <th className="px-3 py-2.5 text-right">{'Akce'}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 8 }).map((_, index) => (
                   <tr key={index} className="border-b border-gray-100">
-                    <td className="px-3 py-3" colSpan={9}>
+                    <td className="px-3 py-3" colSpan={10}>
                       <div className="h-8 rounded-xl bg-gray-50 animate-pulse" />
                     </td>
                   </tr>
                 ))
               ) : error ? (
                 <tr>
-                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={9}>
+                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={10}>
                     {error}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={9}>
+                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={10}>
                     {'Žádné objednávky neodpovídají filtru.'}
                   </td>
                 </tr>
@@ -278,6 +286,21 @@ export function AdminOrdersPage() {
                         <div className="text-[11px] text-gray-400 mt-0.5">{order.tracking_number}</div>
                       )}
                     </td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDeleteRequiresForce(false);
+                          setDeleteTarget(order);
+                        }}
+                        title="Smazat objednávku z databáze"
+                        aria-label={`Smazat objednávku ${order.order_number}`}
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
                   </tr>
                   );
                 })
@@ -286,6 +309,35 @@ export function AdminOrdersPage() {
           </table>
         </div>
       </div>
+
+      {deleteTarget && (
+        <DeleteOrderDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          orderNumber={deleteTarget.order_number}
+          status={deleteTarget.status}
+          paymentStatus={deleteTarget.payment_status}
+          initialRequiresForce={deleteRequiresForce}
+          onConfirm={async ({ force }) => {
+            try {
+              await runAdminOrderAction({
+                action: 'delete_order',
+                orderId: deleteTarget.id,
+                confirmOrderNumber: deleteTarget.order_number,
+                force,
+              });
+              toast.success(`Objednávka ${deleteTarget.order_number} byla smazána.`);
+              setRefreshTick((n) => n + 1);
+            } catch (err) {
+              const e = err as Error & { requiresForce?: boolean };
+              if (e?.requiresForce) setDeleteRequiresForce(true);
+              throw err;
+            }
+          }}
+        />
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
         <div className="text-[13px] text-gray-500">
