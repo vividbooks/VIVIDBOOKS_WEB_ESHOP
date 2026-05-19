@@ -167,7 +167,7 @@ export function SubjectTabsSection({
   const [tabs, setTabs] = useState<any[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const tabStripRef = useRef<HTMLDivElement>(null);
+  const swipeStartX = useRef<number | null>(null);
   const windowWidth = useWindowWidth();
   const mobile = windowWidth < 768;
 
@@ -205,11 +205,22 @@ export function SubjectTabsSection({
     setActiveTabId(tab.id);
   };
 
-  useEffect(() => {
-    if (!mobile || !activeTabId || !tabStripRef.current) return;
-    const activeButton = tabStripRef.current.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`);
-    activeButton?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-  }, [activeTabId, mobile, tabs.length]);
+  const goToPreviousTab = () => selectTabByIndex(Math.max(0, activeTabIndex - 1));
+  const goToNextTab = () => selectTabByIndex(Math.min(tabs.length - 1, activeTabIndex + 1));
+
+  const handleSwipeStart = (clientX: number) => {
+    swipeStartX.current = clientX;
+  };
+
+  const handleSwipeEnd = (clientX: number) => {
+    const start = swipeStartX.current;
+    swipeStartX.current = null;
+    if (start == null) return;
+    const delta = clientX - start;
+    if (Math.abs(delta) < 48) return;
+    if (delta < 0) goToNextTab();
+    else goToPreviousTab();
+  };
 
   if (loading) {
     return (
@@ -258,64 +269,56 @@ export function SubjectTabsSection({
           </h2>
         ) : null}
 
-        <div className="flex items-center gap-1.5">
+        <div className="mb-4 flex items-center justify-between gap-4">
           <button
             type="button"
-            onClick={() => selectTabByIndex(Math.max(0, activeTabIndex - 1))}
+            onClick={goToPreviousTab}
             disabled={activeTabIndex <= 0}
-            aria-label="Předchozí záložka"
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition disabled:cursor-not-allowed disabled:opacity-30 ${
-              light ? 'bg-white text-[#001161] ring-1 ring-[#001161]/12' : 'bg-white/10 text-white ring-1 ring-white/15'
+            aria-label="Předchozí slide"
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-25 ${
+              light
+                ? 'bg-white text-[#001161] shadow-[0_4px_16px_rgba(0,17,97,0.12)] ring-2 ring-[#001161]/10'
+                : 'bg-[#F9E000] text-[#001161] shadow-[0_4px_18px_rgba(0,0,0,0.22)]'
             }`}
           >
-            <ChevronLeft className="h-4 w-4" aria-hidden />
+            <ChevronLeft className="h-6 w-6" strokeWidth={2.5} aria-hidden />
           </button>
 
-          <div
-            ref={tabStripRef}
-            className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-2"
-            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          <p
+            className="text-[12px] font-bold uppercase tracking-[0.12em]"
+            style={{
+              fontFamily: "'Fenomen Sans', sans-serif",
+              color: light ? 'rgba(0,17,97,0.38)' : 'rgba(255,255,255,0.45)',
+            }}
           >
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                data-tab-id={tab.id}
-                onClick={() => setActiveTabId(tab.id)}
-                className="shrink-0 px-4 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap transition-all cursor-pointer"
-                style={{
-                  fontFamily: "'Fenomen Sans', sans-serif",
-                  fontWeight: activeTabId === tab.id ? 700 : 400,
-                  background: activeTabId === tab.id ? (light ? '#001161' : '#F9E000') : (light ? 'rgba(0,17,97,0.07)' : 'rgba(255,255,255,0.1)'),
-                  color: activeTabId === tab.id ? (light ? '#fff' : '#001161') : (light ? 'rgba(0,17,97,0.55)' : 'rgba(255,255,255,0.75)'),
-                  border: activeTabId === tab.id ? 'none' : `1px solid ${light ? 'rgba(0,17,97,0.12)' : 'rgba(255,255,255,0.15)'}`,
-                }}
-              >
-                {tab.tabText}
-              </button>
-            ))}
-          </div>
+            {activeTabIndex + 1} / {tabs.length}
+          </p>
 
           <button
             type="button"
-            onClick={() => selectTabByIndex(Math.min(tabs.length - 1, activeTabIndex + 1))}
+            onClick={goToNextTab}
             disabled={activeTabIndex < 0 || activeTabIndex >= tabs.length - 1}
-            aria-label="Další záložka"
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition disabled:cursor-not-allowed disabled:opacity-30 ${
-              light ? 'bg-white text-[#001161] ring-1 ring-[#001161]/12' : 'bg-white/10 text-white ring-1 ring-white/15'
+            aria-label="Další slide"
+            className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-25 ${
+              light
+                ? 'bg-white text-[#001161] shadow-[0_4px_16px_rgba(0,17,97,0.12)] ring-2 ring-[#001161]/10'
+                : 'bg-[#F9E000] text-[#001161] shadow-[0_4px_18px_rgba(0,0,0,0.22)]'
             }`}
           >
-            <ChevronRight className="h-4 w-4" aria-hidden />
+            <ChevronRight className="h-6 w-6" strokeWidth={2.5} aria-hidden />
           </button>
         </div>
 
         {activeTab && (
           <motion.div
             key={activeTab.id}
-            className="mt-4 rounded-[24px] overflow-hidden"
+            className="rounded-[24px] overflow-hidden touch-pan-y"
             style={{ background: cardBg }}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
+            onTouchStart={(event) => handleSwipeStart(event.touches[0]?.clientX ?? 0)}
+            onTouchEnd={(event) => handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0)}
           >
             {activeTab.contentImage && (
               <div className="w-full" style={{ maxHeight: '240px', overflow: 'hidden' }}>
