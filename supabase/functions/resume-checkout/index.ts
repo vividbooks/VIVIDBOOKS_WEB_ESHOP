@@ -101,7 +101,13 @@ Deno.serve(async (req) => {
       return jsonResponse(req, { error: 'Neplatný odkaz nebo objednávka neexistuje.' }, 404);
     }
 
-    if (order.status !== 'pending_payment' || order.payment_status !== 'pending') {
+    /** Resume link platí pro aktivní pokus o platbu — `incomplete` (karta nezahájená) i `pending_payment`
+     *  (převod / karta po failed pokusu). Oba stavy znamenají, že platba ještě nedoběhla, a zákazník ji
+     *  může dokončit přes Stripe Payment Element načtený s `client_secret` z existující PaymentIntent. */
+    if (
+      !['incomplete', 'pending_payment'].includes(order.status)
+      || order.payment_status !== 'pending'
+    ) {
       if (order.status === 'paid' || order.payment_status === 'paid') {
         const tt = await trackingTokenForOrder(order.id);
         return jsonResponse(req, {

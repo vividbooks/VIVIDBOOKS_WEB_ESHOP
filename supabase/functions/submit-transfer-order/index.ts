@@ -410,6 +410,7 @@ Deno.serve(async (req) => {
                   pickup_point_id = ${shipping.pickupPointId ?? null},
                   pickup_point_name = ${shipping.pickupPointName ?? null},
                   payment_method = 'transfer',
+                  status = 'pending_payment',
                   subtotal = ${subtotal},
                   total = ${total},
                   note = ${noteText},
@@ -421,6 +422,9 @@ Deno.serve(async (req) => {
               await recordDraftUpdatedEvent(tx, {
                 orderId: draftOrderId,
                 actor: 'customer',
+                /** Submit převodem znamená explicit confirmation = pending_payment ("dokončená, čeká na úhradu").
+                 *  Pokud byla původně `incomplete` (uživatel rozjel kartu a pak přepnul), překlopíme. */
+                currentStatus: 'pending_payment',
                 details: {
                   source: 'submit-transfer-order',
                   oldTotal: existingDraft.total,
@@ -428,6 +432,7 @@ Deno.serve(async (req) => {
                   shippingMethod: shipping.method,
                   paymentMethod: 'transfer',
                   ico,
+                  previousStatus: existingDraft.status,
                 },
               });
             });

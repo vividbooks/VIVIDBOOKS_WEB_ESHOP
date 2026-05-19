@@ -552,6 +552,9 @@ Deno.serve(async (req) => {
             await recordDraftUpdatedEvent(tx, {
               orderId: draftOrderId,
               actor: 'customer',
+              currentStatus: existingDraft.status === 'pending_payment'
+                ? 'pending_payment'
+                : 'incomplete',
               details: {
                 source: 'create-payment-intent',
                 oldPaymentIntent: existingDraft.stripe_payment_intent_id,
@@ -560,6 +563,7 @@ Deno.serve(async (req) => {
                 newTotal: total,
                 shippingMethod: shipping.method,
                 paymentMethod: checkoutPaymentMethod,
+                previousStatus: existingDraft.status,
               },
             });
 
@@ -782,7 +786,7 @@ Deno.serve(async (req) => {
               idempotency_key,
               checkout_draft_id
             ) values (
-              'pending_payment',
+              'incomplete',
               ${customer.email.trim()},
               ${customer.name.trim()},
               ${normalizedCustomerPhone},

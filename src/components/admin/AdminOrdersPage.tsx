@@ -7,6 +7,8 @@ import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 const FILTERS = [
   { id: 'all', label: 'Všechny' },
+  { id: 'incomplete', label: 'Nedokončené' },
+  { id: 'pending_payment', label: 'Čekají na platbu' },
   { id: 'new', label: 'Nové' },
   { id: 'shipped', label: 'Odesláno' },
   { id: 'problem', label: 'Problémové' },
@@ -51,7 +53,29 @@ function badgeClass(status: string) {
     return 'bg-amber-100 text-amber-700';
   }
 
+  /** `incomplete` = zákazník checkout opustil — nenařeničné, jen šedý badge (není to chyba). */
+  if (status === 'incomplete') {
+    return 'bg-gray-100 text-gray-600';
+  }
+
   return 'bg-red-100 text-red-700';
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'incomplete': return 'Nedokončená';
+    case 'pending_payment': return 'Čeká na platbu';
+    case 'paid': return 'Zaplaceno';
+    case 'processing': return 'Zpracovává se';
+    case 'exported': return 'Exportováno';
+    case 'shipped': return 'Odesláno';
+    case 'delivered': return 'Doručeno';
+    case 'cancelled': return 'Storno';
+    case 'refunded': return 'Refundováno';
+    case 'failed': return 'Selhalo';
+    case 'draft': return 'Návrh';
+    default: return status;
+  }
 }
 
 function shippingLabel(method: string) {
@@ -74,7 +98,7 @@ export function AdminOrdersPage() {
   const [items, setItems] = useState<AdminOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem'>('all');
+  const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment'>('all');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -264,7 +288,7 @@ export function AdminOrdersPage() {
                     </td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.status)}`}>
-                        {order.status}
+                        {statusLabel(order.status)}
                       </span>
                     </td>
                     <td className="px-3 py-3">

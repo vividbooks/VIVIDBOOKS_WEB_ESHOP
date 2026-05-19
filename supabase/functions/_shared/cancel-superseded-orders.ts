@@ -37,7 +37,11 @@ export async function cancelSupersededPendingOrders(
   const draft = (draftId || '').trim();
   if (!draft || !keepOrderId) return [];
 
-  const rows = await tx<SupersededOrder[]>`
+  /** Rušíme jak `incomplete` (karta nezahájená, ale aktivní draft) tak `pending_payment` (převod
+   *  / karta po payment_attempt_failed). Vrátíme i `previous_status`, aby se v `order_events` zalogoval
+   *  korektní `from_status`. */
+  type SupersededRow = SupersededOrder & { previous_status: string };
+  const rows = await tx<SupersededRow[]>`
     update public.orders
     set
       status = 'cancelled',
@@ -45,9 +49,9 @@ export async function cancelSupersededPendingOrders(
       cancelled_reason = ${reason},
       updated_at = now()
     where checkout_draft_id = ${draft}
-      and status = 'pending_payment'
+      and status in ('incomplete', 'pending_payment')
       and id <> ${keepOrderId}::uuid
-    returning id, stripe_payment_intent_id, order_number
+    returning id, stripe_payment_intent_id, order_number, status as previous_status
   `;
 
   for (const row of rows) {
@@ -62,7 +66,7 @@ export async function cancelSupersededPendingOrders(
       ) values (
         ${row.id}::uuid,
         'auto_cancel',
-        'pending_payment',
+        ${row.previous_status},
         'cancelled',
         ${JSON.stringify({ reason: 'superseded', supersededBy: keepOrderId })}::jsonb,
         'system'
@@ -70,7 +74,7 @@ export async function cancelSupersededPendingOrders(
     `;
   }
 
-  return rows;
+  return rows.map(({ previous_status: _ignored, ...r }) => r);
 }
 
 /**
