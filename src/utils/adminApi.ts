@@ -205,6 +205,8 @@ export interface AdminOrderListItem {
   status: string;
   basecom_status?: string | null;
   payment_status?: string | null;
+  /** card | apple_pay | google_pay | transfer | invoice — UI to mapuje na „Kartou" / „Na fakturu". */
+  payment_method?: string | null;
   shipping_method: string;
   tracking_number?: string | null;
   items_summary?: string | null;
@@ -559,8 +561,23 @@ export type AdminBasecomFulfillment =
     error?: string;
   };
 
+export type AdminOrderStatusFilter =
+  | 'incomplete'
+  | 'pending_payment'
+  | 'paid'
+  | 'processing'
+  | 'exported'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled'
+  | 'refunded'
+  | 'failed'
+  | 'draft';
+
 export async function fetchAdminOrders(params: {
   filter?: 'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment';
+  /** Granular dropdown filter — exact match na orders.status. Má přednost před preset `filter`. */
+  status?: AdminOrderStatusFilter | '';
   search?: string;
   page?: number;
   pageSize?: number;
@@ -571,6 +588,7 @@ export async function fetchAdminOrders(params: {
 }) {
   const url = new URL(ADMIN_ORDERS_BASE);
   url.searchParams.set('filter', params.filter || 'all');
+  if (params.status) url.searchParams.set('status', params.status);
   url.searchParams.set('search', params.search || '');
   url.searchParams.set('page', String(params.page || 1));
   url.searchParams.set('pageSize', String(params.pageSize || 20));

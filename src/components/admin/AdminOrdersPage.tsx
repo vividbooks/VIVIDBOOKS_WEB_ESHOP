@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Trash2, Truck } from 'lucide-react';
+import { CreditCard, FileText, Search, Trash2, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner@2.0.3';
-import { fetchAdminOrders, runAdminOrderAction, type AdminOrderListItem } from '../../utils/adminApi';
+import {
+  fetchAdminOrders,
+  runAdminOrderAction,
+  type AdminOrderListItem,
+  type AdminOrderStatusFilter,
+} from '../../utils/adminApi';
 import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 const FILTERS = [
@@ -19,6 +24,46 @@ const SOURCE_FILTERS = [
   { id: 'eshop', label: 'E-shop' },
   { id: 'pipedrive', label: 'Pipedrive' },
 ] as const;
+
+/**
+ * Položky dropdownu pro exact-match `status` filtr (doplněk k preset filter buttonům).
+ * Drží se v jednom seznamu, ať CZ label, ikona/barva badge i odeslaná query value sedí.
+ */
+const STATUS_OPTIONS: Array<{ value: AdminOrderStatusFilter | ''; label: string }> = [
+  { value: '', label: 'Všechny stavy' },
+  { value: 'incomplete', label: 'Nedokončená' },
+  { value: 'pending_payment', label: 'Čeká na platbu' },
+  { value: 'paid', label: 'Zaplaceno' },
+  { value: 'processing', label: 'Zpracovává se' },
+  { value: 'exported', label: 'Exportováno' },
+  { value: 'shipped', label: 'Odesláno' },
+  { value: 'delivered', label: 'Doručeno' },
+  { value: 'cancelled', label: 'Storno' },
+  { value: 'refunded', label: 'Refundováno' },
+  { value: 'failed', label: 'Selhalo' },
+  { value: 'draft', label: 'Návrh' },
+];
+
+/**
+ * Mapování `orders.payment_method` na zobrazovaný typ platby. Karta / Apple Pay / Google Pay jdou
+ * přes Stripe a obchod je v praxi řeší stejně → sjednotíme do „Kartou". Převod a faktura → „Na fakturu".
+ */
+function paymentTypeBadge(method: string | null | undefined): {
+  label: string;
+  hint?: string;
+  cls: string;
+  icon: 'card' | 'invoice';
+} {
+  const m = String(method || '').trim().toLowerCase();
+  if (m === 'card' || m === 'apple_pay' || m === 'google_pay') {
+    const hint = m === 'apple_pay' ? 'Apple Pay' : m === 'google_pay' ? 'Google Pay' : undefined;
+    return { label: 'Kartou', hint, cls: 'bg-sky-100 text-sky-800', icon: 'card' };
+  }
+  if (m === 'transfer' || m === 'invoice') {
+    return { label: 'Na fakturu', cls: 'bg-violet-100 text-violet-800', icon: 'invoice' };
+  }
+  return { label: method || '—', cls: 'bg-gray-100 text-gray-600', icon: 'invoice' };
+}
 
 function sourceBadge(source: AdminOrderListItem['source']) {
   if (source === 'pipedrive') {
@@ -99,6 +144,8 @@ export function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment'>('all');
+  /** Exact-match dropdown filtr — má přednost před preset `filter` skupinou (viz backend). */
+  const [statusFilter, setStatusFilter] = useState<AdminOrderStatusFilter | ''>('');
   const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -127,7 +174,14 @@ export function AdminOrdersPage() {
       setLoading(true);
       setError('');
       try {
-        const data = await fetchAdminOrders({ filter, search, page, pageSize, source: sourceFilter });
+        const data = await fetchAdminOrders({
+          filter,
+          status: statusFilter || undefined,
+          search,
+          page,
+          pageSize,
+          source: sourceFilter,
+        });
         if (cancelled) return;
         setItems(data.items || []);
         setTotal(data.total || 0);
@@ -143,7 +197,7 @@ export function AdminOrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, search, page, sourceFilter, refreshTick]);
+  }, [filter, statusFilter, search, page, sourceFilter, refreshTick]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
@@ -203,6 +257,25 @@ export function AdminOrdersPage() {
             ))}
           </div>
 
+          {/* Granular status dropdown — doplňuje preset filtry „Nové / Odesláno / …". */}
+          <select
+            value={statusFilter}
+            onChange={(event) => {
+              setPage(1);
+              setStatusFilter(event.target.value as AdminOrderStatusFilter | '');
+            }}
+            className={`px-3 py-1.5 rounded-xl text-[12px] font-bold border border-gray-200 outline-none focus:border-[#001161]/30 cursor-pointer ${
+              statusFilter ? 'bg-[#001161] text-white' : 'bg-gray-100 text-gray-600'
+            }`}
+            title="Filtrovat podle přesného stavu objednávky"
+          >
+            {STATUS_OPTIONS.map((option) => (
+              <option key={option.value || 'all_statuses'} value={option.value} className="bg-white text-[#001161]">
+                {option.label}
+              </option>
+            ))}
+          </select>
+
           <div className="relative w-full lg:w-[320px]">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
@@ -226,6 +299,7 @@ export function AdminOrdersPage() {
                 <th className="px-3 py-2.5">{'Položky'}</th>
                 <th className="px-3 py-2.5">{'Celkem'}</th>
                 <th className="px-3 py-2.5">{'Stav'}</th>
+                <th className="px-3 py-2.5">{'Typ platby'}</th>
                 <th className="px-3 py-2.5">{'Base.com'}</th>
                 <th className="px-3 py-2.5">{'Platba'}</th>
                 <th className="px-3 py-2.5">{'Doprava'}</th>
@@ -236,20 +310,20 @@ export function AdminOrdersPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, index) => (
                   <tr key={index} className="border-b border-gray-100">
-                    <td className="px-3 py-3" colSpan={10}>
+                    <td className="px-3 py-3" colSpan={11}>
                       <div className="h-8 rounded-xl bg-gray-50 animate-pulse" />
                     </td>
                   </tr>
                 ))
               ) : error ? (
                 <tr>
-                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={10}>
+                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={11}>
                     {error}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={10}>
+                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={11}>
                     {'Žádné objednávky neodpovídají filtru.'}
                   </td>
                 </tr>
@@ -290,6 +364,24 @@ export function AdminOrdersPage() {
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.status)}`}>
                         {statusLabel(order.status)}
                       </span>
+                    </td>
+                    <td className="px-3 py-3">
+                      {(() => {
+                        const pay = paymentTypeBadge(order.payment_method);
+                        return (
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${pay.cls}`}
+                            title={pay.hint ? `${pay.label} (${pay.hint})` : pay.label}
+                          >
+                            {pay.icon === 'card' ? (
+                              <CreditCard className="w-3 h-3" />
+                            ) : (
+                              <FileText className="w-3 h-3" />
+                            )}
+                            <span>{pay.label}</span>
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.basecom_status || 'pending')}`}>
