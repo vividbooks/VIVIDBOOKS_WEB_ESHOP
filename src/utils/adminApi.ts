@@ -560,7 +560,7 @@ export type AdminBasecomFulfillment =
   };
 
 export async function fetchAdminOrders(params: {
-  filter?: 'all' | 'new' | 'shipped' | 'problem';
+  filter?: 'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment';
   search?: string;
   page?: number;
   pageSize?: number;

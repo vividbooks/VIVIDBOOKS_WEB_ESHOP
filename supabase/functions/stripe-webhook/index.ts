@@ -642,7 +642,11 @@ Deno.serve(async (req) => {
             if (existing.status === 'paid') {
               return;
             }
-            if (existing.status === 'pending_payment') {
+            /** `incomplete` (= zákazník checkout rozjel, ale nepokusil se ještě platit) i `pending_payment`
+             *  (= karta po failed pokusu / převod po explicit submit) jsou validní zdrojové stavy pro úspěšnou
+             *  platbu. Oba překlopíme přímo na `paid`. */
+            if (existing.status === 'incomplete' || existing.status === 'pending_payment') {
+              const previousStatus = existing.status;
               const updated = await tx<{ id: string; order_number: string }[]>`
                 update public.orders
                 set
@@ -656,7 +660,7 @@ Deno.serve(async (req) => {
                   poster_fulfillment_status = ${posterOnly ? 'pending' : null},
                   basecom_status = ${posterOnly ? 'skipped' : 'pending'}
                 where id = ${existing.id}::uuid
-                  and status = 'pending_payment'
+                  and status in ('incomplete', 'pending_payment')
                 returning id, order_number
               `;
               if (updated.length === 0) {
@@ -712,13 +716,14 @@ Deno.serve(async (req) => {
                 ) values (
                   ${order.id},
                   'payment',
-                  'pending_payment',
+                  ${previousStatus},
                   'paid',
                   ${JSON.stringify({
                     stripeEventId: event.id,
                     paymentIntentId: paymentIntent.id,
                     amount: paymentIntent.amount,
                     path: 'pending_upgrade',
+                    previousStatus,
                   })}::jsonb,
                   'stripe'
                 )
@@ -1042,7 +1047,23 @@ Deno.serve(async (req) => {
         if (!order) return;
         knownOrderId = order.id;
 
-        if (order.status === 'pending_payment') {
+        /** Karta po nedokončené platbě = aspoň 1 pokus → překlopit z `incomplete` na `pending_payment`
+         *  (v adminu „Čeká na platbu / nezaplacená dokončená", místo `incomplete` = "Nedokončená").
+         *  Pokud už je v `pending_payment`, jen logujeme event a status neměníme — zákazník může dál
+         *  resume přes /resume/<token>. */
+        if (order.status === 'incomplete' || order.status === 'pending_payment') {
+          const previousStatus = order.status;
+          const targetStatus = 'pending_payment';
+          if (previousStatus === 'incomplete') {
+            await tx`
+              update public.orders
+              set
+                status = 'pending_payment',
+                updated_at = now()
+              where id = ${order.id}::uuid
+                and status = 'incomplete'
+            `;
+          }
           await tx`
             insert into public.order_events (
               order_id,
@@ -1054,13 +1075,15 @@ Deno.serve(async (req) => {
             ) values (
               ${order.id},
               'payment_attempt_failed',
-              'pending_payment',
-              'pending_payment',
+              ${previousStatus},
+              ${targetStatus},
               ${JSON.stringify({
                 stripeEventId: event.id,
                 paymentIntentId: paymentIntent.id,
                 lastPaymentError: paymentIntent.last_payment_error?.message ?? null,
-                note: 'Order stays pending_payment for resume/retry.',
+                note: previousStatus === 'incomplete'
+                  ? 'Order escalated from incomplete to pending_payment after first failed payment attempt.'
+                  : 'Order stays pending_payment for resume/retry.',
               })}::jsonb,
               'stripe'
             )

@@ -168,6 +168,8 @@ function normalizeFilter(filter: string | null) {
     case 'new':
     case 'shipped':
     case 'problem':
+    case 'incomplete':
+    case 'pending_payment':
       return filter;
     default:
       return 'all';
@@ -910,7 +912,11 @@ Deno.serve(async (req) => {
         ? sql`and o.status in ('shipped', 'delivered')`
         : filter === 'problem'
           ? sql`and o.status in ('failed', 'cancelled')`
-          : sql``;
+          : filter === 'incomplete'
+            ? sql`and o.status = 'incomplete'`
+            : filter === 'pending_payment'
+              ? sql`and o.status = 'pending_payment'`
+              : sql``;
 
     /** Skrýt audit-trail záznamy supersession (cancelled s reason 'Superseded by new checkout attempt')
      *  z výchozího seznamu — admin v hlavním přehledu nepotřebuje vidět historické pokusy stejného

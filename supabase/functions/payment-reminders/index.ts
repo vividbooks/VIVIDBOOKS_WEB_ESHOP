@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     const due = await sql<{ id: string }[]>`
       select id
       from public.orders
-      where status = 'pending_payment'
+      where status in ('incomplete', 'pending_payment')
         and payment_status = 'pending'
         and abandon_reminder_count < 4
         and payment_resume_token is not null
@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
             last_abandon_reminder_at = now(),
             updated_at = now()
           where id = ${row.id}::uuid
-            and status = 'pending_payment'
+            and status in ('incomplete', 'pending_payment')
             and payment_status = 'pending'
         `;
 

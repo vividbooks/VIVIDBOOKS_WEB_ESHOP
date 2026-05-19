@@ -56,7 +56,28 @@ function badgeClass(status: string) {
   if (['pending', 'pending_payment', 'processing'].includes(status)) {
     return 'bg-amber-100 text-amber-700';
   }
+  /** `incomplete` = zákazník checkout opustil — šedý badge (není chyba). */
+  if (status === 'incomplete') {
+    return 'bg-gray-100 text-gray-600';
+  }
   return 'bg-red-100 text-red-700';
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'incomplete': return 'Nedokončená';
+    case 'pending_payment': return 'Čeká na platbu';
+    case 'paid': return 'Zaplaceno';
+    case 'processing': return 'Zpracovává se';
+    case 'exported': return 'Exportováno';
+    case 'shipped': return 'Odesláno';
+    case 'delivered': return 'Doručeno';
+    case 'cancelled': return 'Storno';
+    case 'refunded': return 'Refundováno';
+    case 'failed': return 'Selhalo';
+    case 'draft': return 'Návrh';
+    default: return status;
+  }
 }
 
 function workflowLabel(stepKey: string) {
@@ -218,7 +239,9 @@ export function AdminOrderDetailPage() {
     () => order?.payment_status === 'paid' && order.invoice_status === 'pending',
     [order?.payment_status, order?.invoice_status],
   );
-  const canCancel = !!order && ['paid', 'processing', 'exported'].includes(order.status);
+  /** Storno povoleno z aktivních neúplných stavů (incomplete / pending_payment) i z `paid`/`processing`/`exported`.
+   *  Backend (admin-order-action `cancel_order`) povolí stejné stavy — drží se to v sync. */
+  const canCancel = !!order && ['incomplete', 'pending_payment', 'paid', 'processing', 'exported'].includes(order.status);
   const canMarkShipped = order?.status === 'exported';
 
   const stripeHref = useMemo(() => stripeUrl(order?.stripe_payment_intent_id), [order?.stripe_payment_intent_id]);
@@ -412,7 +435,7 @@ export function AdminOrderDetailPage() {
             <p className="text-[13px] text-gray-500 mt-1">{formatDate(order.created_at)}</p>
           </div>
           <span className={`inline-flex rounded-full px-3 py-1 text-[12px] font-bold ${badgeClass(order.status)}`}>
-            {order.status}
+            {statusLabel(order.status)}
           </span>
         </div>
 

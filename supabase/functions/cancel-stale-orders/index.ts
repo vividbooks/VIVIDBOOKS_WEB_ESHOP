@@ -68,10 +68,10 @@ Deno.serve(async (req) => {
   let errors = 0;
 
   try {
-    const stale = await sql<{ id: string; order_number: string; basecom_order_id: string | null; customer_email: string }[]>`
-      select id, order_number, basecom_order_id, customer_email
+    const stale = await sql<{ id: string; order_number: string; basecom_order_id: string | null; customer_email: string; status: string }[]>`
+      select id, order_number, basecom_order_id, customer_email, status
       from public.orders
-      where status = 'pending_payment'
+      where status in ('incomplete', 'pending_payment')
         and created_at < now() - interval '21 days'
       order by created_at asc
       limit 200
@@ -90,6 +90,7 @@ Deno.serve(async (req) => {
           }
         }
 
+        const previousStatus = row.status;
         await sql.begin(async (tx) => {
           await tx`
             update public.orders
@@ -99,7 +100,7 @@ Deno.serve(async (req) => {
               cancelled_reason = ${CANCEL_REASON},
               updated_at = now()
             where id = ${row.id}::uuid
-              and status = 'pending_payment'
+              and status in ('incomplete', 'pending_payment')
           `;
 
           await tx`
@@ -113,18 +114,23 @@ Deno.serve(async (req) => {
             ) values (
               ${row.id}::uuid,
               'auto_cancel',
-              'pending_payment',
+              ${previousStatus},
               'cancelled',
-              ${JSON.stringify({ reason: CANCEL_REASON })}::jsonb,
+              ${JSON.stringify({ reason: CANCEL_REASON, previousStatus })}::jsonb,
               'system'
             )
           `;
         });
 
-        try {
-          await sendOrderEmail(sql, { orderId: row.id, emailType: 'order_auto_cancelled_unpaid' });
-        } catch (mailErr) {
-          console.error(`[cancel-stale-orders] Email ${row.order_number}:`, mailErr);
+        /** E-mail „auto-cancelled unpaid" má smysl jen pro objednávky, které zákazník opravdu odeslal
+         *  (= dorazil aspoň do `pending_payment`). U `incomplete` nikdy nepotvrdil objednávku, takže
+         *  by ho e-mail mátl („zrušili jsme vaši objednávku" — žádnou neudělal). Mlčky uklidíme. */
+        if (previousStatus === 'pending_payment') {
+          try {
+            await sendOrderEmail(sql, { orderId: row.id, emailType: 'order_auto_cancelled_unpaid' });
+          } catch (mailErr) {
+            console.error(`[cancel-stale-orders] Email ${row.order_number}:`, mailErr);
+          }
         }
 
         cancelled += 1;

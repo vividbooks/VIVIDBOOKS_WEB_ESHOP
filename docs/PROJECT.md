@@ -118,6 +118,36 @@ Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_
 
 Kompletní Stripe/Basecom/iDoklad tabulky: [DEPLOYMENT.md](./DEPLOYMENT.md).
 
+### Stavy objednávky — `incomplete` vs `pending_payment`
+
+Tabulka `public.orders` má dva „aktivní neúplné" stavy, které admin v UI rozlišuje:
+
+- **`incomplete`** (šedý badge „Nedokončená") — zákazník v checkoutu klikl „Pokračovat k platbě" (`create-payment-intent` vytvořil pending řádek), ale platbu nikdy nezkusil (Payment Element ve Stripe nezmáčkl Pay). Z DB pohledu obvykle nemá v `order_events` žádný `payment_attempt_failed` ani `payment` záznam. Vzniká **jen u karetních objednávek** (`card`/`apple_pay`/`google_pay`).
+- **`pending_payment`** (žlutý badge „Čeká na platbu") — zákazník objednávku explicitně potvrdil:
+  - **převod** (`submit-transfer-order` zavolán) — vždy začíná v `pending_payment`,
+  - **karta** s aspoň 1× pokusem o platbu — Stripe webhook `payment_intent.payment_failed` překlopí `incomplete → pending_payment`.
+
+Přechody:
+
+```
+incomplete       ──(payment_intent.payment_failed)──▶  pending_payment
+incomplete       ──(payment_intent.succeeded)─────▶  paid
+pending_payment  ──(payment_intent.succeeded)─────▶  paid
+incomplete | pending_payment  ──(admin cancel_order)──▶  cancelled
+incomplete | pending_payment  ──(cancel-stale-orders 21d)──▶  cancelled
+```
+
+Důsledky pro ostatní logiku (vše už upravené):
+
+- `findExistingDraftOrder` (sdílený util) hledá draft pro daný `checkout_draft_id` v obou stavech.
+- Partial unique index `idx_orders_one_active_per_draft` zaručuje **max 1** aktivní řádek per draft (`status in ('incomplete', 'pending_payment')`).
+- `cancel-stale-orders` (denní cron) ruší oba stavy starší 21 dní. E-mail „order_auto_cancelled_unpaid" se posílá **jen z `pending_payment`** (u `incomplete` zákazník nikdy objednávku nepotvrdil, e-mail by mátl).
+- `payment-reminders` (cron) posílá „payment_reminder" pro oba stavy.
+- `resume-checkout` (zákazníkův link „Dokončit platbu") akceptuje oba.
+- `admin-order-action` akce `cancel_order` povoluje storno z obou stavů i z `paid`/`processing`/`exported`.
+- Admin seznam: nové filtry **Nedokončené** (`status='incomplete'`) a **Čekají na platbu** (`status='pending_payment'`).
+- Backfill v migraci `20260519100000_orders_status_incomplete.sql` přepsal staré karetní `pending_payment` bez `payment_attempt_failed`/`payment` eventu na `incomplete`.
+
 ### Pipedrive inbound webhook — chování
 
 Webhook `pipedrive-inbound-deal` volaný z Pipedrive po `won` rozlišuje dva scénáře přes pole „Eshop ID" (custom field UI ID 12586, hash `26e4a2f8…`):

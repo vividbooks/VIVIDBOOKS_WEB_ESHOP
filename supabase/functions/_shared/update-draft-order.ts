@@ -27,8 +27,12 @@ export type DraftOrderRow = {
 };
 
 /**
- * Načte případnou existující `pending_payment` objednávku stejného draftu.
- * Vrací nejnovější (i když by se díky unique indexu měla najít max jedna).
+ * Načte případnou existující aktivní (incomplete | pending_payment) objednávku stejného draftu.
+ * Vrací nejnovější (i když by se díky partial unique indexu měla najít max jedna).
+ *
+ * `incomplete` = karta byla rozjetá v create-payment-intent, ale zákazník platbu nikdy nezkusil.
+ * `pending_payment` = převod byl explicitně odeslán, nebo karta byla pokusena o úhradu (failed/3DS).
+ * Oba stavy reprezentují „aktivní" rozdělanou objednávku, kterou je možné updatovat in-place.
  */
 export async function findExistingDraftOrder(
   sql: TaggedSql,
@@ -49,7 +53,7 @@ export async function findExistingDraftOrder(
       checkout_session_id
     from public.orders
     where checkout_draft_id = ${draft}
-      and status = 'pending_payment'
+      and status in ('incomplete', 'pending_payment')
     order by created_at desc
     limit 1
     for update
@@ -118,6 +122,10 @@ export async function replaceDraftOrderItems(
 /**
  * Audit záznam o tom, co se v draftu změnilo (pro debugging — admin v detailu
  * objednávky uvidí časovou osu, jak se měnily PI / částka / doprava).
+ *
+ * `currentStatus` se předává z volajícího (z `findExistingDraftOrder().status`), abychom v
+ * timeline správně rozeznali, jestli šlo o aktualizaci `incomplete` (karta nezahájená)
+ * nebo `pending_payment` (převod / karta po neúspěšném pokusu) draftu.
  */
 export async function recordDraftUpdatedEvent(
   tx: TaggedSql,
@@ -125,8 +133,10 @@ export async function recordDraftUpdatedEvent(
     orderId: string;
     actor: 'customer' | 'system';
     details: Record<string, unknown>;
+    currentStatus?: 'incomplete' | 'pending_payment';
   },
 ): Promise<void> {
+  const status = params.currentStatus ?? 'pending_payment';
   await tx`
     insert into public.order_events (
       order_id,
@@ -138,8 +148,8 @@ export async function recordDraftUpdatedEvent(
     ) values (
       ${params.orderId}::uuid,
       'draft_updated',
-      'pending_payment',
-      'pending_payment',
+      ${status},
+      ${status},
       ${JSON.stringify(params.details)}::jsonb,
       ${params.actor}
     )

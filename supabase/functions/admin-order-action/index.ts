@@ -449,7 +449,11 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'cancel_order') {
-      if (!['paid', 'processing', 'exported'].includes(order.status)) {
+      /** Storno povolíme z: `incomplete` (zákazník nedokončil), `pending_payment` (čeká na úhradu — typicky
+       *  převod nebo karta po neúspěšném pokusu), a z aktivních stavů (`paid` / `processing` / `exported`).
+       *  Z finálních (`shipped` / `delivered`) nebo již `cancelled` / `refunded` / `failed` nesahat — admin
+       *  použije refund / jiné nástroje. */
+      if (!['incomplete', 'pending_payment', 'paid', 'processing', 'exported'].includes(order.status)) {
         return jsonResponse(req, { error: 'Cancellation is not allowed for this order status.' }, 400);
       }
 
