@@ -1140,9 +1140,23 @@ export function MathCampaignLandingPage() {
   const { products } = useProducts();
   const [videoOpen, setVideoOpen] = useState(false);
   const [headerActionsVisible, setHeaderActionsVisible] = useState(false);
+  const [headerScrolled, setHeaderScrolled] = useState(false);
   const [heroBackground, setHeroBackground] = useState(SUBJECT_CONFIGS.Matematika.heroColor);
   const heroActionsRef = useRef<HTMLDivElement>(null);
+  const heroSectionRef = useRef<HTMLElement>(null);
   const cfg = SUBJECT_CONFIGS.Matematika;
+
+  useEffect(() => {
+    const el = heroSectionRef.current;
+    if (!el) return undefined;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => setHeaderScrolled(!entry.isIntersecting),
+      { root: null, rootMargin: '-64px 0px 0px 0px', threshold: 0 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const el = heroActionsRef.current;
@@ -1184,6 +1198,8 @@ export function MathCampaignLandingPage() {
     [proBooks, krokBooks],
   );
 
+  const headerBackground = headerScrolled ? 'rgba(255,255,255,0.94)' : heroBackground;
+
   return (
     <div className="min-h-screen bg-white text-[#001161]" style={{ fontFamily: FF }}>
       <SEOHead
@@ -1208,7 +1224,12 @@ export function MathCampaignLandingPage() {
         ])}
       />
 
-      <header className="sticky top-0 z-[60] bg-white/94 backdrop-blur">
+      <motion.header
+        className="sticky top-0 z-[60] backdrop-blur-sm"
+        animate={{ backgroundColor: headerBackground }}
+        initial={{ backgroundColor: cfg.heroColor }}
+        transition={{ duration: headerScrolled ? 0.25 : 0.9, ease: [0.4, 0, 0.2, 1] }}
+      >
         <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-4 px-4 sm:px-6 md:px-10">
           <VividLogo />
           <nav className="hidden items-center gap-5 md:flex" aria-label="Navigace kampaně">
@@ -1234,10 +1255,10 @@ export function MathCampaignLandingPage() {
             </motion.div>
           ) : null}
         </div>
-      </header>
+      </motion.header>
 
       <main>
-        <section className="w-full overflow-hidden">
+        <section ref={heroSectionRef} className="w-full overflow-hidden">
           <motion.div
             className="w-full pb-16 pt-5 md:pb-20 md:pt-8"
             animate={{ backgroundColor: heroBackground }}
