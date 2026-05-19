@@ -3,6 +3,7 @@ import postgres from 'npm:postgres';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
+import { cancelStripePaymentIntentsBestEffort } from '../_shared/cancel-superseded-orders.ts';
 
 type ActionPayload = {
   action?: string;
@@ -13,6 +14,12 @@ type ActionPayload = {
   refreshPipedrive?: boolean;
   /** Jen u objednávek plakátů (`poster_fulfillment_status` IS NOT NULL). */
   posterFulfillmentStatus?: 'pending' | 'done';
+  /** Vyžadováno u `delete_order` = `order_number` objednávky — frontend ho posílá jako pojistku
+   *  proti přehmatu (admin musí v dialogu opsat číslo objednávky). */
+  confirmOrderNumber?: string;
+  /** `true` = povolit smazání objednávky i ve finálních stavech (paid/processing/exported/shipped/delivered).
+   *  Bez `force=true` backend odmítne smazat takovou objednávku a vrátí 409 s hintem zrušit ji nejdřív. */
+  force?: boolean;
 };
 
 type OrderEmailType = 'order_confirmed' | 'order_shipped' | 'order_cancelled';
@@ -168,7 +175,16 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
   }
 
-  const { action, orderId, cancelledReason, trackingNumber, refreshPipedrive, posterFulfillmentStatus } = payload;
+  const {
+    action,
+    orderId,
+    cancelledReason,
+    trackingNumber,
+    refreshPipedrive,
+    posterFulfillmentStatus,
+    confirmOrderNumber,
+    force,
+  } = payload;
   if (!action || !orderId) {
     return jsonResponse(req, { error: 'Missing action or orderId.' }, 400);
   }
@@ -661,6 +677,101 @@ Deno.serve(async (req) => {
       `;
 
       return jsonResponse(req, { success: true, result: syncJson });
+    }
+
+    if (action === 'delete_order') {
+      /**
+       * HARD delete objednávky z DB. Z bezpečnostních důvodů:
+       *  - frontend musí v dialogu nechat admina opsat order_number a poslat ho v `confirmOrderNumber`
+       *    (pojistka proti přehmatu / dvojkliku),
+       *  - finální stavy (`paid`/`processing`/`exported`/`shipped`/`delivered`) bez `force=true` odmítáme
+       *    a vracíme 409 s hintem, ať se objednávka nejdřív zruší (cancel_order). iDoklad fakturu a
+       *    Base.com export delete sám neuklidí, proto musí admin explicitně potvrdit `force=true`.
+       *
+       * Postup:
+       *  1) Nahrát detail objednávky (status, PI id, payment_status, order_number).
+       *  2) Best-effort cancel Stripe PaymentIntentu (jen pokud existuje a payment_status != 'paid' —
+       *     u zaplacené PI Stripe vrátí 400, což je očekávané).
+       *  3) V transakci smazat řádky v tabulkách, které mají `NO ACTION` FK k orders:
+       *       - public.export_queue
+       *       - public.order_events
+       *     Pak DELETE z public.orders — cascade smaže order_items, order_alerts, order_workflow_steps;
+       *     app_incidents.order_id se vynuluje (SET NULL).
+       *  4) Log do konzole pro audit (Edge Function Logs).
+       */
+      const detailRows = await sql<{
+        id: string;
+        order_number: string;
+        status: string;
+        payment_status: string | null;
+        stripe_payment_intent_id: string | null;
+        pipedrive_deal_id: string | null;
+      }[]>`
+        select id, order_number, status, payment_status, stripe_payment_intent_id, pipedrive_deal_id
+        from public.orders
+        where id = ${orderId}::uuid
+        limit 1
+      `;
+      const detail = detailRows[0];
+      if (!detail) {
+        return jsonResponse(req, { error: 'Order not found.' }, 404);
+      }
+
+      const requestedConfirm = String(confirmOrderNumber || '').trim();
+      if (!requestedConfirm) {
+        return jsonResponse(req, { error: 'Chybí confirmOrderNumber.' }, 400);
+      }
+      if (requestedConfirm !== detail.order_number) {
+        return jsonResponse(req, {
+          error: 'Číslo objednávky v potvrzení neodpovídá. Zkontrolujte hodnotu a zkuste to znovu.',
+        }, 400);
+      }
+
+      const finalStatuses = new Set(['paid', 'processing', 'exported', 'shipped', 'delivered']);
+      const isFinal = finalStatuses.has(detail.status) || detail.payment_status === 'paid';
+      if (isFinal && force !== true) {
+        return jsonResponse(req, {
+          error:
+            'Tato objednávka je ve finálním stavu (zaplacená / exportovaná / odeslaná). Smazání nezruší fakturu v iDokladu ani export v Base.com — buď ji nejdřív stornujte tlačítkem „Zrušit objednávku", nebo potvrďte force-delete (force: true).',
+          requiresForce: true,
+          status: detail.status,
+          paymentStatus: detail.payment_status,
+        }, 409);
+      }
+
+      /** Best-effort Stripe PI cancel — selhání u succeeded / canceled PI jen zaloguje. */
+      if (detail.stripe_payment_intent_id && detail.payment_status !== 'paid') {
+        const stripeKey = (Deno.env.get('STRIPE_SECRET_KEY') || '').trim();
+        await cancelStripePaymentIntentsBestEffort(
+          [detail.stripe_payment_intent_id],
+          stripeKey,
+          'admin-order-action:delete_order',
+        );
+      }
+
+      try {
+        await sql.begin(async (tx) => {
+          await tx`delete from public.export_queue where order_id = ${orderId}::uuid`;
+          await tx`delete from public.order_events where order_id = ${orderId}::uuid`;
+          await tx`delete from public.orders where id = ${orderId}::uuid`;
+        });
+      } catch (delErr: unknown) {
+        const message = delErr instanceof Error ? delErr.message : 'Order delete failed.';
+        console.error('[admin-order-action] delete_order DB error:', message);
+        return jsonResponse(req, { error: `Smazání selhalo: ${message}` }, 500);
+      }
+
+      console.log(
+        `[admin-order-action] DELETED order ${detail.order_number} (id=${orderId}) status=${detail.status} paid=${detail.payment_status} pi=${detail.stripe_payment_intent_id || '-'} deal=${detail.pipedrive_deal_id || '-'} force=${force === true}`,
+      );
+
+      return jsonResponse(req, {
+        success: true,
+        deleted: true,
+        orderId,
+        orderNumber: detail.order_number,
+        force: force === true,
+      });
     }
 
     return jsonResponse(req, { error: 'Unsupported action.' }, 400);
