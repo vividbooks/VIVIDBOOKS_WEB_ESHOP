@@ -10632,7 +10632,7 @@ function buildNewsletterSubscribeConfirmationHtml(): string {
 </td></tr>
 <tr><td style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
 <p style="margin:0 0 1em;">Dobrý den,</p>
-<p style="margin:0 0 1em;">děkujeme za váš zájem o náš newsletter. Moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — těší nás, že vám můžeme přinášet inspiraci do výuky.</p>
+<p style="margin:0 0 1em;">Děkujeme za váš zájem o náš newsletter. Moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — těší nás, že vám můžeme přinášet inspiraci do výuky.</p>
 <p style="margin:0 0 1em;">Brzy vám budeme posílat vybrané novinky: metodické tipy, novinky o titulech a pozvánky. Žádný spam — jen to, co dává smysl ve škole.</p>
 <p style="margin:0 0 1.25em;">Když budete chtít napsat zpětnou vazbu, stačí odpovědět na tento e-mail.</p>
 <p style="margin:0 0 0.25em;color:#001161;font-weight:bold;font-size:15px;">Co můžete čekat</p>
@@ -10646,7 +10646,7 @@ function buildNewsletterSubscribeConfirmationHtml(): string {
 <a href="${site}" style="display:inline-block;padding:14px 28px;background:#E8942A;color:#ffffff !important;text-decoration:none;font-weight:bold;font-size:15px;border-radius:10px;">Přejít na Vividbooks</a>
 </td></tr>
 <tr><td style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
-<p style="margin:0 0 1em;">Tento e-mail vám posíláme, protože jste na <a href="${site}" style="color:#001161;">webu</a> vyjádřili zájem o odběr. Zpracování e-mailu probíhá v souladu s <a href="${privacyUrl}" style="color:#001161;">zásadami ochrany osobních údajů</a>. Odběr můžete kdykoli zrušit — napište nám na <a href="${unsubHref}" style="color:#001161;">hello@vividbooks.com</a> nebo odpovězte na tuto zprávu.</p>
+<p style="margin:0 0 1em;">Tento e-mail vám posíláme, protože jste na <a href="${site}" style="color:#001161;">webu</a> vyjádřili zájem o odběr. Zpracování e-mailu probíhá v souladu se <a href="${privacyUrl}" style="color:#001161;">zásadami ochrany osobních údajů</a>. Odběr můžete kdykoli zrušit — napište nám na <a href="${unsubHref}" style="color:#001161;">hello@vividbooks.com</a> nebo odpovězte na tuto zprávu.</p>
 <p style="margin:0;">© ${year} Vividbooks · <a href="mailto:hello@vividbooks.com" style="color:#6b7280;">hello@vividbooks.com</a></p>
 </td></tr>
 </table>
