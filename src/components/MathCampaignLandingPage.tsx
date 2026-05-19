@@ -983,7 +983,7 @@ function PillarsSection() {
                   {String(index + 1).padStart(2, '0')}
                 </span>
                 <div>
-                  <h4 className="text-[15px] font-bold leading-snug text-[#001161]" style={{ fontFamily: FF }}>
+                  <h4 className="text-[17px] font-bold leading-snug text-[#001161] md:text-[18px]" style={{ fontFamily: FF }}>
                     {principle.title}
                   </h4>
                   <p className="mt-2 text-[13px] leading-relaxed text-[#001161]/62" style={{ fontFamily: FF }}>
@@ -1006,6 +1006,7 @@ function MethodologyVideosSection() {
       <div className="mx-auto max-w-[1200px]">
         <YouTubePlaylistSlider
           videos={MATH_CAMPAIGN_WEBINAR_VIDEOS}
+          openAsRecordingPage
           eyebrow="Záznamy webinářů"
           heading="DVPP zdarma – záznamy k matematickým tématům"
           subheading="Webináře navazují na RVP část a jsou určené pro učitele; k DVPP webinářům získáte certifikát."

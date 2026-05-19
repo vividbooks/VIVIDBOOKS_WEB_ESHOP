@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronRight, ExternalLink, Loader2, Play, X } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -34,6 +35,8 @@ interface YouTubePlaylistSliderProps {
   /** Záložní seznam videí při nedostupnosti API */
   fallbackVideos?: YoutubePlaylistVideo[];
   linkLabel?: string;
+  /** Otevřít klik na dlaždici jako stránku záznamu webináře místo YouTube modalu */
+  openAsRecordingPage?: boolean;
 }
 
 export function YouTubePlaylistSlider({
@@ -46,7 +49,9 @@ export function YouTubePlaylistSlider({
   className = '',
   fallbackVideos,
   linkLabel = 'Celý playlist',
+  openAsRecordingPage = false,
 }: YouTubePlaylistSliderProps) {
+  const navigate = useNavigate();
   const isStatic = Boolean(staticVideos?.length);
   const [playlistTitle, setPlaylistTitle] = useState('');
   const [videos, setVideos] = useState<YoutubePlaylistVideo[]>(staticVideos ?? []);
@@ -103,6 +108,14 @@ export function YouTubePlaylistSlider({
   }, [playlistId, isStatic, staticVideos, fallbackVideos]);
 
   const displayHeading = heading || playlistTitle || 'Metodická videa';
+
+  const handleVideoClick = (video: YoutubePlaylistVideo) => {
+    if (openAsRecordingPage) {
+      navigate(`/webinare/zaznam/${video.id}`);
+      return;
+    }
+    setActiveVideo(video);
+  };
 
   return (
     <>
@@ -173,7 +186,7 @@ export function YouTubePlaylistSlider({
               <button
                 key={video.id}
                 type="button"
-                onClick={() => setActiveVideo(video)}
+                onClick={() => handleVideoClick(video)}
                 className={`group ${TILE_W} cursor-pointer text-left`}
               >
                 <div className="relative mb-3 aspect-video overflow-hidden rounded-[16px] bg-[#DEE4F1] shadow-[0_2px_12px_rgba(0,17,97,0.08)]">

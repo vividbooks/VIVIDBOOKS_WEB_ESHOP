@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import {
   COOPER_ACCESS_INTRO_HEADING_STYLE,
@@ -165,8 +166,8 @@ export function SubjectTabsSection({
 }: SubjectTabsSectionProps) {
   const [tabs, setTabs] = useState<any[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [mobileExpanded, setMobileExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
+  const tabStripRef = useRef<HTMLDivElement>(null);
   const windowWidth = useWindowWidth();
   const mobile = windowWidth < 768;
 
@@ -195,9 +196,20 @@ export function SubjectTabsSection({
       .finally(() => setLoading(false));
   }, [subject, tabOverrides, extraTabs, excludeTabTexts]);
 
-  useEffect(() => { setMobileExpanded(false); }, [activeTabId]);
-
   const activeTab = tabs.find(t => t.id === activeTabId);
+  const activeTabIndex = tabs.findIndex((tab) => tab.id === activeTabId);
+
+  const selectTabByIndex = (index: number) => {
+    const tab = tabs[index];
+    if (!tab) return;
+    setActiveTabId(tab.id);
+  };
+
+  useEffect(() => {
+    if (!mobile || !activeTabId || !tabStripRef.current) return;
+    const activeButton = tabStripRef.current.querySelector<HTMLElement>(`[data-tab-id="${activeTabId}"]`);
+    activeButton?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [activeTabId, mobile, tabs.length]);
 
   if (loading) {
     return (
@@ -246,26 +258,54 @@ export function SubjectTabsSection({
           </h2>
         ) : null}
 
-        <div
-          className="flex gap-2 overflow-x-auto pb-2"
-          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
-        >
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTabId(tab.id)}
-              className="shrink-0 px-4 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap transition-all cursor-pointer"
-              style={{
-                fontFamily: "'Fenomen Sans', sans-serif",
-                fontWeight: activeTabId === tab.id ? 700 : 400,
-                background: activeTabId === tab.id ? (light ? '#001161' : '#F9E000') : (light ? 'rgba(0,17,97,0.07)' : 'rgba(255,255,255,0.1)'),
-                color: activeTabId === tab.id ? (light ? '#fff' : '#001161') : (light ? 'rgba(0,17,97,0.55)' : 'rgba(255,255,255,0.75)'),
-                border: activeTabId === tab.id ? 'none' : `1px solid ${light ? 'rgba(0,17,97,0.12)' : 'rgba(255,255,255,0.15)'}`,
-              }}
-            >
-              {tab.tabText}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => selectTabByIndex(Math.max(0, activeTabIndex - 1))}
+            disabled={activeTabIndex <= 0}
+            aria-label="Předchozí záložka"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition disabled:cursor-not-allowed disabled:opacity-30 ${
+              light ? 'bg-white text-[#001161] ring-1 ring-[#001161]/12' : 'bg-white/10 text-white ring-1 ring-white/15'
+            }`}
+          >
+            <ChevronLeft className="h-4 w-4" aria-hidden />
+          </button>
+
+          <div
+            ref={tabStripRef}
+            className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-2"
+            style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+          >
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                data-tab-id={tab.id}
+                onClick={() => setActiveTabId(tab.id)}
+                className="shrink-0 px-4 py-2 rounded-xl text-[13px] font-medium whitespace-nowrap transition-all cursor-pointer"
+                style={{
+                  fontFamily: "'Fenomen Sans', sans-serif",
+                  fontWeight: activeTabId === tab.id ? 700 : 400,
+                  background: activeTabId === tab.id ? (light ? '#001161' : '#F9E000') : (light ? 'rgba(0,17,97,0.07)' : 'rgba(255,255,255,0.1)'),
+                  color: activeTabId === tab.id ? (light ? '#fff' : '#001161') : (light ? 'rgba(0,17,97,0.55)' : 'rgba(255,255,255,0.75)'),
+                  border: activeTabId === tab.id ? 'none' : `1px solid ${light ? 'rgba(0,17,97,0.12)' : 'rgba(255,255,255,0.15)'}`,
+                }}
+              >
+                {tab.tabText}
+              </button>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => selectTabByIndex(Math.min(tabs.length - 1, activeTabIndex + 1))}
+            disabled={activeTabIndex < 0 || activeTabIndex >= tabs.length - 1}
+            aria-label="Další záložka"
+            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition disabled:cursor-not-allowed disabled:opacity-30 ${
+              light ? 'bg-white text-[#001161] ring-1 ring-[#001161]/12' : 'bg-white/10 text-white ring-1 ring-white/15'
+            }`}
+          >
+            <ChevronRight className="h-4 w-4" aria-hidden />
+          </button>
         </div>
 
         {activeTab && (
@@ -300,35 +340,13 @@ export function SubjectTabsSection({
 
               {activeTab.contentRichText && (
                 <>
-                  <motion.div
-                    className="overflow-hidden"
-                    initial={false}
-                    animate={{ height: mobileExpanded ? 'auto' : 0, opacity: mobileExpanded ? 1 : 0 }}
-                    transition={{ duration: 0.25 }}
-                  >
-                    <div
-                      className="text-[#001161]/70 text-[14px] leading-relaxed whitespace-pre-line pb-3"
-                      style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
-                    >
-                      {activeTab.contentRichText}
-                    </div>
-                    <TabContentLink tab={activeTab} light={light} />
-                  </motion.div>
-
-                  <button
-                    onClick={() => setMobileExpanded(p => !p)}
-                    className="inline-flex items-center gap-1.5 text-[#001161] text-[13px] font-bold cursor-pointer transition-opacity hover:opacity-70"
+                  <div
+                    className="text-[#001161]/70 text-[14px] leading-relaxed whitespace-pre-line pb-3"
                     style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
                   >
-                    {mobileExpanded ? 'Méně info' : 'Více info'}
-                    <svg
-                      className="w-3.5 h-3.5 transition-transform"
-                      style={{ transform: mobileExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                      fill="none" viewBox="0 0 24 24" stroke="currentColor"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-                    </svg>
-                  </button>
+                    {activeTab.contentRichText}
+                  </div>
+                  <TabContentLink tab={activeTab} light={light} />
                 </>
               )}
             </div>
