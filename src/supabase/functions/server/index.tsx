@@ -1182,7 +1182,7 @@ function buildMarketingFeedHeaders(origin: string | null) {
   };
 }
 
-const MARKETING_FEED_VERSION = 'new-domain-20260505';
+const MARKETING_FEED_VERSION = 'feed-20260519';
 
 const ALLOWED_API_ORIGINS = [
   'https://new.vividbooks.com',
