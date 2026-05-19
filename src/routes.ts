@@ -100,6 +100,10 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/AppUvodPage'), 'AppUvodPage'),
         },
         {
+          path: 'kampane/matematika-2-stupen',
+          lazy: lazyNamed(() => import('./components/MathCampaignLandingPage'), 'MathCampaignLandingPage'),
+        },
+        {
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
           children: [
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },

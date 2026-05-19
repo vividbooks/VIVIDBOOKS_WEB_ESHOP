@@ -180,6 +180,77 @@ function generateResumeToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function getFunctionBaseUrl(fallbackRequestUrl?: string) {
+  const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
+  if (supabaseUrl) return supabaseUrl;
+  if (fallbackRequestUrl) {
+    try {
+      return new URL(fallbackRequestUrl).origin;
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+/**
+ * Synchronní zavolání pipedrive-sync pro B2B kartovou objednávku v pending_payment.
+ *
+ * Záměrné chování: u zákazníka s IČO (= B2B) chceme vytvořit deal v Pipedrive už ve chvíli, kdy
+ * vytvoří payment intent — stejně jako u převodu. Pokud platbu nedokončí, deal zůstane v Pipedrivu
+ * jako otevřený lead a obchod ho doprodá. Pokud platba projde, stripe-webhook zavolá sync s
+ * `b2b_card_won`, který deal upgradne na won.
+ *
+ * Synchronní await (ne fire-and-forget) je nutný kvůli Supabase Edge runtime — po `return`
+ * z handleru se pending I/O ruší, takže fire-and-forget fetch by se k make-server-93a20b6f vůbec
+ * nedostal. Chyby jen logujeme, aby selhání Pipedrivu nezablokovalo úspěšnou odpověď klientovi
+ * (Stripe payment intent už je vytvořený a klient ho potřebuje k zobrazení Payment Elementu).
+ */
+async function invokeEshopPipedriveCardOpenSync(
+  orderId: string,
+  fallbackRequestUrl?: string,
+): Promise<void> {
+  const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
+  const url = baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
+  if (!url) {
+    console.error('[create-payment-intent] Missing SUPABASE_URL for eshop/pipedrive-sync.');
+    return;
+  }
+  const key = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+  if (!key) {
+    console.error('[create-payment-intent] Missing SUPABASE_SERVICE_ROLE_KEY for eshop/pipedrive-sync.');
+    return;
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      body: JSON.stringify({ orderId, mode: 'b2b_card_open' }),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      console.error('[create-payment-intent] eshop/pipedrive-sync HTTP', res.status, t.slice(0, 500));
+    }
+  } catch (e) {
+    console.error('[create-payment-intent] eshop/pipedrive-sync:', e);
+  }
+}
+
+/**
+ * Vrací true, pokud zákazník vyplnil IČO nebo název školy — tj. objednávka má být v Pipedrivu
+ * spárována jako B2B (org + person + open deal). Bez IČO/školy = čistě B2C jednotlivec, kde
+ * deal vzniká až po úspěšné platbě (přes stripe-webhook → `b2c_card_won`).
+ */
+function shouldCreateB2bCardOpenDeal(customer: CheckoutCustomer): boolean {
+  const ico = String(customer.ico || '').trim().replace(/\s/g, '');
+  const schoolName = String((customer as { schoolName?: string }).schoolName || '').trim();
+  return ico.length > 0 || schoolName.length > 0;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
@@ -532,6 +603,13 @@ Deno.serve(async (req) => {
           `[create-payment-intent] Draft updated in-place: order=${draftOrderId.slice(0, 8)}… draft=${draftId.slice(0, 8)}… new_pi=${newPi.id} old_pi=${existingDraft.stripe_payment_intent_id || '(none)'}`,
         );
 
+        /** B2B (IČO nebo škola) → po UPDATE pending objednávky zkusíme i nadále zajistit otevřený
+         *  deal v Pipedrive. Sync je idempotentní (kontroluje `pipedrive_deal_id`), takže pokud
+         *  už existuje z dřívějšího POSTu, vrátí `already_synced` a nic se nestane. */
+        if (shouldCreateB2bCardOpenDeal(customer as CheckoutCustomer)) {
+          await invokeEshopPipedriveCardOpenSync(draftOrderId, req.url);
+        }
+
         const tracking = await trackingTokenForOrder(draftOrderId);
         return jsonResponse(req, {
           clientSecret: newPi.client_secret,
@@ -606,6 +684,13 @@ Deno.serve(async (req) => {
         } catch (e) {
           console.warn('[create-payment-intent] Reuse path supersession failed:', e);
         }
+      }
+
+      /** Reuse: pokud má objednávka IČO/školu a deal v Pipedrive zatím chybí (např. první POST
+       *  byl před nasazením této logiky, nebo Pipedrive tehdy vrátil 5xx), zkusíme ho doplnit.
+       *  Sync je idempotentní — pokud `pipedrive_deal_id` už existuje, vrátí `already_synced`. */
+      if (reuseOrderId && shouldCreateB2bCardOpenDeal(customer as CheckoutCustomer)) {
+        await invokeEshopPipedriveCardOpenSync(reuseOrderId, req.url);
       }
 
       const reuseTracking = reuseOrderId ? await trackingTokenForOrder(reuseOrderId) : null;
@@ -821,6 +906,20 @@ Deno.serve(async (req) => {
         stripeSecretKey,
         'create-payment-intent',
       );
+    }
+
+    /** B2B (IČO nebo škola) → vytvoříme open deal v Pipedrive ještě před úhradou, stejně jako
+     *  u převodu. Když platba projde, stripe-webhook zavolá sync s `b2b_card_won` a deal upgradne
+     *  na won. Když ji zákazník nedokončí, deal v Pipedrive zůstane jako otevřený lead.
+     *
+     *  Děláme to jen u nově založené objednávky (persistedOrderId je z INSERT větve).
+     *  V reuse / 23505 dedupe větvi sync neopakujeme — pokud první POST proběhl korektně, deal
+     *  už existuje; pokud první sync selhal (např. dočasný Pipedrive 5xx), opraví to admin tlačítkem. */
+    if (
+      persistedOrderId
+      && shouldCreateB2bCardOpenDeal(customer as CheckoutCustomer)
+    ) {
+      await invokeEshopPipedriveCardOpenSync(persistedOrderId, req.url);
     }
 
     const thankYouTracking = persistedOrderId ? await trackingTokenForOrder(persistedOrderId) : null;

@@ -206,7 +206,7 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackin
       </p>`
     : order.stripe_receipt_url
     ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
-        Účtenku od Stripe:
+        Vaše účtenka Stripe:
         <a href="${escapeHtml(order.stripe_receipt_url)}" style="color:#2563eb;text-decoration:none;">Zobrazit účtenku</a>
       </p>`
     : '';
@@ -254,7 +254,7 @@ function buildOrderShippedHtml(order: OrderRow, trackingUrl: string | null) {
   const trackingBlock = order.tracking_number
     ? order.shipping_method === 'zasilkovna'
       ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Sledujte zásilku: <a href="https://tracking.packeta.com/cs/?id=${encodeURIComponent(order.tracking_number)}" style="color:#2563eb;text-decoration:none;">https://tracking.packeta.com/cs/?id=${escapeHtml(order.tracking_number)}</a></p>`
-      : `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Tracking číslo: <strong>${escapeHtml(order.tracking_number)}</strong></p>`
+      : `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Číslo zásilky: <strong>${escapeHtml(order.tracking_number)}</strong></p>`
     : '';
 
   return buildShell(

@@ -3,7 +3,7 @@
   <channel>
     <title>Vividbooks Product Feed</title>
     <link>https://www.vividbooks.com</link>
-    <description>Produktový katalog Vividbooks pro Google Merchant Center. Generated at 2026-05-05T11:52:12.838Z.</description>
+    <description>Produktový katalog Vividbooks pro Google Merchant Center. Generated at 2026-05-19T09:48:41.388Z.</description>
     <item>
       <g:id>69791865ddc8a9234643fe0f</g:id>
       <g:title>Český jazyk 1. stupeň</g:title>
@@ -121,7 +121,7 @@
       <g:title>Prvouka 2. ročník / 2. díl</g:title>
       <g:description>Nová pracovní učebnice prvouky představuje inovativní propojení teoretických znalostí s praktickými zkušenostmi v přírodě. Reaguje na aktuální změny v RVP, klade důraz na rozvoj badatelských dovedností a kritického myšlení. Spojuje klíčová společenská témata s důrazem na udržitelnost a poznávání přírody. Děti se tak učí, jak být zodpovědnými členy společnosti a objevují svět kolem sebe.</g:description>
       <g:link>https://www.vividbooks.com/produkt/prvouka-2-rocnik-2-dil</g:link>
-      <g:image_link>https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/make-93a20b6f-images/1773605723327-hrm7p0ap4s8.png</g:image_link>
+      <g:image_link>https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/make-93a20b6f-images/1778824859416-9oqkoxxjeo9.jpg</g:image_link>
       <g:availability>in_stock</g:availability>
       <g:condition>new</g:condition>
       <g:price>75.00 CZK</g:price>
@@ -334,7 +334,7 @@
       <g:image_link>https://iekkundgizzdbmkzatdl.supabase.co/storage/v1/object/public/make-93a20b6f-images/1773606245020-7a8ggnnmrlq.png</g:image_link>
       <g:availability>in_stock</g:availability>
       <g:condition>new</g:condition>
-      <g:price>90.00 CZK</g:price>
+      <g:price>85.00 CZK</g:price>
       <g:brand>Vividbooks</g:brand>
       <g:mpn>VB-6978d59fc91ca2be0885905b</g:mpn>
       <g:google_product_category>Media &gt; Books</g:google_product_category>

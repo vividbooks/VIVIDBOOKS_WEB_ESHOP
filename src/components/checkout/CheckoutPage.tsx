@@ -193,8 +193,9 @@ const PAYMENT_OPTIONS: Array<{
   },
   {
     id: 'transfer',
-    label: 'Převodem',
-    description: 'Obchodník vás kontaktuje a dokončí objednávku. Vyžaduje vyplněné IČO.',
+    label: 'Na fakturu (převodem)',
+    description:
+      'Objednávku uložíme a pošleme fakturu se splatností — uhradíte ji bankovním převodem. Vyžaduje vyplněné IČO.',
     priceLabel: 'Zdarma',
   },
 ];
@@ -578,12 +579,26 @@ export function CheckoutPage() {
 
   const hasTransferIco = customer.ico.trim().replace(/\s/g, '').length > 0;
 
+  /** Škola má fakturační flow jako primární — `transfer` (= „Na fakturu (převodem)") posuneme na začátek
+   *  seznamu, ať ho vidí jako první. Pro jednotlivce (nebo školu bez IČO) zůstává pořadí Apple Pay / Google Pay
+   *  / karta / převod (pokud je dostupný). */
   const paymentOptionsVisible = useMemo(
-    () => PAYMENT_OPTIONS.filter(
-      (o) => o.id !== 'transfer' || hasTransferIco,
-    ),
-    [hasTransferIco],
+    () => {
+      const visible = PAYMENT_OPTIONS.filter((o) => o.id !== 'transfer' || hasTransferIco);
+      if (customerType === 'school' && hasTransferIco) {
+        const transfer = visible.find((o) => o.id === 'transfer');
+        if (transfer) {
+          return [transfer, ...visible.filter((o) => o.id !== 'transfer')];
+        }
+      }
+      return visible;
+    },
+    [hasTransferIco, customerType],
   );
+
+  /** Ručně zvolená platba uživatelem — když je `true`, auto-default ji už nepřepíše.
+   *  Resume flow (`?resume=…`) ji shora forsuje na `card`, to ale není uživatelská volba, tak ref nesahá. */
+  const paymentMethodUserChangedRef = useRef(false);
 
   useEffect(() => {
     if (resumeFlowActive && paymentMethod !== 'card') {
@@ -596,6 +611,16 @@ export function CheckoutPage() {
       setPaymentMethod('card');
     }
   }, [paymentMethod, hasTransferIco]);
+
+  useEffect(() => {
+    /** Škola + vyplněné IČO → default = převod (NA FAKTURU), pokud uživatel nezvolil jinak.
+     *  Spouští se při přepnutí customerType na 'school' i po vyplnění IČO v kroku 2. */
+    if (paymentMethodUserChangedRef.current) return;
+    if (resumeFlowActive) return;
+    if (customerType === 'school' && hasTransferIco && paymentMethod !== 'transfer') {
+      setPaymentMethod('transfer');
+    }
+  }, [customerType, hasTransferIco, resumeFlowActive, paymentMethod]);
 
   /** Krok 2: vždy povolit klik — platnost řeší `validateCustomerStep()` (jinak by byl „Pokračovat“ disabled a uživatel neviděl chyby u polí). */
   const canGoForward = (
@@ -1909,7 +1934,7 @@ export function CheckoutPage() {
               <PaymentMethodSection
                 description={
                   paymentMethod === 'transfer'
-                    ? 'Objednávku uložíme a obchodník vás kontaktuje.'
+                    ? 'Objednávku uložíme a pošleme fakturu se splatností — uhradíte ji bankovním převodem.'
                     : paymentMethod === 'card'
                       ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
                       : (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
@@ -1919,7 +1944,10 @@ export function CheckoutPage() {
                 }
                 options={paymentOptionsVisible}
                 selectedId={paymentMethod}
-                onSelect={(id) => setPaymentMethod(id as PaymentMethodOption)}
+                onSelect={(id) => {
+                  paymentMethodUserChangedRef.current = true;
+                  setPaymentMethod(id as PaymentMethodOption);
+                }}
               >
                 <>
                   {!publishableKey && !stripePkLoading && (
@@ -2001,7 +2029,7 @@ export function CheckoutPage() {
                   {paymentMethod === 'transfer' && (
                     <div className="mt-4 space-y-4">
                       <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/75 leading-relaxed">
-                        {'Odešlete objednávku — ozve se vám obchodník a domluvíte dokončení nákupu. Nebudete platit kartou na tomto kroku.'}
+                        {'Odešlete objednávku — vystavíme fakturu se splatností a pošleme ji na zadaný e-mail. Uhradíte ji bankovním převodem podle pokynů. Na tomto kroku neplatíte kartou.'}
                       </p>
                       <button
                         type="button"
@@ -2015,7 +2043,7 @@ export function CheckoutPage() {
                             {'Odesílám…'}
                           </>
                         ) : (
-                          'Odeslat objednávku (převod)'
+                          'Odeslat objednávku (na fakturu)'
                         )}
                       </button>
                     </div>
