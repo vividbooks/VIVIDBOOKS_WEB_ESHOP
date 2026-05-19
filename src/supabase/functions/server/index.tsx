@@ -1873,6 +1873,72 @@ app.get('/make-server-93a20b6f/public/hero-slidy', async (c) => {
   }
 });
 
+const YT_PLAYLIST_CACHE = new Map<string, { at: number; data: Record<string, unknown> }>();
+const YT_PLAYLIST_TTL_MS = 60 * 60 * 1000;
+
+function decodeXmlText(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function parseYoutubePlaylistRss(xml: string): { title: string; videos: Array<{ id: string; title: string; thumbnail: string; url: string; published: string }> } {
+  const feedTitle = decodeXmlText(xml.match(/<feed[\s\S]*?<title>([^<]*)<\/title>/)?.[1]?.trim() || '');
+  const videos: Array<{ id: string; title: string; thumbnail: string; url: string; published: string }> = [];
+  for (const entry of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
+    const block = entry[1];
+    const id = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/)?.[1]?.trim();
+    if (!id) continue;
+    const title =
+      decodeXmlText(block.match(/<media:title>([^<]*)<\/media:title>/)?.[1]?.trim() || '') ||
+      decodeXmlText(block.match(/<title>([^<]*)<\/title>/)?.[1]?.trim() || '');
+    const thumbnail =
+      block.match(/<media:thumbnail url="([^"]+)"/)?.[1] ||
+      `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    const published = block.match(/<published>([^<]+)<\/published>/)?.[1]?.trim() || '';
+    videos.push({
+      id,
+      title,
+      thumbnail,
+      url: `https://www.youtube.com/watch?v=${id}`,
+      published,
+    });
+  }
+  return { title: feedTitle, videos };
+}
+
+/** GET /public/youtube-playlist — veřejná videa z YouTube playlistu (RSS, cache 1 h) */
+app.get('/make-server-93a20b6f/public/youtube-playlist', async (c) => {
+  const playlistId = (c.req.query('playlistId') || '').trim();
+  if (!playlistId || !/^[\w-]+$/.test(playlistId)) {
+    return c.json({ error: 'Chybí nebo neplatné playlistId' }, 400);
+  }
+  const cached = YT_PLAYLIST_CACHE.get(playlistId);
+  if (cached && Date.now() - cached.at < YT_PLAYLIST_TTL_MS) {
+    return c.json(cached.data);
+  }
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(playlistId)}`,
+      { headers: { 'User-Agent': 'VividbooksSite/1.0' } },
+    );
+    if (!res.ok) {
+      return c.json({ error: `YouTube RSS HTTP ${res.status}` }, 502);
+    }
+    const xml = await res.text();
+    const parsed = parseYoutubePlaylistRss(xml);
+    const data = { playlistId, ...parsed };
+    YT_PLAYLIST_CACHE.set(playlistId, { at: Date.now(), data });
+    return c.json(data);
+  } catch (e: any) {
+    console.log(`[public/youtube-playlist] ${e.message}`);
+    return c.json({ error: e.message || 'Nepodařilo se načíst playlist' }, 502);
+  }
+});
+
 /** Z textu modelu vytáhne první kompletní JSON objekt (ignoruje markdown, text před/po). */
 function extractFirstJsonObject(raw: string): { ok: true; value: unknown } | { ok: false; reason: string } {
   const strippedBom = raw.replace(/\uFEFF/g, '').trim();

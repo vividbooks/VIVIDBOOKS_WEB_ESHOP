@@ -160,6 +160,8 @@ export type ProductBundlePromoTileProps = {
   heading?: string;
   /** Úzká vysoká karta (dvousloupcový grid na Akcích): obálky nahoře, obsah pod sebou. */
   narrowGrid?: boolean;
+  /** Vnořeno do společné karty (bez vlastního nadpisu a vnitřního boxu). */
+  embeddedInCard?: boolean;
   onAddToSchoolOrder: (bundle: ProductBundleRecord) => void;
   addingBundleId: string | null;
 };
@@ -170,6 +172,7 @@ export function ProductBundlePromoTile({
   anchorProduct,
   heading,
   narrowGrid = false,
+  embeddedInCard = false,
   onAddToSchoolOrder,
   addingBundleId,
 }: ProductBundlePromoTileProps) {
@@ -197,7 +200,7 @@ export function ProductBundlePromoTile({
     ? `Akce ${subjectSlots.paid}+${subjectSlots.free} — nastav\u00edte na str\u00e1nce bal\u00ed\u010dku.`
     : `Zahrnuje ${nTit}\u00a0${titulSkloneni(nTit)}.`;
 
-  const intro = heading ? (
+  const intro = heading || embeddedInCard ? (
     <div className="min-w-0">
       <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] font-normal leading-snug m-0">
         {introMainLine}
@@ -266,6 +269,110 @@ export function ProductBundlePromoTile({
     </>
   );
 
+  const innerContent = (
+    <div
+      className={
+        narrowGrid
+          ? 'flex flex-col gap-4 items-stretch flex-1 min-h-0'
+          : 'flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6'
+      }
+    >
+      {coverPick.length > 0 && (
+        <div
+          className={
+            narrowGrid
+              ? 'flex items-center justify-center shrink-0 pt-0.5'
+              : `flex items-center justify-center shrink-0 mx-auto sm:mx-0 self-center ${embeddedInCard ? '' : 'sm:-translate-x-5 sm:justify-start'}`
+          }
+          aria-hidden
+        >
+          {coverPick.map((bp, idx) => (
+            <BundleFanCoverThumb
+              key={String(bp.id)}
+              book={bp}
+              clickable={false}
+              index={idx}
+              total={coverPick.length}
+              className={idx > 0 ? (narrowGrid ? '-ml-[30px]' : '-ml-[30px] sm:-ml-[34px]') : ''}
+            />
+          ))}
+        </div>
+      )}
+      <div
+        className={
+          narrowGrid
+            ? 'flex-1 min-h-0 min-w-0 flex flex-col gap-3 text-center'
+            : 'flex-1 min-w-0 flex flex-col gap-1.5 sm:gap-2 text-center sm:text-left'
+        }
+      >
+        {narrowGrid ? (
+          <>
+            <div className="flex-1 flex flex-col gap-3 min-h-0 text-center">
+              {intro}
+              {!isSubjectBundle ? (
+                <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 w-full min-w-0">
+                  {standardPriceBlock}
+                </div>
+              ) : null}
+            </div>
+            <div
+              className={
+                isSubjectBundle
+                  ? 'flex shrink-0 justify-center pt-2 w-full min-w-0'
+                  : 'flex flex-row gap-2 w-full min-w-0 mt-0.5'
+              }
+            >
+              {isSubjectBundle ? (
+                <Link
+                  to={bundlePath}
+                  className="inline-flex items-center justify-center gap-1.5 py-2 px-4 sm:px-5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] transition-colors cursor-pointer border-0 text-center leading-tight w-auto max-w-[min(100%,240px)]"
+                >
+                  <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                  {'Vybrat tituly'}
+                </Link>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={!linesOk || addingBundleId === bundle.id}
+                    onClick={() => onAddToSchoolOrder(bundle)}
+                    className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer border-0 text-center leading-tight"
+                  >
+                    <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
+                    {'P\u0159idat do objedn\u00e1vky'}
+                  </button>
+                  <Link
+                    to={bundlePath}
+                    className="flex-1 min-w-0 inline-flex items-center justify-center py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-normal text-[#92400e] underline underline-offset-2 hover:opacity-90 border border-[#d97706]/35 bg-white/90 text-center leading-tight"
+                  >
+                    {'V\u00edce o akci'}
+                  </Link>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {intro}
+            <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 sm:gap-x-2.5 gap-y-1.5 w-full min-w-0">
+              {!isSubjectBundle ? standardPriceBlock : null}
+              {actionsBlockPdp}
+            </div>
+          </>
+        )}
+        {!isSubjectBundle && !linesOk && (
+          <p className="text-[11px] text-[#9a3412] m-0">
+            {'Bal\u00ed\u010dek te\u010f nejde p\u0159idat do ko\u0161\u00edku \u2014 chyb\u00ed produkt v katalogu nebo varianta.'}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+
+  if (embeddedInCard) {
+    return innerContent;
+  }
+
   return (
     <div className={`flex flex-col gap-2 ${narrowGrid ? 'h-full min-h-0' : ''}`}>
       {heading && !narrowGrid ? (
@@ -288,103 +395,7 @@ export function ProductBundlePromoTile({
             {heading}
           </h2>
         ) : null}
-        <div
-          className={
-            narrowGrid
-              ? 'flex flex-col gap-4 items-stretch flex-1 min-h-0'
-              : 'flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-5'
-          }
-        >
-          {coverPick.length > 0 && (
-            <div
-              className={
-                narrowGrid
-                  ? 'flex items-center justify-center shrink-0 pt-0.5'
-                  : 'flex items-center justify-center sm:justify-start shrink-0 mx-auto sm:mx-0 self-center sm:-translate-x-5'
-              }
-              aria-hidden
-            >
-              {coverPick.map((bp, idx) => (
-                <BundleFanCoverThumb
-                  key={String(bp.id)}
-                  book={bp}
-                  clickable={false}
-                  index={idx}
-                  total={coverPick.length}
-                  className={idx > 0 ? (narrowGrid ? '-ml-[30px]' : '-ml-[30px] sm:-ml-[34px]') : ''}
-                />
-              ))}
-            </div>
-          )}
-          <div
-            className={
-              narrowGrid
-                ? 'flex-1 min-h-0 min-w-0 flex flex-col gap-3 text-center'
-                : 'flex-1 min-w-0 flex flex-col gap-1.5 sm:gap-2 text-center sm:text-left'
-            }
-          >
-            {narrowGrid ? (
-              <>
-                <div className="flex-1 flex flex-col gap-3 min-h-0 text-center">
-                  {intro}
-                  {!isSubjectBundle ? (
-                    <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 w-full min-w-0">
-                      {standardPriceBlock}
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  className={
-                    isSubjectBundle
-                      ? 'flex shrink-0 justify-center pt-2 w-full min-w-0'
-                      : 'flex flex-row gap-2 w-full min-w-0 mt-0.5'
-                  }
-                >
-                  {isSubjectBundle ? (
-                    <Link
-                      to={bundlePath}
-                      className="inline-flex items-center justify-center gap-1.5 py-2 px-4 sm:px-5 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] transition-colors cursor-pointer border-0 text-center leading-tight w-auto max-w-[min(100%,240px)]"
-                    >
-                      <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
-                      {'Vybrat tituly'}
-                    </Link>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        disabled={!linesOk || addingBundleId === bundle.id}
-                        onClick={() => onAddToSchoolOrder(bundle)}
-                        className="flex-1 min-w-0 inline-flex items-center justify-center gap-1.5 py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-bold text-white bg-[#001161] hover:bg-[#000a3d] disabled:opacity-45 disabled:cursor-not-allowed transition-colors cursor-pointer border-0 text-center leading-tight"
-                      >
-                        <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
-                        {'P\u0159idat do objedn\u00e1vky'}
-                      </button>
-                      <Link
-                        to={bundlePath}
-                        className="flex-1 min-w-0 inline-flex items-center justify-center py-2 px-2 sm:px-3 rounded-[12px] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[12px] font-normal text-[#92400e] underline underline-offset-2 hover:opacity-90 border border-[#d97706]/35 bg-white/90 text-center leading-tight"
-                      >
-                        {'V\u00edce o akci'}
-                      </Link>
-                    </>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                {intro}
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-x-2 sm:gap-x-2.5 gap-y-1.5 w-full min-w-0">
-                  {!isSubjectBundle ? standardPriceBlock : null}
-                  {actionsBlockPdp}
-                </div>
-              </>
-            )}
-            {!isSubjectBundle && !linesOk && (
-              <p className="text-[11px] text-[#9a3412] m-0">
-                {'Bal\u00ed\u010dek te\u010d nejde p\u0159idat do ko\u0161\u00edku \u2014 chyb\u00ed produkt v katalogu nebo varianta.'}
-              </p>
-            )}
-          </div>
-        </div>
+        {innerContent}
       </div>
     </div>
   );

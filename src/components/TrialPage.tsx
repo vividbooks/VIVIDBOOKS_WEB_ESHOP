@@ -530,17 +530,20 @@ export function SchoolSearch({
   );
 }
 
+export interface TrialRegistrationFormProps {
+  /** Vložený formulář bez stránkového layoutu */
+  embedded?: boolean;
+  /** Předvybrané předměty 2. stupeň (např. Mathematics-2) */
+  defaultSubjects2nd?: string[];
+}
+
 /* ══════════════════════════════════════════
-   Main TrialPage
+   Trial registration form (page + embed)
 ══════════════════════════════════════════ */
-export function TrialPage() {
-  const [searchParams] = useSearchParams();
-  const tokenParam = searchParams.get('token');
-
-  const [identity, setIdentity] = useState<VvbIdentity | null>(null);
-  const [tokenLoading, setTokenLoading] = useState(!!tokenParam);
-  const [tokenError, setTokenError] = useState('');
-
+export function TrialRegistrationForm({
+  embedded: _embedded = false,
+  defaultSubjects2nd,
+}: TrialRegistrationFormProps = {}) {
   // School + Pipedrive
   const [schoolName, setSchoolName] = useState('');
   const [ico, setIco] = useState('');
@@ -560,7 +563,7 @@ export function TrialPage() {
   // Form
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '' });
   /** Kódy předmětů (Webflow data-value), např. Mathematics-1 */
-  const [subjects2nd, setSubjects2nd] = useState<string[]>([]);
+  const [subjects2nd, setSubjects2nd] = useState<string[]>(() => defaultSubjects2nd ?? []);
   const [subjects1st, setSubjects1st] = useState<string[]>([]);
   /** Zástupce ředitele: SchoolStage-1 | SchoolStage-2 */
   const [schoolStages, setSchoolStages] = useState<string[]>([]);
@@ -613,32 +616,6 @@ export function TrialPage() {
       daysLeft: Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
     };
   }, [trialNextEligibleAt]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('vvb_identity');
-    if (saved) {
-      try {
-        const parsed: VvbIdentity = JSON.parse(saved);
-        if (parsed.expires && new Date(parsed.expires) < new Date()) localStorage.removeItem('vvb_identity');
-        else setIdentity(parsed);
-      } catch {}
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!tokenParam) return;
-    setTokenLoading(true);
-    fetch(`${SERVER}/verify-token/${tokenParam}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } })
-      .then(r => r.json())
-      .then(data => {
-        if (data.valid) {
-          const id: VvbIdentity = { email: data.email, name: data.name, webinarId: data.webinarId, webinarTitle: data.webinarTitle, trialActivated: true, since: new Date().toISOString(), expires: data.expires };
-          setIdentity(id); localStorage.setItem('vvb_identity', JSON.stringify(id));
-        } else setTokenError(data.error || 'Neplatn\u00fd odkaz.');
-      })
-      .catch(() => setTokenError('Nepoda\u0159ilo se ov\u011b\u0159it odkaz.'))
-      .finally(() => setTokenLoading(false));
-  }, [tokenParam]);
 
   // Pipedrive check on IČO
   const pdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -744,7 +721,8 @@ export function TrialPage() {
     setFormError('');
     if (name === 'email') checkEmail(value);
     if (name === 'position') {
-      setSubjects2nd([]);
+      const teacherPosition = 'U\u010ditel/ka';
+      setSubjects2nd(value === teacherPosition && defaultSubjects2nd?.length ? [...defaultSubjects2nd] : []);
       setSubjects1st([]);
       setSchoolStages([]);
     }
@@ -847,98 +825,8 @@ export function TrialPage() {
     }
   };
 
-  if (tokenParam && tokenLoading) {
-    return (
-      <div className="min-h-[80vh] flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-3 border-[#7C3AED]/20 border-t-[#7C3AED] rounded-full animate-spin" />
-          <p style={FF} className="text-[#001161]/60 text-[15px]">{'Ov\u011b\u0159uji v\u00e1\u0161 p\u0159\u00edstup\u2026'}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (identity && identity.trialActivated) {
-    const expiresDate = identity.expires ? new Date(identity.expires).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }) : null;
-    return (
-      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
-        className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-        <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte" description="14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
-        <div className="w-full max-w-[520px]">
-          <div className="bg-gradient-to-br from-[#7C3AED]/10 to-[#5B4FD8]/5 border border-[#7C3AED]/20 rounded-[28px] p-8 text-center">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#7C3AED]/15 mb-5">
-              <Sparkles className="w-8 h-8 text-[#7C3AED]" />
-            </div>
-            <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] leading-[1.2] mb-2">
-              {'V\u00edt\u00e1me v\u00e1s, '}{identity.name.split(' ')[0]}{'!'}
-            </h1>
-            {identity.webinarTitle && (
-              <p style={FF} className="text-[#7C3AED] text-[14px] font-bold mb-4">{'Po registraci na: '}{identity.webinarTitle}</p>
-            )}
-            <div className="bg-white rounded-2xl p-5 mb-6 text-left space-y-3">
-              <div className="flex items-center gap-3">
-                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
-                <div>
-                  <p style={FF} className="font-bold text-[#001161] text-[14px]">{'Zku\u0161ebn\u00ed p\u0159\u00edstup aktivov\u00e1n'}</p>
-                  {expiresDate && <p style={FF} className="text-[#001161]/50 text-[12px]">{'Platnost do: '}{expiresDate}</p>}
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <User className="w-5 h-5 text-[#001161]/40 shrink-0" />
-                <p style={FF} className="text-[#001161]/60 text-[13px]">{identity.email}</p>
-              </div>
-            </div>
-            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'T\u00fdm Vividbooks v\u00e1m brzy po\u0161le p\u0159\u00edstupov\u00e9 \u00fadaje.'}</p>
-            <a href="/" className="inline-flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/90 text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline" style={FF}>
-              {'Prohl\u00e9dnout u\u010debnice'}
-            </a>
-            <button onClick={() => { localStorage.removeItem('vvb_identity'); setIdentity(null); }}
-              className="block mx-auto mt-4 text-[12px] text-[#001161]/30 hover:text-[#001161]/60 transition-colors cursor-pointer" style={FF}>
-              {'Odhl\u00e1sit se'}
-            </button>
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
-
-  if (tokenParam && tokenError) {
-    return (
-      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-        className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-[420px] text-center">
-          <div className="bg-red-50 border border-red-200 rounded-[24px] p-8">
-            <p style={FF} className="text-red-600 text-[16px] font-bold mb-2">{'Neplatn\u00fd odkaz'}</p>
-            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{tokenError}</p>
-            <a href="/vyzkousejte" style={FF} className="text-[#7C3AED] font-bold text-[14px] underline hover:opacity-75">{'Zkusit znovu'}</a>
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
-
   return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
-      className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-      <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte"
-        description="Z\u00edskejte 14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
-      <div className="w-full max-w-[520px]">
-
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#E8942A]/10 mb-5">
-            <BookOpen className="w-8 h-8 text-[#E8942A]" />
-          </div>
-          <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] md:text-[36px] leading-[1.2] mb-4">
-            {'Vyzkou\u0161ejte u\u010debn\u00ed materi\u00e1ly Vividbooks zdarma na 14 dn\u00ed.'}
-          </h1>
-          <p style={FF} className="text-[#001161]/60 text-[15px] md:text-[16px] leading-relaxed">
-            {'Vypl\u0148te formul\u00e1\u0159 nebo n\u00e1m zavolejte na'}
-            <Link to="/kontakt" className="inline-flex items-center gap-1.5 text-[#E8942A] font-bold hover:underline ml-1" style={FF}>
-              <Phone className="w-4 h-4" /> +420 602 227 674
-            </Link>
-          </p>
-        </div>
-
+    <>
         {submitted ? (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}
             className="bg-[#F0FDF4] border border-green-200 rounded-[20px] p-8 text-center">
@@ -1292,6 +1180,140 @@ export function TrialPage() {
             )}
           </form>
         )}
+    </>
+  );
+}
+
+/* ══════════════════════════════════════════
+   Main TrialPage
+══════════════════════════════════════════ */
+export function TrialPage() {
+  const [searchParams] = useSearchParams();
+  const tokenParam = searchParams.get('token');
+
+  const [identity, setIdentity] = useState<VvbIdentity | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(!!tokenParam);
+  const [tokenError, setTokenError] = useState('');
+
+  useEffect(() => {
+    const saved = localStorage.getItem('vvb_identity');
+    if (saved) {
+      try {
+        const parsed: VvbIdentity = JSON.parse(saved);
+        if (parsed.expires && new Date(parsed.expires) < new Date()) localStorage.removeItem('vvb_identity');
+        else setIdentity(parsed);
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!tokenParam) return;
+    setTokenLoading(true);
+    fetch(`${SERVER}/verify-token/${tokenParam}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } })
+      .then(r => r.json())
+      .then(data => {
+        if (data.valid) {
+          const id: VvbIdentity = { email: data.email, name: data.name, webinarId: data.webinarId, webinarTitle: data.webinarTitle, trialActivated: true, since: new Date().toISOString(), expires: data.expires };
+          setIdentity(id); localStorage.setItem('vvb_identity', JSON.stringify(id));
+        } else setTokenError(data.error || 'Neplatn\u00fd odkaz.');
+      })
+      .catch(() => setTokenError('Nepoda\u0159ilo se ov\u011b\u0159it odkaz.'))
+      .finally(() => setTokenLoading(false));
+  }, [tokenParam]);
+
+  if (tokenParam && tokenLoading) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-3 border-[#7C3AED]/20 border-t-[#7C3AED] rounded-full animate-spin" />
+          <p style={FF} className="text-[#001161]/60 text-[15px]">{'Ov\u011b\u0159uji v\u00e1\u0161 p\u0159\u00edstup\u2026'}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (identity && identity.trialActivated) {
+    const expiresDate = identity.expires ? new Date(identity.expires).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }) : null;
+    return (
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+        className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+        <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte" description="14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
+        <div className="w-full max-w-[520px]">
+          <div className="bg-gradient-to-br from-[#7C3AED]/10 to-[#5B4FD8]/5 border border-[#7C3AED]/20 rounded-[28px] p-8 text-center">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#7C3AED]/15 mb-5">
+              <Sparkles className="w-8 h-8 text-[#7C3AED]" />
+            </div>
+            <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] leading-[1.2] mb-2">
+              {'V\u00edt\u00e1me v\u00e1s, '}{identity.name.split(' ')[0]}{'!'}
+            </h1>
+            {identity.webinarTitle && (
+              <p style={FF} className="text-[#7C3AED] text-[14px] font-bold mb-4">{'Po registraci na: '}{identity.webinarTitle}</p>
+            )}
+            <div className="bg-white rounded-2xl p-5 mb-6 text-left space-y-3">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
+                <div>
+                  <p style={FF} className="font-bold text-[#001161] text-[14px]">{'Zku\u0161ebn\u00ed p\u0159\u00edstup aktivov\u00e1n'}</p>
+                  {expiresDate && <p style={FF} className="text-[#001161]/50 text-[12px]">{'Platnost do: '}{expiresDate}</p>}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <User className="w-5 h-5 text-[#001161]/40 shrink-0" />
+                <p style={FF} className="text-[#001161]/60 text-[13px]">{identity.email}</p>
+              </div>
+            </div>
+            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'T\u00fdm Vividbooks v\u00e1m brzy po\u0161le p\u0159\u00edstupov\u00e9 \u00fadaje.'}</p>
+            <a href="/" className="inline-flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/90 text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline" style={FF}>
+              {'Prohl\u00e9dnout u\u010debnice'}
+            </a>
+            <button onClick={() => { localStorage.removeItem('vvb_identity'); setIdentity(null); }}
+              className="block mx-auto mt-4 text-[12px] text-[#001161]/30 hover:text-[#001161]/60 transition-colors cursor-pointer" style={FF}>
+              {'Odhl\u00e1sit se'}
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (tokenParam && tokenError) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+        className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-[420px] text-center">
+          <div className="bg-red-50 border border-red-200 rounded-[24px] p-8">
+            <p style={FF} className="text-red-600 text-[16px] font-bold mb-2">{'Neplatn\u00fd odkaz'}</p>
+            <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{tokenError}</p>
+            <a href="/vyzkousejte" style={FF} className="text-[#7C3AED] font-bold text-[14px] underline hover:opacity-75">{'Zkusit znovu'}</a>
+          </div>
+        </div>
+      </motion.div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+      className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+      <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte"
+        description="Z\u00edskejte 14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
+      <div className="w-full max-w-[520px]">
+
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#E8942A]/10 mb-5">
+            <BookOpen className="w-8 h-8 text-[#E8942A]" />
+          </div>
+          <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] md:text-[36px] leading-[1.2] mb-4">
+            {'Vyzkou\u0161ejte u\u010debn\u00ed materi\u00e1ly Vividbooks zdarma na 14 dn\u00ed.'}
+          </h1>
+          <p style={FF} className="text-[#001161]/60 text-[15px] md:text-[16px] leading-relaxed">
+            {'Vypl\u0148te formul\u00e1\u0159 nebo n\u00e1m zavolejte na'}
+            <Link to="/kontakt" className="inline-flex items-center gap-1.5 text-[#E8942A] font-bold hover:underline ml-1" style={FF}>
+              <Phone className="w-4 h-4" /> +420 602 227 674
+            </Link>
+          </p>
+        </div>
+
+        <TrialRegistrationForm />
       </div>
     </motion.div>
   );
