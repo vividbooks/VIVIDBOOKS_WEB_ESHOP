@@ -101,6 +101,13 @@ const PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY_DEFAULT = '26e4a2f8dc44e49f369c468ccc81
 const PIPEDRIVE_INBOUND_DEAL_ORDER_NUMBER_FIELD_KEY_DEFAULT =
   '3525a2dc77a0cfdaa1b4d15ac7d4175a4c6cb11c';
 
+/** Vlastní pole „CIN" / IČO na organizaci (Pipedrive UI ID 4033) — stejný klíč jako v `make-server-93a20b6f`
+ *  (`getPipedriveOrganizationIcoFieldKey`). Eshop sem zapisuje IČO; standardní pole `org.vat` se u škol
+ *  prakticky nepoužívá. */
+const PIPEDRIVE_ORG_ICO_FIELD_KEY_DEFAULT = '0f91eb090c567025d50bd189c2fcef7660168cd2';
+
+let pipedriveOrgIcoFieldKeyCache: string | undefined;
+
 const ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON =
   'Pipedrive import: u dealu chybí osoba i kontakt u organizace. Doplňte u objednávky e-mail a kontakt na zákazníka.';
 
@@ -256,6 +263,53 @@ async function pipedriveApiGet<T>(
     return null;
   }
   return (json?.data ?? null) as T | null;
+}
+
+async function getPipedriveOrganizationIcoFieldKey(apiToken: string): Promise<string> {
+  if (pipedriveOrgIcoFieldKeyCache !== undefined) return pipedriveOrgIcoFieldKeyCache;
+
+  const envKey = (Deno.env.get('PIPEDRIVE_ORG_ICO_FIELD_KEY') || '').trim();
+  if (envKey) {
+    pipedriveOrgIcoFieldKeyCache = envKey;
+    return pipedriveOrgIcoFieldKeyCache;
+  }
+
+  pipedriveOrgIcoFieldKeyCache = PIPEDRIVE_ORG_ICO_FIELD_KEY_DEFAULT;
+  try {
+    const fields = await pipedriveApiGet<Array<Record<string, unknown>>>(apiToken, '/organizationFields', { limit: 500 });
+    if (Array.isArray(fields)) {
+      const byKey = fields.find((item) => String(item?.key || '').trim() === PIPEDRIVE_ORG_ICO_FIELD_KEY_DEFAULT);
+      if (byKey?.key) {
+        pipedriveOrgIcoFieldKeyCache = String(byKey.key);
+        return pipedriveOrgIcoFieldKeyCache;
+      }
+      const byName = fields.find((item) => {
+        const name = String(item?.name || '').toLowerCase();
+        const keyName = String(item?.key || '').toLowerCase();
+        return /\b(cin|ico|ic|company\s*id|ičo)\b/.test(name) || /\b(cin|ico)\b/.test(keyName);
+      });
+      if (byName?.key) {
+        pipedriveOrgIcoFieldKeyCache = String(byName.key);
+      }
+    }
+  } catch {
+    /* keep default */
+  }
+  return pipedriveOrgIcoFieldKeyCache;
+}
+
+/** IČO z PD organizace: preferuje vlastní pole CIN (4033), fallback na standardní `vat`. */
+function readOrganizationIco(org: Record<string, unknown>, icoFieldKey: string): string | null {
+  const customRaw = org[icoFieldKey];
+  const custom = typeof customRaw === 'string' || typeof customRaw === 'number'
+    ? String(customRaw).trim().replace(/\s/g, '')
+    : '';
+  const vatRaw = org.vat;
+  const vat = typeof vatRaw === 'string' && vatRaw.trim()
+    ? vatRaw.trim().replace(/\s/g, '')
+    : '';
+  const digits = (custom || vat).replace(/\D/g, '');
+  return digits.length >= 6 ? digits.slice(0, 10) : null;
 }
 
 function readPersonEmail(person: Record<string, unknown>): string {
@@ -1013,13 +1067,13 @@ Deno.serve(async (req) => {
 
   const orgId = parsePipedriveEntityId(deal.org_id);
   if (orgId != null && orgId > 0) {
-    const org = await pipedriveApiGet<Record<string, unknown>>(apiToken, `/organizations/${orgId}`);
+    const [org, icoFieldKey] = await Promise.all([
+      pipedriveApiGet<Record<string, unknown>>(apiToken, `/organizations/${orgId}`),
+      getPipedriveOrganizationIcoFieldKey(apiToken),
+    ]);
     if (org) {
       schoolName = String(org.name || '').trim() || null;
-      const vat = org.vat;
-      if (typeof vat === 'string' && vat.trim()) {
-        ico = vat.trim().replace(/\s/g, '');
-      }
+      ico = readOrganizationIco(org, icoFieldKey);
       /**
        * Doplnit adresu z Org tam, kde Person sub‑pole nestačí — strukturovaná podpole `address_*`
        * (PD v1), nested `address` (PD v2) nebo plain text `org.address`. Po‑komponentově: jen co
