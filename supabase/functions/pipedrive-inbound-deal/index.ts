@@ -43,9 +43,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *      `locality`, `postal_code`, …),
  *   2) strukturovaná / textová pole PD Org (`address_*` v v1, nested `address` v v2,
  *      případně plain‑text `org.address`) doplní chybějící komponenty,
- *   3) pokud něco stále chybí, server‑to‑server **Google Geocoding API** (klíč
- *      `GOOGLE_MAPS_API_KEY` v Edge Secrets — stejný, jaký používá `make-server-93a20b6f`
- *      pro `/address-autocomplete` + `/place-details` na webu) přepíše chybějící části.
+ *   3) pokud něco stále chybí, **Google Geocoding API** (`GOOGLE_MAPS_API_KEY`; log
+ *      `geocode_skipped_no_api_key` když chybí) a **ARES podle IČO** (oficiální sídlo včetně PSČ);
+ *      adresa v názvu organizace za pomlčkou se parsuje automaticky.
  * Vypnutí geocodingu: `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`. Pokud zůstane adresa neúplná,
  * loguje se `address_incomplete` a do `admin_note` se přidá upozornění.
  *
@@ -79,6 +79,12 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * Nasazení: supabase functions deploy pipedrive-inbound-deal --no-verify-jwt
  */
 import postgres from 'npm:postgres';
+import {
+  type AddressParts,
+  enrichCzechAddressParts,
+  normalizeCzechZip,
+  parseFreeFormAddress,
+} from '../_shared/czech-address-enrichment.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -342,139 +348,6 @@ function readPersonPhone(person: Record<string, unknown>): string {
     if (v) return v;
   }
   return '';
-}
-
-/**
- * Strukturovaný formát adresy stejný jako v eshop checkoutu (`orders.street/city/zip`).
- * Street = ulice + číslo (případně subpremise / vchod), city = obec, zip = PSČ bez mezer (5 znaků).
- */
-type AddressParts = { street: string; city: string; zip: string };
-
-function normalizeCzechZip(value: string | undefined | null): string {
-  const digitsOnly = String(value ?? '').replace(/\D/g, '');
-  return digitsOnly.length === 5 ? digitsOnly : '';
-}
-
-/**
- * Parsuje plain‑text adresu (typicky `postal_address.formatted_address` z PD nebo `org.address`)
- * na strukturované části. Funguje pro běžné české formáty:
- *   - „Karlova 5, 120 00 Praha"
- *   - „Karlova 5, 12000 Praha, Czech Republic"
- *   - „Karlova 5, Praha, 120 00, Česká republika"
- *   - „120 00 Praha, Karlova 5"
- * Vrací prázdné stringy, pokud se z textu nedá nic vyčíst (volající má pak svůj fallback).
- */
-function parseFreeFormAddress(rawInput: string | undefined | null): AddressParts {
-  const raw = String(rawInput ?? '').replace(/\s+/g, ' ').trim();
-  if (!raw) return { street: '', city: '', zip: '' };
-  /** Země na konci („Czech Republic" / „Česká republika" / „Czechia" / „CZ") oříznout. */
-  const noCountry = raw
-    .replace(/,?\s*(czech\s*republic|czechia|česká\s*republika|slovakia|slovensk[áo]\s*republika|cz|sk)\s*\.?\s*$/i, '')
-    .trim();
-  /** Najít PSČ — 5 číslic, případně s mezerou mezi 3. a 4. */
-  const zipMatch = noCountry.match(/\b(\d{3})\s?(\d{2})\b/);
-  const zip = zipMatch ? `${zipMatch[1]}${zipMatch[2]}` : '';
-
-  /** Odstranit PSČ z textu, abychom mohli rozdělit zbytek na ulici + město. */
-  const withoutZip = zipMatch
-    ? (noCountry.slice(0, zipMatch.index) + ' ' + noCountry.slice((zipMatch.index || 0) + zipMatch[0].length))
-      .replace(/\s+/g, ' ')
-      .trim()
-    : noCountry;
-  const parts = withoutZip.split(/,/).map((p) => p.trim()).filter(Boolean);
-
-  let street = '';
-  let city = '';
-  if (parts.length === 1) {
-    /** Bez čárky — pokud je tam zip, předpokládáme „<ulice> <zip> <město>" → město = poslední „slovo(a)". */
-    if (zipMatch) {
-      /** Část před PSČ = ulice, část za PSČ = město. Tu už máme v `withoutZip` jen splácaná dohromady,
-       *  vrátíme se proto k původnímu textu s PSČ a rozdělíme okolo něj. */
-      const before = noCountry.slice(0, zipMatch.index || 0).replace(/[,\s]+$/, '').trim();
-      const after = noCountry.slice((zipMatch.index || 0) + zipMatch[0].length).replace(/^[,\s]+/, '').trim();
-      street = before;
-      city = after;
-    } else {
-      street = parts[0];
-    }
-  } else {
-    /** Vícekomponentový řetězec: nejdřív zkusíme heuristiku „ulice je první, město je část obsahující PSČ
-     *  (nebo poslední část bez země)". */
-    street = parts[0];
-    const cityPart = parts.slice(1).find((p) => /[a-zA-ZáčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/.test(p)) || '';
-    city = cityPart;
-  }
-
-  street = street.replace(/[,;]+$/, '').trim();
-  city = city.replace(/[,;]+$/, '').trim();
-  return { street, city, zip };
-}
-
-/**
- * Server‑side geocoding přes Google Geocoding API — stejný princip, jaký používá eshop checkout
- * přes Place Details (`make-server-93a20b6f /address-autocomplete` + `/place-details`). Klíč je
- * `GOOGLE_MAPS_API_KEY` (resp. `GOOGLE_PLACES_API_KEY`) v Edge Secrets.
- * Vstupem je volná věta z PD (např. „Karlova 5, Praha 1"), výstupem rozparsované `street/city/zip`.
- * Když klíč chybí nebo Google nevrátí výsledek, vrátí `null` a volající zachová původní hodnoty.
- */
-async function geocodeFreeFormAddressViaGoogle(rawAddress: string): Promise<AddressParts | null> {
-  const key = (Deno.env.get('GOOGLE_MAPS_API_KEY') || Deno.env.get('GOOGLE_PLACES_API_KEY') || '').trim();
-  if (!key) return null;
-  const cleanedInput = String(rawAddress || '').replace(/\s+/g, ' ').trim();
-  if (!cleanedInput) return null;
-  const url = new URL('https://maps.googleapis.com/maps/api/geocode/json');
-  url.searchParams.set('address', cleanedInput);
-  url.searchParams.set('key', key);
-  url.searchParams.set('language', 'cs');
-  url.searchParams.set('region', 'cz');
-  url.searchParams.set('components', 'country:CZ|country:SK');
-  try {
-    const res = await fetch(url.toString());
-    const data = (await res.json()) as {
-      status?: string;
-      results?: Array<{
-        address_components?: Array<{ long_name: string; short_name: string; types: string[] }>;
-        formatted_address?: string;
-      }>;
-      error_message?: string;
-    };
-    if (data.status !== 'OK' || !Array.isArray(data.results) || data.results.length === 0) {
-      console.log('[pipedrive-inbound] geocode_failed', data.status, data.error_message || '');
-      return null;
-    }
-    const components = data.results[0].address_components || [];
-    let streetNumber = '';
-    let route = '';
-    let city = '';
-    let zip = '';
-    for (const c of components) {
-      const t = c.types || [];
-      if (t.includes('street_number')) streetNumber = c.long_name;
-      if (t.includes('route')) route = c.long_name;
-      if (t.includes('locality')) city = c.long_name;
-      if (!city && t.includes('postal_town')) city = c.long_name;
-      if (t.includes('postal_code')) zip = String(c.long_name || '').replace(/\s/g, '');
-    }
-    if (!city) {
-      for (const c of components) {
-        if ((c.types || []).includes('administrative_area_level_2')) {
-          city = c.long_name;
-          break;
-        }
-      }
-    }
-    let street = [route, streetNumber].filter(Boolean).join(' ').trim();
-    /** Pokud street je prázdný (Google nevrátil route+number), zkusíme první segment formatted_address. */
-    if (!street && data.results[0].formatted_address) {
-      const first = String(data.results[0].formatted_address).split(',')[0]?.trim() || '';
-      if (first) street = first;
-    }
-    return { street, city, zip: normalizeCzechZip(zip) };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.log('[pipedrive-inbound] geocode_error', msg);
-    return null;
-  }
 }
 
 function structuredFieldsFromObject(obj: Record<string, unknown> | null | undefined, prefix = ''): AddressParts {
@@ -1063,7 +936,6 @@ Deno.serve(async (req) => {
 
   let schoolName: string | null = null;
   let ico: string | null = null;
-  let orgRawAddressForGeocode = '';
 
   const orgId = parsePipedriveEntityId(deal.org_id);
   if (orgId != null && orgId > 0) {
@@ -1083,9 +955,6 @@ Deno.serve(async (req) => {
       if (!street) street = orgAddr.street;
       if (!city) city = orgAddr.city;
       if (!zip) zip = orgAddr.zip;
-      if (typeof org.address === 'string' && org.address.trim()) {
-        orgRawAddressForGeocode = org.address.trim();
-      }
     }
   }
 
@@ -1093,45 +962,24 @@ Deno.serve(async (req) => {
   zip = normalizeCzechZip(zip);
 
   /**
-   * Trojí fallback při neúplné adrese — stejně, jako to dělá eshop checkout přes
-   * Google Places autocomplete + details. Tady jdeme přímo na Geocoding API:
-   *   1) Server-to-server volání s tím, co máme (`street, city, zip` joined; pokud chybí, jen org/person).
-   *   2) Strukturovaná odpověď Google přepíše chybějící části (street/city/zip).
-   *   3) `GOOGLE_MAPS_API_KEY` v Edge Secrets se sdílí s `make-server-93a20b6f` (eshop)
-   *      — výsledky tak budou konzistentní s manuálním zadáním na webu.
-   * Vypnutí přes `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`.
+   * Mezikrok doplnění adresy — po načtení z PD Person/Org:
+   *   1) adresa v názvu organizace (za pomlčkou),
+   *   2) Google Geocoding (`GOOGLE_MAPS_API_KEY`; vypnutí `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`),
+   *   3) ARES podle IČO (oficiální sídlo včetně PSČ).
    */
   const geocodeDisabled = String(Deno.env.get('PIPEDRIVE_INBOUND_DISABLE_GEOCODE') || '').trim() === '1';
-  if (!geocodeDisabled && (!street.trim() || !city.trim() || !zip.trim())) {
-    /** Sestavíme nejvýstižnější vstup pro geocoder. */
-    const geocodeQueryParts = [
-      street.trim(),
-      [zip, city.trim()].filter(Boolean).join(' ').trim(),
-    ].filter(Boolean);
-    let geocodeQuery = geocodeQueryParts.join(', ').trim();
-    if (!geocodeQuery) {
-      const personRaw = person && typeof person === 'object'
-        ? String((person.postal_address as Record<string, unknown> | undefined)?.formatted_address || '').trim()
-        : '';
-      geocodeQuery = personRaw || orgRawAddressForGeocode || '';
-    }
-    if (geocodeQuery) {
-      const geocoded = await geocodeFreeFormAddressViaGoogle(geocodeQuery);
-      if (geocoded && (geocoded.street || geocoded.city || geocoded.zip)) {
-        const before = { street, city, zip };
-        if (!street.trim() && geocoded.street) street = geocoded.street;
-        if (!city.trim() && geocoded.city) city = geocoded.city;
-        if (!zip.trim() && geocoded.zip) zip = geocoded.zip;
-        zip = normalizeCzechZip(zip);
-        logInbound('address_geocoded', {
-          dealId,
-          before,
-          after: { street, city, zip },
-          query: geocodeQuery,
-        });
-      }
-    }
-  }
+  const enriched = await enrichCzechAddressParts(
+    { street: street.trim(), city: city.trim(), zip },
+    {
+      ico,
+      orgName: schoolName,
+      geocodeDisabled,
+      log: (event, data) => logInbound(event, { dealId, ...data }),
+    },
+  );
+  street = enriched.street;
+  city = enriched.city;
+  zip = enriched.zip;
 
   const addressIncomplete = !street.trim() || !city.trim() || !zip.trim();
   if (addressIncomplete) {
