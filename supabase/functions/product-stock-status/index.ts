@@ -221,13 +221,19 @@ async function loadInventoryProducts() {
     ? listResponse.products as Record<string, Record<string, unknown>>
     : {};
 
-  const products: InventoryProduct[] = Object.entries(listProducts).map(([productId, value]) => {
+  const allProductIds = new Set([
+    ...Object.keys(listProducts),
+    ...Object.keys(stockProducts),
+  ]);
+
+  const products: InventoryProduct[] = Array.from(allProductIds).map((productId) => {
+    const value = listProducts[productId] || {};
     const stockRecord = stockProducts[productId] || {};
     return {
       productId,
-      name: String(value?.name || ''),
-      sku: String(value?.sku || ''),
-      ean: String(value?.ean || ''),
+      name: String(value?.name || stockRecord?.name || ''),
+      sku: String(value?.sku || stockRecord?.sku || productId || ''),
+      ean: String(value?.ean || stockRecord?.ean || ''),
       quantity: parseWarehouseQuantity(
         stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
         firstInventory.defaultWarehouse,

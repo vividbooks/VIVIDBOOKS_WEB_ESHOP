@@ -2,6 +2,7 @@
 
 export type StockInventoryItem = {
   sku: string;
+  productId?: string | null;
   quantity: number | null;
 };
 
@@ -51,8 +52,12 @@ function isSameStockSku(left: string | null | undefined, right: string | null | 
   return Boolean(leftNorm && rightNorm && leftNorm === rightNorm);
 }
 
+function resolveInventorySku(item: StockInventoryItem) {
+  return String(item.sku || item.productId || '').trim();
+}
+
 function findInventoryQuantity(sku: string, inventoryProducts: StockInventoryItem[]) {
-  const match = inventoryProducts.find((item) => isSameStockSku(item.sku, sku));
+  const match = inventoryProducts.find((item) => isSameStockSku(resolveInventorySku(item), sku));
   return match?.quantity ?? null;
 }
 
@@ -92,12 +97,13 @@ export function computeEffectiveStockQuantity(
   const packContributions: StockPackContribution[] = [];
 
   for (const item of inventoryProducts) {
-    const pack = parsePackSku(item.sku);
+    const inventorySku = resolveInventorySku(item);
+    const pack = parsePackSku(inventorySku);
     if (!pack || !isSameStockSku(pack.baseSku, sku)) continue;
     if (item.quantity === null) continue;
 
     packContributions.push({
-      packSku: item.sku,
+      packSku: inventorySku,
       unitsPerPack: pack.unitsPerPack,
       packQuantity: item.quantity,
       unitQuantity: item.quantity * pack.unitsPerPack,

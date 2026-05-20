@@ -202,10 +202,18 @@ async function fetchStockSnapshot(params: {
       ? listResponse.products as Record<string, unknown>
       : {};
 
-    const candidates = Object.entries(listProducts).map(([productId, value]) => ({
-      productId,
-      ...(value && typeof value === 'object' ? value as Record<string, unknown> : {}),
-    }));
+    const allProductIds = new Set([
+      ...Object.keys(listProducts),
+      ...Object.keys(stockProducts),
+    ]);
+
+    const candidates = Array.from(allProductIds).map((productId) => {
+      const value = listProducts[productId];
+      return {
+        productId,
+        ...(value && typeof value === 'object' ? value as Record<string, unknown> : {}),
+      };
+    });
 
     const lookupIdNorm = normalizeLoose(params.stockLookupId);
     const eanNorm = normalizeLoose(params.ean);
@@ -242,21 +250,22 @@ async function fetchStockSnapshot(params: {
       ? stockProducts[matchedProductId] as Record<string, unknown>
       : null;
 
-    const inventoryProducts = candidates.map((item) => ({
-      sku: String(item.sku ?? item.productId ?? ''),
-      quantity: (() => {
-        const productId = String(item.productId ?? '');
-        const stockRecord = productId && stockProducts[productId] && typeof stockProducts[productId] === 'object'
-          ? stockProducts[productId] as Record<string, unknown>
-          : null;
-        return stockRecord
+    const inventoryProducts = candidates.map((item) => {
+      const productId = String(item.productId ?? '');
+      const stockRecord = productId && stockProducts[productId] && typeof stockProducts[productId] === 'object'
+        ? stockProducts[productId] as Record<string, unknown>
+        : null;
+      return {
+        sku: String(item.sku ?? stockRecord?.sku ?? productId ?? ''),
+        productId,
+        quantity: stockRecord
           ? parseWarehouseQuantity(
               stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
               firstInventory.defaultWarehouse,
             )
-          : null;
-      })(),
-    }));
+          : null,
+      };
+    });
 
     const lookupSku = params.stockLookupId
       || (matchedCandidate ? String(matchedCandidate.sku ?? matchedCandidate.productId ?? '') : null);
