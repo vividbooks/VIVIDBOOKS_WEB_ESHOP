@@ -1,4 +1,5 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
 type CatalogProduct = {
   id: string;
   name?: string | null;
@@ -351,7 +352,13 @@ Deno.serve(async (req) => {
         ? { ...product, shoptetId: overrideShoptetSku }
         : product;
       const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
-      const quantity = matched?.quantity ?? null;
+      const lookupSku = overrideShoptetSku
+        || product.shoptetId
+        || product.basecomSku
+        || matched?.sku
+        || null;
+      const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventory.products);
+      const quantity = effectiveStock.quantity;
       const stockStatus = getStockStatus(quantity);
 
       return {
@@ -367,6 +374,8 @@ Deno.serve(async (req) => {
         basecomProductId: product.basecomProductId || null,
         basecomSku: product.basecomSku || null,
         quantity,
+        baseQuantity: effectiveStock.baseQuantity,
+        packContributions: effectiveStock.packContributions,
         stockStatus,
         matched: Boolean(matched),
         matchType,
