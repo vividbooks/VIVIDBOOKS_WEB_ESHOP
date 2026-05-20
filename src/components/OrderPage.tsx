@@ -1012,11 +1012,11 @@ export function OrderPage() {
     });
   };
 
-  /* ── součty sešitů (původní logika formuláře) — celkem v Kč jako integer (např. 125 × ks) ── */
+  /* ── součty sešitů — jednotná cena z pole `price` v administraci ── */
   const workbookIndividualTotalKc = Object.entries(quantities).reduce((sum, [id, qty]) => {
     if (!qty) return sum;
     const p = products.find((x) => String(x.id) === String(id));
-    return p ? sum + parseInt(p.price.replace(/\D/g, ''), 10) * qty : sum;
+    return p ? sum + Math.round(getProductUnitPriceInHaler(p) / 100) * qty : sum;
   }, 0);
   const workbookIndividualPcs = Object.values(quantities).reduce((s, q) => s + (q || 0), 0);
   const workbookBundleSubtotalHalers = Object.entries(schoolBundleQtyById).reduce((sum, [bundleId, qty]) => {

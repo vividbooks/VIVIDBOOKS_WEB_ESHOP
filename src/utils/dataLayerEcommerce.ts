@@ -1,4 +1,5 @@
 import type { CartItem } from '../contexts/CartContext';
+import { getProductUnitPriceInHaler } from './productPrice';
 
 const CURRENCY = 'CZK';
 
@@ -93,9 +94,7 @@ export function dataLayerItemFromProduct(
   const priceHaler =
     typeof options.priceHaler === 'number'
       ? options.priceHaler
-      : typeof product.priceAmount === 'number'
-        ? Math.round(product.priceAmount * 100)
-        : 0;
+      : getProductUnitPriceInHaler(product);
   return {
     item_id: itemId || 'unknown',
     item_name: String(options.itemName || product.name || product.title || 'Produkt'),

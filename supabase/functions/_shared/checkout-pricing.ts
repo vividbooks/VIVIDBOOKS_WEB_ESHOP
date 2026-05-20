@@ -1,3 +1,5 @@
+import { getProductUnitPriceInHaler, parsePriceTextToKc } from './product-price.ts';
+
 /**
  * Ověření cen košíku oproti katalogu (make-server /products + /product-bundles).
  * Použití: create-payment-intent, submit-transfer-order.
@@ -108,38 +110,6 @@ function getProductVariantId(product: any): string | undefined {
   return undefined;
 }
 
-export function getProductUnitPriceInHaler(product: any): number {
-  if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
-    return Math.max(0, Math.round(product.priceAmount * 100));
-  }
-  const merch = product.merchVariants;
-  if (Array.isArray(merch) && merch.length > 0) {
-    for (const v of merch) {
-      if (typeof v?.priceAmount === 'number' && Number.isFinite(v.priceAmount)) {
-        return Math.max(0, Math.round(v.priceAmount * 100));
-      }
-    }
-    for (const v of merch) {
-      const fromVariant = String(v?.price || '')
-        .replace(/\s/g, '')
-        .replace('Kč', '')
-        .replace(/\./g, '')
-        .replace(',', '.')
-        .replace(/[^\d.]/g, '');
-      const pv = Number.parseFloat(fromVariant);
-      if (Number.isFinite(pv)) return Math.max(0, Math.round(pv * 100));
-    }
-  }
-  const normalized = String(product.price || '')
-    .replace(/\s/g, '')
-    .replace('Kč', '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
-}
-
 function variantMatchPriceHaler(product: any, variantLabel: string): number | null {
   const label = variantLabel.trim().toLowerCase();
   const merch = product.merchVariants;
@@ -148,19 +118,15 @@ function variantMatchPriceHaler(product: any, variantLabel: string): number | nu
     const vl = typeof v?.label === 'string' ? v.label.trim().toLowerCase() : '';
     const vid = typeof v?.id === 'string' ? v.id.trim().toLowerCase() : '';
     if (vl && vl === label) {
+      const fromText = parsePriceTextToKc(v?.price);
+      if (fromText !== null) return Math.round(fromText * 100);
       if (typeof v.priceAmount === 'number' && Number.isFinite(v.priceAmount)) {
         return Math.max(0, Math.round(v.priceAmount * 100));
       }
-      const fromVariant = String(v?.price || '')
-        .replace(/\s/g, '')
-        .replace('Kč', '')
-        .replace(/\./g, '')
-        .replace(',', '.')
-        .replace(/[^\d.]/g, '');
-      const pv = Number.parseFloat(fromVariant);
-      if (Number.isFinite(pv)) return Math.max(0, Math.round(pv * 100));
     }
     if (vid && vid === label) {
+      const fromText = parsePriceTextToKc(v?.price);
+      if (fromText !== null) return Math.round(fromText * 100);
       if (typeof v.priceAmount === 'number' && Number.isFinite(v.priceAmount)) {
         return Math.max(0, Math.round(v.priceAmount * 100));
       }

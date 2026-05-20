@@ -17,6 +17,7 @@ import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessCom
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
+import { getMerchVariantUnitPriceInHaler } from '../utils/productPrice';
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
 import {
   bundleIsNxPlusOneSubject,
@@ -466,22 +467,6 @@ const formatPrice = (product: any): string => {
   return `${p.replace(/[,\s\.].*$/, '').trim()}\u00a0K\u010d`;
 };
 
-const getUnitPriceInHaler = (product: any): number => {
-  if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
-    return Math.max(0, Math.round(product.priceAmount * 100));
-  }
-
-  const normalized = String(product.price || '')
-    .replace(/\s/g, '')
-    .replace('Kč', '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
-};
-
 const getNote = (p: any): string =>
   p.note || p.poznamka || p.metadata?.poznamka || p.metadata?.pozn\u00e1mka || p.metadata?.note || '';
 
@@ -870,8 +855,8 @@ export function ProductDetailPage({
     const itemId = String(product.item_id || product.itemId || product.id || '');
     const unitPrice =
       product.type === 'merch' && selectedMerchVariant
-        ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
-        : getUnitPriceInHaler(product);
+        ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+        : getProductUnitPriceInHaler(product);
     const itemName =
       product.type === 'merch' && selectedMerchVariant
         ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
@@ -1029,8 +1014,8 @@ export function ProductDetailPage({
     if (!vid) return;
     const unitPrice =
       product.type === 'merch' && selectedMerchVariant
-        ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
-        : getUnitPriceInHaler(product);
+        ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+        : getProductUnitPriceInHaler(product);
     const lineName =
       product.type === 'merch' && selectedMerchVariant
         ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
@@ -1057,8 +1042,8 @@ export function ProductDetailPage({
       const bundleVid = effectiveCartVariantId;
       const bundleUnitPrice =
         product.type === 'merch' && selectedMerchVariant
-          ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
-          : getUnitPriceInHaler(product);
+          ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+          : getProductUnitPriceInHaler(product);
       const bundleLineName =
         product.type === 'merch' && selectedMerchVariant
           ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
@@ -1080,7 +1065,7 @@ export function ProductDetailPage({
           productName: sibling.name || 'Produkt',
           variantId: sibling.shopifyVariantId || sibling.variantId || undefined,
           quantity: 1,
-          unitPrice: getUnitPriceInHaler(sibling),
+          unitPrice: getProductUnitPriceInHaler(sibling),
           imageUrl: sibling.image || sibling.imageUrl || sibling.coverImage || undefined,
           itemGroup: sibling.category || sibling.merchCategory || sibling.type || undefined,
         });
@@ -1664,7 +1649,7 @@ export function ProductDetailPage({
                           ? {
                               shopifyVariantId: selectedMerchVariant.shopifyVariantId,
                               shoptetSku: selectedMerchVariant.shoptetId,
-                              unitPriceHaler: Math.round(selectedMerchVariant.priceAmount * 100),
+                              unitPriceHaler: getMerchVariantUnitPriceInHaler(selectedMerchVariant),
                               productDisplayName: `${product.name} – ${selectedMerchVariant.label}`,
                               variantLabel: selectedMerchVariant.label,
                             }
@@ -1694,10 +1679,7 @@ export function ProductDetailPage({
                   : sibLabels.slice(0, -1).join(', ') + '\u00a0a\u00a0' + sibLabels[sibLabels.length - 1];
 
                 const totalPrice = [product, ...siblingDils]
-                  .reduce((acc: number, p: any) => {
-                    const raw = String(p.priceAmount || p.price || '').replace(/[^\d]/g, '');
-                    return acc + (parseInt(raw) || 0);
-                  }, 0);
+                  .reduce((acc: number, p: any) => acc + Math.round(getProductUnitPriceInHaler(p) / 100), 0);
 
                 return (
                   <div className="grid grid-cols-1 gap-2">

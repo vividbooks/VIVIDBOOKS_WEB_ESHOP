@@ -1,5 +1,6 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
+import { parsePriceTextToKc } from '../_shared/product-price.ts';
 
 type SyncProductPayload = {
   id?: string | null;
@@ -154,19 +155,14 @@ function pickEan(product: SyncProductPayload) {
 }
 
 function parsePrice(product: SyncProductPayload) {
+  const fromPrice = parsePriceTextToKc(product.price);
+  if (fromPrice !== null) return Number(fromPrice.toFixed(2));
+
   if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
     return Number(product.priceAmount.toFixed(2));
   }
 
-  const normalized = String(product.price || '')
-    .replace(/\s/g, '')
-    .replace('Kč', '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? Number(parsed.toFixed(2)) : null;
+  return null;
 }
 
 Deno.serve(async (req) => {
