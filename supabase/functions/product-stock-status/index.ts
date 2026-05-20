@@ -1,4 +1,5 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
 type CatalogProduct = {
   id: string;
   name?: string | null;
@@ -220,13 +221,19 @@ async function loadInventoryProducts() {
     ? listResponse.products as Record<string, Record<string, unknown>>
     : {};
 
-  const products: InventoryProduct[] = Object.entries(listProducts).map(([productId, value]) => {
+  const allProductIds = new Set([
+    ...Object.keys(listProducts),
+    ...Object.keys(stockProducts),
+  ]);
+
+  const products: InventoryProduct[] = Array.from(allProductIds).map((productId) => {
+    const value = listProducts[productId] || {};
     const stockRecord = stockProducts[productId] || {};
     return {
       productId,
-      name: String(value?.name || ''),
-      sku: String(value?.sku || ''),
-      ean: String(value?.ean || ''),
+      name: String(value?.name || stockRecord?.name || ''),
+      sku: String(value?.sku || stockRecord?.sku || productId || ''),
+      ean: String(value?.ean || stockRecord?.ean || ''),
       quantity: parseWarehouseQuantity(
         stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
         firstInventory.defaultWarehouse,
@@ -351,7 +358,13 @@ Deno.serve(async (req) => {
         ? { ...product, shoptetId: overrideShoptetSku }
         : product;
       const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
-      const quantity = matched?.quantity ?? null;
+      const lookupSku = overrideShoptetSku
+        || product.shoptetId
+        || product.basecomSku
+        || matched?.sku
+        || null;
+      const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventory.products);
+      const quantity = effectiveStock.quantity;
       const stockStatus = getStockStatus(quantity);
 
       return {
@@ -367,6 +380,8 @@ Deno.serve(async (req) => {
         basecomProductId: product.basecomProductId || null,
         basecomSku: product.basecomSku || null,
         quantity,
+        baseQuantity: effectiveStock.baseQuantity,
+        packContributions: effectiveStock.packContributions,
         stockStatus,
         matched: Boolean(matched),
         matchType,
