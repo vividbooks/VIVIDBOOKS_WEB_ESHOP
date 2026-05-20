@@ -20,6 +20,7 @@ import {
 } from '../../../utils/emailValidation.ts';
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
+import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { MARKETING_ORIGIN_PRIMARY_DEFAULT, MARKETING_ORIGINS_CANONICAL_SET } from '../../../config/marketingSiteConstants.ts';
 
 const app = new Hono();
@@ -212,7 +213,7 @@ async function getAllProducts() {
 
 async function saveAllProducts(products: any[]) {
   const data = {
-    products,
+    products: products.map((p) => syncProductPriceAmount(p)),
     updatedAt: new Date().toISOString()
   };
   await kv.set(KV_KEY, data);
@@ -943,6 +944,9 @@ function normalizeMarketingFeedUrl(raw: unknown): string {
 }
 
 function parseMarketingFeedPriceAmount(product: any): number | null {
+  const fromPrice = parsePriceTextToKc(product?.price);
+  if (fromPrice !== null) return fromPrice;
+
   const rawAmount = product?.priceAmount;
   if (typeof rawAmount === 'number' && Number.isFinite(rawAmount)) {
     return Math.max(0, rawAmount);
@@ -951,13 +955,7 @@ function parseMarketingFeedPriceAmount(product: any): number | null {
     const n = Number(rawAmount.replace(/\s/g, '').replace(',', '.'));
     if (Number.isFinite(n)) return Math.max(0, n);
   }
-  const rawPrice = String(product?.price ?? '').trim();
-  if (!rawPrice) return null;
-  if (/zdarma/i.test(rawPrice)) return 0;
-  const match = rawPrice.replace(/\s/g, '').replace(',', '.').match(/\d+(?:\.\d+)?/);
-  if (!match) return null;
-  const n = Number(match[0]);
-  return Number.isFinite(n) ? Math.max(0, n) : null;
+  return null;
 }
 
 function formatMarketingFeedPrice(amount: number): string {
@@ -1248,7 +1246,7 @@ function publicFunctionUrl(path: string): string {
 }
 
 app.post('/make-server-93a20b6f/products', async (c) => {
-  const newProduct = await c.req.json();
+  const newProduct = syncProductPriceAmount(await c.req.json());
   if (!newProduct.id) newProduct.id = `sb-${Date.now()}`;
   if ('note' in newProduct) {
     Object.assign(newProduct, applyProductNoteSync(newProduct, newProduct.note));
@@ -1260,21 +1258,27 @@ app.post('/make-server-93a20b6f/products', async (c) => {
 
 app.get('/make-server-93a20b6f/products', async (c) => {
   const products = await getAllProducts();
-  // Normalize category variants: "Matematika 2" / "Matematika-2" → "Matematika 2. stupeň"
   const normalized = products.map((p: any) => {
-    if (!p.category) return p;
-    let cat: string = String(p.category).trim();
+    let next = syncProductPriceAmount(p);
+    if (!next.category) return next;
+    let cat: string = String(next.category).trim();
     if (/^[Mm]atematika[\s\-]+2$/.test(cat)) cat = 'Matematika 2. stupeň';
     if (/^[Mm]atematika[\s\-]+1$/.test(cat)) cat = 'Matematika 1. stupeň';
-    return cat === p.category ? p : { ...p, category: cat };
+    return cat === next.category ? next : { ...next, category: cat };
   });
-  const data = await kv.get(KV_KEY);
-  return c.json({ products: normalized, updatedAt: data?.updatedAt });
+  const needsPricePersist = normalized.some((p: any, i: number) => p.priceAmount !== products[i]?.priceAmount);
+  const needsCategoryPersist = normalized.some((p: any, i: number) => p.category !== products[i]?.category);
+  let updatedAt = (await kv.get(KV_KEY))?.updatedAt;
+  if (needsPricePersist || needsCategoryPersist) {
+    const data = await saveAllProducts(normalized);
+    updatedAt = data.updatedAt;
+  }
+  return c.json({ products: normalized, updatedAt });
 });
 
 app.put('/make-server-93a20b6f/products/:id', async (c) => {
   const id = c.req.param('id');
-  const updates = await c.req.json();
+  const updates = syncProductPriceAmount(await c.req.json());
   const products = await getAllProducts();
   const updated = products.map((p: any) => {
     if (p.id !== id) return p;
@@ -1282,7 +1286,7 @@ app.put('/make-server-93a20b6f/products/:id', async (c) => {
     if ('note' in updates) {
       next = applyProductNoteSync(next, updates.note);
     }
-    return next;
+    return syncProductPriceAmount(next);
   });
   await saveAllProducts(updated);
   return c.json({ success: true });
@@ -1293,6 +1297,15 @@ app.delete('/make-server-93a20b6f/products/:id', async (c) => {
   const products = await getAllProducts();
   await saveAllProducts(products.filter((p: any) => p.id !== id));
   return c.json({ success: true });
+});
+
+/** Sjednotí `priceAmount` u všech produktů podle textového pole `price` z administrace. */
+app.post('/make-server-93a20b6f/admin/sync-product-prices', async (c) => {
+  const adminGate = await requireAdminJwt(c.req.raw);
+  if (adminGate instanceof Response) return adminGate;
+  const products = await getAllProducts();
+  const data = await saveAllProducts(products);
+  return c.json({ success: true, count: data.products.length });
 });
 
 /** Proxy stažení Shoptet productsComplete.xml (prohlížeč jinak často blokuje CORS). Povoleno jen https://eshop.vividbooks.com/export/… */
