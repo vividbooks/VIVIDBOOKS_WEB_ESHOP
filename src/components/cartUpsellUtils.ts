@@ -102,8 +102,6 @@ export function getProductImage(product: any): string | undefined {
   return product.image || product.imageUrl || product.coverImage || undefined;
 }
 
-export { getProductUnitPriceInHaler } from '../utils/productPrice';
-
 export function getCartUpsellRecommendations(cartLines: CartUpsellLine[], products: any[]) {
   const subjects = new Set<string>();
   const grades = new Set<number>();
