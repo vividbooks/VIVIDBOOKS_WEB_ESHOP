@@ -334,19 +334,33 @@ export function WebinarSurveyResponsesPanel({
         </p>
       ) : (
         <div className="space-y-4 p-4">
-          <p className="text-[11px] text-gray-500">
-            {'Odeslání: '}
-            <strong className="text-[#001161]">{responses.length}</strong>
-          </p>
+          {(() => {
+            const completedCount = responses.filter((r) => !r.partial).length;
+            const partialCount = responses.filter((r) => r.partial).length;
+            return (
+              <p className="text-[11px] text-gray-500">
+                {'Dokončené odeslání: '}
+                <strong className="text-[#001161]">{completedCount}</strong>
+                {partialCount > 0 ? (
+                  <>
+                    {' · rozpracované: '}
+                    <strong className="text-amber-800">{partialCount}</strong>
+                    {' (průběžné uložení otázek, ještě ne finální odeslání)'}
+                  </>
+                ) : null}
+              </p>
+            );
+          })()}
 
           <div className="space-y-3">
             {questions.map((q) => {
-              const vals = responses
+              const completedResponses = responses.filter((r) => !r.partial);
+              const vals = completedResponses
                 .map((r) => getAnswerRaw(r, q.id))
                 .filter(Boolean);
 
               const renderOpenText = () => {
-                const rows = responses
+                const rows = completedResponses
                   .map((r) => ({ r, raw: getAnswerRaw(r, q.id).trim() }))
                   .filter(({ raw }) => raw.length > 0);
                 if (rows.length === 0) {
@@ -380,8 +394,8 @@ export function WebinarSurveyResponsesPanel({
               };
 
               if (q.type === 'yes_no') {
-                const ano = responses.filter((r) => getAnswerRaw(r, q.id) === 'yes').map(responderLabel);
-                const ne = responses.filter((r) => getAnswerRaw(r, q.id) === 'no').map(responderLabel);
+                const ano = completedResponses.filter((r) => getAnswerRaw(r, q.id) === 'yes').map(responderLabel);
+                const ne = completedResponses.filter((r) => getAnswerRaw(r, q.id) === 'no').map(responderLabel);
                 const max = Math.max(ano.length, ne.length, 1);
                 return (
                   <div key={q.id} className="rounded-xl border border-gray-100 bg-gray-50/80 p-3">
@@ -409,7 +423,7 @@ export function WebinarSurveyResponsesPanel({
               if (q.type === 'abc' && q.options?.length) {
                 const counts = q.options.map((opt) => ({
                   opt,
-                  responders: responses
+                  responders: completedResponses
                     .filter((r) => getAnswerRaw(r, q.id) === opt)
                     .map(responderLabel),
                 }));

@@ -27,32 +27,6 @@ function isRestQuestionAnswered(q: WebinarSurveyQuestion, answers: Record<string
   return true;
 }
 
-/** Jen lokální `npm run dev` — přeskočení na konec (certifikát) bez vyplňování. */
-function DevPostSurveySkipBar({
-  onSkip,
-  active,
-}: {
-  onSkip: () => void;
-  active: boolean;
-}) {
-  if (!import.meta.env.DEV || !active) return null;
-  return (
-    <div
-      className="pointer-events-auto fixed bottom-0 left-0 right-0 z-[200] flex flex-wrap items-center justify-center gap-2 border-t border-amber-400/80 bg-amber-50/95 px-3 py-2 shadow-[0_-6px_20px_rgba(0,0,0,0.08)] backdrop-blur-sm"
-      style={{ paddingBottom: 'max(8px, env(safe-area-inset-bottom))' }}
-    >
-      <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-amber-900">DEV</span>
-      <button
-        type="button"
-        onClick={onSkip}
-        className="rounded-lg bg-amber-600 px-3 py-1.5 text-[12px] font-bold text-white shadow-sm transition hover:bg-amber-700"
-      >
-        {'P\u0159esko\u010dit na certifik\u00e1t'}
-      </button>
-    </div>
-  );
-}
-
 function parseJsonResponseBody(text: string): unknown {
   const strippedBom = text.replace(/\uFEFF/g, '').trim();
   if (!strippedBom) return null;
@@ -165,6 +139,7 @@ export function WebinarPostSurvey({
   }, [answers, onAnswersChange]);
 
   const autoSubmitEmptyRestRef = useRef(false);
+  const submitInFlightRef = useRef(false);
 
   useEffect(() => {
     setDvppNavStep(-1);
@@ -176,8 +151,6 @@ export function WebinarPostSurvey({
   const dvppSeg = postFlow && dvppRaw.length > 0 ? 1 + dvppRaw.length : 0;
   const part2Seg = postFlow ? part2Steps.length : 0;
   const restSeg = postFlow ? 1 : 0;
-  const certSeg = postFlow ? 1 : 0;
-  const totalProgressSegments = postFlow ? dvppSeg + part2Seg + restSeg + certSeg : 0;
 
   const showDvppWizard = dvppRaw.length > 0 && !dvppPhaseDone;
   const showPart2Wizard =
@@ -186,17 +159,35 @@ export function WebinarPostSurvey({
     !part2PhaseDone &&
     (dvppRaw.length === 0 || dvppPhaseDone);
 
-  const globalSegmentIndex = useMemo(() => {
+  /** Pruh ukazuje jen aktuální fázi — ne budoucí kroky (odeslání / certifikát), aby nevypadal jako „hotovo“ předčasně. */
+  const totalProgressSegments = useMemo(() => {
+    if (!postFlow) return 0;
+    if (showDvppWizard) return dvppSeg;
+    if (showPart2Wizard) return dvppSeg + part2Seg;
+    if (restQuestions.length > 0) return dvppSeg + part2Seg + restSeg;
+    return Math.max(dvppSeg + part2Seg + restSeg, 1);
+  }, [
+    postFlow,
+    showDvppWizard,
+    showPart2Wizard,
+    restQuestions.length,
+    dvppSeg,
+    part2Seg,
+    restSeg,
+  ]);
+
+  const progressFilled = useMemo(() => {
     if (!postFlow || totalProgressSegments === 0) return 0;
     if (done) return totalProgressSegments;
     if (showDvppWizard) {
       if (dvppNavStep < 0) return 0;
-      return Math.min(1 + dvppNavStep, dvppSeg);
+      return Math.min(1 + dvppNavStep, totalProgressSegments);
     }
     if (showPart2Wizard) {
-      return Math.min(dvppSeg + part2NavStep, dvppSeg + part2Seg);
+      const part2Filled = Math.min(part2NavStep + 1, part2Seg);
+      return Math.min(dvppSeg + part2Filled, totalProgressSegments);
     }
-    return dvppSeg + part2Seg;
+    return totalProgressSegments;
   }, [
     postFlow,
     totalProgressSegments,
@@ -209,34 +200,13 @@ export function WebinarPostSurvey({
     part2Seg,
   ]);
 
-  const progressFilled = useMemo(() => {
-    if (!postFlow || totalProgressSegments === 0) return 0;
-    if (done) return totalProgressSegments;
-    let filled = globalSegmentIndex;
-    if (!showDvppWizard && !showPart2Wizard && filled === 0 && totalProgressSegments > 0) {
-      filled = 1;
-    }
-    return Math.min(filled, totalProgressSegments);
-  }, [
-    postFlow,
-    totalProgressSegments,
-    done,
-    globalSegmentIndex,
-    showDvppWizard,
-    showPart2Wizard,
-  ]);
-
-  const devSkipToCertificate = useCallback(() => {
-    setDvppPhaseDone(true);
-    setPart2PhaseDone(true);
-    setDone(true);
-  }, []);
-
   const submit = useCallback(async () => {
     if (restQuestions.length > 0 && !restQuestionsComplete) {
       setError('Vyplňte prosím všechny otázky v této části.');
       return;
     }
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
     setSubmitting(true);
     setError('');
     try {
@@ -272,6 +242,7 @@ export function WebinarPostSurvey({
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Chyba');
     } finally {
+      submitInFlightRef.current = false;
       setSubmitting(false);
     }
   }, [answers, email, webinar.id, restQuestions.length, restQuestionsComplete, participantName]);
@@ -422,7 +393,6 @@ export function WebinarPostSurvey({
             </button>
           </div>
         ) : null}
-        <DevPostSurveySkipBar onSkip={devSkipToCertificate} active={postFlow} />
       </motion.div>
     );
   }
@@ -462,7 +432,6 @@ export function WebinarPostSurvey({
             </button>
           </div>
         ) : null}
-        <DevPostSurveySkipBar onSkip={devSkipToCertificate} active={postFlow} />
       </motion.div>
     );
   }
@@ -526,7 +495,6 @@ export function WebinarPostSurvey({
             </div>
           )}
         </div>
-        <DevPostSurveySkipBar onSkip={devSkipToCertificate} active={postFlow} />
       </motion.div>
     );
   }
@@ -694,7 +662,6 @@ export function WebinarPostSurvey({
           {'P\u0159esko\u010dit'}
         </button>
       </div>
-      <DevPostSurveySkipBar onSkip={devSkipToCertificate} active={postFlow} />
       </div>
     </motion.div>
   );
