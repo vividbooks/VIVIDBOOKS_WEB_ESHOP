@@ -7,7 +7,24 @@ const app = new Hono();
 
 // Enable CORS
 app.use("/*", cors({
-  origin: "*",
+  origin: [
+    'https://new.vividbooks.com',
+    'https://project-e4jce.vercel.app',
+    'https://vividbooks.com',
+    'https://www.vividbooks.com',
+    'http://localhost:3000',
+    'https://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://127.0.0.1:3000',
+    'http://localhost:5173',
+    'https://localhost:5173',
+    'http://127.0.0.1:5173',
+    'https://127.0.0.1:5173',
+    'http://localhost',
+    'https://localhost',
+    'http://127.0.0.1',
+    'https://127.0.0.1',
+  ],
   allowHeaders: ["Content-Type", "Authorization", "apikey", "x-client-info", "x-user-access-token"],
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 }));

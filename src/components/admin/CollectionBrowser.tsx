@@ -139,6 +139,7 @@ const PRODUCT_FIELDS: FieldDef[] = [
   { key: 'dolozka', label: 'Doložka MŠMT', type: 'text', fullWidth: true },
   { key: 'obsah', label: 'Obsah sešitu (RAG)', type: 'textarea', fullWidth: true, placeholder: 'Kapitola 1: Přirozená čísla\nKapitola 2: Zlomky\n...', hint: 'Zobrazuje se pouze v RAG databázi. Pomáhá AI lépe odpovídat na dotazy.' },
   { key: 'isbn', label: 'ISBN', type: 'text' },
+  { key: 'item_id', label: 'Item ID (XML feed)', type: 'text', hint: 'Externí ID pro Google/Meta feed. Nechte prázdné, pokud má feed použít interní ID položky.' },
   { key: 'basecomProductId', label: 'Base.com Product ID', type: 'text' },
   { key: 'basecomSku', label: 'Base.com SKU', type: 'text', hint: 'Standardně bereme Shoptet ID. Toto pole slouží jen jako výjimka / override.' },
   { key: 'description', label: 'Popis', type: 'textarea', fullWidth: true },
@@ -1002,6 +1003,7 @@ function ProductCommercePanel({
         <h5 className="text-[13px] font-bold text-[#001161] mb-3">Identifikátory e-shopu</h5>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[13px]">
           <div><span className="text-gray-400">Vivid ID: </span><span className="font-semibold text-[#001161]">{editData.id || '—'}</span></div>
+          <div><span className="text-gray-400">Item ID feed: </span><span className="font-semibold text-[#001161]">{editData.item_id || editData.itemId || editData.id || '—'}</span></div>
           <div><span className="text-gray-400">Shoptet ID: </span><span className="font-semibold text-[#001161]">{editData.shoptetId || editData.shoptetProductId || '—'}</span></div>
           <div><span className="text-gray-400">Base.com SKU: </span><span className="font-semibold text-[#001161]">{editData.shoptetId || editData.basecomSku || stock?.matchedProductSku || editData.metadata?.ean || editData.isbn || '—'}</span></div>
           <div><span className="text-gray-400">Base.com Product ID: </span><span className="font-semibold text-[#001161]">{editData.basecomProductId || stock?.matchedProductId || '—'}</span></div>

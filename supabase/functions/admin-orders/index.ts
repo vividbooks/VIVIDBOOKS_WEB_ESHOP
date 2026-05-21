@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
@@ -16,6 +17,7 @@ type OrderListRow = {
   tracking_number: string | null;
   items_summary: string | null;
   poster_fulfillment_status: string | null;
+  source: string;
 };
 
 type OrderDetailRow = {
@@ -123,18 +125,18 @@ type OrderAlertRow = {
   payload: unknown;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -144,11 +146,30 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
+async function hasColumn(
+  sql: ReturnType<typeof postgres>,
+  tableName: string,
+  columnName: string,
+): Promise<boolean> {
+  const rows = await sql<{ exists: boolean }[]>`
+    select exists(
+      select 1
+      from information_schema.columns
+      where table_schema = 'public'
+        and table_name = ${tableName}
+        and column_name = ${columnName}
+    ) as exists
+  `;
+  return Boolean(rows[0]?.exists);
+}
+
 function normalizeFilter(filter: string | null) {
   switch (filter) {
     case 'new':
     case 'shipped':
     case 'problem':
+    case 'incomplete':
+    case 'pending_payment':
       return filter;
     default:
       return 'all';
@@ -674,11 +695,11 @@ async function enrichOrderItemsWithStock(items: OrderItemRow[]) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -688,7 +709,7 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -757,7 +778,7 @@ Deno.serve(async (req) => {
 
       const order = orderRows[0];
       if (!order) {
-        return jsonResponse({ error: 'Order not found.' }, 404);
+        return jsonResponse(req, { error: 'Order not found.' }, 404);
       }
 
       const [items, events, workflowSteps, alerts] = await Promise.all([
@@ -830,7 +851,7 @@ Deno.serve(async (req) => {
       const stockData = await enrichOrderItemsWithStock(items);
       const basecomFulfillment = await loadBasecomFulfillment(order.basecom_order_id);
 
-      return jsonResponse({
+      return jsonResponse(req, {
         order,
         items: stockData.items,
         events,
@@ -847,6 +868,28 @@ Deno.serve(async (req) => {
     const search = (url.searchParams.get('search') || '').trim();
     const filter = normalizeFilter(url.searchParams.get('filter'));
     const posterOnly = url.searchParams.get('poster') === '1' || url.searchParams.get('poster') === 'true';
+    const includeSuperseded = url.searchParams.get('includeSuperseded') === '1'
+      || url.searchParams.get('includeSuperseded') === 'true';
+    const hasSourceColumn = await hasColumn(sql, 'orders', 'source');
+    /** Objednávka z inbound webhooku (scénář A) — vždy `pipedrive_inbound`; sloupec `source` může na starší DB chybět. */
+    const pipedriveInboundOriginJoin = sql`
+      left join (
+        select distinct order_id
+        from public.order_events
+        where event_type = 'pipedrive_inbound'
+      ) pdi on pdi.order_id = o.id
+    `;
+    /** Jednotná definice „původ Pipedrive“: explicitní sloupec nebo audit událost (retroaktivně bez migrace). */
+    const pipedriveSourceMatch = hasSourceColumn
+      ? sql`(pdi.order_id is not null or o.source = 'pipedrive')`
+      : sql`(pdi.order_id is not null)`;
+    const sourceProjection = hasSourceColumn
+      ? sql`case when pdi.order_id is not null then 'pipedrive' else o.source end`
+      : sql`case when pdi.order_id is not null then 'pipedrive' else 'eshop' end`;
+    /** `source=eshop|pipedrive|all` — filtr zdroje objednávky pro admin seznam. */
+    const sourceParam = (url.searchParams.get('source') || '').trim().toLowerCase();
+    const sourceFilter: 'eshop' | 'pipedrive' | null =
+      sourceParam === 'eshop' || sourceParam === 'pipedrive' ? sourceParam : null;
     const searchPattern = `%${search}%`;
 
     const searchClause = search
@@ -857,22 +900,42 @@ Deno.serve(async (req) => {
       ? sql`and o.poster_fulfillment_status is not null`
       : sql``;
 
+    const sourceClause = sourceFilter === 'pipedrive'
+      ? sql`and ${pipedriveSourceMatch}`
+      : sourceFilter === 'eshop'
+        ? sql`and not (${pipedriveSourceMatch})`
+        : sql``;
+
     const filterClause = filter === 'new'
       ? sql`and o.status in ('paid', 'processing', 'exported')`
       : filter === 'shipped'
         ? sql`and o.status in ('shipped', 'delivered')`
         : filter === 'problem'
           ? sql`and o.status in ('failed', 'cancelled')`
-          : sql``;
+          : filter === 'incomplete'
+            ? sql`and o.status = 'incomplete'`
+            : filter === 'pending_payment'
+              ? sql`and o.status = 'pending_payment'`
+              : sql``;
+
+    /** Skrýt audit-trail záznamy supersession (cancelled s reason 'Superseded by new checkout attempt')
+     *  z výchozího seznamu — admin v hlavním přehledu nepotřebuje vidět historické pokusy stejného
+     *  draftu. Filter 'problem' i explicit search/`includeSuperseded=1` je nadále zobrazí. */
+    const supersededClause = (filter === 'problem' || search || includeSuperseded)
+      ? sql``
+      : sql`and not (o.status = 'cancelled' and o.cancelled_reason = 'Superseded by new checkout attempt')`;
 
     const [countRows, items] = await Promise.all([
       sql<{ count: number }[]>`
         select count(*)::int as count
         from public.orders o
+        ${pipedriveInboundOriginJoin}
         where true
         ${searchClause}
         ${posterClause}
         ${filterClause}
+        ${supersededClause}
+        ${sourceClause}
       `,
       sql<OrderListRow[]>`
         select
@@ -889,21 +952,40 @@ Deno.serve(async (req) => {
           o.shipping_method,
           o.tracking_number,
           o.poster_fulfillment_status,
+          ${sourceProjection} as source,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
+        ${pipedriveInboundOriginJoin}
         left join public.order_items oi on oi.order_id = o.id
         where true
         ${searchClause}
         ${posterClause}
         ${filterClause}
-        group by o.id
+        ${supersededClause}
+        ${sourceClause}
+        group by
+          o.id,
+          o.order_number,
+          o.created_at,
+          o.customer_name,
+          o.school_name,
+          o.customer_email,
+          o.total,
+          o.status,
+          o.basecom_status,
+          o.payment_status,
+          o.shipping_method,
+          o.tracking_number,
+          o.poster_fulfillment_status,
+          pdi.order_id
+          ${hasSourceColumn ? sql`, o.source` : sql``}
         order by o.created_at desc
         limit ${pageSize}
         offset ${offset}
       `,
     ]);
 
-    return jsonResponse({
+    return jsonResponse(req, {
       items,
       total: countRows[0]?.count ?? 0,
       page,
@@ -911,10 +993,11 @@ Deno.serve(async (req) => {
       filter,
       search,
       posterOnly,
+      source: sourceFilter,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load admin orders.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

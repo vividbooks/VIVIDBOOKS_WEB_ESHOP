@@ -1,18 +1,19 @@
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+});
 
 const BASECOM_API_URL = 'https://api.baselinker.com/connector.php';
 
 type JsonRecord = Record<string, unknown>;
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body, null, 2), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -383,11 +384,11 @@ async function inspectExternalStorageStock(apiToken: string, storageId: string) 
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (!['GET', 'POST'].includes(req.method)) {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const url = new URL(req.url);
@@ -399,14 +400,14 @@ Deno.serve(async (req) => {
       try {
         body = await req.json();
       } catch {
-        return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+        return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
       }
     }
   }
 
   const debug = isDebugEnabled(url, body);
   if (!debug) {
-    return jsonResponse({ status: 'sync not implemented yet, use ?debug=true' });
+    return jsonResponse(req, { status: 'sync not implemented yet, use ?debug=true' });
   }
 
   const databaseUrl = getDatabaseUrl();
@@ -523,5 +524,5 @@ Deno.serve(async (req) => {
     result.apiTokenWorks = false;
   }
 
-  return jsonResponse(result);
+  return jsonResponse(req, result);
 });

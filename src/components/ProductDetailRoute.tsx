@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { ProductDetailPage, type SchoolOrderMerchContext } from './ProductDetailPage';
 import { useProducts } from '../contexts/ProductsContext';
@@ -6,6 +6,7 @@ import { useCart } from '../contexts/CartContext';
 import { getProductUnitPriceInHaler } from './cartUpsellUtils';
 import { mergeSchoolOrderDraft, matchSchoolSubjectKeysFromCategory } from '../utils/schoolOrderDraft';
 import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
+import { productDetailPath, productSlug } from '../utils/slugify';
 
 export function ProductDetailRoute() {
   const { id }     = useParams<{ id: string }>();
@@ -13,8 +14,24 @@ export function ProductDetailRoute() {
   const { products, isLoading } = useProducts();
   const { addItem, items } = useCart();
 
-  const productId = id ? decodeURIComponent(id) : '';
-  const product   = products.find(p => p.id === productId);
+  const slugOrId = id ? decodeURIComponent(id) : '';
+  const product = useMemo(() => {
+    if (!slugOrId) return null;
+    return (
+      products.find((p) => productSlug(p, products) === slugOrId) ||
+      products.find((p) => String(p.id) === slugOrId) ||
+      null
+    );
+  }, [products, slugOrId]);
+
+  useEffect(() => {
+    if (!product || !slugOrId) return;
+    const canonical = productDetailPath(product, products);
+    const current = `/produkt/${encodeURIComponent(slugOrId)}`;
+    if (canonical !== current) {
+      navigate(canonical, { replace: true });
+    }
+  }, [navigate, product, products, slugOrId]);
 
   if (isLoading && products.length === 0) {
     return (
@@ -90,6 +107,7 @@ export function ProductDetailRoute() {
               quantity: 1,
               unitPrice: ctx ? ctx.unitPriceHaler : getProductUnitPriceInHaler(product),
               imageUrl: product.image || undefined,
+              itemGroup: product.category || product.merchCategory || product.type || undefined,
               ...(posterMerch ? { posterMerch: true as const } : {}),
             });
           }
@@ -97,7 +115,7 @@ export function ProductDetailRoute() {
 
         navigate(`/objednat?step=2${predmetQ}`, { state });
       }}
-      onProductSelect={(p) => navigate(`/produkt/${encodeURIComponent(p.id)}`)}
+      onProductSelect={(p) => navigate(productDetailPath(p, products))}
     />
   );
 }

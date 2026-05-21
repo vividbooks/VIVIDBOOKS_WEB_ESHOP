@@ -35,6 +35,7 @@ import { SEOHead } from '../SEOHead';
 import { publicAssetUrl } from '../../utils/publicAssetUrl';
 import { appPath } from '../../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../../utils/checkoutThankYouRedirect';
+import { getOrCreateCheckoutDraftId } from '../../utils/checkoutDraftId';
 import { AddressStreetAutocomplete } from '../AddressStreetAutocomplete';
 import {
   isValidEmailFormat,
@@ -42,6 +43,7 @@ import {
   EMAIL_MX_REJECT_CS,
 } from '../../utils/emailValidation';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
+import { pushCheckoutStep } from '../../utils/dataLayerEcommerce';
 import {
   loadSavedCheckoutAddresses,
   rememberCheckoutAddress,
@@ -50,6 +52,8 @@ import {
 import { loadSavedDvppContacts, type SavedDvppContact } from '../../utils/dvppSavedContacts';
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../../utils/streetHouseNumberCZ';
+import { isValidCzechPhone, PHONE_CZ_HINT } from '../../utils/phoneCZ';
+import { usePacketaApiKey } from '../../utils/packeta/usePacketaApiKey';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
 type ShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
@@ -98,7 +102,6 @@ const SUBMIT_TRANSFER_ORDER_URL = `https://${projectId}.supabase.co/functions/v1
 const RESUME_CHECKOUT_URL = `https://${projectId}.supabase.co/functions/v1/resume-checkout`;
 const CONTACT_SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
-const PACKETA_API_KEY = import.meta.env.VITE_PACKETA_API_KEY ?? '';
 
 const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 1, label: 'Košík' },
@@ -107,6 +110,30 @@ const STEPS: Array<{ id: CheckoutStep; label: string }> = [
   { id: 4, label: 'Platba' },
   { id: 5, label: 'Potvrzení' },
 ];
+
+const CHECKOUT_STEP_SLUGS: Record<CheckoutStep, string> = {
+  1: 'cart',
+  2: 'details',
+  3: 'shipping',
+  4: 'payment',
+  5: 'confirmation',
+};
+
+const CHECKOUT_STEP_EVENT_NAMES: Record<CheckoutStep, string> = {
+  1: 'cart_review',
+  2: 'customer_details',
+  3: 'shipping',
+  4: 'payment',
+};
+
+function checkoutStepFromUrl(): CheckoutStep {
+  if (typeof window === 'undefined') return 1;
+  const raw = new URLSearchParams(window.location.search).get('step')?.trim().toLowerCase();
+  if (!raw) return 1;
+  if (/^[1-5]$/.test(raw)) return Number(raw) as CheckoutStep;
+  const entry = Object.entries(CHECKOUT_STEP_SLUGS).find(([, slug]) => slug === raw);
+  return entry ? (Number(entry[0]) as CheckoutStep) : 1;
+}
 
 const SHIPPING_OPTIONS: Array<{ id: ShippingMethod; label: string; price: number }> = [
   { id: 'dpd', label: 'DPD', price: 8900 },
@@ -166,8 +193,9 @@ const PAYMENT_OPTIONS: Array<{
   },
   {
     id: 'transfer',
-    label: 'Převodem',
-    description: 'Obchodník vás kontaktuje a dokončí objednávku. Vyžaduje vyplněné IČO.',
+    label: 'Na fakturu (převodem)',
+    description:
+      'Objednávku uložíme a pošleme fakturu se splatností — uhradíte ji bankovním převodem. Vyžaduje vyplněné IČO.',
     priceLabel: 'Zdarma',
   },
 ];
@@ -187,9 +215,10 @@ function PlaceholderSection({ title, text = 'Bude doplněno' }: { title: string;
 
 export function CheckoutPage() {
   const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
+  const { packetaApiKey, packetaKeyLoading, ensurePacketaApiKey } = usePacketaApiKey();
   const { products } = useProducts();
   const { items, subtotal, itemCount, updateQuantity, removeItem, replaceUnitPrice } = useCart();
-  const [currentStep, setCurrentStep] = useState<CheckoutStep>(1);
+  const [currentStep, setCurrentStep] = useState<CheckoutStep>(() => checkoutStepFromUrl());
   const [customerType, setCustomerType] = useState<CustomerType>('school');
   const [customer, setCustomer] = useState<CustomerFormState>(INITIAL_CUSTOMER);
   const [hasSeparateDeliveryAddress, setHasSeparateDeliveryAddress] = useState(false);
@@ -203,6 +232,7 @@ export function CheckoutPage() {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [paymentIntentId, setPaymentIntentId] = useState<string | null>(null);
   const [paymentResumeToken, setPaymentResumeToken] = useState<string | null>(null);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [resumeFlowActive, setResumeFlowActive] = useState(false);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [resumeError, setResumeError] = useState('');
@@ -215,6 +245,8 @@ export function CheckoutPage() {
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('card');
   const [transferSubmitting, setTransferSubmitting] = useState(false);
+  /** Dvojklik na „Odeslat převodem“ — setState je asynchronní, ref zablokuje hned. */
+  const transferSubmitGuardRef = useRef(false);
   const [schoolQuery, setSchoolQuery] = useState('');
   const [schoolResults, setSchoolResults] = useState<SchoolSearchResult[]>([]);
   const [schoolSearchLoading, setSchoolSearchLoading] = useState(false);
@@ -223,6 +255,11 @@ export function CheckoutPage() {
   const lastPaymentKeyRef = useRef<string | null>(null);
   /** Zruší paralelní POST create-payment-intent (React Strict Mode / rychlé změny kroku). */
   const paymentIntentFetchRef = useRef<AbortController | null>(null);
+  /** Per-tab UUID — server zruší starší pending objednávky téhož draftu při novém POST. */
+  const checkoutDraftIdRef = useRef<string>('');
+  if (!checkoutDraftIdRef.current) {
+    checkoutDraftIdRef.current = getOrCreateCheckoutDraftId();
+  }
   const schoolSearchRef = useRef<HTMLDivElement | null>(null);
   /** Aby starší odpověď ARES/CSV nepřepsala novější požadavek (dvojí fetch při výběru školy). */
   const schoolAddressFetchSeq = useRef(0);
@@ -377,7 +414,8 @@ export function CheckoutPage() {
         setPaymentIntentId(typeof data.paymentIntentId === 'string' ? data.paymentIntentId : null);
         {
           const rpi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const rtt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(rtt || null);
           if (rpi && rtt) storePaymentIntentTrackingToken(rpi, rtt);
         }
         setResumedOrderNumber(typeof data.orderNumber === 'string' ? data.orderNumber : null);
@@ -387,7 +425,7 @@ export function CheckoutPage() {
           total: Number(data.total) || 0,
         });
         setCurrentStep(4);
-        window.history.replaceState({}, '', window.location.pathname);
+        window.history.replaceState({}, '', `${window.location.pathname}?step=${CHECKOUT_STEP_SLUGS[4]}`);
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -402,6 +440,20 @@ export function CheckoutPage() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('resume')) return;
+
+    const stepSlug = CHECKOUT_STEP_SLUGS[currentStep];
+    if (params.get('step') === stepSlug) return;
+
+    params.set('step', stepSlug);
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}${window.location.hash}`;
+    window.history.replaceState({}, '', nextUrl);
+  }, [currentStep]);
 
   useEffect(() => {
     setSavedAddresses(loadSavedCheckoutAddresses());
@@ -483,12 +535,30 @@ export function CheckoutPage() {
     ? Boolean(resumedTotals)
     : showShippingInSummary;
 
+  useEffect(() => {
+    if (items.length === 0) return;
+    const valueHaler = currentStep >= 3 ? summaryTotal : subtotal;
+    const checkoutOption =
+      currentStep === 3
+        ? shipping.method
+        : currentStep === 4
+          ? paymentMethod
+          : undefined;
+    pushCheckoutStep(
+      currentStep,
+      CHECKOUT_STEP_EVENT_NAMES[currentStep],
+      items,
+      valueHaler,
+      checkoutOption,
+    );
+  }, [currentStep, items, subtotal, summaryTotal, shipping.method, paymentMethod]);
+
   const canGoBack = currentStep > 1;
 
   const isCustomerStepValid = useMemo(() => (
     customer.name.trim().length > 0 &&
     isValidEmailFormat(customer.email.trim()) &&
-    customer.phone.trim().length > 0 &&
+    isValidCzechPhone(customer.phone) &&
     (customerType === 'individual' || (
       customer.schoolName.trim().length > 0 &&
       customer.ico.trim().length > 0
@@ -509,12 +579,26 @@ export function CheckoutPage() {
 
   const hasTransferIco = customer.ico.trim().replace(/\s/g, '').length > 0;
 
+  /** Škola má fakturační flow jako primární — `transfer` (= „Na fakturu (převodem)") posuneme na začátek
+   *  seznamu, ať ho vidí jako první. Pro jednotlivce (nebo školu bez IČO) zůstává pořadí Apple Pay / Google Pay
+   *  / karta / převod (pokud je dostupný). */
   const paymentOptionsVisible = useMemo(
-    () => PAYMENT_OPTIONS.filter(
-      (o) => o.id !== 'transfer' || hasTransferIco,
-    ),
-    [hasTransferIco],
+    () => {
+      const visible = PAYMENT_OPTIONS.filter((o) => o.id !== 'transfer' || hasTransferIco);
+      if (customerType === 'school' && hasTransferIco) {
+        const transfer = visible.find((o) => o.id === 'transfer');
+        if (transfer) {
+          return [transfer, ...visible.filter((o) => o.id !== 'transfer')];
+        }
+      }
+      return visible;
+    },
+    [hasTransferIco, customerType],
   );
+
+  /** Ručně zvolená platba uživatelem — když je `true`, auto-default ji už nepřepíše.
+   *  Resume flow (`?resume=…`) ji shora forsuje na `card`, to ale není uživatelská volba, tak ref nesahá. */
+  const paymentMethodUserChangedRef = useRef(false);
 
   useEffect(() => {
     if (resumeFlowActive && paymentMethod !== 'card') {
@@ -527,6 +611,16 @@ export function CheckoutPage() {
       setPaymentMethod('card');
     }
   }, [paymentMethod, hasTransferIco]);
+
+  useEffect(() => {
+    /** Škola + vyplněné IČO → default = převod (NA FAKTURU), pokud uživatel nezvolil jinak.
+     *  Spouští se při přepnutí customerType na 'school' i po vyplnění IČO v kroku 2. */
+    if (paymentMethodUserChangedRef.current) return;
+    if (resumeFlowActive) return;
+    if (customerType === 'school' && hasTransferIco && paymentMethod !== 'transfer') {
+      setPaymentMethod('transfer');
+    }
+  }, [customerType, hasTransferIco, resumeFlowActive, paymentMethod]);
 
   /** Krok 2: vždy povolit klik — platnost řeší `validateCustomerStep()` (jinak by byl „Pokračovat“ disabled a uživatel neviděl chyby u polí). */
   const canGoForward = (
@@ -637,6 +731,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setPaymentIntentError('');
       lastPaymentKeyRef.current = null;
       return;
@@ -648,6 +743,7 @@ export function CheckoutPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       lastPaymentKeyRef.current = null;
       return;
     }
@@ -687,53 +783,69 @@ export function CheckoutPage() {
         zip: customer.zip.trim(),
       },
       checkoutPaymentMethod: paymentMethod,
+      checkoutDraftId: checkoutDraftIdRef.current,
     };
 
-    const paymentKey = JSON.stringify(payload);
+    /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod` a `checkoutDraftId`, aby přepnutí
+     *  karta↔Apple Pay↔Google Pay nezakládalo nový PaymentIntent (a tím i novou objednávku).
+     *  Stripe Payment Element s `automatic_payment_methods=true` zvládne všechny tři varianty na stejném PI.
+     *  `checkoutDraftId` se v rámci jednoho tabu nemění, takže ho z klíče vynecháváme jen pro čistotu. */
+    const { checkoutPaymentMethod: _unusedPm, checkoutDraftId: _unusedDraft, ...keyPayload } = payload;
+    const paymentKey = JSON.stringify(keyPayload);
     if (lastPaymentKeyRef.current === paymentKey && clientSecret) return;
 
     lastPaymentKeyRef.current = paymentKey;
     paymentIntentFetchRef.current?.abort();
     const ac = new AbortController();
     paymentIntentFetchRef.current = ac;
-    setPaymentIntentLoading(true);
     setPaymentIntentError('');
 
-    fetch(CREATE_PAYMENT_INTENT_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${publicAnonKey}`,
-      },
-      body: JSON.stringify(payload),
-      signal: ac.signal,
-    })
-      .then(async (response) => {
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.error || 'Nepodařilo se připravit platbu.');
-        }
-        setClientSecret(data.clientSecret ?? null);
-        setPaymentIntentId(data.paymentIntentId ?? null);
-        setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
-        {
-          const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
-          if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
-        }
+    /** Debounce ~600 ms — když uživatel rychle proklikává dopravu/údaje, nezatěžuje to server
+     *  ani neprodukuje stovky pending záznamů (server následně sice zruší starší přes
+     *  `checkoutDraftId`, ale lepší síťový provoz neposílat vůbec). */
+    const debounceId = window.setTimeout(() => {
+      setPaymentIntentLoading(true);
+      fetch(CREATE_PAYMENT_INTENT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${publicAnonKey}`,
+        },
+        body: JSON.stringify(payload),
+        signal: ac.signal,
       })
-      .catch((error: unknown) => {
-        if (error instanceof Error && error.name === 'AbortError') return;
-        setClientSecret(null);
-        setPaymentIntentId(null);
-        setPaymentResumeToken(null);
-        setPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
-      })
-      .finally(() => {
-        if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
-        setPaymentIntentLoading(false);
-      });
+        .then(async (response) => {
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(data.error || 'Nepodařilo se připravit platbu.');
+          }
+          setClientSecret(data.clientSecret ?? null);
+          setPaymentIntentId(data.paymentIntentId ?? null);
+          setPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
+          {
+            const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
+            const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+            setThankYouTrackingToken(apiTt || null);
+            if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
+          }
+        })
+        .catch((error: unknown) => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+          setClientSecret(null);
+          setPaymentIntentId(null);
+          setPaymentResumeToken(null);
+          setThankYouTrackingToken(null);
+          setPaymentIntentError(
+            error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.',
+          );
+        })
+        .finally(() => {
+          if (paymentIntentFetchRef.current === ac) paymentIntentFetchRef.current = null;
+          setPaymentIntentLoading(false);
+        });
+    }, 600);
     return () => {
+      window.clearTimeout(debounceId);
       ac.abort();
     };
   }, [
@@ -745,7 +857,6 @@ export function CheckoutPage() {
     deliveryAddress,
     isCustomerStepValid,
     isShippingStepValid,
-    clientSecret,
     resumeFlowActive,
     paymentMethod,
     wantsCardLikePayment,
@@ -803,6 +914,8 @@ export function CheckoutPage() {
   const submitTransferOrder = useCallback(async () => {
     if (!hasTransferIco) return;
     if (!validateCustomerStep()) return;
+    if (transferSubmitGuardRef.current) return;
+    transferSubmitGuardRef.current = true;
     setTransferSubmitting(true);
     setPaymentIntentError('');
     try {
@@ -840,6 +953,7 @@ export function CheckoutPage() {
           city: customer.city.trim(),
           zip: customer.zip.trim(),
         },
+        checkoutDraftId: checkoutDraftIdRef.current,
       };
 
       const response = await fetch(SUBMIT_TRANSFER_ORDER_URL, {
@@ -861,6 +975,7 @@ export function CheckoutPage() {
       thankYou.searchParams.set('transfer', '1');
       window.location.assign(thankYou.toString());
     } catch (error: unknown) {
+      transferSubmitGuardRef.current = false;
       setPaymentIntentError(error instanceof Error ? error.message : 'Odeslání se nezdařilo.');
     } finally {
       setTransferSubmitting(false);
@@ -883,6 +998,7 @@ export function CheckoutPage() {
     if (!customer.name.trim()) nextErrors.name = 'Vyplňte jméno.';
     if (!isValidEmailFormat(customer.email.trim())) nextErrors.email = EMAIL_FORMAT_HINT_CS;
     if (!customer.phone.trim()) nextErrors.phone = 'Vyplňte telefon.';
+    else if (!isValidCzechPhone(customer.phone)) nextErrors.phone = PHONE_CZ_HINT;
     if (customerType === 'school' && !customer.schoolName.trim()) nextErrors.schoolName = 'Vyberte školu.';
     if (customerType === 'school' && !customer.ico.trim()) nextErrors.ico = 'Vyplňte IČO školy.';
     if (!customer.street.trim()) nextErrors.street = 'Vyplňte ulici a číslo.';
@@ -1091,10 +1207,15 @@ export function CheckoutPage() {
   const summarySlotMobile =
     typeof document !== 'undefined' ? document.getElementById('checkout-summary-slot-mobile') : null;
 
-  const handlePacketaPick = () => {
+  const handlePacketaPick = async () => {
     setPacketaError('');
-    if (!PACKETA_API_KEY) {
-      setPacketaError('Chybí VITE_PACKETA_API_KEY pro widget Zásilkovny.');
+    if (packetaKeyLoading) {
+      setPacketaError('Načítám klíč pro widget Zásilkovny. Zkuste to prosím za chvíli.');
+      return;
+    }
+    const apiKey = packetaApiKey || await ensurePacketaApiKey();
+    if (!apiKey) {
+      setPacketaError('Chybí Packeta API key pro widget Zásilkovny.');
       return;
     }
     setPacketaLoading(true);
@@ -1105,7 +1226,7 @@ export function CheckoutPage() {
       return;
     }
 
-    window.Packeta.Widget.pick(PACKETA_API_KEY, (point) => {
+    window.Packeta.Widget.pick(apiKey, (point) => {
       setPacketaLoading(false);
 
       if (!point) return;
@@ -1813,7 +1934,7 @@ export function CheckoutPage() {
               <PaymentMethodSection
                 description={
                   paymentMethod === 'transfer'
-                    ? 'Objednávku uložíme a obchodník vás kontaktuje.'
+                    ? 'Objednávku uložíme a pošleme fakturu se splatností — uhradíte ji bankovním převodem.'
                     : paymentMethod === 'card'
                       ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
                       : (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
@@ -1823,7 +1944,10 @@ export function CheckoutPage() {
                 }
                 options={paymentOptionsVisible}
                 selectedId={paymentMethod}
-                onSelect={(id) => setPaymentMethod(id as PaymentMethodOption)}
+                onSelect={(id) => {
+                  paymentMethodUserChangedRef.current = true;
+                  setPaymentMethod(id as PaymentMethodOption);
+                }}
               >
                 <>
                   {!publishableKey && !stripePkLoading && (
@@ -1874,6 +1998,7 @@ export function CheckoutPage() {
 
                   {showStripePaymentElement && stripePromise && (
                     <Elements
+                      key={clientSecret}
                       stripe={stripePromise}
                       options={{
                         clientSecret: clientSecret ?? undefined,
@@ -1890,6 +2015,7 @@ export function CheckoutPage() {
                       <StripePaymentSubmitForm
                         total={summaryTotal}
                         onError={setPaymentIntentError}
+                        thankYouTrackingToken={thankYouTrackingToken}
                       />
                     </Elements>
                   )}
@@ -1903,7 +2029,7 @@ export function CheckoutPage() {
                   {paymentMethod === 'transfer' && (
                     <div className="mt-4 space-y-4">
                       <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/75 leading-relaxed">
-                        {'Odešlete objednávku — ozve se vám obchodník a domluvíte dokončení nákupu. Nebudete platit kartou na tomto kroku.'}
+                        {'Odešlete objednávku — vystavíme fakturu se splatností a pošleme ji na zadaný e-mail. Uhradíte ji bankovním převodem podle pokynů. Na tomto kroku neplatíte kartou.'}
                       </p>
                       <button
                         type="button"
@@ -1917,7 +2043,7 @@ export function CheckoutPage() {
                             {'Odesílám…'}
                           </>
                         ) : (
-                          'Odeslat objednávku (převod)'
+                          'Odeslat objednávku (na fakturu)'
                         )}
                       </button>
                     </div>
@@ -1945,15 +2071,38 @@ export function CheckoutPage() {
                   {'Zpět'}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => void goForward()}
-                  disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
-                  className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {'Pokračovat'}
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+                {/* Krok 4 + převod: „Pokračovat" plní stejnou funkci jako tlačítko „Odeslat objednávku (převod)“
+                    uvnitř panelu (uživateli stačí klik na tlačítko, na které je zvyklý z předchozích kroků). */}
+                {currentStep === 4 && paymentMethod === 'transfer' ? (
+                  <button
+                    type="button"
+                    onClick={() => void submitTransferOrder()}
+                    disabled={transferSubmitting || !hasTransferIco}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {transferSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {'Odesílám…'}
+                      </>
+                    ) : (
+                      <>
+                        {'Odeslat objednávku'}
+                        <ChevronRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void goForward()}
+                    disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  >
+                    {'Pokračovat'}
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             )}
         </div>

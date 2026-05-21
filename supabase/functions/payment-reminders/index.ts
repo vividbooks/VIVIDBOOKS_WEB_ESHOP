@@ -1,10 +1,11 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 function getDatabaseUrl() {
   return (
@@ -14,11 +15,11 @@ function getDatabaseUrl() {
   );
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -66,25 +67,25 @@ function verifyServiceAuth(req: Request): boolean {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   if (!verifyServiceAuth(req)) {
-    return jsonResponse({ error: 'Unauthorized.' }, 401);
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const emailUrl = getSendOrderEmailUrl(req.url);
   if (!emailUrl) {
-    return jsonResponse({ error: 'Missing SUPABASE_URL for send-order-email.' }, 500);
+    return jsonResponse(req, { error: 'Missing SUPABASE_URL for send-order-email.' }, 500);
   }
 
   const headers = {
@@ -104,7 +105,7 @@ Deno.serve(async (req) => {
     const due = await sql<{ id: string }[]>`
       select id
       from public.orders
-      where status = 'pending_payment'
+      where status in ('incomplete', 'pending_payment')
         and payment_status = 'pending'
         and abandon_reminder_count < 4
         and payment_resume_token is not null
@@ -151,7 +152,7 @@ Deno.serve(async (req) => {
             last_abandon_reminder_at = now(),
             updated_at = now()
           where id = ${row.id}::uuid
-            and status = 'pending_payment'
+            and status in ('incomplete', 'pending_payment')
             and payment_status = 'pending'
         `;
 
@@ -162,7 +163,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse({
+    return jsonResponse(req, {
       success: true,
       candidates: due.length,
       sent,
@@ -171,7 +172,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'payment-reminders failed.';
     console.error('[payment-reminders]', message);
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

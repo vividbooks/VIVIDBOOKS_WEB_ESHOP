@@ -8,18 +8,22 @@ import { UnifiedBookCard } from './UnifiedBookCard';
 import { SUBJECT_CONFIGS } from './subjectConfigs';
 import { SEOHead, productJsonLd, breadcrumbJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { useCart } from '../contexts/CartContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchProductStockItem, type ProductStockItem } from '../utils/productStock';
-import { subjectToSlug } from '../utils/slugify';
+import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
+import { getMerchVariantUnitPriceInHaler } from '../utils/productPrice';
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
 import {
   bundleIsNxPlusOneSubject,
   productMatchesBundleSubjectLabels,
+  productBundleDetailPath,
+  promotionCardBundlesForProduct,
   type ProductBundleRecord,
 } from '../utils/bundlePricing';
 import { ProductBundlePromoTile } from './ProductBundlePromoTile';
@@ -28,6 +32,7 @@ import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
+import { dataLayerItemFromProduct, pushViewContent } from '../utils/dataLayerEcommerce';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
@@ -462,22 +467,6 @@ const formatPrice = (product: any): string => {
   return `${p.replace(/[,\s\.].*$/, '').trim()}\u00a0K\u010d`;
 };
 
-const getUnitPriceInHaler = (product: any): number => {
-  if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
-    return Math.max(0, Math.round(product.priceAmount * 100));
-  }
-
-  const normalized = String(product.price || '')
-    .replace(/\s/g, '')
-    .replace('Kč', '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
-};
-
 const getNote = (p: any): string =>
   p.note || p.poznamka || p.metadata?.poznamka || p.metadata?.pozn\u00e1mka || p.metadata?.note || '';
 
@@ -863,6 +852,26 @@ export function ProductDetailPage({
   }, [product.type, product.shopifyVariantId, selectedMerchVariant]);
 
   useEffect(() => {
+    const itemId = String(product.item_id || product.itemId || product.id || '');
+    const unitPrice =
+      product.type === 'merch' && selectedMerchVariant
+        ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+        : getProductUnitPriceInHaler(product);
+    const itemName =
+      product.type === 'merch' && selectedMerchVariant
+        ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
+        : product.name || 'Produkt';
+    pushViewContent(dataLayerItemFromProduct(product, {
+      itemId,
+      itemName,
+      itemGroup: product.category || product.merchCategory || product.type || 'product',
+      priceHaler: unitPrice,
+      quantity: 1,
+      variantName: product.type === 'merch' && selectedMerchVariant ? selectedMerchVariant.label : undefined,
+    }));
+  }, [product.id, product.name, product.category, product.type, product.merchCategory, effectiveCartVariantId, selectedMerchVariant]);
+
+  useEffect(() => {
     let cancelled = false;
 
     if (
@@ -944,10 +953,15 @@ export function ProductDetailPage({
     });
   }, [publicProductBundles, product]);
 
+  const promotionCardBundlesForPdp = useMemo(
+    () => promotionCardBundlesForProduct(product, publicProductBundles),
+    [product, publicProductBundles],
+  );
+
   const handleAddKvBundleToSchoolOrder = (bundle: ProductBundleRecord) => {
     if (kvBundleAddingId) return;
     if (bundleIsNxPlusOneSubject(bundle)) {
-      navigate(`/balicek/${encodeURIComponent(bundle.slug || bundle.id)}`);
+      navigate(productBundleDetailPath(bundle));
       return;
     }
     setKvBundleAddingId(bundle.id);
@@ -1000,8 +1014,8 @@ export function ProductDetailPage({
     if (!vid) return;
     const unitPrice =
       product.type === 'merch' && selectedMerchVariant
-        ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
-        : getUnitPriceInHaler(product);
+        ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+        : getProductUnitPriceInHaler(product);
     const lineName =
       product.type === 'merch' && selectedMerchVariant
         ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
@@ -1014,6 +1028,7 @@ export function ProductDetailPage({
       quantity: 1,
       unitPrice,
       imageUrl: product.image || undefined,
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
       ...(isPosterMerchHero ? { posterMerch: true as const } : {}),
     });
     openInternalCart();
@@ -1027,8 +1042,8 @@ export function ProductDetailPage({
       const bundleVid = effectiveCartVariantId;
       const bundleUnitPrice =
         product.type === 'merch' && selectedMerchVariant
-          ? Math.max(0, Math.round(selectedMerchVariant.priceAmount * 100))
-          : getUnitPriceInHaler(product);
+          ? getMerchVariantUnitPriceInHaler(selectedMerchVariant)
+          : getProductUnitPriceInHaler(product);
       const bundleLineName =
         product.type === 'merch' && selectedMerchVariant
           ? `${product.name || 'Produkt'} – ${selectedMerchVariant.label}`
@@ -1041,6 +1056,7 @@ export function ProductDetailPage({
         quantity: 1,
         unitPrice: bundleUnitPrice,
         imageUrl: product.image || undefined,
+        itemGroup: product.category || product.merchCategory || product.type || undefined,
       });
 
       for (const sibling of siblingDils) {
@@ -1049,8 +1065,9 @@ export function ProductDetailPage({
           productName: sibling.name || 'Produkt',
           variantId: sibling.shopifyVariantId || sibling.variantId || undefined,
           quantity: 1,
-          unitPrice: getUnitPriceInHaler(sibling),
+          unitPrice: getProductUnitPriceInHaler(sibling),
           imageUrl: sibling.image || sibling.imageUrl || sibling.coverImage || undefined,
+          itemGroup: sibling.category || sibling.merchCategory || sibling.type || undefined,
         });
       }
 
@@ -1155,7 +1172,7 @@ export function ProductDetailPage({
     >
       <SEOHead
         title={product.name}
-        path={`/produkt/${encodeURIComponent(product.id)}`}
+        path={productDetailPath(product, products)}
         description={desc || `${product.name} \u2014 ${product.category}. Interaktivn\u00ed u\u010debn\u00ed materi\u00e1l od Vividbooks.`}
         image={resolveShareImageUrl({ explicitImage: product.image, category: product.category })}
         imageAlt={buildOgImageAlt({ productName: product.name, categoryLabel: product.category })}
@@ -1169,21 +1186,21 @@ export function ProductDetailPage({
             category: product.category,
           }),
           breadcrumbJsonLd([
-            { name: 'Katalog', url: 'https://www.vividbooks.com/' },
+            { name: 'Katalog', url: marketingUrl('/') },
             ...(product.type === 'merch'
               ? [
                   {
                     name: 'Další produkty',
-                    url: 'https://www.vividbooks.com/dalsi-produkty',
+                    url: marketingUrl('/dalsi-produkty'),
                   },
                 ]
               : [
                   {
                     name: product.category,
-                    url: `https://www.vividbooks.com/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`,
+                    url: marketingUrl(`/predmet/${(product.category || '').toLowerCase().replace(/\s+/g, '-')}`),
                   },
                 ]),
-            { name: product.name, url: `https://www.vividbooks.com/produkt/${encodeURIComponent(product.id)}` },
+            { name: product.name, url: marketingUrl(productDetailPath(product, products)) },
           ]),
         ]}
       />
@@ -1465,7 +1482,7 @@ export function ProductDetailPage({
               <span className="text-[#001161]/40 font-['Fenomen_Sans',sans-serif] text-[12px]">{product.category}</span>
             </div>
 
-            {/* Category + type label */}
+            {/* Category + type label + odkazy na akční balíčky */}
             <div className="flex items-center gap-2 flex-wrap mb-4">
               <span
                 className="inline-block px-3 py-1 rounded-xl font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.15em]"
@@ -1473,6 +1490,20 @@ export function ProductDetailPage({
               >
                 {product.category}
               </span>
+              {promotionCardBundlesForPdp.map((bundle) => {
+                const label = String(bundle.productCardBadgeText || '').trim();
+                if (!label) return null;
+                return (
+                  <Link
+                    key={bundle.id}
+                    to={productBundleDetailPath(bundle)}
+                    className="inline-flex max-w-[min(100%,280px)] items-center truncate rounded-full bg-[#ff2e43] px-2.5 py-1 font-['Fenomen_Sans',sans-serif] text-[10px] font-bold uppercase tracking-wide text-white shadow-md ring-1 ring-white/50 transition-transform hover:brightness-110 hover:ring-white/65 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#ff2e43] active:scale-[0.98]"
+                    title={bundle.title ? `Akce:\u00a0${bundle.title}` : 'Detail akce'}
+                  >
+                    {label}
+                  </Link>
+                );
+              })}
               {product.rocnik && (
                 <span className="inline-block px-3 py-1 rounded-xl bg-[#f1f3f8] text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-[0.15em]">
                   {product.rocnik}{'.\u00a0ro\u010dn\u00edk'}
@@ -1618,7 +1649,7 @@ export function ProductDetailPage({
                           ? {
                               shopifyVariantId: selectedMerchVariant.shopifyVariantId,
                               shoptetSku: selectedMerchVariant.shoptetId,
-                              unitPriceHaler: Math.round(selectedMerchVariant.priceAmount * 100),
+                              unitPriceHaler: getMerchVariantUnitPriceInHaler(selectedMerchVariant),
                               productDisplayName: `${product.name} – ${selectedMerchVariant.label}`,
                               variantLabel: selectedMerchVariant.label,
                             }
@@ -1648,10 +1679,7 @@ export function ProductDetailPage({
                   : sibLabels.slice(0, -1).join(', ') + '\u00a0a\u00a0' + sibLabels[sibLabels.length - 1];
 
                 const totalPrice = [product, ...siblingDils]
-                  .reduce((acc: number, p: any) => {
-                    const raw = String(p.priceAmount || p.price || '').replace(/[^\d]/g, '');
-                    return acc + (parseInt(raw) || 0);
-                  }, 0);
+                  .reduce((acc: number, p: any) => acc + Math.round(getProductUnitPriceInHaler(p) / 100), 0);
 
                 return (
                   <div className="grid grid-cols-1 gap-2">
@@ -2059,14 +2087,14 @@ export function ProductDetailPage({
                     >
                       <Math2ComparisonCoverThumb
                         book={product}
-                        onClick={() => navigate(`/produkt/${encodeURIComponent(product.id)}`)}
+                        onClick={() => navigate(productDetailPath(product, products))}
                         zIndex={3}
                       />
                       {mat2BannerCounterpart && (
                         <Math2ComparisonCoverThumb
                           book={mat2BannerCounterpart}
                           onClick={() =>
-                            navigate(`/produkt/${encodeURIComponent(mat2BannerCounterpart.id)}`)
+                            navigate(productDetailPath(mat2BannerCounterpart, products))
                           }
                           rotatedDeg={15}
                           className="-ml-7 sm:-ml-8"
@@ -2341,7 +2369,7 @@ export function ProductDetailPage({
                 );
                 const handleMat2Digital = () => {
                   if (mat2OnlineProduct) {
-                    navigate(`/produkt/${encodeURIComponent(mat2OnlineProduct.id)}`);
+                    navigate(productDetailPath(mat2OnlineProduct, products));
                   } else {
                     navigate('/predmet/matematika-2-stupen');
                   }

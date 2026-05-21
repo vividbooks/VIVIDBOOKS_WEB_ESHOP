@@ -1258,8 +1258,32 @@ function UploadTab() {
   const [docs, setDocs]               = useState<DocRecord[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [deletingSource, setDeletingSource] = useState<string | null>(null);
+  const [correctionText, setCorrectionText] = useState('');
+  const [correctionLoadedAt, setCorrectionLoadedAt] = useState('');
+  const [loadingCorrection, setLoadingCorrection] = useState(false);
+  const [savingCorrection, setSavingCorrection] = useState(false);
+  const [correctionMsg, setCorrectionMsg] = useState('');
 
   const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const loadCorrection = React.useCallback(async () => {
+    setLoadingCorrection(true);
+    setCorrectionMsg('');
+    try {
+      const res = await fetch(`${SERVER_UPLOAD}/rag/source?source=${encodeURIComponent('doc:product-truth')}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setCorrectionText(data.text || '');
+      setCorrectionLoadedAt(data.uploadedAt || '');
+      if (!data.found) setCorrectionMsg('Korekční dokument zatím neexistuje. Vlož text a ulož ho.');
+    } catch (e: any) {
+      setCorrectionMsg(`Nepodařilo se načíst korekční dokument: ${e.message}`);
+    } finally {
+      setLoadingCorrection(false);
+    }
+  }, []);
 
   const loadDocs = React.useCallback(async () => {
     setLoadingDocs(true);
@@ -1283,7 +1307,7 @@ function UploadTab() {
     } finally { setLoadingDocs(false); }
   }, []);
 
-  React.useEffect(() => { loadDocs(); }, [loadDocs]);
+  React.useEffect(() => { loadDocs(); loadCorrection(); }, [loadDocs, loadCorrection]);
 
   function readFile(file: File) {
     if (!file.name.match(/\.(txt|md)$/i)) { alert('Zatím jsou podporovány pouze soubory .txt a .md'); return; }
@@ -1320,6 +1344,34 @@ function UploadTab() {
     finally { setUploading(false); }
   }
 
+  async function handleSaveCorrection() {
+    if (!correctionText.trim()) { alert('Korekční dokument nesmí být prázdný.'); return; }
+    setSavingCorrection(true);
+    setCorrectionMsg('');
+    try {
+      const res = await fetch(`${SERVER_UPLOAD}/rag/ingest-text`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({
+          text: correctionText,
+          title: 'Produktová pravda Vividbooks - korekce pro RAG',
+          sourceTag: 'product-truth',
+          description: 'Primární korekční soubor pro positioning, přesnost RAG odpovědí a segmentaci 1./2. stupně.',
+          replaceExisting: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      setCorrectionMsg(`Uloženo. Zaindexováno ${data.ingested} / ${data.total} chunků.`);
+      setCorrectionLoadedAt(new Date().toISOString());
+      loadDocs();
+    } catch (e: any) {
+      setCorrectionMsg(`Chyba při ukládání: ${e.message}`);
+    } finally {
+      setSavingCorrection(false);
+    }
+  }
+
   async function handleDelete(source: string) {
     if (!confirm(`Smazat chunky pro "${source}"?`)) return;
     setDeletingSource(source);
@@ -1345,8 +1397,54 @@ function UploadTab() {
             {'Nahrát dokument do RAG'}
           </h2>
           <p className="text-[13px] text-gray-500 mt-1">
-            {'Nahraj .txt / .md soubor nebo vlož text — Gemini ho rozseká na chunky a zaindexuje.'}
+            {'Nahraj .txt / .md soubor nebo vlož text — Gemini ho rozseká na chunky a zaindexuje. Pro autoritativní korekční soubor použij source tag product-truth.'}
           </p>
+        </div>
+
+        <div className="bg-white rounded-2xl border-2 border-emerald-200 overflow-hidden">
+          <div className="px-5 py-4 border-b border-emerald-100 bg-emerald-50/70 flex items-start justify-between gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-emerald-600" />
+              </div>
+              <div>
+                <h3 className="text-[15px] font-bold text-[#001161]">{'Primární korekční dokument'}</h3>
+                <p className="text-[12px] text-[#001161]/55 mt-0.5">
+                  {'Tento text má v RAG odpovědích přednost před běžnými zdroji. Upravuje positioning, zakázané claimy a přesnost pro 1./2. stupeň.'}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-mono bg-white border border-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full">{'doc:product-truth'}</span>
+                  {correctionLoadedAt && (
+                    <span className="text-[10px] text-emerald-700/60">{'Upraveno: '} {new Date(correctionLoadedAt).toLocaleString('cs-CZ')}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button onClick={loadCorrection} disabled={loadingCorrection}
+              className="shrink-0 flex items-center gap-1.5 border border-emerald-200 bg-white text-emerald-700 px-3 py-1.5 rounded-xl text-[12px] font-bold hover:bg-emerald-50 transition-colors disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingCorrection ? 'animate-spin' : ''}`} />
+              {'Načíst'}
+            </button>
+          </div>
+          <div className="p-5 space-y-3">
+            <textarea
+              value={correctionText}
+              onChange={e => setCorrectionText(e.target.value)}
+              rows={14}
+              className="w-full px-4 py-3 text-[13px] text-[#001161] border border-emerald-200 rounded-2xl focus:border-emerald-400 outline-none resize-y bg-white leading-relaxed font-mono"
+              placeholder={'Sem patří hlavní korekční pravidla pro RAG…'}
+            />
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] text-gray-400">
+                {correctionText.length.toLocaleString('cs-CZ')} {'znaků'}
+                {correctionMsg && <span className="ml-3 text-emerald-700">{correctionMsg}</span>}
+              </div>
+              <button onClick={handleSaveCorrection} disabled={savingCorrection || loadingCorrection || !correctionText.trim()}
+                className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white rounded-xl text-[13px] font-bold transition-colors">
+                {savingCorrection ? <><Loader2 className="w-4 h-4 animate-spin" />{'Ukládám…'}</> : <><ShieldCheck className="w-4 h-4" />{'Uložit korekční dokument'}</>}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-[1fr_320px] gap-5 items-start">
@@ -1388,7 +1486,7 @@ function UploadTab() {
               <textarea
                 value={text}
                 onChange={e => { setText(e.target.value); setFileName(''); }}
-                placeholder={'Vlož sem libovolný text — FAQ, manuál, přepis, poznámky…'}
+                placeholder={'Vlož sem libovolný text — FAQ, manuál, přepis, poznámky…\n\nTip: korekční soubor s tagem product-truth má v RAG odpovědích přednost před běžnými zdroji.'}
                 rows={14}
                 className="w-full px-4 py-3 text-[13px] text-[#001161] border border-gray-200 rounded-2xl focus:border-purple-400 outline-none resize-none bg-white leading-relaxed"
                 style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
@@ -1420,8 +1518,8 @@ function UploadTab() {
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide block mb-1.5">{'Source tag'}</label>
                 <input value={sourceTag} onChange={e => setSourceTag(e.target.value)}
-                  placeholder={'faq-vividbooks'} className={iCls + ' font-mono text-[12px]'} />
-                <p className="text-[10px] text-gray-400 mt-1">{'Nechej prázdné = vygeneruje se z názvu'}</p>
+                  placeholder={'product-truth'} className={iCls + ' font-mono text-[12px]'} />
+                <p className="text-[10px] text-gray-400 mt-1">{'Nechej prázdné = vygeneruje se z názvu. product-truth / korekce = primární zdroj pravdy.'}</p>
               </div>
               <div>
                 <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wide block mb-1.5">Popis</label>

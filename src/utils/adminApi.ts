@@ -210,6 +210,8 @@ export interface AdminOrderListItem {
   items_summary?: string | null;
   /** Jen objednávky plakátů (admin záložka). */
   poster_fulfillment_status?: string | null;
+  /** Zdroj objednávky: `eshop` = web checkout, `pipedrive` = ručně založený deal v CRM. */
+  source?: 'eshop' | 'pipedrive' | string | null;
 }
 
 export interface AdminOrderItem {
@@ -558,12 +560,14 @@ export type AdminBasecomFulfillment =
   };
 
 export async function fetchAdminOrders(params: {
-  filter?: 'all' | 'new' | 'shipped' | 'problem';
+  filter?: 'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment';
   search?: string;
   page?: number;
   pageSize?: number;
   /** Jen řádky s `poster_fulfillment_status` (objednávky jen z plakátů v košíku). */
   posterOnly?: boolean;
+  /** Filtr zdroje objednávky: `all` (default) nebo `eshop` / `pipedrive`. */
+  source?: 'all' | 'eshop' | 'pipedrive';
 }) {
   const url = new URL(ADMIN_ORDERS_BASE);
   url.searchParams.set('filter', params.filter || 'all');
@@ -571,6 +575,7 @@ export async function fetchAdminOrders(params: {
   url.searchParams.set('page', String(params.page || 1));
   url.searchParams.set('pageSize', String(params.pageSize || 20));
   if (params.posterOnly) url.searchParams.set('poster', '1');
+  if (params.source && params.source !== 'all') url.searchParams.set('source', params.source);
 
   const res = await fetch(url.toString(), { headers: await edgeAdminHeaders() });
   if (!res.ok) {
@@ -645,13 +650,18 @@ export async function runAdminOrderAction(payload: {
     | 'cancel_order'
     | 'mark_shipped'
     | 'sync_pipedrive'
-    | 'set_poster_fulfillment';
+    | 'set_poster_fulfillment'
+    | 'delete_order';
   orderId: string;
   cancelledReason?: string;
   trackingNumber?: string;
   /** true = jen aktualizace štítků/PRINT u existujícího dealu */
   refreshPipedrive?: boolean;
   posterFulfillmentStatus?: 'pending' | 'done';
+  /** Vyžadováno pro `delete_order` — admin musí v dialogu opsat order_number objednávky. */
+  confirmOrderNumber?: string;
+  /** Pro `delete_order` u finálních stavů (paid / processing / exported / shipped / delivered) — bez force backend vrátí 409. */
+  force?: boolean;
 }) {
   const res = await fetch(ADMIN_ORDER_ACTION_BASE, {
     method: 'POST',
@@ -660,8 +670,20 @@ export async function runAdminOrderAction(payload: {
   });
 
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Admin order action failed: ${err}`);
+    /** Edge funkce vrací JSON `{ error, requiresForce?, ... }` — zkusíme ho dekódovat, jinak fallback na raw text.
+     *  `requiresForce` u 409 vyhazuje speciální chybu, kterou UI rozezná a nabídne force-delete. */
+    const text = await res.text();
+    let data: { error?: string; requiresForce?: boolean } = {};
+    try {
+      data = JSON.parse(text) as { error?: string; requiresForce?: boolean };
+    } catch {
+      /* keep text fallback */
+    }
+    const message = (data.error && data.error.trim()) || `Admin order action failed: ${text || res.status}`;
+    const err = new Error(message) as Error & { requiresForce?: boolean; httpStatus?: number };
+    err.requiresForce = data.requiresForce === true;
+    err.httpStatus = res.status;
+    throw err;
   }
 
   return res.json();

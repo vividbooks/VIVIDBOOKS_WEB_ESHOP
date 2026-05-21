@@ -1,0 +1,9 @@
+# Vividbooks robots.txt
+# https://www.vividbooks.com
+
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/*
+
+Sitemap: https://www.vividbooks.com/sitemap.xml

@@ -14,7 +14,7 @@ import { AdminPanel } from './AdminPanel';
 import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
 import { CookieConsentBar } from './CookieConsentBar';
-import { GoogleAnalyticsBridge } from './GoogleAnalyticsBridge';
+import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -33,6 +33,7 @@ function RootInner() {
   return (
     <>
       <ScrollToTop />
+      <WebflowLegacyRedirect />
       <Toaster
         position="top-center"
         richColors
@@ -54,7 +55,6 @@ function RootInner() {
       {/* Popup Manager renderer */}
       <PopupRenderer />
       <CookieConsentBar />
-      <GoogleAnalyticsBridge />
       <Outlet />
     </>
   );

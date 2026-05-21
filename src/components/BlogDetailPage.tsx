@@ -6,6 +6,7 @@ import type { BlogPost, BlogBlock } from '../data/blogPosts';
 import { BlogCard } from './BlogCard';
 import { SEOHead, articleJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { useBlogPosts } from '../contexts/BlogContext';
 import { NewsletterInlineBlock } from './NewsletterInlineBlock';
 
@@ -290,7 +291,7 @@ export function BlogDetailPage({ post }: BlogDetailPageProps) {
           description: post.excerpt || post.title,
           image: post.coverImage,
           datePublished: post.date,
-          url: `https://www.vividbooks.com/blog/${post.slug}`,
+          url: marketingUrl(`/blog/${post.slug}`),
         })}
       />
 

@@ -1,12 +1,13 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
 import { computeOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 function getDatabaseUrl() {
   return (
@@ -16,11 +17,11 @@ function getDatabaseUrl() {
   );
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -34,30 +35,30 @@ async function trackingTokenForOrder(orderId: string): Promise<string | null> {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
   const databaseUrl = getDatabaseUrl();
 
   if (!stripeSecretKey || !databaseUrl) {
-    return jsonResponse({ error: 'Server configuration error.' }, 500);
+    return jsonResponse(req, { error: 'Server configuration error.' }, 500);
   }
 
   let body: { token?: string };
   try {
     body = await req.json();
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body.' }, 400);
+    return jsonResponse(req, { error: 'Invalid JSON body.' }, 400);
   }
 
   const token = typeof body.token === 'string' ? body.token.trim() : '';
   if (!token || token.length < 32) {
-    return jsonResponse({ error: 'Missing or invalid token.' }, 400);
+    return jsonResponse(req, { error: 'Missing or invalid token.' }, 400);
   }
 
   const sql = postgres(databaseUrl, {
@@ -97,27 +98,33 @@ Deno.serve(async (req) => {
 
     const order = rows[0];
     if (!order) {
-      return jsonResponse({ error: 'Neplatný odkaz nebo objednávka neexistuje.' }, 404);
+      return jsonResponse(req, { error: 'Neplatný odkaz nebo objednávka neexistuje.' }, 404);
     }
 
-    if (order.status !== 'pending_payment' || order.payment_status !== 'pending') {
+    /** Resume link platí pro aktivní pokus o platbu — `incomplete` (karta nezahájená) i `pending_payment`
+     *  (převod / karta po failed pokusu). Oba stavy znamenají, že platba ještě nedoběhla, a zákazník ji
+     *  může dokončit přes Stripe Payment Element načtený s `client_secret` z existující PaymentIntent. */
+    if (
+      !['incomplete', 'pending_payment'].includes(order.status)
+      || order.payment_status !== 'pending'
+    ) {
       if (order.status === 'paid' || order.payment_status === 'paid') {
         const tt = await trackingTokenForOrder(order.id);
-        return jsonResponse({
+        return jsonResponse(req, {
           status: 'already_paid',
           orderNumber: order.order_number,
           ...(order.stripe_payment_intent_id ? { paymentIntentId: order.stripe_payment_intent_id } : {}),
           ...(tt ? { trackingToken: tt } : {}),
         });
       }
-      return jsonResponse({
+      return jsonResponse(req, {
         error: 'Tuto objednávku už nelze zaplatit přes tento odkaz.',
         orderNumber: order.order_number,
       }, 409);
     }
 
     if (!order.stripe_payment_intent_id) {
-      return jsonResponse({ error: 'Chybí platební údaje u objednávky.' }, 500);
+      return jsonResponse(req, { error: 'Chybí platební údaje u objednávky.' }, 500);
     }
 
     const stripe = new Stripe(stripeSecretKey, { apiVersion: '2024-06-20' });
@@ -125,7 +132,7 @@ Deno.serve(async (req) => {
 
     if (pi.status === 'succeeded') {
       const tt = await trackingTokenForOrder(order.id);
-      return jsonResponse({
+      return jsonResponse(req, {
         status: 'already_paid',
         orderNumber: order.order_number,
         paymentIntentId: pi.id,
@@ -134,7 +141,7 @@ Deno.serve(async (req) => {
     }
 
     if (pi.status === 'canceled') {
-      return jsonResponse({
+      return jsonResponse(req, {
         status: 'payment_cancelled',
         orderNumber: order.order_number,
         message: 'Platba byla zrušena. Vytvořte prosím novou objednávku nebo nás kontaktujte.',
@@ -142,11 +149,11 @@ Deno.serve(async (req) => {
     }
 
     if (!pi.client_secret) {
-      return jsonResponse({ error: 'Nepodařilo se načíst platební relaci.' }, 500);
+      return jsonResponse(req, { error: 'Nepodařilo se načíst platební relaci.' }, 500);
     }
 
     const ttReq = await trackingTokenForOrder(order.id);
-    return jsonResponse({
+    return jsonResponse(req, {
       status: 'requires_payment',
       clientSecret: pi.client_secret,
       paymentIntentId: pi.id,
@@ -159,7 +166,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Resume checkout failed.';
     console.error('[resume-checkout]', message);
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

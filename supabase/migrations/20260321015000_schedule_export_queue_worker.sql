@@ -4,6 +4,11 @@ create extension if not exists pg_net;
 do $migration$
 declare
   existing_job_id bigint;
+  v_url text := coalesce(
+    nullif(current_setting('app.process_export_queue_url', true), ''),
+    'https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/process-export-queue'
+  );
+  v_headers jsonb;
 begin
   select jobid
     into existing_job_id
@@ -15,13 +20,20 @@ begin
     perform cron.unschedule(existing_job_id);
   end if;
 
+  v_headers := jsonb_strip_nulls(
+    jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', nullif(current_setting('app.process_export_queue_cron_secret', true), '')
+    )
+  );
+
   perform cron.schedule(
     'process-export-queue-every-minute',
     '* * * * *',
     $job$
       select net.http_post(
-        url := 'https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/process-export-queue',
-        headers := '{"Content-Type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlla2t1bmRnaXp6ZGJta3phdGRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MjYwMDIsImV4cCI6MjA4OTUwMjAwMn0.PsD7gEnhCushlJwnCkFIwfrGLws0KFa0QsCb54_6WHk","apikey":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imlla2t1bmRnaXp6ZGJta3phdGRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MjYwMDIsImV4cCI6MjA4OTUwMjAwMn0.PsD7gEnhCushlJwnCkFIwfrGLws0KFa0QsCb54_6WHk"}'::jsonb,
+        url := v_url,
+        headers := v_headers,
         body := '{}'::jsonb
       );
     $job$

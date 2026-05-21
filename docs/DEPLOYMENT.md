@@ -25,6 +25,10 @@ Workflow: [.github/workflows/deploy-github-pages.yml](../.github/workflows/deplo
 2. **Settings → Pages → Build and deployment:** zdroj musí být **GitHub Actions**. Pokud je nastavené **Deploy from a branch** (např. `gh-pages`), nasazuje se obsah z větve **bez** proměnných z Actions — pak klíče v Secrets nemají na výsledek vliv.
 3. V prohlížeči zkuste **tvrdé obnovení** nebo anonymní okno (cache starého `*.js`).
 
+### Nasazení ze složky `/docs` na větvi `main`
+
+Pokud v **Settings → Pages** máte **Deploy from a branch** a složku **`/docs`**, GitHub servíruje přímo soubory z repozitáře — **ne** artefakt z workflow „Deploy GitHub Actions“. Po změnách v `index.html`, `public/` (favicon, logo) nebo kódu je potřeba lokálně spustit **`npm run build:github-pages`**, zkontrolovat změny v `docs/` a **commitnout je**. Bez toho zůstane např. starý `docs/index.html` bez odkazu na ikonu záložky.
+
 ---
 
 ## Supabase (produkce)
@@ -78,6 +82,33 @@ Minimálně pro platby:
 Migrace `20260417210000_marketing_rls_admin_only.sql` omezuje čtení marketingových tabulek v DB na e-maily v `public.admin_staff_emails` (výchozí řádky odpovídají allowlistu v kódu). Další administrátory přidejte v SQL (`insert … on conflict do nothing`) nebo přes Dashboard.
 
 Další proměnné podle zapnutých integrací (Basecom, iDoklad, e‑mail SMTP, …).
+
+#### Base.com / BaseLinker
+
+`process-export-queue` vytváří objednávky v Base.com přes `addOrder`. Cílová skupina/stav v levém menu Base.com se nastavuje parametrem `order_status_id`, který bere hodnotu ze Supabase secretu `BASECOM_ORDER_STATUS_ID`.
+
+Aktuální Base.com stavy z `getOrderStatusList`:
+
+| ID | Název |
+|----|-------|
+| `438571` | Nové objednávky (přenos do FF) |
+| `438572` | Vytvořeno v FF |
+| `438573` | Odesláno |
+| `438574` | Zrušeno |
+| `438575` | Čeká na zboží v FF |
+| `441049` | Doručeno |
+| `441050` | Problém v expedici FF |
+| `441051` | Error FF (chyba přenosu) |
+| `441052` | V expedici FF |
+| `441053` | Zabaleno v FF |
+| `441054` | Vrácena do FF |
+| `444858` | Do expedice (manual) |
+
+Pro nové objednávky, které mají čekat na přenos do FF, nastavte:
+
+```bash
+supabase secrets set BASECOM_ORDER_STATUS_ID=438571 --project-ref iekkundgizzdbmkzatdl
+```
 
 #### iDoklad ([API v3](https://api.idoklad.cz/Help/v3/cs/index.html))
 

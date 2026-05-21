@@ -1,0 +1,107 @@
+name: Promote main to production
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (optional, e.g. v1.4.0)"
+        required: false
+        type: string
+      reason:
+        description: "Reason for production promotion"
+        required: true
+        type: string
+      promote_strategy:
+        description: "Merge strategy"
+        required: false
+        default: merge
+        type: choice
+        options:
+          - merge
+          - ff-only
+      run_tests:
+        description: "Run tests before promote"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests (optional)
+        if: ${{ inputs.run_tests }}
+        run: |
+          if node -e "const s=(require('./package.json').scripts||{}); process.exit(s.test?0:1)"; then
+            npm test
+          else
+            echo "No npm test script found in package.json, skipping."
+          fi
+
+      - name: Promote main -> production
+        env:
+          PUSH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${PUSH_TOKEN}@github.com/${{ github.repository }}.git"
+
+          git fetch origin main production
+          git checkout production
+
+          if [ "${{ inputs.promote_strategy }}" = "ff-only" ]; then
+            git merge --ff-only origin/main
+          else
+            git merge --no-edit origin/main
+          fi
+
+          git push origin production
+
+      - name: Create release tag
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="release-$(date +%Y.%m.%d)-${GITHUB_SHA::8}"
+          fi
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag '$TAG' already exists. Aborting."
+            exit 1
+          fi
+
+          git tag -a "$TAG" -m "Production release: ${{ inputs.reason }}"
+          git push origin "$TAG"
+
+      - name: Audit summary
+        run: |
+          {
+            echo "## Production promotion"
+            echo "- Source: main"
+            echo "- Target: production"
+            echo "- Strategy: ${{ inputs.promote_strategy }}"
+            echo "- Reason: ${{ inputs.reason }}"
+            echo "- Commit: $GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"

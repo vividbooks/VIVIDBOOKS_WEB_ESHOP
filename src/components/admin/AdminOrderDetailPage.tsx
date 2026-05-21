@@ -13,8 +13,9 @@ import {
   Circle,
   GraduationCap,
   School,
+  Trash2,
 } from 'lucide-react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   fetchAdminOrderDetail,
@@ -30,6 +31,7 @@ import {
 } from '../../utils/adminApi';
 import { orderAlertTypeLabelCs } from '../../utils/orderAlertLabels';
 import { incidentResolutionStateLabelCs, incidentSeverityLabelCs } from '../../utils/incidentLabels';
+import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -56,7 +58,28 @@ function badgeClass(status: string) {
   if (['pending', 'pending_payment', 'processing'].includes(status)) {
     return 'bg-amber-100 text-amber-700';
   }
+  /** `incomplete` = zákazník checkout opustil — šedý badge (není chyba). */
+  if (status === 'incomplete') {
+    return 'bg-gray-100 text-gray-600';
+  }
   return 'bg-red-100 text-red-700';
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'incomplete': return 'Nedokončená';
+    case 'pending_payment': return 'Čeká na platbu';
+    case 'paid': return 'Zaplaceno';
+    case 'processing': return 'Zpracovává se';
+    case 'exported': return 'Exportováno';
+    case 'shipped': return 'Odesláno';
+    case 'delivered': return 'Doručeno';
+    case 'cancelled': return 'Storno';
+    case 'refunded': return 'Refundováno';
+    case 'failed': return 'Selhalo';
+    case 'draft': return 'Návrh';
+    default: return status;
+  }
 }
 
 function workflowLabel(stepKey: string) {
@@ -178,6 +201,7 @@ function basecomStepSourceHint(source: string): string {
 
 export function AdminOrderDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [order, setOrder] = useState<AdminOrderDetail | null>(null);
   const [items, setItems] = useState<AdminOrderItem[]>([]);
   const [events, setEvents] = useState<AdminOrderEvent[]>([]);
@@ -188,8 +212,21 @@ export function AdminOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  /** Backend vrátí `requiresForce: true` u finálních stavů — předáme do dialogu, ať checkbox přednastaví. */
+  const [deleteRequiresForce, setDeleteRequiresForce] = useState(false);
 
-  const canRetryExport = order?.basecom_status === 'failed';
+  /** Stripe/webhook někdy označí jen workflow jako failed (`invoke` fronty), zatímco `basecom_status` zůstane pending — retry musí projít stejně. */
+  const basecomWorkflowStep = useMemo(
+    () => workflowSteps.find((s) => workflowStepKey(s) === 'basecom_exported'),
+    [workflowSteps],
+  );
+  const canRetryExport = useMemo(() => {
+    if (!order || order.poster_fulfillment_status != null) return false;
+    if (order.basecom_status === 'done' || order.basecom_status === 'skipped') return false;
+    return order.basecom_status === 'failed' || basecomWorkflowStep?.status === 'failed';
+  }, [order, basecomWorkflowStep]);
+
   const idokladWorkflowStep = useMemo(
     () => workflowSteps.find((s) => workflowStepKey(s) === 'idoklad_exported'),
     [workflowSteps],
@@ -208,7 +245,9 @@ export function AdminOrderDetailPage() {
     () => order?.payment_status === 'paid' && order.invoice_status === 'pending',
     [order?.payment_status, order?.invoice_status],
   );
-  const canCancel = !!order && ['paid', 'processing', 'exported'].includes(order.status);
+  /** Storno povoleno z aktivních neúplných stavů (incomplete / pending_payment) i z `paid`/`processing`/`exported`.
+   *  Backend (admin-order-action `cancel_order`) povolí stejné stavy — drží se to v sync. */
+  const canCancel = !!order && ['incomplete', 'pending_payment', 'paid', 'processing', 'exported'].includes(order.status);
   const canMarkShipped = order?.status === 'exported';
 
   const stripeHref = useMemo(() => stripeUrl(order?.stripe_payment_intent_id), [order?.stripe_payment_intent_id]);
@@ -402,7 +441,7 @@ export function AdminOrderDetailPage() {
             <p className="text-[13px] text-gray-500 mt-1">{formatDate(order.created_at)}</p>
           </div>
           <span className={`inline-flex rounded-full px-3 py-1 text-[12px] font-bold ${badgeClass(order.status)}`}>
-            {order.status}
+            {statusLabel(order.status)}
           </span>
         </div>
 
@@ -413,8 +452,8 @@ export function AdminOrderDetailPage() {
               disabled={actionLoading !== null}
               className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-100 text-amber-800 font-bold text-[12px] disabled:opacity-40"
             >
-              <RefreshCw className="w-4 h-4" />
-              {'Retry export'}
+              <RefreshCw className={`w-4 h-4 ${actionLoading === 'retry_export' ? 'animate-spin' : ''}`} />
+              {'Znovu export do Base.com'}
             </button>
           )}
           {canCancel && (
@@ -437,8 +476,47 @@ export function AdminOrderDetailPage() {
               {'Označit jako odesláno'}
             </button>
           )}
+          <button
+            onClick={() => {
+              setDeleteRequiresForce(false);
+              setDeleteDialogOpen(true);
+            }}
+            disabled={actionLoading !== null}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-red-600 text-white font-bold text-[12px] disabled:opacity-40 hover:bg-red-700"
+            title="Trvale smaže objednávku z databáze (vyžaduje potvrzení)."
+          >
+            <Trash2 className="w-4 h-4" />
+            {'Smazat objednávku'}
+          </button>
         </div>
       </div>
+
+      {order && (
+        <DeleteOrderDialog
+          open={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          orderNumber={order.order_number}
+          status={order.status}
+          paymentStatus={order.payment_status}
+          initialRequiresForce={deleteRequiresForce}
+          onConfirm={async ({ force }) => {
+            try {
+              await runAdminOrderAction({
+                action: 'delete_order',
+                orderId: order.id,
+                confirmOrderNumber: order.order_number,
+                force,
+              });
+              toast.success(`Objednávka ${order.order_number} byla smazána.`);
+              navigate('/admin/objednavky');
+            } catch (err) {
+              const e = err as Error & { requiresForce?: boolean };
+              if (e?.requiresForce) setDeleteRequiresForce(true);
+              throw err;
+            }
+          }}
+        />
+      )}
 
       {order.admin_note ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950">
@@ -750,7 +828,21 @@ export function AdminOrderDetailPage() {
             <div className="space-y-2 text-[13px]">
               <div><span className="text-gray-400">{'Metoda: '}</span><span className="font-semibold text-[#001161]">{order.payment_method}</span></div>
               <div><span className="text-gray-400">{'Status platby: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.payment_status || 'pending')}`}>{order.payment_status || 'pending'}</span></div>
-              <div><span className="text-gray-400">{'Base.com: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.basecom_status || 'pending')}`}>{order.basecom_status || 'pending'}</span></div>
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="text-gray-400">{'Base.com: '}</span>
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.basecom_status || 'pending')}`}>{order.basecom_status || 'pending'}</span>
+                {canRetryExport && (
+                  <button
+                    type="button"
+                    title="Znovu zařadit řádek do fronty exportu (po selhání nebo zamítnutém volání fronty)"
+                    disabled={actionLoading !== null}
+                    onClick={() => void handleAction('retry_export')}
+                    className="inline-flex items-center justify-center rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                  >
+                    <Repeat className={`w-3.5 h-3.5 ${actionLoading === 'retry_export' ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+              </div>
               <div><span className="text-gray-400">{'Zásilkovna: '}</span><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.zasilkovna_status || 'pending')}`}>{order.zasilkovna_status || 'pending'}</span></div>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-gray-400">{'Faktura: '}</span>
@@ -893,34 +985,6 @@ export function AdminOrderDetailPage() {
                   {'Stripe PaymentIntent'}
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
-              )}
-              {order.stripe_receipt_url
-                && !(order.invoice_status === 'done' && order.idoklad_invoice_id?.trim()) && (
-                <a
-                  href={order.stripe_receipt_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]"
-                >
-                  {'Stripe účtenka (záloha, dokud není iDoklad)'}
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-              )}
-              {order.stripe_receipt_url
-                && order.invoice_status === 'done'
-                && order.idoklad_invoice_id?.trim() && (
-                <p className="text-[11px] text-gray-500 leading-snug">
-                  <span className="text-gray-400">{'Technicky: '}</span>
-                  <a
-                    href={order.stripe_receipt_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="font-semibold text-[#001161] hover:text-[#ff6a35] inline-flex items-center gap-0.5"
-                  >
-                    {'Stripe receipt'}
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </p>
               )}
               {basecomHref && (
                 <a href={basecomHref} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[12px] font-bold text-[#001161] hover:text-[#ff6a35]">

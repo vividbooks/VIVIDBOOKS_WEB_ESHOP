@@ -19,6 +19,7 @@ import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridge
 import CollageModal from './CollageModal';
 import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
+import { marketingUrl } from '../../config/marketingSite';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -1619,7 +1620,7 @@ export function AdminAgentPage({
         headline: email.headline || email.subject,
         bodyHtml: email.bodyHtml || '',
         ctaText: email.ctaText || 'Vyzkoušejte zdarma',
-        ctaUrl: email.ctaUrl || 'https://www.vividbooks.com/vyzkousejte',
+        ctaUrl: email.ctaUrl || marketingUrl('/vyzkousejte'),
         audience: email.audience || 'newsletter',
         fullHtml: email.fullHtml,
         ...(chatHistory.length > 0 ? { chatHistory } : {}),

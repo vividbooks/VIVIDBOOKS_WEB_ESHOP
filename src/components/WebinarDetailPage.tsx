@@ -8,6 +8,7 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { SEOHead, webinarJsonLd } from './SEOHead';
+import { marketingUrl } from '../config/marketingSite';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
@@ -54,6 +55,10 @@ interface FormState {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  schoolAddress: string;
+  webinarMotivation: string;
+  webinarTopicInterest: string;
+  usesVividbooks: '' | 'yes' | 'no';
   /** YYYY-MM-DD — brána DVPP dotazníku */
   birthDateIso: string;
 }
@@ -153,6 +158,10 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     newsletter: false,
     schoolName: '',
     ico: '',
+    schoolAddress: '',
+    webinarMotivation: '',
+    webinarTopicInterest: '',
+    usesVividbooks: '',
     birthDateIso: '',
   });
 
@@ -290,9 +299,15 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setError('');
   };
 
-  const handleSchoolSelect = (school: { ico: string; name: string }) => {
-    setForm(prev => ({ ...prev, schoolName: school.name, ico: school.ico }));
-    setSchoolOpen(false); setSchoolResults([]);
+  const handleSchoolSelect = (school: { ico: string; name: string; address?: string }) => {
+    setForm((prev) => ({
+      ...prev,
+      schoolName: school.name,
+      ico: school.ico,
+      schoolAddress: typeof school.address === 'string' ? school.address.trim() : '',
+    }));
+    setSchoolOpen(false);
+    setSchoolResults([]);
   };
 
   const handleIcoChange = (v: string) => {
@@ -308,6 +323,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       birthDateIso: c.birthDateIso,
       schoolName: c.schoolName,
       ico: c.ico,
+      schoolAddress: '',
     }));
     setSchoolOpen(false);
     setSchoolResults([]);
@@ -401,7 +417,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setNotTeacher((v) => {
       const next = !v;
       if (!v) {
-        setForm((prev) => ({ ...prev, schoolName: '', ico: '' }));
+        setForm((prev) => ({ ...prev, schoolName: '', ico: '', schoolAddress: '' }));
         setSchoolResults([]);
         setSchoolOpen(false);
       }
@@ -425,6 +441,10 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }
     if (!form.gdpr) {
       setError('Souhlas se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f je povinn\u00fd.');
+      return;
+    }
+    if (form.usesVividbooks !== 'yes' && form.usesVividbooks !== 'no') {
+      setError('Vyberte pros\u00edm u polo\u017eky \u201ePou\u017e\u00edv\u00e1m Vividbooks\u201c mo\u017enost Ano nebo Ne.');
       return;
     }
     if (isSurveyFullPage && requireFullSurveyReg) {
@@ -571,7 +591,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
@@ -597,7 +617,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col justify-center gap-4 px-4 py-10 sm:px-6">
@@ -765,7 +785,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+              url: marketingUrl(`/webinar/${webinar.id}`),
             })}
           />
           <div className="mx-auto grid w-full max-w-[560px] flex-1 content-start gap-4 px-4 py-8 sm:px-6">
@@ -881,7 +901,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             name: webinar.title,
             description: webinar.title,
             startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-            url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+            url: marketingUrl(`/webinar/${webinar.id}`),
           })}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -894,6 +914,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             participantSchoolIco={form.ico.replace(/\D/g, '')}
             onAnswersChange={onPostSurveyAnswersChange}
             scope="post"
+            certificateKindOverride="dvpp"
             variant="fullscreen"
           />
         </div>
@@ -916,11 +937,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
           name: webinar.title,
           description: webinar.title,
           startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-          url: `https://www.vividbooks.com/webinar/${webinar.id}`,
+          url: marketingUrl(`/webinar/${webinar.id}`),
         })}
       />
 
-      {/* Breadcrumb — na mobilu v toku stránky, na desktopu pod horní lištou */}
+      {/* Back link — na mobilu v toku stránky, na desktopu pod horní lištou */}
       <div className="relative z-30 border-b border-[#001161]/6 bg-white md:sticky md:top-14 md:bg-white/90 md:backdrop-blur-md">
         <div className="max-w-[900px] mx-auto px-6 h-14 flex items-center gap-2">
           <button
@@ -928,12 +949,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             className="flex items-center gap-1.5 text-[#001161]/60 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] transition-colors cursor-pointer group"
           >
             <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            {'Webin\u00e1\u0159e'}
+            {'Zobrazit v\u0161echny webin\u00e1\u0159e'}
           </button>
-          <span className="text-[#001161]/20 text-[13px]">/</span>
-          <span className="text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold truncate max-w-[300px]">
-            {webinar.title}
-          </span>
         </div>
       </div>
 

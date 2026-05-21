@@ -16,6 +16,7 @@ import type { Webinar, WebinarSurveyQuestion, WebinarSurveyQuestionType } from '
 import { DEFAULT_WEBINAR_SURVEY_QUESTIONS } from '../../utils/webinarSurveyDefaults';
 import { ImagePicker } from './ImagePicker';
 import { compareWebinarsBySchedule, computeWebinarIsPastFromSchedule, DEFAULT_WEBINAR_DURATION_MIN } from '../../utils/webinarEventTimestamp';
+import { marketingUrl } from '../../config/marketingSite';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -166,7 +167,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
   const [reminderTestBusy, setReminderTestBusy] = useState(false);
 
   function handleCopyLive() {
-    const url = `https://www.vividbooks.com/webinar/${selected?.slug || selected?.id}/live`;
+    const url = marketingUrl(`/webinar/${selected?.slug || selected?.id}/live`);
     navigator.clipboard.writeText(url).then(() => {
       setCopiedLive(true);
       setTimeout(() => setCopiedLive(false), 2000);
@@ -652,7 +653,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                       </label>
                       <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-3 py-2.5">
                         <span className="flex-1 text-[12px] font-mono text-red-700 truncate select-all">
-                          {`https://www.vividbooks.com/webinar/${selected.slug}/live`}
+                          {marketingUrl(`/webinar/${selected.slug}/live`)}
                         </span>
                         <button
                           type="button"

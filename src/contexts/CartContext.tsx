@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { pushAddToCart } from '../utils/dataLayerEcommerce';
 
 export interface CartItem {
   productId: string;
@@ -8,6 +9,8 @@ export interface CartItem {
   quantity: number;
   unitPrice: number;
   imageUrl?: string;
+  /** Kategorie/předmět pro ecommerce dataLayer item_group. */
+  itemGroup?: string;
   /** ID definice balíčku (KV). */
   bundleId?: string;
   bundleTitle?: string;
@@ -88,9 +91,16 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   }, [items]);
 
   const addItem = useCallback((item: CartItem) => {
+    const nextQuantity = Math.max(1, Math.floor(item.quantity || 1));
+    const normalizedItem = {
+      ...item,
+      quantity: nextQuantity,
+      unitPrice: Math.max(0, Math.round(item.unitPrice)),
+    };
+    pushAddToCart(normalizedItem);
+
     setItems((prev) => {
-      const nextQuantity = Math.max(1, Math.floor(item.quantity || 1));
-      const itemKey = getCartLineKey(item.productId, item.variantId, item.bundleInstanceId);
+      const itemKey = getCartLineKey(normalizedItem.productId, normalizedItem.variantId, normalizedItem.bundleInstanceId);
       const existingIndex = prev.findIndex(
         (existing) => getCartLineKey(existing.productId, existing.variantId, existing.bundleInstanceId) === itemKey,
       );
@@ -98,11 +108,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
       if (existingIndex === -1) {
         return [
           ...prev,
-          {
-            ...item,
-            quantity: nextQuantity,
-            unitPrice: Math.max(0, Math.round(item.unitPrice)),
-          },
+          normalizedItem,
         ];
       }
 
@@ -114,7 +120,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
               unitPrice:
                 existing.unitPrice > 0
                   ? existing.unitPrice
-                  : Math.max(0, Math.round(item.unitPrice)),
+                  : normalizedItem.unitPrice,
             }
           : existing
       ));

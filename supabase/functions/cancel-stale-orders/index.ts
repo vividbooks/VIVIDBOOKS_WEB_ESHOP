@@ -1,14 +1,16 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
  * Denní job: pending_payment starší 21 dní → zrušit, případně Base.com storno, e-mail zákazníkovi.
  */
 import postgres from 'npm:postgres';
+import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
 import { sendOrderEmail } from '../_shared/order-email.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 const CANCEL_REASON = 'Automatické storno — nezaplaceno po 3 týdnech';
 
@@ -16,10 +18,10 @@ function getDatabaseUrl() {
   return Deno.env.get('DATABASE_URL') || Deno.env.get('SUPABASE_DB_URL') || '';
 }
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
   });
 }
 
@@ -32,42 +34,20 @@ function verifyServiceAuth(req: Request): boolean {
   return token === expected;
 }
 
-async function callBasecomSetOrderStatus(apiToken: string, orderId: number, statusId: number) {
-  const body = new URLSearchParams({
-    method: 'setOrderStatus',
-    parameters: JSON.stringify({ order_id: orderId, status_id: statusId }),
-  });
-  const response = await fetch('https://api.baselinker.com/connector.php', {
-    method: 'POST',
-    headers: {
-      'X-BLToken': apiToken,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: body.toString(),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Base.com setOrderStatus HTTP ${response.status}`);
-  }
-  if (data?.status !== 'SUCCESS') {
-    throw new Error(`Base.com setOrderStatus: ${data?.error_message || JSON.stringify(data)}`);
-  }
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
   if (!verifyServiceAuth(req)) {
-    return jsonResponse({ error: 'Unauthorized.' }, 401);
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -88,10 +68,10 @@ Deno.serve(async (req) => {
   let errors = 0;
 
   try {
-    const stale = await sql<{ id: string; order_number: string; basecom_order_id: string | null; customer_email: string }[]>`
-      select id, order_number, basecom_order_id, customer_email
+    const stale = await sql<{ id: string; order_number: string; basecom_order_id: string | null; customer_email: string; status: string }[]>`
+      select id, order_number, basecom_order_id, customer_email, status
       from public.orders
-      where status = 'pending_payment'
+      where status in ('incomplete', 'pending_payment')
         and created_at < now() - interval '21 days'
       order by created_at asc
       limit 200
@@ -110,6 +90,7 @@ Deno.serve(async (req) => {
           }
         }
 
+        const previousStatus = row.status;
         await sql.begin(async (tx) => {
           await tx`
             update public.orders
@@ -119,7 +100,7 @@ Deno.serve(async (req) => {
               cancelled_reason = ${CANCEL_REASON},
               updated_at = now()
             where id = ${row.id}::uuid
-              and status = 'pending_payment'
+              and status in ('incomplete', 'pending_payment')
           `;
 
           await tx`
@@ -133,18 +114,23 @@ Deno.serve(async (req) => {
             ) values (
               ${row.id}::uuid,
               'auto_cancel',
-              'pending_payment',
+              ${previousStatus},
               'cancelled',
-              ${JSON.stringify({ reason: CANCEL_REASON })}::jsonb,
+              ${JSON.stringify({ reason: CANCEL_REASON, previousStatus })}::jsonb,
               'system'
             )
           `;
         });
 
-        try {
-          await sendOrderEmail(sql, { orderId: row.id, emailType: 'order_auto_cancelled_unpaid' });
-        } catch (mailErr) {
-          console.error(`[cancel-stale-orders] Email ${row.order_number}:`, mailErr);
+        /** E-mail „auto-cancelled unpaid" má smysl jen pro objednávky, které zákazník opravdu odeslal
+         *  (= dorazil aspoň do `pending_payment`). U `incomplete` nikdy nepotvrdil objednávku, takže
+         *  by ho e-mail mátl („zrušili jsme vaši objednávku" — žádnou neudělal). Mlčky uklidíme. */
+        if (previousStatus === 'pending_payment') {
+          try {
+            await sendOrderEmail(sql, { orderId: row.id, emailType: 'order_auto_cancelled_unpaid' });
+          } catch (mailErr) {
+            console.error(`[cancel-stale-orders] Email ${row.order_number}:`, mailErr);
+          }
         }
 
         cancelled += 1;
@@ -154,10 +140,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse({ processed: stale.length, cancelled, errors });
+    return jsonResponse(req, { processed: stale.length, cancelled, errors });
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'cancel-stale-orders failed';
-    return jsonResponse({ error: msg }, 500);
+    return jsonResponse(req, { error: msg }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

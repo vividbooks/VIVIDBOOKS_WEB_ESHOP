@@ -1,5 +1,7 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
+import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
 
 type ProductSalesSummaryRow = {
   total_units_sold: number;
@@ -35,18 +37,18 @@ type ProductDestinationRow = {
   last_sold_at: string | null;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -200,10 +202,18 @@ async function fetchStockSnapshot(params: {
       ? listResponse.products as Record<string, unknown>
       : {};
 
-    const candidates = Object.entries(listProducts).map(([productId, value]) => ({
-      productId,
-      ...(value && typeof value === 'object' ? value as Record<string, unknown> : {}),
-    }));
+    const allProductIds = new Set([
+      ...Object.keys(listProducts),
+      ...Object.keys(stockProducts),
+    ]);
+
+    const candidates = Array.from(allProductIds).map((productId) => {
+      const value = listProducts[productId];
+      return {
+        productId,
+        ...(value && typeof value === 'object' ? value as Record<string, unknown> : {}),
+      };
+    });
 
     const lookupIdNorm = normalizeLoose(params.stockLookupId);
     const eanNorm = normalizeLoose(params.ean);
@@ -240,12 +250,27 @@ async function fetchStockSnapshot(params: {
       ? stockProducts[matchedProductId] as Record<string, unknown>
       : null;
 
-    const quantity = matchedRecord
-      ? parseWarehouseQuantity(
-          matchedRecord.quantity ?? matchedRecord.stock ?? matchedRecord.available ?? null,
-          firstInventory.defaultWarehouse,
-        )
-      : null;
+    const inventoryProducts = candidates.map((item) => {
+      const productId = String(item.productId ?? '');
+      const stockRecord = productId && stockProducts[productId] && typeof stockProducts[productId] === 'object'
+        ? stockProducts[productId] as Record<string, unknown>
+        : null;
+      return {
+        sku: String(item.sku ?? stockRecord?.sku ?? productId ?? ''),
+        productId,
+        quantity: stockRecord
+          ? parseWarehouseQuantity(
+              stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
+              firstInventory.defaultWarehouse,
+            )
+          : null,
+      };
+    });
+
+    const lookupSku = params.stockLookupId
+      || (matchedCandidate ? String(matchedCandidate.sku ?? matchedCandidate.productId ?? '') : null);
+    const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventoryProducts);
+    const quantity = effectiveStock.quantity;
 
     return {
       apiTokenWorks: true,
@@ -254,13 +279,17 @@ async function fetchStockSnapshot(params: {
       warehouseId: firstInventory.defaultWarehouse,
       lookupValue: params.stockLookupId,
       matchType,
-      matched: Boolean(matchedRecord),
+      matched: Boolean(matchedRecord) || quantity !== null,
       quantity,
+      baseQuantity: effectiveStock.baseQuantity,
+      packContributions: effectiveStock.packContributions,
       matchedProductId,
       matchedProductName: matchedCandidate ? String(matchedCandidate.name ?? '') : null,
       matchedProductEan: matchedCandidate ? String(matchedCandidate.ean ?? '') : null,
       matchedProductSku: matchedCandidate ? String(matchedCandidate.sku ?? '') : null,
-      error: matchedRecord ? null : 'Produkt nebyl ve skladových datech Base.com nalezen podle dostupných identifikátorů.',
+      error: (matchedRecord || quantity !== null)
+        ? null
+        : 'Produkt nebyl ve skladových datech Base.com nalezen podle dostupných identifikátorů.',
     };
   } catch (error) {
     return {
@@ -283,11 +312,11 @@ async function fetchStockSnapshot(params: {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const adminGate = await requireAdminJwt(req);
@@ -297,7 +326,7 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const url = new URL(req.url);
@@ -308,7 +337,7 @@ Deno.serve(async (req) => {
   const ean = (url.searchParams.get('ean') || '').trim();
 
   if (!productId) {
-    return jsonResponse({ error: 'Missing productId.' }, 400);
+    return jsonResponse(req, { error: 'Missing productId.' }, 400);
   }
 
   const sql = postgres(databaseUrl, {
@@ -390,7 +419,7 @@ Deno.serve(async (req) => {
       last_sold_at: null,
     };
 
-    return jsonResponse({
+    return jsonResponse(req, {
       product: {
         id: productId,
         name: productName || null,
@@ -405,7 +434,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load product commerce data.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

@@ -11,7 +11,11 @@ const BENEFITS = [
   'Pozvánky na webináře zdarma',
 ];
 
-export function NewsletterBanner() {
+interface NewsletterBannerProps {
+  source?: string;
+}
+
+export function NewsletterBanner({ source = 'homepage-banner' }: NewsletterBannerProps) {
   const [email, setEmail]     = useState('');
   const [state, setState]     = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
@@ -27,7 +31,7 @@ export function NewsletterBanner() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-          body: JSON.stringify({ email: email.trim(), source: 'homepage-banner' }),
+          body: JSON.stringify({ email: email.trim(), source }),
         },
       );
       const data = await res.json();

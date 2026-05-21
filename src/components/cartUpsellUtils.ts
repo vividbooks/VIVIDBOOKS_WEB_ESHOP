@@ -3,6 +3,8 @@ export type CartUpsellLine = {
   variantId?: string;
 };
 
+export { getProductUnitPriceInHaler } from '../utils/productPrice';
+
 const KNOWN_SUBJECTS = ['Fyzika', 'Chemie', 'Přírodopis', 'Matematika', 'Anglický jazyk', 'Český jazyk', 'Prvouka'];
 
 export const SUBJECT_COLORS: Record<string, { accent: string; bg: string; text: string }> = {
@@ -98,41 +100,6 @@ export function getProductVariantId(product: any): string | undefined {
 
 export function getProductImage(product: any): string | undefined {
   return product.image || product.imageUrl || product.coverImage || undefined;
-}
-
-export function getProductUnitPriceInHaler(product: any): number {
-  if (typeof product.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
-    return Math.max(0, Math.round(product.priceAmount * 100));
-  }
-
-  const merch = product.merchVariants;
-  if (Array.isArray(merch) && merch.length > 0) {
-    for (const v of merch) {
-      if (typeof v?.priceAmount === 'number' && Number.isFinite(v.priceAmount)) {
-        return Math.max(0, Math.round(v.priceAmount * 100));
-      }
-    }
-    for (const v of merch) {
-      const fromVariant = String(v?.price || '')
-        .replace(/\s/g, '')
-        .replace('Kč', '')
-        .replace(/\./g, '')
-        .replace(',', '.')
-        .replace(/[^\d.]/g, '');
-      const pv = Number.parseFloat(fromVariant);
-      if (Number.isFinite(pv)) return Math.max(0, Math.round(pv * 100));
-    }
-  }
-
-  const normalized = String(product.price || '')
-    .replace(/\s/g, '')
-    .replace('Kč', '')
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.]/g, '');
-
-  const parsed = Number.parseFloat(normalized);
-  return Number.isFinite(parsed) ? Math.max(0, Math.round(parsed * 100)) : 0;
 }
 
 export function getCartUpsellRecommendations(cartLines: CartUpsellLine[], products: any[]) {

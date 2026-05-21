@@ -1,3 +1,4 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
 /**
  * GET ?orderId=<uuid> — vrátí PDF vydané faktury z iDokladu (Reports API).
  * Stejná autentizace jako ostatní admin funkce (Bearer anon / service role).
@@ -7,17 +8,17 @@ import { idokladSdkHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { verifyOrderTrackingToken } from '../_shared/order-tracking-token.ts';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers':
     'authorization, x-client-info, apikey, content-type, x-user-access-token',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
   });
 }
 
@@ -172,10 +173,10 @@ async function fetchIssuedInvoicePdfFromReports(
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const urlEarly = new URL(req.url);
@@ -193,7 +194,7 @@ Deno.serve(async (req) => {
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const url = new URL(req.url);
@@ -213,7 +214,7 @@ Deno.serve(async (req) => {
     if (!orderId && orderNumberParam && trackingToken) {
       const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
       if (!secret) {
-        return jsonResponse({ error: 'Missing ORDER_TRACKING_HMAC_SECRET.' }, 503);
+        return jsonResponse(req, { error: 'Missing ORDER_TRACKING_HMAC_SECRET.' }, 503);
       }
       const oidRows = await sql<{ id: string }[]>`
         select id::text as id
@@ -223,17 +224,17 @@ Deno.serve(async (req) => {
       `;
       const oid = oidRows[0]?.id;
       if (!oid) {
-        return jsonResponse({ error: 'Order not found.' }, 404);
+        return jsonResponse(req, { error: 'Order not found.' }, 404);
       }
       const valid = await verifyOrderTrackingToken(oid, secret, trackingToken);
       if (!valid) {
-        return jsonResponse({ error: 'Invalid tracking token.' }, 403);
+        return jsonResponse(req, { error: 'Invalid tracking token.' }, 403);
       }
       orderId = oid;
     }
 
     if (!orderId || !/^[0-9a-f-]{36}$/i.test(orderId)) {
-      return jsonResponse({ error: 'Missing or invalid orderId (or orderNumber + t).' }, 400);
+      return jsonResponse(req, { error: 'Missing or invalid orderId (or orderNumber + t).' }, 400);
     }
 
     const rows = await sql<{ idoklad_invoice_id: string | null; invoice_status: string | null; invoice_number: string | null }[]>`
@@ -244,10 +245,10 @@ Deno.serve(async (req) => {
     `;
     const row = rows[0];
     if (!row) {
-      return jsonResponse({ error: 'Order not found.' }, 404);
+      return jsonResponse(req, { error: 'Order not found.' }, 404);
     }
     if (row.invoice_status !== 'done' || !row.idoklad_invoice_id?.trim()) {
-      return jsonResponse({ error: 'Invoice is not available for this order.' }, 400);
+      return jsonResponse(req, { error: 'Invoice is not available for this order.' }, 400);
     }
 
     const idokladNumericId = row.idoklad_invoice_id.trim();
@@ -291,7 +292,7 @@ Deno.serve(async (req) => {
             : 'idoklad_invoice_id v DB neodpovídá dokladu v iDokladu (GET IssuedInvoices/{id} také selhalo). Zkontrolujte uložené Id z API po vytvoření faktury.'
         )
         : undefined;
-      return jsonResponse(
+      return jsonResponse(req, 
         {
           error: `iDoklad PDF HTTP ${pdfRes.status}`,
           detail: errText.slice(0, 500),
@@ -313,7 +314,7 @@ Deno.serve(async (req) => {
       const text = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf));
       const trimmed = text.trimStart();
       if (!trimmed.startsWith('{')) {
-        return jsonResponse(
+        return jsonResponse(req, 
           {
             error: 'Neočekávaný tvar odpovědi PDF z iDokladu (není ani raw PDF, ani JSON).',
             detail: text.slice(0, 200),
@@ -325,11 +326,11 @@ Deno.serve(async (req) => {
       try {
         parsed = JSON.parse(text) as typeof parsed;
       } catch {
-        return jsonResponse({ error: 'Odpověď z iDokladu není platné PDF ani JSON.' }, 502);
+        return jsonResponse(req, { error: 'Odpověď z iDokladu není platné PDF ani JSON.' }, 502);
       }
       const b64 = parsed.Data ?? parsed.data;
       if (typeof b64 !== 'string' || !b64.trim()) {
-        return jsonResponse(
+        return jsonResponse(req, 
           { error: 'JSON z iDokladu neobsahuje Data (base64 PDF).', detail: text.slice(0, 300) },
           502,
         );
@@ -341,14 +342,14 @@ Deno.serve(async (req) => {
           pdfBytes[i] = binary.charCodeAt(i);
         }
       } catch {
-        return jsonResponse({ error: 'Dekódování base64 PDF z iDokladu selhalo.' }, 502);
+        return jsonResponse(req, { error: 'Dekódování base64 PDF z iDokladu selhalo.' }, 502);
       }
     }
 
     return new Response(pdfBytes, {
       status: 200,
       headers: {
-        ...corsHeaders,
+        ...corsHeaders(req.headers.get('origin')),
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="${safeName}.pdf"`,
         'Cache-Control': 'private, max-age=60',
@@ -357,7 +358,7 @@ Deno.serve(async (req) => {
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error('[idoklad-invoice-pdf]', message);
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 }).catch(() => {});
   }

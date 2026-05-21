@@ -11,6 +11,11 @@ export type WebinarRegFormState = {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  /** Z autocomplete školy (pro Pipedrive organizaci) */
+  schoolAddress: string;
+  webinarMotivation: string;
+  webinarTopicInterest: string;
+  usesVividbooks: '' | 'yes' | 'no';
   /** Volitelné — brána DVPP dotazníku na stránce webináře */
   birthDateIso?: string;
 };
@@ -22,7 +27,7 @@ type Props = {
   handleChange: (field: keyof WebinarRegFormState, value: string | boolean) => void;
   handleSubmit: (e: React.FormEvent) => void;
   handleSchoolNameChange: (v: string) => void;
-  handleSchoolSelect: (school: { ico: string; name: string }) => void;
+  handleSchoolSelect: (school: { ico: string; name: string; address?: string }) => void;
   handleIcoChange: (v: string) => void;
   schoolContainerRef: React.RefObject<HTMLDivElement | null>;
   schoolResults: { ico: string; name: string; address?: string }[];
@@ -211,6 +216,63 @@ export function WebinarRegistrationFormFields({
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
           </svg>
+        </div>
+      </div>
+
+      <p className="font-['Fenomen_Sans',sans-serif] text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mt-2 pl-1">
+        {'Webin\u00e1\u0159'}
+      </p>
+      <label className="block">
+        <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/70 mb-1 block">
+          {'S jakou motivac\u00ed p\u0159ich\u00e1z\u00edte na tento webin\u00e1\u0159?'}
+        </span>
+        <textarea
+          rows={4}
+          value={form.webinarMotivation}
+          onChange={(e) => handleChange('webinarMotivation', e.target.value)}
+          placeholder={'Kr\u00e1tce popi\u0161te, co v\u00e1s k akci vede\u2026'}
+          className="w-full bg-white border border-[#001161]/10 rounded-[12px] px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15 transition-all resize-y min-h-[96px]"
+        />
+      </label>
+      <label className="block">
+        <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/70 mb-1 block">
+          {'Co by v\u00e1s u t\u00e9matu nejv\u00edce zaj\u00edmalo?'}
+        </span>
+        <textarea
+          rows={4}
+          value={form.webinarTopicInterest}
+          onChange={(e) => handleChange('webinarTopicInterest', e.target.value)}
+          placeholder={'T\u00e9mata, ot\u00e1zky nebo o\u010dek\u00e1v\u00e1n\u00ed\u2026'}
+          className="w-full bg-white border border-[#001161]/10 rounded-[12px] px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] placeholder-[#001161]/40 outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15 transition-all resize-y min-h-[96px]"
+        />
+      </label>
+      <div>
+        <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/70 mb-2 block">
+          {'Pou\u017e\u00edv\u00e1m Vividbooks *'}
+        </span>
+        <div className="flex flex-wrap gap-4">
+          <label className="flex items-center gap-2 cursor-pointer font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]">
+            <input
+              type="radio"
+              name="usesVividbooks"
+              required
+              checked={form.usesVividbooks === 'yes'}
+              onChange={() => handleChange('usesVividbooks', 'yes')}
+              className="w-4 h-4 accent-[#5B4FD8]"
+            />
+            {'Ano'}
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161]">
+            <input
+              type="radio"
+              name="usesVividbooks"
+              required
+              checked={form.usesVividbooks === 'no'}
+              onChange={() => handleChange('usesVividbooks', 'no')}
+              className="w-4 h-4 accent-[#5B4FD8]"
+            />
+            {'Ne'}
+          </label>
         </div>
       </div>
 

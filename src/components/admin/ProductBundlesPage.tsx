@@ -129,6 +129,8 @@ export default function ProductBundlesPage() {
   /** Jen `nx_plus_one_subject`: OR mezi předměty (stejné štítky jako filtr katalogu). */
   const [formBundleSubjects, setFormBundleSubjects] = useState<string[]>([]);
   const [formPaidItemCount, setFormPaidItemCount] = useState(10);
+  const [formProductCardBadgeEnabled, setFormProductCardBadgeEnabled] = useState(false);
+  const [formProductCardBadgeText, setFormProductCardBadgeText] = useState('');
 
   const loadAll = useCallback(async (options?: { showLoading?: boolean }): Promise<ProductBundleRecord[]> => {
     const showLoading = options?.showLoading !== false;
@@ -209,6 +211,8 @@ export default function ProductBundlesPage() {
     setFormFreeItemCount(0);
     setFormBundleSubjects([]);
     setFormPaidItemCount(10);
+    setFormProductCardBadgeEnabled(false);
+    setFormProductCardBadgeText('');
     setEditingId(null);
     setCreating(false);
     setSubjectFilters([]);
@@ -253,6 +257,8 @@ export default function ProductBundlesPage() {
       setFormPaidItemCount(10);
       setFormFreeItemCount(0);
     }
+    setFormProductCardBadgeEnabled(Boolean(b.productCardBadgeEnabled));
+    setFormProductCardBadgeText(typeof b.productCardBadgeText === 'string' ? b.productCardBadgeText : '');
   };
 
   const nxSlices = useMemo(() => {
@@ -303,11 +309,15 @@ export default function ProductBundlesPage() {
   const saveDisabled =
     !formTitle.trim()
     || nxBonusInvalid
+    || (formProductCardBadgeEnabled && !formProductCardBadgeText.trim())
     || (formBundleKind === 'standard' && (previewSum.targetHaler <= 0 || formProductIds.length === 0))
     || (formBundleKind === 'standard' && previewSum.alloc.length !== nxSlices.paidIds.length);
 
   const saveBlockReason = useMemo(() => {
     if (!formTitle.trim()) return 'Vyplňte název balíčku.';
+    if (formProductCardBadgeEnabled && !formProductCardBadgeText.trim()) {
+      return 'U bobánku na produktové kartě zadejte text nebo funkci vypněte.';
+    }
     if (formBundleKind !== 'nx_plus_one_subject' && formProductIds.length === 0) {
       return 'Vyberte alespoň jeden produkt.';
     }
@@ -332,6 +342,8 @@ export default function ProductBundlesPage() {
        formPaidItemCount,
     formBundleSubjects.length,
     nxSlices.paidIds.length,
+    formProductCardBadgeEnabled,
+    formProductCardBadgeText,
   ]);
 
   const handleSave = async () => {
@@ -348,6 +360,11 @@ export default function ProductBundlesPage() {
       validFrom: formValidFrom ? `${formValidFrom}T00:00:00.000Z` : null,
       validTo: formValidTo ? `${formValidTo}T23:59:59.999Z` : null,
       bundleKind: formBundleKind,
+      productCardBadgeEnabled: formProductCardBadgeEnabled,
+      productCardBadgeText:
+        formProductCardBadgeEnabled && formProductCardBadgeText.trim()
+          ? formProductCardBadgeText.trim()
+          : null,
     };
     if (formBundleKind === 'standard') {
       payload.productIds = formProductIds;
@@ -698,6 +715,36 @@ export default function ProductBundlesPage() {
                   <Label className="text-[11px]">Platnost do</Label>
                   <Input type="date" value={formValidTo} onChange={(e) => setFormValidTo(e.target.value)} className="h-9" />
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-rose-100 bg-rose-50/40 px-3 py-3 space-y-2">
+                <div className="flex items-start gap-2">
+                  <Checkbox
+                    id="b-card-badge"
+                    checked={formProductCardBadgeEnabled}
+                    onCheckedChange={(c) => setFormProductCardBadgeEnabled(c === true)}
+                  />
+                  <div className="min-w-0 space-y-1">
+                    <Label htmlFor="b-card-badge" className="font-normal cursor-pointer text-[#001161]">
+                      Bobánek na produktové kartě (katalog, předmět, související)
+                    </Label>
+                    <p className="text-[11px] text-gray-600 m-0 leading-snug">
+                      Červený štítek vlevo nahoře na obálce u produktů v akci — u pevného balíčku jen vybrané tituly,
+                      u akce podle předmětu všechny tištěné sešity daného předmětu v katalogu.
+                    </p>
+                  </div>
+                </div>
+                {formProductCardBadgeEnabled ? (
+                  <div className="space-y-1 pt-1">
+                    <Label className="text-[11px]">Text bobánku</Label>
+                    <Input
+                      value={formProductCardBadgeText}
+                      onChange={(e) => setFormProductCardBadgeText(e.target.value)}
+                      placeholder="např. Akce 25+1"
+                      className="max-w-md"
+                    />
+                  </div>
+                ) : null}
               </div>
 
               {formBundleKind !== 'nx_plus_one_subject' ? (

@@ -7,6 +7,7 @@ import { useNovinky } from '../contexts/NovinkyContext';
 import { NovinkaCard } from './NovinkaCard';
 import { SEOHead, articleJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
+import { marketingUrl } from '../config/marketingSite';
 import { NewsletterInlineBlock } from './NewsletterInlineBlock';
 
 /* ── Sidebar CTA card ──────────────────────────────────────────── */
@@ -127,7 +128,7 @@ export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
           description: post.excerpt || post.title,
           image: coverImage,
           datePublished: post.date,
-          url: `https://www.vividbooks.com/novinky/${post.slug}`,
+          url: marketingUrl(`/novinky/${post.slug}`),
         })}
       />
 

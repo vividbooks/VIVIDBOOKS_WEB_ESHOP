@@ -69,6 +69,9 @@ import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../utils/street
 import { checkoutTextInputClass } from '../utils/formFieldClasses';
 import { appPath } from '../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
+import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
+import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
+import { isValidCzechPhone, PHONE_CZ_HINT } from '../utils/phoneCZ';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -84,6 +87,34 @@ const SCHOOL_ORDER_STEPS = [
   { id: 5 as const, label: 'Platba' },
   { id: 6 as const, label: 'Potvrzen\u00ed' },
 ];
+
+type SchoolOrderStep = typeof SCHOOL_ORDER_STEPS[number]['id'];
+
+const SCHOOL_ORDER_STEP_SLUGS: Record<SchoolOrderStep, string> = {
+  1: 'selection',
+  2: 'counts',
+  3: 'details',
+  4: 'shipping',
+  5: 'payment',
+  6: 'confirmation',
+};
+
+const SCHOOL_ORDER_STEP_EVENT_NAMES: Record<SchoolOrderStep, string> = {
+  1: 'school_order_selection',
+  2: 'school_order_counts',
+  3: 'school_details',
+  4: 'shipping',
+  5: 'payment',
+  6: 'confirmation',
+};
+
+function schoolOrderStepFromSearch(search: URLSearchParams): SchoolOrderStep | null {
+  const raw = search.get('step')?.trim().toLowerCase();
+  if (!raw) return null;
+  if (/^[1-6]$/.test(raw)) return Number(raw) as SchoolOrderStep;
+  const entry = Object.entries(SCHOOL_ORDER_STEP_SLUGS).find(([, slug]) => slug === raw);
+  return entry ? (Number(entry[0]) as SchoolOrderStep) : null;
+}
 
 /* ── Subject definitions ─────────────────────────────────────── */
 const SUBJECTS_2 = [
@@ -131,7 +162,6 @@ const SHIPPING_OPTIONS: Array<{ id: SchoolShippingMethod; label: string; price: 
 ];
 
 const PACKETA_WIDGET_URL = 'https://widget.packeta.com/v6/www/js/library.js';
-const PACKETA_API_KEY = import.meta.env.VITE_PACKETA_API_KEY ?? '';
 
 /** Info při kombinaci tiskovin + digitální licence (kroky s dopravou zůstávají). */
 const DIGITAL_WITH_PRINT_INFO =
@@ -216,7 +246,7 @@ function OrderCheckboxRow({ active, label, onClick }: { active: boolean; label: 
     <button
       type="button"
       onClick={onClick}
-      className={`w-full flex items-center gap-3 px-4 py-3 rounded-[14px] transition-all cursor-pointer text-left border-2 ${
+      className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-[14px] transition-all cursor-pointer text-left border-2 sm:px-4 ${
         active ? 'bg-[#001161]/6 border-[#001161]/20' : 'bg-white border-transparent hover:border-[#001161]/10 hover:bg-[#001161]/3'
       }`}
     >
@@ -231,7 +261,7 @@ function OrderCheckboxRow({ active, label, onClick }: { active: boolean; label: 
           </svg>
         )}
       </span>
-      <span style={FF} className="text-[16px] text-[#001161] leading-tight">
+      <span style={FF} className="min-w-0 flex-1 text-[15px] text-[#001161] leading-tight sm:text-[16px]">
         {label}
       </span>
     </button>
@@ -369,13 +399,24 @@ export function OrderPage() {
   const prevPathRef = useRef<string>('');
   useEffect(() => {
     if (location.pathname === '/objednat' && prevPathRef.current !== '/objednat') {
-      const requestedStep = searchParams.get('step') === '2';
+      const requestedStep = schoolOrderStepFromSearch(searchParams);
       const savedDraft = readSchoolOrderDraft();
-      const shouldOpenCounts = requestedStep && (items.length > 0 || hasSchoolOrderDraft(savedDraft));
-      setStep(shouldOpenCounts ? 2 : 1);
+      const canOpenRequestedStep =
+        requestedStep != null &&
+        (requestedStep === 1 || items.length > 0 || hasSchoolOrderDraft(savedDraft));
+      setStep(canOpenRequestedStep ? requestedStep : 1);
     }
     prevPathRef.current = location.pathname;
   }, [items.length, location.pathname, searchParams, setStep]);
+
+  useEffect(() => {
+    if (location.pathname !== '/objednat') return;
+    const stepSlug = SCHOOL_ORDER_STEP_SLUGS[step];
+    if (searchParams.get('step') === stepSlug) return;
+    const next = new URLSearchParams(searchParams);
+    next.set('step', stepSlug);
+    navigate(`${location.pathname}?${next.toString()}${location.hash}`, { replace: true });
+  }, [location.hash, location.pathname, navigate, searchParams, step]);
 
   const [flowError, setFlowError] = useState('');
 
@@ -393,6 +434,7 @@ export function OrderPage() {
   }, []);
 
   const { publishableKey, stripePromise, stripePkLoading } = useStripePublishableKey();
+  const { packetaApiKey, packetaKeyLoading, ensurePacketaApiKey } = usePacketaApiKey();
 
   /* ── pre-select from location state / URL param ── */
   const preselectedCategory =
@@ -475,6 +517,7 @@ export function OrderPage() {
   const [schoolPaymentIntentLoading, setSchoolPaymentIntentLoading] = useState(false);
   const [schoolPaymentIntentError, setSchoolPaymentIntentError] = useState('');
   const [schoolPaymentResumeToken, setSchoolPaymentResumeToken] = useState<string | null>(null);
+  const [thankYouTrackingToken, setThankYouTrackingToken] = useState<string | null>(null);
   const [isDesktopPaymentView, setIsDesktopPaymentView] = useState(false);
   const lastSchoolPaymentKeyRef = useRef<string | null>(null);
   const schoolPaymentIntentFetchRef = useRef<AbortController | null>(null);
@@ -890,6 +933,7 @@ export function OrderPage() {
       quantity: nextQuantity,
       unitPrice: getProductUnitPriceInHaler(product),
       imageUrl: product.image || undefined,
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
     });
   }, [items, addItem, updateCartQuantity, removeItem]);
 
@@ -968,11 +1012,11 @@ export function OrderPage() {
     });
   };
 
-  /* ── součty sešitů (původní logika formuláře) — celkem v Kč jako integer (např. 125 × ks) ── */
+  /* ── součty sešitů — jednotná cena z pole `price` v administraci ── */
   const workbookIndividualTotalKc = Object.entries(quantities).reduce((sum, [id, qty]) => {
     if (!qty) return sum;
     const p = products.find((x) => String(x.id) === String(id));
-    return p ? sum + parseInt(p.price.replace(/\D/g, ''), 10) * qty : sum;
+    return p ? sum + Math.round(getProductUnitPriceInHaler(p) / 100) * qty : sum;
   }, 0);
   const workbookIndividualPcs = Object.values(quantities).reduce((s, q) => s + (q || 0), 0);
   const workbookBundleSubtotalHalers = Object.entries(schoolBundleQtyById).reduce((sum, [bundleId, qty]) => {
@@ -1010,11 +1054,72 @@ export function OrderPage() {
   const showShippingInOrderSummary = step >= 4 && !isDigitalServicesOnly;
   const orderSummaryShippingHalers = showShippingInOrderSummary ? shipping.price : 0;
   const orderSummaryGrandHalers = orderSummaryWorkbookSubtotalHalers + orderSummaryShippingHalers;
+  const schoolTrackingItems = useMemo(() => {
+    const workbookCartItems = items.filter((item) => workbookProductIds.has(String(item.productId)));
+    const bundleItems = Object.entries(schoolBundleQtyById)
+      .filter(([, qty]) => (qty || 0) > 0)
+      .map(([bundleId, quantity]) => {
+        const bundle = productBundlesById[bundleId];
+        if (!bundle) return null;
+        const selection = schoolSubjectBundleSelectionsById[bundleId];
+        const unitPrice = bundleIsNxPlusOneSubject(bundle) && selection
+          ? Math.max(1, subjectBundleSelectionPaidListSumHaler(products, bundle, selection))
+          : Math.max(1, Math.round(bundle.bundlePriceHaler));
+        return {
+          productId: `bundle:${bundleId}`,
+          productName: bundle.title,
+          quantity,
+          unitPrice,
+          itemGroup: 'school_bundle',
+          bundleId: bundle.id,
+          bundleTitle: bundle.title,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item != null);
+    return [...workbookCartItems, ...bundleItems];
+  }, [
+    items,
+    productBundlesById,
+    products,
+    schoolBundleQtyById,
+    schoolSubjectBundleSelectionsById,
+    workbookProductIds,
+  ]);
+
+  useEffect(() => {
+    const checkoutOption =
+      step === 1
+        ? selTypes.join(',') || undefined
+        : step === 3
+          ? (form.ico.trim() ? 'school' : undefined)
+          : step === 4
+            ? shipping.method
+            : step === 5
+              ? paymentMethod
+              : undefined;
+    const valueHaler = step >= 4 ? orderSummaryGrandHalers : orderSummaryWorkbookSubtotalHalers;
+    pushSchoolOrderStep({
+      step,
+      stepName: SCHOOL_ORDER_STEP_EVENT_NAMES[step],
+      items: schoolTrackingItems,
+      valueHaler,
+      checkoutOption,
+    });
+  }, [
+    form.ico,
+    orderSummaryGrandHalers,
+    orderSummaryWorkbookSubtotalHalers,
+    paymentMethod,
+    schoolTrackingItems,
+    selTypes,
+    shipping.method,
+    step,
+  ]);
 
   const canPrepareSchoolCardPayment = useMemo(() => {
     if (isDigitalServicesOnly || !hasSchoolWorkbookSelection) return false;
     if (!form.schoolName.trim() || !form.ico.trim()) return false;
-    if (!form.name.trim() || !form.phone.trim()) return false;
+    if (!form.name.trim() || !isValidCzechPhone(form.phone)) return false;
     if (!form.email.trim() || !isValidEmailFormat(form.email.trim())) return false;
     if (
       !hasStreetWithHouseNumber(form.street)
@@ -1081,6 +1186,7 @@ export function OrderPage() {
     if (!form.email.trim()) return fail('Vypl\u0148te e-mail.', 'order-field-email');
     if (!isValidEmailFormat(form.email.trim())) return fail(EMAIL_FORMAT_HINT_CS, 'order-field-email');
     if (!form.phone.trim()) return fail('Vypl\u0148te telefon.', 'order-field-phone');
+    if (!isValidCzechPhone(form.phone)) return fail(PHONE_CZ_HINT, 'order-field-phone');
     if (!form.position.trim()) return fail('Vyberte funkci / pozici u \u0161koly.', 'order-field-position');
     if (!form.street.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-street');
     if (!hasStreetWithHouseNumber(form.street)) return fail(STREET_NUMBER_HINT_CS, 'order-field-street');
@@ -1246,6 +1352,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
@@ -1256,6 +1363,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       setSchoolPaymentIntentError('');
       lastSchoolPaymentKeyRef.current = null;
       return;
@@ -1305,6 +1413,7 @@ export function OrderPage() {
       setClientSecret(null);
       setPaymentIntentId(null);
       setSchoolPaymentResumeToken(null);
+      setThankYouTrackingToken(null);
       return;
     }
 
@@ -1370,7 +1479,8 @@ export function OrderPage() {
         setSchoolPaymentResumeToken(typeof data.resumeToken === 'string' ? data.resumeToken : null);
         {
           const apiPi = typeof data.paymentIntentId === 'string' ? data.paymentIntentId : '';
-          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken : '';
+          const apiTt = typeof data.trackingToken === 'string' ? data.trackingToken.trim() : '';
+          setThankYouTrackingToken(apiTt || null);
           if (apiPi && apiTt) storePaymentIntentTrackingToken(apiPi, apiTt);
         }
       })
@@ -1379,6 +1489,7 @@ export function OrderPage() {
         setClientSecret(null);
         setPaymentIntentId(null);
         setSchoolPaymentResumeToken(null);
+        setThankYouTrackingToken(null);
         setSchoolPaymentIntentError(error instanceof Error ? error.message : 'Nepodařilo se připravit platbu.');
       })
       .finally(() => {
@@ -1721,10 +1832,15 @@ export function OrderPage() {
     setPacketaError('');
   }, []);
 
-  const handleSchoolPacketaPick = useCallback(() => {
+  const handleSchoolPacketaPick = useCallback(async () => {
     setPacketaError('');
-    if (!PACKETA_API_KEY) {
-      setPacketaError('Chybí VITE_PACKETA_API_KEY pro widget Zásilkovny.');
+    if (packetaKeyLoading) {
+      setPacketaError('Načítám klíč pro widget Zásilkovny. Zkuste to prosím za chvíli.');
+      return;
+    }
+    const apiKey = packetaApiKey || await ensurePacketaApiKey();
+    if (!apiKey) {
+      setPacketaError('Chybí Packeta API key pro widget Zásilkovny.');
       return;
     }
     setPacketaLoading(true);
@@ -1734,7 +1850,7 @@ export function OrderPage() {
       return;
     }
     window.Packeta.Widget.pick(
-      PACKETA_API_KEY,
+      apiKey,
       (point) => {
         setPacketaLoading(false);
         if (!point) return;
@@ -1750,7 +1866,7 @@ export function OrderPage() {
       },
       { country: 'cz' },
     );
-  }, []);
+  }, [ensurePacketaApiKey, packetaApiKey, packetaKeyLoading]);
 
   useEffect(() => {
     if (shipping.method !== 'zasilkovna') return;
@@ -1962,7 +2078,7 @@ export function OrderPage() {
         <div className="max-w-3xl space-y-6">
           {step === 1 && (
             <div className="rounded-[24px] border border-[#001161]/10 bg-white overflow-hidden">
-              <div className="px-6 md:px-8 pt-5 pb-6 md:pt-6 md:pb-8">
+              <div className="px-4 pt-5 pb-6 sm:px-6 md:px-8 md:pt-6 md:pb-8">
                 <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] leading-tight mb-1.5">
                   {'Co objedn\u00e1v\u00e1te'}
                 </h2>
@@ -1975,17 +2091,17 @@ export function OrderPage() {
                     <p style={FF} className="text-[#92400e] text-[14px] leading-snug">{flowError}</p>
                   </div>
                 )}
-                <div className="space-y-6">
-                  <div id="order-field-step1-subjects" className="rounded-[18px] bg-[#f8f9fc] p-5 md:p-6">
-                    <p style={FF} className="text-[#001161]/50 text-[13px] font-bold uppercase tracking-widest mb-4">
+                <div className="space-y-4 sm:space-y-6">
+                  <div id="order-field-step1-subjects" className="rounded-[18px] bg-[#f8f9fc] p-3.5 sm:p-5 md:p-6">
+                    <p style={FF} className="text-[#001161]/50 text-[12px] font-bold uppercase tracking-widest mb-3 sm:text-[13px] sm:mb-4">
                       {'Jak\u00fd p\u0159edm\u011bt?'}
                     </p>
-                    <div className="space-y-5">
+                    <div className="space-y-4 sm:space-y-5">
                       <div>
-                        <p style={FF} className="text-[#001161]/40 text-[12px] font-bold uppercase tracking-widest mb-2 px-1">
+                        <p style={FF} className="text-[#001161]/40 text-[11px] font-bold uppercase tracking-widest mb-2 px-1 sm:text-[12px]">
                           {'2. stupe\u0148'}
                         </p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           {SUBJECTS_2.map((s) => (
                             <OrderCheckboxRow
                               key={s.key}
@@ -1997,10 +2113,10 @@ export function OrderPage() {
                         </div>
                       </div>
                       <div>
-                        <p style={FF} className="text-[#001161]/40 text-[12px] font-bold uppercase tracking-widest mb-2 px-1">
+                        <p style={FF} className="text-[#001161]/40 text-[11px] font-bold uppercase tracking-widest mb-2 px-1 sm:text-[12px]">
                           {'1. stupe\u0148'}
                         </p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                           {SUBJECTS_1.map((s) => (
                             <OrderCheckboxRow
                               key={s.key}
@@ -2013,8 +2129,8 @@ export function OrderPage() {
                       </div>
                     </div>
                   </div>
-                  <div id="order-field-step1-forms" className="rounded-[18px] bg-[#f8f9fc] p-5 md:p-6">
-                    <p style={FF} className="text-[#001161]/50 text-[13px] font-bold uppercase tracking-widest mb-4">
+                  <div id="order-field-step1-forms" className="rounded-[18px] bg-[#f8f9fc] p-3.5 sm:p-5 md:p-6">
+                    <p style={FF} className="text-[#001161]/50 text-[12px] font-bold uppercase tracking-widest mb-3 sm:text-[13px] sm:mb-4">
                       {'V jak\u00e9 form\u011b?'}
                     </p>
                     <div className="flex flex-col gap-2">
@@ -2394,44 +2510,53 @@ export function OrderPage() {
                                             </div>
                                           );
                                           rowItems.push(
-                                            <div key={p.id} className="flex flex-col gap-3 sm:flex-row sm:gap-2 sm:items-stretch">
+                                            <div key={p.id} className="grid grid-cols-[minmax(0,1fr)_108px] items-stretch gap-1.5 sm:flex sm:gap-2">
                                               <Tooltip>
                                                 <TooltipTrigger asChild>
-                                                  <div className={`min-w-0 flex-1 rounded-[8px] px-3 py-3 cursor-default transition-colors ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
-                                                    <p style={FF} className="text-[#001161] text-[15.5px] leading-snug">{p.name}</p>
+                                                  <div className={`min-w-0 rounded-[8px] px-2.5 py-2.5 cursor-default transition-colors sm:flex-1 sm:px-3 sm:py-3 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                                    <p style={FF} className="line-clamp-2 text-[#001161] text-[13px] leading-[1.12] sm:text-[15.5px] sm:leading-snug">{p.name}</p>
+                                                    <div className="mt-1 flex items-center gap-1.5 sm:hidden">
+                                                      <span style={FF} className="text-[11px] font-bold leading-none text-[#001161]/55">
+                                                        {p.price.replace(',-', '')}
+                                                        {',−'}
+                                                      </span>
+                                                      {p.note && (
+                                                        <span style={FF} className="rounded-md bg-[#FF9900] px-1.5 py-0.5 text-[7.5px] font-bold leading-none text-white">
+                                                          {p.note}
+                                                        </span>
+                                                      )}
+                                                    </div>
                                                   </div>
                                                 </TooltipTrigger>
                                                 <TooltipContent side="right" className="p-4 bg-white border border-gray-100 rounded-[12px] shadow-2xl hidden md:block">
                                                   {p.image && <ImageWithFallback src={p.image} alt={p.name} className="w-[100px] h-auto object-contain drop-shadow-xl" />}
                                                 </TooltipContent>
                                               </Tooltip>
-                                              <div className="flex w-full min-w-0 gap-2 sm:w-auto sm:shrink-0">
                                               <div
-                                                className={`w-[min(112px,34%)] shrink-0 rounded-[8px] px-2 py-2.5 flex flex-col items-center justify-center gap-1.5 self-stretch sm:min-w-[104px] sm:max-w-[148px] sm:w-auto ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}
+                                                className={`hidden w-full shrink-0 rounded-[8px] px-1 py-2 flex-col items-center justify-center gap-1 self-stretch sm:flex sm:min-w-[104px] sm:max-w-[148px] sm:w-auto sm:px-2 sm:py-2.5 sm:gap-1.5 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}
                                               >
-                                                <p style={FF} className="text-[#001161] text-[15px] sm:text-[15.5px] font-semibold leading-none text-center whitespace-nowrap">
+                                                <p style={FF} className="text-[#001161] text-[12.5px] sm:text-[15.5px] font-semibold leading-none text-center whitespace-nowrap">
                                                   {p.price.replace(',-', '')}
                                                   {',−'}
                                                 </p>
                                                 {p.note && (
                                                   <span
                                                     style={FF}
-                                                    className="w-full text-center text-[9px] sm:text-[10px] leading-snug bg-[#FF9900] text-white px-2 py-1.5 rounded-lg font-bold shadow-sm"
+                                                    className="w-full text-center text-[7.5px] sm:text-[10px] leading-snug bg-[#FF9900] text-white px-1 py-1 rounded-md font-bold shadow-sm sm:px-2 sm:py-1.5 sm:rounded-lg"
                                                   >
                                                     {p.note}
                                                   </span>
                                                 )}
                                               </div>
-                                              <div className={`min-w-0 flex-1 rounded-[10px] px-1.5 py-2 flex items-center justify-between gap-2 sm:w-[164px] sm:flex-none sm:shrink-0 sm:gap-1.5 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
-                                                <button type="button" onClick={() => updateQty(p.id, -1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">{'−'}</button>
-                                                <div className={`min-w-0 flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-10 sm:h-9`}>
+                                              <div className={`min-w-0 rounded-[10px] px-1 py-1.5 flex items-center justify-between gap-1 sm:w-[164px] sm:flex-none sm:shrink-0 sm:px-1.5 sm:py-2 sm:gap-1.5 ${active ? 'bg-[#c8d7f7]' : 'bg-white/80'}`}>
+                                                <button type="button" onClick={() => updateQty(p.id, -1)} className="size-8 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">{'−'}</button>
+                                                <div className={`min-w-0 flex-1 rounded-[6px] border-2 ${active ? 'border-[#001161]/30 bg-white/60' : 'border-[#001161]/15 bg-white/40'} flex items-center justify-center h-8 sm:h-9`}>
                                                   <input type="text" inputMode="numeric" placeholder="0"
                                                     value={quantities[p.id] || ''}
                                                     onChange={e => setQtyInput(p.id, e.target.value)}
-                                                    className="w-full min-w-0 bg-transparent text-center text-[#001161] text-[16px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25" />
+                                                    className="w-full min-w-0 bg-transparent text-center text-[#001161] text-[14px] font-['Fenomen_Sans',sans-serif] font-bold focus:outline-none border-none p-0 placeholder:text-[#001161]/25 sm:text-[16px]" />
                                                 </div>
-                                                <button type="button" onClick={() => updateQty(p.id, 1)} className="size-10 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">+</button>
-                                              </div>
+                                                <button type="button" onClick={() => updateQty(p.id, 1)} className="size-8 bg-[#26356B] rounded-[6px] flex items-center justify-center text-white cursor-pointer shrink-0 hover:bg-[#001161] transition-colors text-[16px] touch-manipulation sm:size-8 sm:h-9">+</button>
                                               </div>
                                             </div>
                                           );
@@ -3155,6 +3280,7 @@ export function OrderPage() {
                     )}
                     {schoolShowStripePaymentElement && stripePromise && (
                       <Elements
+                        key={clientSecret}
                         stripe={stripePromise}
                         options={{
                           clientSecret,
@@ -3171,6 +3297,7 @@ export function OrderPage() {
                         <StripePaymentSubmitForm
                           total={orderSummaryGrandHalers}
                           onError={setSchoolPaymentIntentError}
+                          thankYouTrackingToken={thankYouTrackingToken}
                         />
                       </Elements>
                     )}

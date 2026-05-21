@@ -1,7 +1,10 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
+import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -70,9 +73,55 @@ type BaseInventoryProduct = {
 type BasecomResponse = {
   status?: string;
   order_id?: number | string;
+  /** Některé odpovědi / proxy mohou vnořovat payload. */
+  data?: { order_id?: number | string; OrderId?: number | string };
+  OrderId?: number | string;
   error_message?: string;
   warnings?: unknown;
 };
+
+/** BaseLinker `addOrder` vrací `order_id` (číslo nebo řetězec); tolerujeme vnoření a alternativní klíče. */
+function extractBaseLinkerOrderId(raw: Record<string, unknown>): string | null {
+  const fromObj = (o: Record<string, unknown>): unknown =>
+    o.order_id ?? o.OrderId ?? o.orderId;
+  let v: unknown = fromObj(raw);
+  const nested = raw.data;
+  if ((v == null || v === '') && nested && typeof nested === 'object' && !Array.isArray(nested)) {
+    v = fromObj(nested as Record<string, unknown>);
+  }
+  if (v == null || v === '') return null;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const n = Math.trunc(v);
+    return n > 0 ? String(n) : null;
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    return /^\d+$/.test(t) ? t : null;
+  }
+  return null;
+}
+
+/** Zapíše Base ID do JSON `orders.note` (stejně jako u Pipedrive metadat), textovou poznámku nemění. */
+function tryMergeBasecomOrderIdIntoOrderNote(note: string | null, basecomOrderId: string): string | null {
+  const id = String(basecomOrderId || '').trim();
+  if (!id) return null;
+  const trimmed = String(note || '').trim();
+  if (!trimmed) {
+    return JSON.stringify({ basecomOrderId: id });
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const o = parsed as Record<string, unknown>;
+      o.basecomOrderId = id;
+      const s = JSON.stringify(o);
+      return s.length > 12000 ? s.slice(0, 12000) : s;
+    }
+  } catch {
+    /* poznámka není JSON objekt */
+  }
+  return null;
+}
 
 type IdokladTokenResponse = {
   access_token?: string;
@@ -92,11 +141,20 @@ type IdokladInvoiceResponse = {
   };
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-};
+});
+
+const cronSecret = Deno.env.get('PROCESS_EXPORT_QUEUE_CRON_SECRET')?.trim();
+
+function isAuthorizedCronRequest(req: Request) {
+  if (!cronSecret) return true;
+  const secretHeader = req.headers.get('x-cron-secret')?.trim();
+  const secretQuery = new URL(req.url).searchParams.get('cronSecret')?.trim();
+  return secretHeader === cronSecret || secretQuery === cronSecret;
+}
 
 function idokladEnvInt(name: string, fallback: number): number {
   const raw = (Deno.env.get(name) || '').trim();
@@ -341,11 +399,11 @@ async function idokladSendIssuedInvoiceToPurchaser(
 
 let idokladAccessTokenCache: { token: string; expiresAt: number } | null = null;
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -593,7 +651,50 @@ function resolveBasecomOrderStatusId(order: OrderRow): number {
   return Number.isInteger(schoolId) ? schoolId : defaultId;
 }
 
-async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
+/** Volitelný přepis `order_status_id` v Base z payloadu fronty (např. webhook `pipedrive-inbound-deal`). */
+function resolvePayloadBasecomOrderStatusId(payload: Record<string, unknown> | null | undefined): number | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = payload.basecomOrderStatusId;
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw > 0) return raw;
+  if (typeof raw === 'string') {
+    const n = Number.parseInt(raw.trim(), 10);
+    return Number.isInteger(n) && n > 0 ? n : null;
+  }
+  return null;
+}
+
+async function handleBasecomPipedriveInboundSetStatus(
+  sql: postgres.Sql,
+  queueItem: ExportQueueRow,
+): Promise<{ sourceOrderStatus: string }> {
+  const payload = queueItem.payload as Record<string, unknown> | null;
+  if (!payload || payload.pipedriveInboundSetStatus !== true) {
+    throw new Error('Invalid pipedrive inbound Base set-status payload.');
+  }
+  const statusId = resolvePayloadBasecomOrderStatusId(payload);
+  const rawBlId = payload.baseLinkerOrderId;
+  if (statusId == null || rawBlId == null || String(rawBlId).trim() === '') {
+    throw new Error('pipedrive inbound set-status: missing basecomOrderStatusId or baseLinkerOrderId.');
+  }
+  const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+  if (!apiToken) throw new Error('Missing Base.com environment configuration.');
+  const blNum = typeof rawBlId === 'number' ? rawBlId : Number.parseInt(String(rawBlId).trim(), 10);
+  if (!Number.isInteger(blNum) || blNum <= 0) {
+    throw new Error(`Invalid baseLinkerOrderId: ${String(rawBlId)}`);
+  }
+  await callBasecomSetOrderStatus(apiToken, blNum, statusId);
+
+  const rows = await sql<{ status: string }[]>`
+    select status from public.orders where id = ${queueItem.order_id}::uuid limit 1
+  `;
+  return { sourceOrderStatus: rows[0]?.status ?? 'unknown' };
+}
+
+async function handleBasecomExport(
+  sql: postgres.Sql,
+  orderId: string,
+  queuePayload?: Record<string, unknown> | null,
+) {
   const orderRows = await sql<OrderRow[]>`
     select
       o.id,
@@ -646,14 +747,15 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
 
   const productMap = await loadCatalogProductMap();
 
-  const apiToken = Deno.env.get('BASECOM_API_TOKEN');
-  const customSourceIdRaw = Deno.env.get('BASECOM_CUSTOM_SOURCE_ID');
+  const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+  const customSourceIdRaw = (Deno.env.get('BASECOM_CUSTOM_SOURCE_ID') || '').trim();
 
   if (!apiToken || !customSourceIdRaw) {
     throw new Error('Missing Base.com environment configuration.');
   }
 
-  const orderStatusId = resolveBasecomOrderStatusId(order);
+  const payloadOverrideId = resolvePayloadBasecomOrderStatusId(queuePayload ?? undefined);
+  const orderStatusId = payloadOverrideId ?? resolveBasecomOrderStatusId(order);
   const customSourceId = Number.parseInt(customSourceIdRaw, 10);
 
   if (!Number.isInteger(customSourceId)) {
@@ -662,19 +764,67 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
 
   const baseInventory = await loadBaseInventoryMap(apiToken);
 
+  /**
+   * Pravidla pro `payment_method` a `paid` v Base addOrder:
+   *
+   *   - **Platba převodem (`payment_method = 'transfer'`) NIKDY není `paid: true`.** Bez ohledu
+   *     na původ (běžný eshop checkout, který přejde do PD a obchodník překlapne na won, nebo
+   *     ručně založený deal v CRM). Reálné zaplacení převodem si obchodník v BaseLinkeru eviduje
+   *     sám (resp. přes bankovní integraci), takže import musí přijít jako nezaplaceno.
+   *
+   *   - Karta / Apple Pay / Google Pay (Stripe) jdou do Base s `paid: true` (peníze už jsou zúčtované).
+   *
+   *   - `payment_method = 'invoice'` → `paid: false` (fakturace na splatnost, eviduje se po úhradě).
+   *
+   *   - Payload může explicitně přepsat `basecomPaymentMethodLabel` (string) nebo `basecomPaid`
+   *     (bool) — má přednost (ručně zařazené exporty, speciální případy).
+   */
+  const payloadPaymentMethodLabel = (() => {
+    const raw = queuePayload && typeof queuePayload === 'object'
+      ? (queuePayload as Record<string, unknown>).basecomPaymentMethodLabel
+      : undefined;
+    return typeof raw === 'string' && raw.trim() ? raw.trim() : '';
+  })();
+  const payloadPaidRaw = queuePayload && typeof queuePayload === 'object'
+    ? (queuePayload as Record<string, unknown>).basecomPaid
+    : undefined;
+  const payloadPaidIsBool = typeof payloadPaidRaw === 'boolean';
+
+  const isStripeCardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+
+  const effectivePaymentMethod = payloadPaymentMethodLabel
+    || paymentMethodLabel(order.payment_method);
+  const effectivePaid = payloadPaidIsBool
+    ? (payloadPaidRaw as boolean)
+    : isStripeCardLike;
+
+  /**
+   * Override pro `user_comments` v Base addOrder (viditelné v Base UI i na fakturách).
+   * `pipedrive-inbound-deal` scénář B ho používá pro doplnění „Číslo faktury: X" (PD pole 12530)
+   * vedle původní poznámky zákazníka z eshop checkoutu. Pokud override není, použije se
+   * `order.note` (default chování).
+   */
+  const payloadUserComments = (() => {
+    const raw = queuePayload && typeof queuePayload === 'object'
+      ? (queuePayload as Record<string, unknown>).basecomUserComments
+      : undefined;
+    return typeof raw === 'string' ? raw : '';
+  })();
+  const effectiveUserComments = payloadUserComments || order.note || '';
+
   const parameters: Record<string, unknown> = {
     order_status_id: orderStatusId,
     custom_source_id: customSourceId,
     date_add: Math.floor(new Date(order.created_at).getTime() / 1000),
-    user_comments: order.note || '',
+    user_comments: effectiveUserComments,
     admin_comments: `VB order: ${order.order_number}`,
-    phone: order.customer_phone || '',
+    phone: normalizeCzechPhone(order.customer_phone) || order.customer_phone || '',
     email: order.customer_email,
     user_login: order.customer_email,
     currency: 'CZK',
-    payment_method: paymentMethodLabel(order.payment_method),
+    payment_method: effectivePaymentMethod,
     payment_method_cod: false,
-    paid: true,
+    paid: effectivePaid,
     delivery_method: deliveryMethodLabel(order.shipping_method),
     delivery_price: amountInCzk(order.shipping_price),
     delivery_fullname: order.customer_name,
@@ -690,6 +840,8 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     invoice_city: order.city || '',
     invoice_postcode: order.zip || '',
     invoice_country_code: 'CZ',
+    /** Doplňkové pole 1 v Base — číslo objednávky z e‑shopu (`orders.order_number`), max 50 znaků (limit API). */
+    extra_field_1: String(order.order_number || '').trim().slice(0, 50),
     products: orderItems.map((item) => {
       const product = productMap.get(item.product_id);
       const matchedBaseProduct = matchBaseInventoryProduct(product, item, baseInventory.products);
@@ -744,9 +896,19 @@ async function handleBasecomExport(sql: postgres.Sql, orderId: string) {
     throw new Error(`Base.com addOrder failed: ${details}`);
   }
 
+  const basecomOrderId = extractBaseLinkerOrderId(data as unknown as Record<string, unknown>);
+  if (!basecomOrderId) {
+    throw new Error(
+      `Base.com addOrder: chybí order_id v odpovědi: ${JSON.stringify(data).slice(0, 500)}`,
+    );
+  }
+
+  const orderNotePatch = tryMergeBasecomOrderIdIntoOrderNote(order.note, basecomOrderId);
+
   return {
-    orderId: data.order_id ? String(data.order_id) : '',
+    orderId: basecomOrderId,
     sourceOrderStatus: order.status,
+    orderNotePatch,
   };
 }
 
@@ -1101,16 +1263,20 @@ async function handleIdokladExport(sql: postgres.Sql, orderId: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
+  }
+
+  if (!isAuthorizedCronRequest(req)) {
+    return jsonResponse(req, { error: 'Unauthorized.' }, 401);
   }
 
   if (!['GET', 'POST'].includes(req.method)) {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const databaseUrl = getDatabaseUrl();
   if (!databaseUrl) {
-    return jsonResponse({ error: 'Missing DATABASE_URL.' }, 500);
+    return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
   const sql = postgres(databaseUrl, {
@@ -1312,7 +1478,69 @@ Deno.serve(async (req) => {
         }
 
         if (queueItem.service === 'basecom') {
-          const result = await handleBasecomExport(sql, queueItem.order_id);
+          const bcPayload = queueItem.payload as Record<string, unknown> | null | undefined;
+
+          if (bcPayload?.pipedriveInboundSetStatus === true) {
+            const result = await handleBasecomPipedriveInboundSetStatus(sql, queueItem);
+            const rawBlId = bcPayload.baseLinkerOrderId;
+            const blIdStr = typeof rawBlId === 'number' ? String(rawBlId) : String(rawBlId ?? '').trim();
+
+            await sql.begin(async (tx) => {
+              await tx`
+                update public.export_queue
+                set
+                  status = 'done',
+                  completed_at = now(),
+                  last_error = null
+                where id = ${queueItem.id}::uuid
+              `;
+
+              await tx`
+                insert into public.order_events (
+                  order_id,
+                  event_type,
+                  from_status,
+                  to_status,
+                  details,
+                  actor
+                ) values (
+                  ${queueItem.order_id}::uuid,
+                  'export',
+                  ${result.sourceOrderStatus},
+                  ${result.sourceOrderStatus},
+                  ${JSON.stringify({
+                    service: 'basecom',
+                    queueItemId: queueItem.id,
+                    pipedriveInboundSetStatus: true,
+                    baseLinkerOrderId: blIdStr,
+                    basecomOrderStatusId: resolvePayloadBasecomOrderStatusId(bcPayload),
+                  })}::jsonb,
+                  'system'
+                )
+              `;
+
+              await upsertWorkflowStep(tx, {
+                orderId: queueItem.order_id,
+                stepKey: 'basecom_exported',
+                status: 'done',
+                attemptCount: queueItem.retry_count + 1,
+                lastError: null,
+                metadata: {
+                  queueItemId: queueItem.id,
+                  pipedriveInboundSetStatus: true,
+                  baseLinkerOrderId: blIdStr,
+                },
+              });
+            });
+
+            summary.succeeded += 1;
+            continue;
+          }
+
+          const result = await handleBasecomExport(sql, queueItem.order_id, bcPayload ?? null);
+          const noteFragment = result.orderNotePatch != null
+            ? sql`, note = ${result.orderNotePatch}`
+            : sql``;
 
           await sql.begin(async (tx) => {
             await tx`
@@ -1331,6 +1559,7 @@ Deno.serve(async (req) => {
                 basecom_order_id = ${result.orderId},
                 status = 'exported',
                 retry_count = ${queueItem.retry_count}
+                ${noteFragment}
               where id = ${queueItem.order_id}::uuid
             `;
 
@@ -1525,14 +1754,18 @@ Deno.serve(async (req) => {
           `;
 
           if (queueItem.service === 'basecom') {
-            await tx`
-              update public.orders
-              set
-                basecom_status = ${shouldFail ? 'failed' : 'pending'},
-                status = ${shouldFail ? 'failed' : 'paid'},
-                retry_count = ${nextRetryCount}
-              where id = ${queueItem.order_id}::uuid
-            `;
+            const failPl = queueItem.payload as Record<string, unknown> | null | undefined;
+            const isPipedriveSetStatusOnly = failPl?.pipedriveInboundSetStatus === true;
+            if (!isPipedriveSetStatusOnly) {
+              await tx`
+                update public.orders
+                set
+                  basecom_status = ${shouldFail ? 'failed' : 'pending'},
+                  status = ${shouldFail ? 'failed' : 'paid'},
+                  retry_count = ${nextRetryCount}
+                where id = ${queueItem.order_id}::uuid
+              `;
+            }
 
             await upsertWorkflowStep(tx, {
               orderId: queueItem.order_id,
@@ -1545,6 +1778,7 @@ Deno.serve(async (req) => {
                 retryCount: nextRetryCount,
                 maxRetries: queueItem.max_retries,
                 nextRetryInMinutes: shouldFail ? null : backoffMinutes,
+                pipedriveInboundSetStatus: isPipedriveSetStatusOnly,
               },
             });
           }
@@ -1619,10 +1853,10 @@ Deno.serve(async (req) => {
       }
     }
 
-    return jsonResponse(summary);
+    return jsonResponse(req, summary);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Queue processing failed.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   } finally {
     await sql.end({ timeout: 5 });
   }

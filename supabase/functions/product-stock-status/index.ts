@@ -1,3 +1,5 @@
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
 type CatalogProduct = {
   id: string;
   name?: string | null;
@@ -23,17 +25,17 @@ type InventoryProduct = {
   quantity: number | null;
 };
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
-};
+});
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -219,13 +221,19 @@ async function loadInventoryProducts() {
     ? listResponse.products as Record<string, Record<string, unknown>>
     : {};
 
-  const products: InventoryProduct[] = Object.entries(listProducts).map(([productId, value]) => {
+  const allProductIds = new Set([
+    ...Object.keys(listProducts),
+    ...Object.keys(stockProducts),
+  ]);
+
+  const products: InventoryProduct[] = Array.from(allProductIds).map((productId) => {
+    const value = listProducts[productId] || {};
     const stockRecord = stockProducts[productId] || {};
     return {
       productId,
-      name: String(value?.name || ''),
-      sku: String(value?.sku || ''),
-      ean: String(value?.ean || ''),
+      name: String(value?.name || stockRecord?.name || ''),
+      sku: String(value?.sku || stockRecord?.sku || productId || ''),
+      ean: String(value?.ean || stockRecord?.ean || ''),
       quantity: parseWarehouseQuantity(
         stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
         firstInventory.defaultWarehouse,
@@ -323,11 +331,11 @@ function getStockStatus(quantity: number | null) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'GET') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   try {
@@ -350,7 +358,13 @@ Deno.serve(async (req) => {
         ? { ...product, shoptetId: overrideShoptetSku }
         : product;
       const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
-      const quantity = matched?.quantity ?? null;
+      const lookupSku = overrideShoptetSku
+        || product.shoptetId
+        || product.basecomSku
+        || matched?.sku
+        || null;
+      const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventory.products);
+      const quantity = effectiveStock.quantity;
       const stockStatus = getStockStatus(quantity);
 
       return {
@@ -366,6 +380,8 @@ Deno.serve(async (req) => {
         basecomProductId: product.basecomProductId || null,
         basecomSku: product.basecomSku || null,
         quantity,
+        baseQuantity: effectiveStock.baseQuantity,
+        packContributions: effectiveStock.packContributions,
         stockStatus,
         matched: Boolean(matched),
         matchType,
@@ -380,18 +396,18 @@ Deno.serve(async (req) => {
     if (productId) {
       const catalogProduct = filteredCatalog.find((p) => p.id === productId);
       if (!catalogProduct) {
-        return jsonResponse({ error: 'Product not found.' }, 404);
+        return jsonResponse(req, { error: 'Product not found.' }, 404);
       }
 
       const item = buildItem(catalogProduct, shoptetSkuOverride || undefined);
-      return jsonResponse({
+      return jsonResponse(req, {
         item,
       });
     }
 
     const items = filteredCatalog.map((product) => buildItem(product));
 
-    return jsonResponse({
+    return jsonResponse(req, {
       inventory: {
         inventoryId: inventory.inventoryId,
         inventoryName: inventory.inventoryName,
@@ -401,6 +417,6 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load product stock status.';
-    return jsonResponse({ error: message }, 500);
+    return jsonResponse(req, { error: message }, 500);
   }
 });

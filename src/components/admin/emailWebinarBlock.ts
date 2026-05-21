@@ -1,4 +1,5 @@
 import type { Webinar } from '../../data/webinars';
+import { getMarketingSiteOrigin } from '../../config/marketingSite';
 
 export type EmailWebinarLayout = 'hero' | 'compact';
 
@@ -29,7 +30,7 @@ export type EmailWebinarPayloadV1 = {
   snapshot: EmailWebinarSnapshot;
 };
 
-const SITE = 'https://www.vividbooks.com';
+const SITE = getMarketingSiteOrigin();
 /** Stejné pozadí karty jako `WebinarCard` — spodní lišta + obal. */
 const WEBINAR_CARD_BG = '#F0F2F8';
 

@@ -1,8 +1,9 @@
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+import { resolveAllowedOrigin } from '../_shared/cors.ts';
+const corsHeaders = (origin: string | null) => ({
+  'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+});
 
 type BasecomResponse = {
   status?: string;
@@ -27,11 +28,11 @@ type SampleProduct = {
   unitPrice: number;
 };
 
-function jsonResponse(body: Record<string, unknown>, status = 200) {
+function jsonResponse(req: Request, body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
-      ...corsHeaders,
+      ...corsHeaders(req.headers.get('origin')),
       'Content-Type': 'application/json',
     },
   });
@@ -131,11 +132,11 @@ function resolveBaseInventoryProduct(
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders(req.headers.get('origin')) });
   }
 
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed.' }, 405);
+    return jsonResponse(req, { error: 'Method not allowed.' }, 405);
   }
 
   const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
@@ -143,13 +144,13 @@ Deno.serve(async (req) => {
   const customSourceIdRaw = (Deno.env.get('BASECOM_CUSTOM_SOURCE_ID') || '').trim();
 
   if (!apiToken || !orderStatusIdRaw || !customSourceIdRaw) {
-    return jsonResponse({ error: 'Missing Base.com environment configuration.' }, 500);
+    return jsonResponse(req, { error: 'Missing Base.com environment configuration.' }, 500);
   }
 
   const orderStatusId = Number.parseInt(orderStatusIdRaw, 10);
   const customSourceId = Number.parseInt(customSourceIdRaw, 10);
   if (!Number.isInteger(orderStatusId) || !Number.isInteger(customSourceId)) {
-    return jsonResponse({ error: 'Invalid Base.com numeric environment configuration.' }, 500);
+    return jsonResponse(req, { error: 'Invalid Base.com numeric environment configuration.' }, 500);
   }
 
   const now = new Date();
@@ -256,16 +257,16 @@ Deno.serve(async (req) => {
   const data = await response.json().catch(() => ({} as BasecomResponse)) as BasecomResponse;
 
   if (!response.ok) {
-    return jsonResponse({ error: `Base.com HTTP ${response.status}` }, 500);
+    return jsonResponse(req, { error: `Base.com HTTP ${response.status}` }, 500);
   }
 
   if (data.status !== 'SUCCESS') {
-    return jsonResponse({
+    return jsonResponse(req, {
       error: data.error_message || JSON.stringify(data.warnings || data),
     }, 500);
   }
 
-  return jsonResponse({
+  return jsonResponse(req, {
     success: true,
     basecomOrderId: data.order_id ? String(data.order_id) : null,
     sentAt: stamp,

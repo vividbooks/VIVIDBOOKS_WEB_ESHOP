@@ -14,6 +14,7 @@ import {
   SUBJECT_COLORS,
 } from '../cartUpsellUtils';
 import { BOOK_COVER_DROP_SHADOW } from './BookCoverThumb';
+import { productDetailPath } from '../../utils/slugify';
 
 function formatProductPrice(product: any): string {
   const amount = getProductUnitPriceInHaler(product);
@@ -242,13 +243,14 @@ export function InternalCartUpsellSection({
       quantity: 1,
       unitPrice: getProductUnitPriceInHaler(product),
       imageUrl: getProductImage(product),
+      itemGroup: product.category || product.merchCategory || product.type || undefined,
     });
     if (openCartAfterAdd) openCart();
     setAddingId(null);
   };
 
   const handleNavigate = (product: any) => {
-    navigate(`/produkt/${encodeURIComponent(product.id || product.slug)}`);
+    navigate(productDetailPath(product, products));
   };
 
   const seriesGenitiv: Record<string, string> = {

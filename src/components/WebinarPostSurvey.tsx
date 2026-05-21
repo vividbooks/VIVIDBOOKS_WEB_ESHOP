@@ -49,6 +49,7 @@ export function WebinarPostSurvey({
   onAnswersChange,
   variant = 'default',
   scope = 'post',
+  certificateKindOverride,
   participantName = '',
   participantBirthDateIso = '',
   participantSchoolName = '',
@@ -60,6 +61,8 @@ export function WebinarPostSurvey({
   onAnswersChange?: (answers: Record<string, string>) => void;
   /** `pre` = jen otázky před webinářem (bez DVPP). `post` = DVPP + dotazník po akci. */
   scope?: 'pre' | 'post';
+  /** `dvpp-dotaznik` má vystavit DVPP certifikát i tehdy, když u webináře nejsou kvízové otázky. */
+  certificateKindOverride?: 'dvpp' | 'feedback';
   /** Celostránkový režim (`?dvppDotaznik=1`): bez horního okraje, kvíz vyplní šířku/výšku. */
   variant?: 'default' | 'fullscreen';
   /** Jméno z registrace — do potvrzení / certifikátu po odeslání. */
@@ -113,6 +116,7 @@ export function WebinarPostSurvey({
         q.options.length >= 2,
     );
   }, [webinar, scope]);
+  const certificateKind = certificateKindOverride ?? (dvppRaw.length > 0 ? 'dvpp' : 'feedback');
 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -332,7 +336,7 @@ export function WebinarPostSurvey({
             participantSchoolName={participantSchoolName}
             participantSchoolIco={participantSchoolIco}
             variant={fs ? 'fullscreen' : 'default'}
-            certificateKind={dvppRaw.length > 0 ? 'dvpp' : 'feedback'}
+            certificateKind={certificateKind}
           />
         </div>
       );

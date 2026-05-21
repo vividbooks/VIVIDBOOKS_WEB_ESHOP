@@ -1,4 +1,4 @@
-# Nasazení na GitHub Pages. Vlastní doména (např. new.vividbooks.com) = kořen webu → Vite base musí být /.
+# Nasazení na GitHub Pages. Vlastní doména (např. www.vividbooks.com) = kořen webu → Vite base musí být /.
 # GITHUB_PAGES_ROOT_BASE vypíná /VIVIDBOOKS_WEB_ESHOP/ z publicPath (jinak 404 na custom domain).
 # V repozitáři: Settings → Pages → Build and deployment → Source: GitHub Actions
 
@@ -31,7 +31,7 @@ jobs:
       VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
       VITE_PACKETA_API_KEY: ${{ secrets.VITE_PACKETA_API_KEY }}
       VITE_TWITTER_SITE: ${{ secrets.VITE_TWITTER_SITE }}
-      VITE_GA_MEASUREMENT_ID: ${{ secrets.VITE_GA_MEASUREMENT_ID }}
+      VITE_PUBLIC_SITE_URL: https://www.vividbooks.com
     steps:
       - uses: actions/checkout@v4
 
@@ -56,12 +56,6 @@ jobs:
           else
             echo "::warning::VITE_STRIPE_PUBLISHABLE_KEY je prázdný — Stripe na Pages nemusí fungovat; doplňte repository secret."
           fi
-          if [ -n "${VITE_GA_MEASUREMENT_ID:-}" ]; then
-            echo "::notice::VITE_GA_MEASUREMENT_ID je v běhu k dispozici (GA4 v buildu)."
-          else
-            echo "::notice::VITE_GA_MEASUREMENT_ID je prázdný — GA4 se do statického buildu nezahrne (volitelné)."
-          fi
-
       # Repository secrets: Settings → Secrets and variables → Actions
       - name: Build
         run: npm run build

@@ -1,14 +1,31 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Truck, AlertTriangle } from 'lucide-react';
+import { Search, Trash2, Truck } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { fetchAdminOrders, type AdminOrderListItem } from '../../utils/adminApi';
+import { toast } from 'sonner@2.0.3';
+import { fetchAdminOrders, runAdminOrderAction, type AdminOrderListItem } from '../../utils/adminApi';
+import { DeleteOrderDialog } from './DeleteOrderDialog';
 
 const FILTERS = [
   { id: 'all', label: 'Všechny' },
+  { id: 'incomplete', label: 'Nedokončené' },
+  { id: 'pending_payment', label: 'Čekají na platbu' },
   { id: 'new', label: 'Nové' },
   { id: 'shipped', label: 'Odesláno' },
   { id: 'problem', label: 'Problémové' },
 ] as const;
+
+const SOURCE_FILTERS = [
+  { id: 'all', label: 'Všechny zdroje' },
+  { id: 'eshop', label: 'E-shop' },
+  { id: 'pipedrive', label: 'Pipedrive' },
+] as const;
+
+function sourceBadge(source: AdminOrderListItem['source']) {
+  if (source === 'pipedrive') {
+    return { label: 'Pipedrive', cls: 'bg-purple-100 text-purple-700' };
+  }
+  return { label: 'E-shop', cls: 'bg-sky-100 text-sky-700' };
+}
 
 function formatPrice(amountInHaler: number) {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -36,7 +53,29 @@ function badgeClass(status: string) {
     return 'bg-amber-100 text-amber-700';
   }
 
+  /** `incomplete` = zákazník checkout opustil — nenařeničné, jen šedý badge (není to chyba). */
+  if (status === 'incomplete') {
+    return 'bg-gray-100 text-gray-600';
+  }
+
   return 'bg-red-100 text-red-700';
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'incomplete': return 'Nedokončená';
+    case 'pending_payment': return 'Čeká na platbu';
+    case 'paid': return 'Zaplaceno';
+    case 'processing': return 'Zpracovává se';
+    case 'exported': return 'Exportováno';
+    case 'shipped': return 'Odesláno';
+    case 'delivered': return 'Doručeno';
+    case 'cancelled': return 'Storno';
+    case 'refunded': return 'Refundováno';
+    case 'failed': return 'Selhalo';
+    case 'draft': return 'Návrh';
+    default: return status;
+  }
 }
 
 function shippingLabel(method: string) {
@@ -59,12 +98,18 @@ export function AdminOrdersPage() {
   const [items, setItems] = useState<AdminOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem'>('all');
+  const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const pageSize = 20;
+  /** Otevřený dialog pro mazání — `null` = zavřeno. Klik na ikonu řádku otevře dialog pro tu objednávku. */
+  const [deleteTarget, setDeleteTarget] = useState<AdminOrderListItem | null>(null);
+  const [deleteRequiresForce, setDeleteRequiresForce] = useState(false);
+  /** Bumpne se po úspěšném smazání — useEffect refetchne seznam s aktuálními filtry. */
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -82,7 +127,7 @@ export function AdminOrdersPage() {
       setLoading(true);
       setError('');
       try {
-        const data = await fetchAdminOrders({ filter, search, page, pageSize });
+        const data = await fetchAdminOrders({ filter, search, page, pageSize, source: sourceFilter });
         if (cancelled) return;
         setItems(data.items || []);
         setTotal(data.total || 0);
@@ -98,7 +143,7 @@ export function AdminOrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, search, page]);
+  }, [filter, search, page, sourceFilter, refreshTick]);
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil(total / pageSize)),
@@ -138,14 +183,35 @@ export function AdminOrdersPage() {
           ))}
         </div>
 
-        <div className="relative w-full lg:w-[320px]">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={searchInput}
-            onChange={(event) => setSearchInput(event.target.value)}
-            placeholder="Hledat číslo objednávky nebo e-mail"
-            className="w-full rounded-xl border border-gray-200 bg-white pl-10 pr-4 py-2 text-[13px] text-[#001161] outline-none focus:border-[#001161]/30"
-          />
+        <div className="flex flex-wrap items-center gap-3 lg:flex-nowrap lg:gap-3">
+          <div className="flex flex-wrap gap-2">
+            {SOURCE_FILTERS.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setPage(1);
+                  setSourceFilter(item.id);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-[12px] font-bold transition-colors ${
+                  sourceFilter === item.id
+                    ? 'bg-[#001161] text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative w-full lg:w-[320px]">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Hledat číslo objednávky nebo e-mail"
+              className="w-full rounded-xl border border-gray-200 bg-white pl-10 pr-4 py-2 text-[13px] text-[#001161] outline-none focus:border-[#001161]/30"
+            />
+          </div>
         </div>
       </div>
 
@@ -163,38 +229,46 @@ export function AdminOrdersPage() {
                 <th className="px-3 py-2.5">{'Base.com'}</th>
                 <th className="px-3 py-2.5">{'Platba'}</th>
                 <th className="px-3 py-2.5">{'Doprava'}</th>
+                <th className="px-3 py-2.5 text-right">{'Akce'}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array.from({ length: 8 }).map((_, index) => (
                   <tr key={index} className="border-b border-gray-100">
-                    <td className="px-3 py-3" colSpan={9}>
+                    <td className="px-3 py-3" colSpan={10}>
                       <div className="h-8 rounded-xl bg-gray-50 animate-pulse" />
                     </td>
                   </tr>
                 ))
               ) : error ? (
                 <tr>
-                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={9}>
+                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={10}>
                     {error}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={9}>
+                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={10}>
                     {'Žádné objednávky neodpovídají filtru.'}
                   </td>
                 </tr>
               ) : (
-                items.map((order) => (
+                items.map((order) => {
+                  const sb = sourceBadge(order.source);
+                  return (
                   <tr
                     key={order.id}
                     onClick={() => navigate(`/admin/objednavky/${order.id}`)}
                     className="border-b border-gray-100 hover:bg-[#f9fafc] cursor-pointer align-top"
                   >
                     <td className="px-3 py-3">
-                      <div className="font-bold text-[#001161] text-[12px]">{order.order_number}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-[#001161] text-[12px]">{order.order_number}</span>
+                        <span className={`inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-bold ${sb.cls}`}>
+                          {sb.label}
+                        </span>
+                      </div>
                       <div className="text-[11px] text-gray-400">{order.customer_email}</div>
                     </td>
                     <td className="px-3 py-3 text-[12px] text-gray-600 whitespace-nowrap">
@@ -214,7 +288,7 @@ export function AdminOrdersPage() {
                     </td>
                     <td className="px-3 py-3">
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.status)}`}>
-                        {order.status}
+                        {statusLabel(order.status)}
                       </span>
                     </td>
                     <td className="px-3 py-3">
@@ -236,13 +310,58 @@ export function AdminOrdersPage() {
                         <div className="text-[11px] text-gray-400 mt-0.5">{order.tracking_number}</div>
                       )}
                     </td>
+                    <td className="px-3 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setDeleteRequiresForce(false);
+                          setDeleteTarget(order);
+                        }}
+                        title="Smazat objednávku z databáze"
+                        aria-label={`Smazat objednávku ${order.order_number}`}
+                        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
                   </tr>
-                ))
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {deleteTarget && (
+        <DeleteOrderDialog
+          open={deleteTarget !== null}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          orderNumber={deleteTarget.order_number}
+          status={deleteTarget.status}
+          paymentStatus={deleteTarget.payment_status}
+          initialRequiresForce={deleteRequiresForce}
+          onConfirm={async ({ force }) => {
+            try {
+              await runAdminOrderAction({
+                action: 'delete_order',
+                orderId: deleteTarget.id,
+                confirmOrderNumber: deleteTarget.order_number,
+                force,
+              });
+              toast.success(`Objednávka ${deleteTarget.order_number} byla smazána.`);
+              setRefreshTick((n) => n + 1);
+            } catch (err) {
+              const e = err as Error & { requiresForce?: boolean };
+              if (e?.requiresForce) setDeleteRequiresForce(true);
+              throw err;
+            }
+          }}
+        />
+      )}
 
       <div className="mt-4 flex items-center justify-between gap-4 flex-wrap">
         <div className="text-[13px] text-gray-500">

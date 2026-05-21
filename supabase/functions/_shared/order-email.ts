@@ -113,7 +113,10 @@ function getPublicEshopBaseUrl(): string {
   return 'https://vividbooks.com';
 }
 
-async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string): Promise<string | null> {
+async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string, params?: {
+  paymentMethod?: string;
+  status?: string;
+}): Promise<string | null> {
   const secret = (Deno.env.get('ORDER_TRACKING_HMAC_SECRET') || '').trim();
   if (!secret) return null;
   try {
@@ -122,6 +125,12 @@ async function buildPublicOrderTrackingUrl(orderId: string, orderNumber: string)
     const u = new URL('objednavka/sledovani', `${site}/`);
     u.searchParams.set('order', orderNumber);
     u.searchParams.set('t', token);
+    if (
+      params?.paymentMethod === 'transfer'
+      && params?.status === 'pending_payment'
+    ) {
+      u.searchParams.set('transfer', '1');
+    }
     return u.toString();
   } catch {
     return null;
@@ -197,7 +206,7 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackin
       </p>`
     : order.stripe_receipt_url
     ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.7;color:#374151;">
-        Účtenku od Stripe:
+        Vaše účtenka Stripe:
         <a href="${escapeHtml(order.stripe_receipt_url)}" style="color:#2563eb;text-decoration:none;">Zobrazit účtenku</a>
       </p>`
     : '';
@@ -245,7 +254,7 @@ function buildOrderShippedHtml(order: OrderRow, trackingUrl: string | null) {
   const trackingBlock = order.tracking_number
     ? order.shipping_method === 'zasilkovna'
       ? `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Sledujte zásilku: <a href="https://tracking.packeta.com/cs/?id=${encodeURIComponent(order.tracking_number)}" style="color:#2563eb;text-decoration:none;">https://tracking.packeta.com/cs/?id=${escapeHtml(order.tracking_number)}</a></p>`
-      : `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Tracking číslo: <strong>${escapeHtml(order.tracking_number)}</strong></p>`
+      : `<p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">Číslo zásilky: <strong>${escapeHtml(order.tracking_number)}</strong></p>`
     : '';
 
   return buildShell(
@@ -409,7 +418,10 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
 
   let trackingUrl: string | null = null;
   if (params.emailType === 'order_confirmed' || params.emailType === 'order_shipped') {
-    trackingUrl = await buildPublicOrderTrackingUrl(order.id, order.order_number);
+    trackingUrl = await buildPublicOrderTrackingUrl(order.id, order.order_number, {
+      paymentMethod: order.payment_method,
+      status: order.status,
+    });
   }
 
   let subject = '';

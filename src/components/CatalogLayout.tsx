@@ -13,6 +13,7 @@ import { useOrderNav } from '../contexts/OrderNavContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
 import { subjectToSlug } from '../utils/slugify';
+import { DvppLeadMagnetPage } from './DvppLeadMagnetPage';
 
 /* ── Logo: viewBox musí pokrýt celý řádek BOOKS (y≈866); 655 ořezával půlku písmen ── */
 const VIVIDBOOKS_LOGO_VIEWBOX = '0 0 1786.62 869.93';
@@ -229,6 +230,8 @@ export default function CatalogLayout() {
   const schoolOrderCount = itemCount + extraCount;
 
   const searchParams = new URLSearchParams(location.search);
+  const isDvppStandaloneHost = typeof window !== 'undefined'
+    && window.location.hostname.replace(/^www\./, '').toLowerCase() === 'dvppzdarma.cz';
 
   /* ── distributor mode ──────────────────────────────────────── */
   const isDistributorMode = searchParams.get('mode') === 'distributor';
@@ -322,6 +325,10 @@ export default function CatalogLayout() {
     handleDownloadPack,
     isDownloadingPack,
   };
+
+  if (isDvppStandaloneHost && location.pathname === '/') {
+    return <DvppLeadMagnetPage />;
+  }
 
   if (isMinimalCatalogChrome) {
     return (
@@ -819,9 +826,10 @@ export default function CatalogLayout() {
 
           {/* ── Main content area ───────────────────────────────── */}
           <main
-            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 ${
+            className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 overflow-x-hidden ${
               isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
             }`}
+       
           >
             {location.pathname === '/' && !isCheckoutLikeSidebar && (
               <div className="md:hidden px-4 pt-2 pb-2 border-b border-gray-100/90 bg-white">

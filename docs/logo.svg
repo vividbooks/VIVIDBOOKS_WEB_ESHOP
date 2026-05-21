@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Vividbooks">
+  <rect width="32" height="32" rx="7" fill="#001161"/>
+  <path
+    fill="#ffffff"
+    d="M8.5 9h4.35l3.65 9.2L20.15 9h4.35l-6.4 15h-3.6L8.5 9z"
+  />
+</svg>
