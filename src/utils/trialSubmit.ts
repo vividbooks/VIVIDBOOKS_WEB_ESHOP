@@ -67,7 +67,12 @@ export type FreeTrialSubmitResult =
       kind: 'created' | 'existing_trial';
     }
   | { status: 'thank_only' }
-  | { status: 'error'; message: string };
+  | {
+      status: 'error';
+      message: string;
+      /** Legacy API `reason` — pro bohatší UI (kontakt obchodníka). */
+      code?: 'email_used_in_school' | 'active_subscription_trial' | 'generic';
+    };
 
 export function parseTrialCodes(data: Record<string, unknown> | null): { student: string; teacher: string } | null {
   if (!data) return null;
@@ -79,17 +84,34 @@ export function parseTrialCodes(data: Record<string, unknown> | null): { student
   return null;
 }
 
-export function freeTrialErrorMessage(data: Record<string, unknown> | null): string {
+export function parseFreeTrialError(data: Record<string, unknown> | null): {
+  message: string;
+  code: 'email_used_in_school' | 'active_subscription_trial' | 'generic';
+} {
   const reason = typeof data?.reason === 'string' ? data.reason : '';
   if (reason === 'Email is used yet.') {
-    return 'Tento e-mail je už evidovaný u školy v databázi.';
+    return {
+      code: 'email_used_in_school',
+      message:
+        'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce.',
+    };
   }
   if (reason === 'You have active subscription trial yet.') {
-    return 'Vaše škola už má aktivní předplatné.';
+    return {
+      code: 'active_subscription_trial',
+      message: 'Vaše škola už má aktivní předplatné.',
+    };
   }
-  if (reason) return reason;
+  if (reason) return { code: 'generic', message: reason };
   const m = data?.message ?? data?.error ?? data?.detail ?? data?.title;
-  return typeof m === 'string' ? m : 'Požadavek se nezdařil.';
+  return {
+    code: 'generic',
+    message: typeof m === 'string' ? m : 'Požadavek se nezdařil.',
+  };
+}
+
+export function freeTrialErrorMessage(data: Record<string, unknown> | null): string {
+  return parseFreeTrialError(data).message;
 }
 
 export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
@@ -125,7 +147,12 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   }
 
   if (!res.ok) {
-    return { status: 'error', message: freeTrialErrorMessage(data) || `Chyba serveru (${res.status}).` };
+    const err = parseFreeTrialError(data);
+    return {
+      status: 'error',
+      code: err.code,
+      message: err.message || `Chyba serveru (${res.status}).`,
+    };
   }
 
   const codes = parseTrialCodes(data);
@@ -142,5 +169,6 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
     return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'existing_trial' };
   }
 
-  return { status: 'error', message: freeTrialErrorMessage(data) };
+  const err = parseFreeTrialError(data);
+  return { status: 'error', code: err.code, message: err.message };
 }

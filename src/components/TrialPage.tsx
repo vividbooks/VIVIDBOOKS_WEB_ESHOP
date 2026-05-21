@@ -79,6 +79,110 @@ const INPUT_CLASS =
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
+/** E-mail už v legacy DB u školy — místo holé chyby ukážeme kontakt obchodníka z CRM (pokud známe IČO). */
+function TrialEmailUsedInSchoolPanel({
+  owner,
+  schoolName,
+  ico,
+  colleagues,
+}: {
+  owner: PdOwner | null;
+  schoolName: string;
+  ico: string;
+  colleagues: string[];
+}) {
+  const mailSubject = encodeURIComponent(`Žádost o přístupové kódy Vividbooks – ${schoolName || ico}`);
+  const mailBody = encodeURIComponent(
+    `Dobrý den${owner?.firstName ? ` ${owner.firstName}` : ''},\n\nžádám o přístupové kódy k digitálním učebnicím Vividbooks pro naši školu:\n\nŠkola: ${schoolName || '–'}\nIČO: ${ico || '–'}\n\nDěkuji za vyřízení.`,
+  );
+  const fallbackMail = 'hello@vividbooks.com';
+  const contactMail = owner?.email || fallbackMail;
+  const teamPhone = owner?.email ? TEAM_PHONES[owner.email.toLowerCase()] : undefined;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-2xl overflow-hidden border border-violet-200 bg-[#f5f3ff]"
+    >
+      <div className="flex items-start gap-2.5 px-4 pt-4 pb-2">
+        <AlertCircle className="w-4 h-4 shrink-0 text-violet-700 mt-0.5" aria-hidden />
+        <p style={FF} className="text-[13px] text-[#001161]/85 leading-relaxed m-0">
+          {
+            'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce.'
+          }
+        </p>
+      </div>
+      <div className="px-4 pb-4 space-y-3">
+        {colleagues.length > 0 ? (
+          <p style={FF} className="text-[12px] text-[#001161]/75 m-0 leading-snug">
+            <span className="font-bold text-[#001161]">{'Kolegové s přístupem: '}</span>
+            {colleagues.join(', ')}
+          </p>
+        ) : null}
+        <div className="bg-white rounded-xl overflow-hidden border border-violet-100">
+          <div className="flex items-center gap-3 p-3.5">
+            <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 bg-[#7C3AED]/10 flex items-center justify-center">
+              {(owner && (TEAM_PHOTOS[owner.email?.toLowerCase()] || owner.photoUrl)) ? (
+                <ImageWithFallback
+                  src={TEAM_PHOTOS[owner.email?.toLowerCase()] || owner.photoUrl}
+                  alt={owner.firstName || owner.name}
+                  className="w-full h-full object-cover object-top"
+                />
+              ) : (
+                <ImageWithFallback
+                  src={TEAM_PHOTOS['gabriela@vividbooks.com']}
+                  alt="Gabriela"
+                  className="w-full h-full object-cover object-top"
+                />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p style={FF} className="text-[11px] text-[#001161]/45 mb-0.5">
+                {owner ? 'O vaši školu se stará:' : 'Kontaktujte nás:'}
+              </p>
+              <p style={FF} className="text-[15px] font-bold text-[#7C3AED] leading-tight truncate">
+                {owner?.name || 'Tým Vividbooks'}
+              </p>
+            </div>
+            <a
+              href={`mailto:${contactMail}?subject=${mailSubject}&body=${mailBody}`}
+              className="shrink-0 inline-flex items-center gap-1.5 text-white font-bold text-[12px] px-3 py-2 rounded-lg no-underline transition-all hover:opacity-90"
+              style={{ ...FF, backgroundColor: '#7C3AED' }}
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              {'Napsat o přístup'}
+            </a>
+          </div>
+          <div className="flex items-stretch border-t border-violet-100">
+            <a
+              href={`mailto:${contactMail}`}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 no-underline transition-colors hover:bg-violet-50 min-w-0 text-[12px] font-semibold text-[#7C3AED]"
+              style={FF}
+            >
+              <Mail className="w-3.5 h-3.5 shrink-0" />
+              <span className="truncate">{contactMail}</span>
+            </a>
+            {teamPhone ? (
+              <>
+                <div className="w-px self-stretch bg-violet-100" />
+                <Link
+                  to="/kontakt"
+                  className="shrink-0 inline-flex items-center gap-1.5 px-3.5 py-2.5 no-underline transition-colors hover:bg-violet-50 font-bold text-[13px] text-[#7C3AED]"
+                  style={FF}
+                >
+                  <Phone className="w-3.5 h-3.5 shrink-0" />
+                  {teamPhone}
+                </Link>
+              </>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 interface VvbIdentity {
   email: string; name: string; webinarId?: string; webinarTitle?: string;
   trialActivated: boolean; since: string; expires?: string;
@@ -575,6 +679,8 @@ export function TrialRegistrationForm({
   const [trialResult, setTrialResult] = useState<FreeTrialSubmitResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  /** Legacy API: e-mail už evidovaný u školy — zobrazíme kontakt obchodníka místo holé chyby. */
+  const [emailUsedInSchool, setEmailUsedInSchool] = useState(false);
 
   // Email dedup
   const [emailCheck, setEmailCheck] = useState<{
@@ -720,6 +826,7 @@ export function TrialRegistrationForm({
     const { name, value } = e.target;
     setForm(prev => ({ ...prev, [name]: value }));
     setFormError('');
+    setEmailUsedInSchool(false);
     if (name === 'email') checkEmail(value);
     if (name === 'position') {
       const teacherPosition = 'U\u010ditel/ka';
@@ -812,9 +919,16 @@ export function TrialRegistrationForm({
     try {
       const result = await submitFreeTrialAjax(payload);
       if (result.status === 'error') {
-        setFormError(result.message);
+        if (result.code === 'email_used_in_school') {
+          setEmailUsedInSchool(true);
+          setFormError('');
+        } else {
+          setEmailUsedInSchool(false);
+          setFormError(result.message);
+        }
         return;
       }
+      setEmailUsedInSchool(false);
       setTrialResult(result);
       setSubmitted(true);
     } catch (err) {
@@ -1156,12 +1270,19 @@ export function TrialRegistrationForm({
               </span>
             </label>
 
-            {formError && (
+            {emailUsedInSchool ? (
+              <TrialEmailUsedInSchoolPanel
+                owner={owner}
+                schoolName={schoolName}
+                ico={ico}
+                colleagues={colleagues}
+              />
+            ) : formError ? (
               <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                 <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
                 <p style={FF} className="text-red-600 text-[13px]">{formError}</p>
               </div>
-            )}
+            ) : null}
 
             <button type="submit"
               disabled={
