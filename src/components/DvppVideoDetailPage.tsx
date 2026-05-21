@@ -7,6 +7,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { SEOHead } from './SEOHead';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { absoluteAppUrl } from '../utils/appBaseUrl';
+import { privacyPolicyUrl } from '../utils/publicSiteUrl';
 
 const ff = "'Fenomen Sans', sans-serif";
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -712,7 +713,7 @@ export function DvppVideoDetailPage() {
                           </div>
                           <span className="text-[13px] text-[#001161]/70 leading-snug" style={{ fontFamily: ff }} onClick={() => handleChange('gdpr', !form.gdpr)}>
                             {'Souhlas\u00edm se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f podle\u00a0'}
-                            <a href="https://www.vividbooks.cz/gdpr" target="_blank" rel="noopener noreferrer" className="underline text-[#5B4FD8] hover:opacity-75" onClick={e => e.stopPropagation()}>
+                            <a href={privacyPolicyUrl()} target="_blank" rel="noopener noreferrer" className="underline text-[#5B4FD8] hover:opacity-75" onClick={e => e.stopPropagation()}>
                               {'Z\u00e1sad ochrany osobn\u00edch \u00fadaj\u016f'}
                             </a>
                             {'. *'}

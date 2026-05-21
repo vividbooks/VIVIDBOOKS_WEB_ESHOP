@@ -42,7 +42,7 @@ Po změně **`src/supabase/functions/server/index.tsx`** je nutný **nový deplo
 
 | Proměnná | Účel |
 |----------|------|
-| `VITE_PUBLIC_SITE_URL` | Veřejná URL webu (odkazy, SSR fallback; např. `https://www.vividbooks.com`). |
+| `VITE_PUBLIC_SITE_URL` | Veřejná URL webu (canonical, sdílení, fallback mimo `window.location.origin`; během migrace např. `https://new.vividbooks.com`, později finální `https://vividbooks.com` nebo `https://www.vividbooks.com`). |
 | `VITE_STRIPE_PUBLISHABLE_KEY` | Stripe Payment Element (`pk_…`). |
 | `VITE_PACKETA_API_KEY` | Widget Zásilkovny na pokladně. |
 | `VITE_TWITTER_SITE` | Volitelně — `og:twitter:site`. |
@@ -64,7 +64,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `SUPABASE_ANON_KEY` | Veřejný klíč (některé interní volání). |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role — privilegované operace. |
 | `DATABASE_URL` / `SUPABASE_DB_URL` | Přímý Postgres (mnoho worker funkcí). |
-| `PUBLIC_SITE_URL` | Odkazy v e‑mailech (objednávky, webináře). Alternativně `SITE_URL` v části e‑mail kódu. |
+| `PUBLIC_SITE_URL` | Odkazy v e‑mailech, sitemapě, `robots.txt`, AI CTA a webinářových odpovědích. Alternativně `SITE_URL` v části e‑mail kódu. |
 | `GEMINI_API_KEY_RAG` | Google Gemini v Edge (RAG, agent, kampaně, …). |
 
 ---
@@ -93,6 +93,12 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 
 Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PUBLIC_SITE_URL` / `SITE_URL`, `ORDER_TRACKING_HMAC_SECRET`. Pokud hlavní web (`PUBLIC_SITE_URL`) není React e‑shop (např. Webflow), doplňte **`PUBLIC_ESHOP_URL`** — plná adresa nasazení Vite aplikace (včetně cesty `/VIVIDBOOKS_WEB_ESHOP` u GitHub Pages), aby odkazy *Sledovat objednávku* a *Dokončit platbu* mířily na SPA, ne na 404 marketingového webu.
 
+Při migraci domény držte `VITE_PUBLIC_SITE_URL` a `PUBLIC_SITE_URL` ve stejném tvaru hostu. Typický průběh:
+- dočasný cutover: `https://new.vividbooks.com`
+- finální cutover: `https://vividbooks.com` nebo `https://www.vividbooks.com`
+
+Pokud necháváte právní/GDPR stránku dál na `www.vividbooks.cz`, ponechte `NEWSLETTER_PRIVACY_URL` beze změny. Pokud ji přesouváte na `.com`, nastavte ji explicitně v Supabase secrets / `.env`.
+
 ---
 
 ## Asistent — `make-server-954b19ad` (a duplicity v `VIVIDASISTANT/`)
@@ -104,6 +110,8 @@ Objednávkové e‑maily (`_shared/order-email.ts`): `MANDRILL_API_KEY`, `EMAIL_
 | `GOOGLE_MAPS_API_KEY` | Mapy (kde je route používá). |
 | `FIRECRAWL_API_KEY` | Nástroje vyžadující Firecrawl. |
 | `GEMINI_API_KEY` | Fallback vedle `GEMINI_API_KEY_RAG`. |
+
+Asistent / scrape synchronizace blogu a webinářů nově bere veřejný host z `PUBLIC_SITE_URL`, takže při migraci domény už nemusí být `www.vividbooks.com` natvrdo v kódu.
 
 ---
 

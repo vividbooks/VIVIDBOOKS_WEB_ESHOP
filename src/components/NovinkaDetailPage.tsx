@@ -7,8 +7,8 @@ import { useNovinky } from '../contexts/NovinkyContext';
 import { NovinkaCard } from './NovinkaCard';
 import { SEOHead, articleJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
-import { marketingUrl } from '../config/marketingSite';
 import { NewsletterInlineBlock } from './NewsletterInlineBlock';
+import { eshopUrl, publicSiteUrl } from '../utils/publicSiteUrl';
 
 /* ── Sidebar CTA card ──────────────────────────────────────────── */
 function SidebarCTA() {
@@ -29,7 +29,7 @@ function SidebarCTA() {
         {'Vyzkoušet zdarma online'}
       </a>
       <a
-        href="https://eshop.vividbooks.com"
+        href={eshopUrl()}
         target="_blank"
         rel="noopener noreferrer"
         className="block w-full text-center bg-[#001161] hover:bg-[#001161]/80 text-white font-['Fenomen_Sans',sans-serif] font-bold text-[13px] px-4 py-3 rounded-[12px] transition-all hover:scale-[1.02] cursor-pointer no-underline"
@@ -128,7 +128,7 @@ export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
           description: post.excerpt || post.title,
           image: coverImage,
           datePublished: post.date,
-          url: marketingUrl(`/novinky/${post.slug}`),
+          url: publicSiteUrl(`/novinky/${post.slug}`),
         })}
       />
 

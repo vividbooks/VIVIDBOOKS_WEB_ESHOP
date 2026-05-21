@@ -16,10 +16,10 @@ import { AgentOrbAvatar } from '@/components/ui/AgentOrbAvatar';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridgeContext';
+import { previewCtaUrl } from '../../utils/publicSiteUrl';
 import CollageModal from './CollageModal';
 import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
-import { marketingUrl } from '../../config/marketingSite';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -1620,7 +1620,7 @@ export function AdminAgentPage({
         headline: email.headline || email.subject,
         bodyHtml: email.bodyHtml || '',
         ctaText: email.ctaText || 'Vyzkoušejte zdarma',
-        ctaUrl: email.ctaUrl || marketingUrl('/vyzkousejte'),
+        ctaUrl: email.ctaUrl || previewCtaUrl(),
         audience: email.audience || 'newsletter',
         fullHtml: email.fullHtml,
         ...(chatHistory.length > 0 ? { chatHistory } : {}),

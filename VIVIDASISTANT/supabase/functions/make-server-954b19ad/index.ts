@@ -49,6 +49,15 @@ function getUserJwtFromRequest(c: { req: { header: (name: string) => string | un
   return "";
 }
 
+function publicSiteOrigin(): string {
+  return (Deno.env.get("PUBLIC_SITE_URL") || "https://new.vividbooks.com").replace(/\/$/, "");
+}
+
+function publicSiteUrl(path = ""): string {
+  if (!path) return publicSiteOrigin();
+  return `${publicSiteOrigin()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 /** Ověří JWT uživatele (viz getUserJwtFromRequest) a vrátí user id, jinak null. */
 async function getUserIdFromRequestAuth(c: { req: { header: (name: string) => string | undefined } }): Promise<string | null> {
   const token = getUserJwtFromRequest(c);
@@ -1057,7 +1066,7 @@ Typy webinářů:
 4. Tematické webináře k jednotlivým předmětům
 
 Webináře jsou ZDARMA pro všechny učitele.
-Registrace na: https://www.vividbooks.com/cs/webinare
+Registrace na: ${publicSiteUrl('/cs/webinare')}
 
 Aktuální webináře:
 - Představení nové řady: Český jazyk od Vividbooks
@@ -1272,7 +1281,7 @@ app.post("/make-server-954b19ad/rag/scrape-web", async (c) => {
     // STEP 1: Scrape webinars page and find individual webinar links
     console.log("[Scrape] Starting webinars scrape...");
     try {
-      const webinarsResp = await fetch('https://www.vividbooks.com/cs/webinare');
+      const webinarsResp = await fetch(publicSiteUrl('/cs/webinare'));
       if (webinarsResp.ok) {
         const html = await webinarsResp.text();
         
@@ -1331,7 +1340,7 @@ ${webinar.speaker ? `Přednášející: ${webinar.speaker}` : ''}
 
 ${webinar.description || ''}
 
-Registrace: https://www.vividbooks.com/cs/webinare`;
+Registrace: ${publicSiteUrl('/cs/webinare')}`;
 
               const doc = {
                 id: docId,
@@ -1340,7 +1349,7 @@ Registrace: https://www.vividbooks.com/cs/webinare`;
                 category: 'novinka',
                 tags: ['webinář', 'školení', 'online'],
                 source: 'scrape',
-                sourceUrl: webinar.link || 'https://www.vividbooks.com/cs/webinare',
+                sourceUrl: webinar.link || publicSiteUrl('/cs/webinare'),
                 eventDate: webinar.date,
                 createdAt: Date.now(),
                 wordCount: content.split(/\s+/).length
@@ -1367,7 +1376,7 @@ Registrace: https://www.vividbooks.com/cs/webinare`;
     // STEP 2: Scrape blog - first get list of articles, then scrape each one
     console.log("[Scrape] Starting blog scrape...");
     try {
-      const blogResp = await fetch('https://www.vividbooks.com/cs/blog');
+      const blogResp = await fetch(publicSiteUrl('/cs/blog'));
       if (blogResp.ok) {
         const html = await blogResp.text();
         
@@ -1416,7 +1425,7 @@ Vrať JSON:
                 // Build full URL
                 let articleUrl = article.link;
                 if (!articleUrl.startsWith('http')) {
-                  articleUrl = `https://www.vividbooks.com${articleUrl.startsWith('/') ? '' : '/'}${articleUrl}`;
+                  articleUrl = publicSiteUrl(articleUrl);
                 }
                 
                 console.log(`[Scrape] Fetching article: ${articleUrl}`);

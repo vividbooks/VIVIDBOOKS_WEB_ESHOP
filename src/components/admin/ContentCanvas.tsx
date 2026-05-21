@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { previewCtaUrl } from '../../utils/publicSiteUrl';
 import CollageModal from './CollageModal';
 import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
 import {
@@ -17,7 +18,6 @@ import {
   heroTitleFontUseTightTracking,
   normalizeHeroSlideTitleFont,
 } from '../../data/heroSlides';
-import { marketingUrl } from '../../config/marketingSite';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -1165,7 +1165,7 @@ function StructuredCanvas({
           headline: email.headline || email.subject,
           bodyHtml: email.bodyHtml || '',
           ctaText: email.ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: email.ctaUrl || marketingUrl('/vyzkousejte'),
+          ctaUrl: email.ctaUrl || previewCtaUrl(),
           audience: email.audience || 'newsletter',
           fullHtml: email.fullHtml,
         }),
@@ -1199,7 +1199,7 @@ function StructuredCanvas({
           headline: d.headline || d.subject,
           bodyContent: d.bodyHtml || '',
           ctaText: d.ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: d.ctaUrl || marketingUrl('/vyzkousejte'),
+          ctaUrl: d.ctaUrl || previewCtaUrl(),
           audience: d.audience === 'no-newsletter' ? 'no-newsletter' : 'newsletter',
           htmlBody: d.fullHtml || undefined,
         }),

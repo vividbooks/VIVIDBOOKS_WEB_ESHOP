@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { fetchProducts, seedCollection } from '../../utils/adminApi';
+import { eshopUrl } from '../../utils/publicSiteUrl';
 import {
   parseShoptetProductsCompleteXml,
   summarizeShoptetImportByCategory,
@@ -1157,7 +1158,7 @@ export default function MigrationPage() {
               value={shoptetUrl}
               onChange={(e) => setShoptetUrl(e.target.value)}
               className="w-full px-3 py-2 text-[12px] bg-white border border-emerald-200 rounded-lg focus:border-emerald-500 outline-none font-mono mb-3"
-              placeholder="https://eshop.vividbooks.com/export/productsComplete.xml?patternId=…&partnerId=…&hash=…"
+              placeholder={`${eshopUrl('/export/productsComplete.xml')}?patternId=…&partnerId=…&hash=…`}
             />
             <div className="flex flex-wrap items-center gap-3">
               <button

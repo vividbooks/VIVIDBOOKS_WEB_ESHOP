@@ -1,0 +1,72 @@
+# Domain Migration Checklist
+
+## Scope
+
+Tento projekt teď používá sdílenou konfiguraci veřejné domény pro:
+- frontend canonical / OG / structured data
+- GitHub Pages build (`VITE_PUBLIC_SITE_URL`)
+- Supabase Edge e-maily, `robots.txt`, `llms.txt`, `sitemap.xml` (`PUBLIC_SITE_URL`)
+- admin CTA buildery
+- assistant scrape blogu a webinářů
+
+Nemění se automaticky tyto samostatné služby:
+- `https://app.vividbooks.com`
+- `https://api.vividbooks.com`
+- `https://eshop.vividbooks.com`
+- `https://www.vividbooks.cz` (např. GDPR), pokud je sami nepřesměrujete jinam
+
+## Cutover na `new.vividbooks.com`
+
+1. GitHub Pages:
+   - `Settings -> Pages -> Source: GitHub Actions`
+   - custom domain `new.vividbooks.com`
+   - zapnuté HTTPS
+2. DNS:
+   - nasměrovat `new.vividbooks.com` na GitHub Pages
+3. GitHub Actions secrets:
+   - `VITE_PUBLIC_SITE_URL=https://new.vividbooks.com`
+   - zkontrolovat i `VITE_STRIPE_PUBLISHABLE_KEY`, `VITE_PACKETA_API_KEY`, `VITE_TWITTER_SITE`, `VITE_GA_MEASUREMENT_ID`
+4. Supabase Edge secrets:
+   - `PUBLIC_SITE_URL=https://new.vividbooks.com`
+   - `PUBLIC_ESHOP_URL=...`, pokud SPA běží jinde než hlavní marketingový web
+   - volitelně `NEWSLETTER_PRIVACY_URL`, pokud GDPR stránka není na `www.vividbooks.cz`
+5. Redeploy:
+   - znovu spustit GitHub Pages workflow
+   - redeploy `make-server-93a20b6f`, pokud se změnil serverový handler nebo secrets
+6. Ověření:
+   - canonical / OG na několika stránkách
+   - `https://new.vividbooks.com/api/sitemap.xml`
+   - `https://new.vividbooks.com/api/robots.txt`
+   - objednávkové a webinářové e-maily vedou na `new.vividbooks.com`
+   - assistant scrape čte `new.vividbooks.com/cs/webinare` a `new.vividbooks.com/cs/blog`
+
+## Finální cutover na `vividbooks.com` nebo `www.vividbooks.com`
+
+1. Rozhodnout jednu kanonickou variantu hostu.
+2. Přepnout DNS a GitHub Pages custom domain.
+3. Aktualizovat:
+   - `CNAME`
+   - `docs/CNAME`
+   - `VITE_PUBLIC_SITE_URL`
+   - `PUBLIC_SITE_URL`
+   - případně `PUBLIC_ESHOP_URL`
+4. Znovu nasadit frontend a ověřit, že sitemapa a canonical už nepoužívají `new.vividbooks.com`.
+5. Nastavit redirect ze `new.vividbooks.com` na finální host.
+
+## Third-party checklist
+
+### Stripe
+- webhook URL na Supabase se nemění jen kvůli doméně webu
+- ověřit Apple Pay / Google Pay doménovou verifikaci pro nový host
+
+### Search / analytics
+- Google Search Console: přidat a ověřit nový host
+- znovu nahrát sitemapu
+- ověřit GA4 / případně Meta preview a sociální share debug
+
+### E-mail / marketing
+- Mandrill / Mailchimp šablony a CTA vedou na správný host
+- `NEWSLETTER_PRIVACY_URL` odpovídá skutečné GDPR stránce
+
+### Ostatní
+- `app.vividbooks.com`, `api.vividbooks.com`, `eshop.vividbooks.com` zůstávají samostatně, pokud jejich migraci neřešíte zvlášť

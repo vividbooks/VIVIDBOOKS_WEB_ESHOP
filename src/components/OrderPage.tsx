@@ -2,6 +2,7 @@ import React, { Fragment, useState, useEffect, useRef, useCallback, useMemo } fr
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
+import { privacyPolicyUrl } from '../utils/publicSiteUrl';
 import {
   Check,
   ChevronLeft,
@@ -3059,7 +3060,7 @@ export function OrderPage() {
                       clearContactFormError();
                     }}>
                       {'Souhlasím se zpracováním osobních údajů podle '}
-                      <a href="https://www.vividbooks.cz/gdpr" target="_blank" rel="noopener noreferrer" className="underline text-[#5B4FD8] hover:opacity-75" onClick={e => e.stopPropagation()}>{'Zásad ochrany osobních údajů'}</a>{'. *'}
+                      <a href={privacyPolicyUrl()} target="_blank" rel="noopener noreferrer" className="underline text-[#5B4FD8] hover:opacity-75" onClick={e => e.stopPropagation()}>{'Zásad ochrany osobních údajů'}</a>{'. *'}
                     </span>
                   </label>
 

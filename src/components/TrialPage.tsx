@@ -13,6 +13,7 @@ import {
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
+import { appUrl } from '../utils/publicSiteUrl';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
@@ -864,7 +865,7 @@ export function TrialRegistrationForm({
               </p>
             )}
             <a
-              href="https://app.vividbooks.com"
+              href={appUrl()}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 font-bold text-[16px] text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9]"

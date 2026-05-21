@@ -1,5 +1,6 @@
 import React from 'react';
 import { CheckCircle2 } from 'lucide-react';
+import { appUrl } from '../utils/publicSiteUrl';
 
 /* ─── Per-subject configuration ─────────────────────────────── */
 const SUBJECT_DATA: Record<string, {
@@ -165,7 +166,7 @@ export function DigitalAccessComparison({ subject, workbooks, onOrder, compact =
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
           <a
-            href="https://app.vividbooks.com"
+            href={appUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[#001161] text-[13px] underline underline-offset-2 hover:text-[#FF6B1A] transition-colors"
@@ -250,7 +251,7 @@ export function DigitalAccessComparison({ subject, workbooks, onOrder, compact =
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-white/20">
           <a
-            href="https://app.vividbooks.com"
+            href={appUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="text-white/80 text-[13px] underline underline-offset-2 hover:text-white transition-colors"

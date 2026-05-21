@@ -2,6 +2,7 @@ import { Phone } from 'lucide-react';
 import { Link, useNavigate } from 'react-router';
 import { useCart } from '../contexts/CartContext';
 import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
+import { appUrl } from '../utils/publicSiteUrl';
 
 interface TopNavProps {
   onOrder?: () => void;
@@ -79,7 +80,7 @@ export function TopNav({ onOrder }: TopNavProps) {
         )}
 
         <a
-          href="https://app.vividbooks.com"
+          href={appUrl()}
           target="_blank"
           rel="noopener noreferrer"
           className={`${BTN_BASE} border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white group`}

@@ -9,8 +9,9 @@ import {
   rejectOptionalCookies,
   saveCookieConsent,
 } from '@/lib/cookieConsentStorage';
+import { privacyPolicyUrl } from '../utils/publicSiteUrl';
 
-const GDPR_URL = 'https://www.vividbooks.cz/gdpr';
+const GDPR_URL = privacyPolicyUrl();
 
 function ToggleRow({
   id,

@@ -1,6 +1,6 @@
 import { getProductImage, getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import type { ProductBundleRecord } from '../../utils/bundlePricing';
-import { getMarketingSiteOrigin } from '../../config/marketingSite';
+import { publicSiteUrl } from '../../utils/publicSiteUrl';
 
 export type EmailProductCollageLayout = 'grid' | 'list' | 'compact';
 
@@ -38,8 +38,6 @@ export type EmailProductCollagePayloadV2 = {
   gridColumns?: 2 | 3;
   imageSize?: EmailProductCollageImageSize;
 };
-
-const SITE = getMarketingSiteOrigin();
 
 function escapeHtml(s: string): string {
   return String(s)
@@ -81,7 +79,7 @@ export function snapshotFromProduct(p: any): EmailProductCollageItem {
     image: img,
     teaser: '',
     price: formatPriceKc(haler),
-    href: `${SITE}/produkt/${encodeURIComponent(id)}`,
+    href: publicSiteUrl(`/produkt/${encodeURIComponent(id)}`),
   };
 }
 
@@ -107,7 +105,7 @@ export function snapshotFromBundle(b: ProductBundleRecord, productsById: Map<str
     image,
     teaser: '',
     price: formatPriceKc(haler),
-    href: `${SITE}/balicek/${encodeURIComponent(slug)}`,
+    href: publicSiteUrl(`/balicek/${encodeURIComponent(slug)}`),
   };
 }
 

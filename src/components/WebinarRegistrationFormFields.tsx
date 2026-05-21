@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertCircle, Building2, Loader2, Search } from 'lucide-react';
+import { privacyPolicyUrl } from '../utils/publicSiteUrl';
 
 export type WebinarRegFormState = {
   name: string;
@@ -293,7 +294,7 @@ export function WebinarRegistrationFormFields({
         >
           {'Souhlas\u00edm se zpracov\u00e1n\u00edm osobn\u00edch \u00fadaj\u016f podle\u00a0'}
           <a
-            href="https://www.vividbooks.cz/gdpr"
+            href={privacyPolicyUrl()}
             target="_blank"
             rel="noopener noreferrer"
             className="underline text-[#5B4FD8] hover:opacity-75"

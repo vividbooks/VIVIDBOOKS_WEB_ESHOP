@@ -18,7 +18,6 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
-import { marketingUrl } from '../../config/marketingSite';
 import CollageModal from './CollageModal';
 import { EmailProductCollagePanel, type EmailProductCollageLivePayload } from './EmailProductCollagePanel';
 import { EmailWebinarPanel, type EmailWebinarLivePayload } from './EmailWebinarPanel';
@@ -42,6 +41,7 @@ import {
   geminiErrorLooksOverloaded,
   getStoredEmailAiTier,
 } from '../../utils/emailAiTier';
+import { previewCtaUrl, productsUrl, publicSiteUrl } from '../../utils/publicSiteUrl';
 import {
   EMAIL_BLOCK_PRESETS,
   type EmailBlockPreset,
@@ -149,7 +149,7 @@ const DEFAULT_PREVIEW_COLUMN_BG = '#ffffff';
 
 const EMPTY_DRAFT: Omit<EmailDraft, 'id' | 'createdAt' | 'updatedAt'> = {
   subject: '', previewText: '', headline: '', bodyHtml: normalizeEmailBodyHtml(''),
-  ctaText: 'Vyzkoušejte zdarma', ctaUrl: marketingUrl('/vyzkousejte'),
+  ctaText: 'Vyzkoušejte zdarma', ctaUrl: previewCtaUrl(),
   previewOuterBg: DEFAULT_PREVIEW_OUTER_BG,
   previewColumnBg: DEFAULT_PREVIEW_COLUMN_BG,
   audience: 'newsletter', status: 'draft',
@@ -475,7 +475,7 @@ function buildInlineCtaHtml(buttonText: string, href: string): string {
   const text = escapeHtmlTextContent((buttonText || '').trim() || 'Další informace');
   let url = (href || '').trim();
   if (!/^https?:\/\//i.test(url)) {
-    url = marketingUrl(url.startsWith('/') ? url : `/${url}`);
+    url = publicSiteUrl(url.startsWith('/') ? url : `/${url}`);
   }
   const safeHref = escapeHtmlAttr(url);
   return (
@@ -3410,7 +3410,7 @@ export default function EmailBuilder() {
       const link = extractFirstLink(block);
       if (!link) return;
       if (field === 'text') link.textContent = value || 'Vyzkoušet zdarma';
-      else link.setAttribute('href', value || marketingUrl('/vyzkousejte'));
+      else link.setAttribute('href', value || previewCtaUrl());
     });
   }, [applyStructuredBodyMutation]);
 
@@ -3571,7 +3571,7 @@ export default function EmailBuilder() {
       contextText = getPlainTextBeforeInsertAnchor(doc, id);
     }
     setCtaFormText(selected.ctaText || 'Vyzkoušejte zdarma');
-    setCtaFormUrl(selected.ctaUrl || marketingUrl('/vyzkousejte'));
+    setCtaFormUrl(selected.ctaUrl || previewCtaUrl());
     setCtaAiHint('');
     setCtaInsertModalOpen(true);
     setCtaAiLoading(true);
@@ -3583,7 +3583,7 @@ export default function EmailBuilder() {
           contextText,
           subject: selected.subject,
           headline: selected.headline,
-          defaultCtaUrl: selected.ctaUrl || marketingUrl('/vyzkousejte'),
+          defaultCtaUrl: selected.ctaUrl || previewCtaUrl(),
         }),
       });
       const data = await r.json();
@@ -3644,7 +3644,7 @@ export default function EmailBuilder() {
           contextText,
           subject: selected.subject,
           headline: selected.headline,
-          defaultCtaUrl: selected.ctaUrl || marketingUrl('/vyzkousejte'),
+          defaultCtaUrl: selected.ctaUrl || previewCtaUrl(),
         }),
       });
       const data = await r.json();
@@ -3913,7 +3913,7 @@ export default function EmailBuilder() {
         headline: e.headline || selected?.headline || '',
         bodyHtml: e.bodyHtml || selected?.bodyHtml || '',
         ctaText: e.ctaText || selected?.ctaText || 'Vyzkoušejte zdarma',
-        ctaUrl: e.ctaUrl || selected?.ctaUrl || marketingUrl('/vyzkousejte'),
+        ctaUrl: e.ctaUrl || selected?.ctaUrl || previewCtaUrl(),
         audience: e.audience || selected?.audience || 'newsletter',
         fullHtml: e.fullHtml || '',
         status: 'draft' as const,
@@ -4464,21 +4464,21 @@ export default function EmailBuilder() {
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   <button
                     type="button"
-                    onClick={() => setCtaFormUrl(selected.ctaUrl || marketingUrl('/vyzkousejte'))}
+                    onClick={() => setCtaFormUrl(selected.ctaUrl || previewCtaUrl())}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-[#001161]/70 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED] transition-colors cursor-pointer"
                   >
                     Hlavní CTA draftu
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCtaFormUrl(marketingUrl('/vyzkousejte'))}
+                    onClick={() => setCtaFormUrl(previewCtaUrl())}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-[#001161]/70 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED] transition-colors cursor-pointer"
                   >
                     Vyzkoušet
                   </button>
                   <button
                     type="button"
-                    onClick={() => setCtaFormUrl(marketingUrl('/produkty'))}
+                    onClick={() => setCtaFormUrl(productsUrl())}
                     className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-gray-100 text-[#001161]/70 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED] transition-colors cursor-pointer"
                   >
                     Katalog

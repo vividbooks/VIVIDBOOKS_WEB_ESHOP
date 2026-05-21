@@ -1,5 +1,7 @@
+import { apiUrl } from './publicSiteUrl';
+
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
-export const FREE_TRIAL_AJAX_URL = 'https://api.vividbooks.com/web/free-trial-ajax';
+export const FREE_TRIAL_AJAX_URL = apiUrl('/web/free-trial-ajax');
 
 export type FreeTrialFields = {
   name: string;

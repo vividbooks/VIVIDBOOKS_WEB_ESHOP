@@ -1,7 +1,7 @@
-import { getMarketingSiteOrigin } from '../config/marketingSite';
+import { getPublicSiteOrigin } from './publicSiteUrl';
 
-/** Kanonický origin pro SEO / OG — řídí VITE_PUBLIC_SITE_URL nebo výchozí www.vividbooks.com */
-export const SITE_URL = getMarketingSiteOrigin();
+/** Musí odpovídat doméně v SEOHead a nasazení (canonical / sdílení). */
+export const SITE_URL = getPublicSiteOrigin();
 
 export const DEFAULT_OG_IMAGE = `${SITE_URL}/og-image.png`;
 

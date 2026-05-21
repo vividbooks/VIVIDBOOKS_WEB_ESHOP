@@ -1,5 +1,5 @@
 import type { Webinar } from '../../data/webinars';
-import { getMarketingSiteOrigin } from '../../config/marketingSite';
+import { publicSiteUrl } from '../../utils/publicSiteUrl';
 
 export type EmailWebinarLayout = 'hero' | 'compact';
 
@@ -30,7 +30,6 @@ export type EmailWebinarPayloadV1 = {
   snapshot: EmailWebinarSnapshot;
 };
 
-const SITE = getMarketingSiteOrigin();
 /** Stejné pozadí karty jako `WebinarCard` — spodní lišta + obal. */
 const WEBINAR_CARD_BG = '#F0F2F8';
 
@@ -76,7 +75,7 @@ function normalizeBackdropHex(input: string | undefined, fallback: string): stri
 
 export function webinarDetailPath(snapshot: EmailWebinarSnapshot): string {
   const seg = encodeURIComponent((snapshot.slug || snapshot.id || '').trim() || 'webinar');
-  return `${SITE}/webinar/${seg}`;
+  return publicSiteUrl(`/webinar/${seg}`);
 }
 
 export function snapshotFromWebinar(w: Webinar): EmailWebinarSnapshot {
