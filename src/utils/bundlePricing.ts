@@ -10,7 +10,8 @@ import {
 
 /**
  * `standard` — jedna cena balíčku se rozdělí mezi vybrané produkty.
- * `nx_plus_one_subject` — předmět + počty kusů; bonus = nejlevnější kusy v sestavě po násobcích (paid+free).
+ * `nx_plus_one_subject` — předmět + počty kusů; bonus se počítá **per titul** (paid+free na titul,
+ * mix titulů bonus negeneruje).
  */
 export type ProductBundleKind = 'standard' | 'nx_plus_one_subject';
 
@@ -311,8 +312,14 @@ export type SubjectBundleQtyUnit = {
 };
 
 /**
- * Rozdělí kusy v košíku: v každé celé sadě (paid+free) jsou zdarma nejlevnější kusy v celém výběru.
- * Vrátí `null`, pokud není co dělit, počet není násobkem sady, nebo produkt nepatří do štítků.
+ * Rozdělí kusy v košíku **per titul** — bonus 10+1 (resp. paid+free) platí samostatně pro každý
+ * titul. Tj. 11× PM6100 + 5× PM6200 → 1 PM6100 zdarma, PM6200 plná cena (5 ks není násobek sady,
+ * tedy bonus se neuplatní). 5× PM6100 + 5× PM6200 → 0 zdarma. Tím se zabrání kombinování titulů
+ * pro získání bonusu, jak vyžadují obchodní pravidla.
+ *
+ * Vrátí `null`, pokud produkt nepatří do štítků balíčku, nemá variantu, nebo je výběr prázdný.
+ * Neúplné sady (zbytky < `slots.total` v rámci titulu) NIKDY nevrací `null` — jen se na ně bonus
+ * neuplatní (uživatel může titul mít v jakémkoli počtu).
  */
 export function allocateSubjectBundleQuantities(
   products: any[],
@@ -323,34 +330,43 @@ export function allocateSubjectBundleQuantities(
   const labels = bundle.bundleSubjectLabels || [];
   if (!slots || labels.length === 0) return null;
 
-  const units: Array<{ productId: string; product: any; unitPriceHaler: number }> = [];
+  type Group = { productId: string; product: any; qty: number; unitPriceHaler: number };
+  const groups: Group[] = [];
   for (const [rawId, rawQ] of Object.entries(quantities)) {
     const q = Math.max(0, Math.floor(Number(rawQ) || 0));
     if (q <= 0) continue;
     const product = products.find((p) => String(p.id) === String(rawId));
     if (!product || !getProductVariantId(product)) return null;
     if (!productMatchesBundleSubjectLabels(product, labels)) return null;
-    const price = getProductUnitPriceInHaler(product);
-    for (let i = 0; i < q; i++) {
-      units.push({ productId: String(product.id), product, unitPriceHaler: price });
+    groups.push({
+      productId: String(product.id),
+      product,
+      qty: q,
+      unitPriceHaler: getProductUnitPriceInHaler(product),
+    });
+  }
+
+  if (groups.length === 0) return null;
+
+  /** Stabilní pořadí napříč zákaznickými relacemi (řazení dle id pomocí cs locale jako dříve). */
+  groups.sort((a, b) => String(a.productId).localeCompare(String(b.productId), 'cs'));
+
+  const out: SubjectBundleQtyUnit[] = [];
+  for (const g of groups) {
+    const completeSets = Math.floor(g.qty / slots.total);
+    const freeForGroup = completeSets * slots.free;
+    for (let i = 0; i < g.qty; i++) {
+      out.push({
+        productId: g.productId,
+        product: g.product,
+        unitPriceHaler: g.unitPriceHaler,
+        /** Pro stejný titul je cena stejná, takže o nejlevnější kusy nejde — prvních N je free. */
+        isFree: i < freeForGroup,
+      });
     }
   }
 
-  const total = units.length;
-  if (total === 0) return null;
-  if (total % slots.total !== 0) return null;
-
-  const freeSlots = (total / slots.total) * slots.free;
-  units.sort((a, b) => (
-    a.unitPriceHaler !== b.unitPriceHaler
-      ? a.unitPriceHaler - b.unitPriceHaler
-      : String(a.productId).localeCompare(String(b.productId), 'cs')
-  ));
-
-  return units.map((u, i) => ({
-    ...u,
-    isFree: i < freeSlots,
-  }));
+  return out;
 }
 
 export type SubjectBundleQtySummary = {
@@ -366,7 +382,15 @@ export type SubjectBundleQtySummary = {
   isValidMultiple: boolean;
 };
 
-/** Průběžný souhrn počtů (i když zatím není násobek sady). */
+/**
+ * Průběžný souhrn počtů. Bonus se počítá **per titul** (viz `allocateSubjectBundleQuantities`):
+ * - `completeSets` = součet uzavřených sad přes všechny tituly (každý titul samostatně).
+ * - `freePieces` = součet bonusových kusů přes všechny tituly.
+ * - `needsForNextSet` = nejmenší počet kusů, který zbývá doplnit u libovolného titulu (s qty>0)
+ *   k uzavření jeho další sady. Když všechny tituly jsou násobkem `slots.total`, vrací 0.
+ * - `isValidMultiple` = true, když je vybraný alespoň jeden kus a všechny tituly s qty>0 jsou
+ *   násobkem sady (tj. žádné „zbytky" mimo bonus). Použito pro indikaci „sada je kompletní".
+ */
 export function subjectBundleQtySummary(
   bundle: ProductBundleRecord,
   quantities: Record<string, number>,
@@ -374,14 +398,31 @@ export function subjectBundleQtySummary(
   const slots = getNxPlusSubjectSlotCounts(bundle);
   if (!slots) return null;
   let total = 0;
+  let completeSets = 0;
+  let freePieces = 0;
+  let needsForNextSet = 0;
+  let allMultiples = true;
+  let anyHasQty = false;
   for (const rawQ of Object.values(quantities)) {
-    total += Math.max(0, Math.floor(Number(rawQ) || 0));
+    const q = Math.max(0, Math.floor(Number(rawQ) || 0));
+    if (q <= 0) continue;
+    anyHasQty = true;
+    total += q;
+    const titleSets = Math.floor(q / slots.total);
+    const titleRemainder = q % slots.total;
+    completeSets += titleSets;
+    freePieces += titleSets * slots.free;
+    if (titleRemainder !== 0) {
+      allMultiples = false;
+      const need = slots.total - titleRemainder;
+      if (needsForNextSet === 0 || need < needsForNextSet) {
+        needsForNextSet = need;
+      }
+    }
   }
-  const completeSets = Math.floor(total / slots.total);
-  const remainder = total % slots.total;
-  const freePieces = completeSets * slots.free;
   const paidPieces = total - freePieces;
-  const needsForNextSet = remainder === 0 ? 0 : slots.total - remainder;
+  /** Zachováno pro zpětnou kompat. (sumární zbytek napříč tituly = total - hotové sady * setSize). */
+  const remainder = total - completeSets * slots.total;
   return {
     total,
     setSize: slots.total,
@@ -392,7 +433,7 @@ export function subjectBundleQtySummary(
     freePieces,
     paidPieces,
     needsForNextSet,
-    isValidMultiple: total > 0 && remainder === 0,
+    isValidMultiple: anyHasQty && allMultiples,
   };
 }
 

@@ -228,6 +228,13 @@ type SubjectBundleQtyUnit = {
   isFree: boolean;
 };
 
+/**
+ * Server-side kopie alokace pro `nx_plus_one_subject` balíčky.
+ *
+ * Bonus se aplikuje **per titul** (paritní s `src/utils/bundlePricing.ts`): počet kusů zdarma
+ * se pro každý titul počítá jako `floor(qty / slots.total) * slots.free`. Mix titulů (např.
+ * 5× PM6100 + 5× PM6200) tedy nepředstavuje uzavřenou sadu a žádný bonus nedostane.
+ */
 function allocateSubjectBundleQuantities(
   products: any[],
   bundle: ProductBundleRecord,
@@ -237,34 +244,41 @@ function allocateSubjectBundleQuantities(
   const labels = bundle.bundleSubjectLabels || [];
   if (!slots || labels.length === 0) return null;
 
-  const units: Array<{ productId: string; product: any; unitPriceHaler: number }> = [];
+  type Group = { productId: string; product: any; qty: number; unitPriceHaler: number };
+  const groups: Group[] = [];
   for (const [rawId, rawQ] of Object.entries(quantities)) {
     const q = Math.max(0, Math.floor(Number(rawQ) || 0));
     if (q <= 0) continue;
     const product = products.find((p) => String(p.id) === String(rawId));
     if (!product || !getProductVariantId(product)) return null;
     if (!productMatchesBundleSubjectLabels(product, labels)) return null;
-    const price = getProductUnitPriceInHaler(product);
-    for (let i = 0; i < q; i++) {
-      units.push({ productId: String(product.id), product, unitPriceHaler: price });
+    groups.push({
+      productId: String(product.id),
+      product,
+      qty: q,
+      unitPriceHaler: getProductUnitPriceInHaler(product),
+    });
+  }
+
+  if (groups.length === 0) return null;
+
+  groups.sort((a, b) => String(a.productId).localeCompare(String(b.productId), 'cs'));
+
+  const out: SubjectBundleQtyUnit[] = [];
+  for (const g of groups) {
+    const completeSets = Math.floor(g.qty / slots.total);
+    const freeForGroup = completeSets * slots.free;
+    for (let i = 0; i < g.qty; i++) {
+      out.push({
+        productId: g.productId,
+        product: g.product,
+        unitPriceHaler: g.unitPriceHaler,
+        isFree: i < freeForGroup,
+      });
     }
   }
 
-  const total = units.length;
-  if (total === 0) return null;
-  if (total % slots.total !== 0) return null;
-
-  const freeSlots = (total / slots.total) * slots.free;
-  units.sort((a, b) => (
-    a.unitPriceHaler !== b.unitPriceHaler
-      ? a.unitPriceHaler - b.unitPriceHaler
-      : String(a.productId).localeCompare(String(b.productId), 'cs')
-  ));
-
-  return units.map((u, i) => ({
-    ...u,
-    isFree: i < freeSlots,
-  }));
+  return out;
 }
 
 function subjectBundleSelectionPaidListSumHaler(

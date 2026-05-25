@@ -124,36 +124,9 @@ export function BundlePage() {
     [products, subjectQtyById],
   );
 
-  /** Rozpracovaná sada (10+1): po doplnění placených slotů je v sadě ještě bonus. */
-  const subjectOpenCycle = useMemo(() => {
-    if (!subjectSlots || !subjectQtySummary) return null;
-    const { paid: paidTarget, free: freeTarget, total: setSize } = subjectSlots;
-    const { total, remainder, freePieces } = subjectQtySummary;
-    if (total === 0) {
-      return {
-        paidTarget,
-        freeTarget,
-        setSize,
-        inOpenSet: 0,
-        paidFilled: 0,
-        bonusPendingInOpenSet: 0,
-        freeRealized: freePieces,
-      };
-    }
-    const inOpenSet = remainder === 0 ? 0 : remainder;
-    const paidFilled = inOpenSet > 0 ? Math.min(inOpenSet, paidTarget) : 0;
-    const bonusPendingInOpenSet =
-      inOpenSet >= paidTarget && inOpenSet < setSize ? freeTarget : 0;
-    return {
-      paidTarget,
-      freeTarget,
-      setSize,
-      inOpenSet,
-      paidFilled,
-      bonusPendingInOpenSet,
-      freeRealized: freePieces,
-    };
-  }, [subjectSlots, subjectQtySummary]);
+  /** Per‑titul: bonus 10+1 platí samostatně pro každý titul, takže globální „rozpracovaná sada"
+   *  jako u pooled výpočtu nemá smysl. Souhrnné údaje se počítají z `subjectQtySummary` a
+   *  případné upozornění „chybí N ks u některého titulu" se zobrazuje jen jako prostý hint. */
 
   const bundleShareCategory = (bundle?.bundleSubjectLabels?.[0]
     || resolvedProducts[0]?.category) as string | undefined;
@@ -412,46 +385,20 @@ export function BundlePage() {
                   </p>
                   {subjectQtySummary.total === 0 ? (
                     <p className="text-[12px] text-[#001161]/45 mt-2 m-0">Zatím nic nevybráno</p>
-                  ) : subjectOpenCycle && subjectOpenCycle.inOpenSet > 0 ? (
-                    <p className="text-[12px] text-[#001161]/55 mt-2 m-0 leading-snug">
-                      {`Akce ${subjectOpenCycle.paidTarget}+${subjectOpenCycle.freeTarget} = ${subjectOpenCycle.setSize} ks v sadě · `}
-                      <strong className="text-[#001161]">
-                        {subjectOpenCycle.paidFilled}
-                        /
-                        {subjectOpenCycle.paidTarget}
-                      </strong>
-                      {' placených'}
-                      {subjectOpenCycle.bonusPendingInOpenSet > 0 ? (
-                        <>
-                          {' '}
-                          — přidejte ještě
-                          {' '}
-                          <strong>{subjectOpenCycle.setSize - subjectOpenCycle.inOpenSet}</strong>
-                          {' '}
-                          ks (bonus zdarma).
-                        </>
-                      ) : subjectOpenCycle.paidFilled < subjectOpenCycle.paidTarget ? (
-                        <>
-                          {' '}
-                          — do bloku placených zbývá
-                          {' '}
-                          {subjectOpenCycle.paidTarget - subjectOpenCycle.paidFilled}
-                          {' '}
-                          ks.
-                        </>
-                      ) : null}
-                    </p>
                   ) : subjectQtySummary.completeSets > 0 ? (
-                    <p className="text-[12px] text-[#001161]/50 mt-2 m-0">
+                    <p className="text-[12px] text-[#001161]/55 mt-2 m-0 leading-snug">
                       {uzavreneSadyText(subjectQtySummary.completeSets)}
+                      {' (bonus se počítá samostatně pro každý titul).'}
                     </p>
                   ) : (
-                    <p className="text-[12px] text-[#001161]/50 mt-2 m-0">Zatím žádná uzavřená sada</p>
+                    <p className="text-[12px] text-[#001161]/50 mt-2 m-0 leading-snug">
+                      {`Pro bonus potřebujete ${subjectSlots?.total ?? 11} ks jednoho titulu (akce ${subjectSlots?.paid ?? 10}+${subjectSlots?.free ?? 1}).`}
+                    </p>
                   )}
                 </div>
                 <div
                   className={`rounded-[20px] border px-4 py-4 sm:px-5 sm:py-4 ${
-                    subjectQtySummary.freePieces > 0 || (subjectOpenCycle?.bonusPendingInOpenSet ?? 0) > 0
+                    subjectQtySummary.freePieces > 0
                       ? 'border-emerald-200/90 bg-emerald-50/90'
                       : 'border-[#001161]/10 bg-white'
                   }`}
@@ -460,45 +407,36 @@ export function BundlePage() {
                     Zdarma v akci
                     {subjectSlots ? (
                       <span className="font-bold normal-case text-[#065f46]/85">
-                        {` (${subjectSlots.paid}+${subjectSlots.free})`}
+                        {` (${subjectSlots.paid}+${subjectSlots.free} na titul)`}
                       </span>
                     ) : null}
                   </p>
                   <p className="font-['Fenomen_Sans'] text-[32px] sm:text-[36px] font-bold tabular-nums leading-none m-0 flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
                     <span
                       className={
-                        subjectOpenCycle && subjectOpenCycle.freeRealized === 0
+                        subjectQtySummary.freePieces === 0
                           ? 'text-[#001161]/30'
                           : 'text-emerald-800'
                       }
                     >
-                      {subjectOpenCycle?.freeRealized ?? subjectQtySummary.freePieces}
+                      {subjectQtySummary.freePieces}
                     </span>
-                    {subjectOpenCycle && subjectOpenCycle.bonusPendingInOpenSet > 0 ? (
-                      <span className="text-emerald-800">
-                        +
-                        {subjectOpenCycle.bonusPendingInOpenSet}
-                      </span>
-                    ) : null}
                   </p>
-                  {subjectOpenCycle && subjectOpenCycle.bonusPendingInOpenSet > 0 ? (
+                  {subjectQtySummary.needsForNextSet > 0 ? (
                     <p className="text-[12px] text-[#065f46] mt-2 m-0 leading-snug">
-                      {subjectOpenCycle.freeRealized > 0
-                        ? `${subjectOpenCycle.freeRealized} už v uzavřených sadách. `
-                        : ''}
-                      {`+${subjectOpenCycle.bonusPendingInOpenSet} ks při ${subjectOpenCycle.setSize}. kusu (nejlevnější v sadě).`}
+                      {`U jednoho z titulů chybí ${subjectQtySummary.needsForNextSet} ks do dalšího bonusu.`}
                     </p>
-                  ) : subjectQtySummary.needsForNextSet > 0 && (subjectOpenCycle?.bonusPendingInOpenSet ?? 0) === 0 ? (
-                    <p className="text-[12px] text-[#065f46] mt-2 m-0 leading-snug">
-                      {`Do uzavření další sady chybí ${subjectQtySummary.needsForNextSet} ks.`}
-                    </p>
-                  ) : subjectQtySummary.isValidMultiple && subjectQtySummary.total > 0 ? (
+                  ) : subjectQtySummary.freePieces > 0 ? (
                     <p className="text-[12px] text-emerald-900/80 mt-2 m-0">
-                      Sada je kompletní — můžete přidat do košíku.
+                      {`Bonus uplatněn pro ${subjectQtySummary.completeSets > 1 ? `${subjectQtySummary.completeSets} sady` : '1 sadu'} u jednoho/jednotlivých titulů — můžete přidat do košíku.`}
                     </p>
                   ) : subjectQtySummary.total === 0 ? (
-                    <p className="text-[12px] text-[#001161]/45 mt-2 m-0">Po uzavření sad zde uvidíte bonus.</p>
-                  ) : null}
+                    <p className="text-[12px] text-[#001161]/45 mt-2 m-0">Po dokončení sady jednoho titulu zde uvidíte bonus.</p>
+                  ) : (
+                    <p className="text-[12px] text-[#001161]/45 mt-2 m-0 leading-snug">
+                      {`Bonus se počítá samostatně pro každý titul. Vyberte ${subjectSlots?.total ?? 11} ks stejného titulu.`}
+                    </p>
+                  )}
                 </div>
               </div>
             ) : null}
