@@ -153,12 +153,9 @@ const POSITIONS = [
 /* ── License duration options ────────────────────────────────── */
 const LICENSE_YEARS = [1, 2, 3];
 
-/** Stejné dopravce jako v pokladně (ceny v haléřích) */
+/** Pro školní objednávky nabízíme pouze PPL (cena v haléřích). */
 type SchoolShippingMethod = 'dpd' | 'zasilkovna' | 'gls' | 'ppl';
 const SHIPPING_OPTIONS: Array<{ id: SchoolShippingMethod; label: string; price: number }> = [
-  { id: 'dpd', label: 'DPD', price: 8900 },
-  { id: 'zasilkovna', label: 'Zásilkovna Z-Point', price: 7900 },
-  { id: 'gls', label: 'GLS', price: 8900 },
   { id: 'ppl', label: 'PPL', price: 9900 },
 ];
 
@@ -508,7 +505,7 @@ export function OrderPage() {
     pickupPointStreet?: string;
     pickupPointCity?: string;
     pickupPointZip?: string;
-  }>({ method: 'dpd', price: 8900 });
+  }>({ method: 'ppl', price: 9900 });
   const [paymentMethod, setPaymentMethod] = useState<SchoolPaymentPref>('card');
   const [packetaLoading, setPacketaLoading] = useState(false);
   const [packetaError, setPacketaError] = useState('');
