@@ -142,6 +142,10 @@ const SHIPPING_OPTIONS: Array<{ id: ShippingMethod; label: string; price: number
   { id: 'ppl', label: 'PPL', price: 9900 },
 ];
 
+/** Pro školy nabízíme pouze PPL (ostatní dopravce jsou jen pro jednotlivce). */
+const SCHOOL_SHIPPING_METHOD: ShippingMethod = 'ppl';
+const SCHOOL_SHIPPING_OPTIONS = SHIPPING_OPTIONS.filter((option) => option.id === SCHOOL_SHIPPING_METHOD);
+
 const INITIAL_CUSTOMER: CustomerFormState = {
   name: '',
   email: '',
@@ -628,6 +632,17 @@ export function CheckoutPage() {
     currentStep === 2 ||
     (currentStep === 3 && isShippingStepValid)
   );
+
+  /** Škola má jen PPL — pokud uživatel zvolí school flow (vč. výchozího stavu),
+   *  synchronizujeme dopravu na PPL bez čekání na klik. */
+  useEffect(() => {
+    if (customerType !== 'school') return;
+    if (shipping.method === SCHOOL_SHIPPING_METHOD) return;
+    const pplOption = SHIPPING_OPTIONS.find((option) => option.id === SCHOOL_SHIPPING_METHOD);
+    if (!pplOption) return;
+    setShipping({ method: pplOption.id, price: pplOption.price });
+    setFormErrors((prev) => ({ ...prev, shipping: undefined }));
+  }, [customerType, shipping.method]);
 
   useEffect(() => {
     if (shipping.method !== 'zasilkovna') return;
@@ -1127,7 +1142,19 @@ export function CheckoutPage() {
       ...prev,
       schoolName: undefined,
       ico: undefined,
+      shipping: undefined,
     }));
+    /** Škola má jen PPL — pokud měl uživatel vybrané jiné (vč. Zásilkovny s pickup pointem),
+     *  přepneme na PPL a vyčistíme údaje o výdejním místě, aby zůstal stav konzistentní. */
+    if (type === 'school') {
+      const pplOption = SHIPPING_OPTIONS.find((option) => option.id === SCHOOL_SHIPPING_METHOD);
+      if (pplOption) {
+        setShipping({
+          method: pplOption.id,
+          price: pplOption.price,
+        });
+      }
+    }
   };
 
   const handleSeparateDeliveryToggle = () => {
@@ -1853,7 +1880,7 @@ export function CheckoutPage() {
                   {'Doprava'}
                 </h2>
                 <div className="space-y-3">
-                  {SHIPPING_OPTIONS.map((option) => (
+                  {(customerType === 'school' ? SCHOOL_SHIPPING_OPTIONS : SHIPPING_OPTIONS).map((option) => (
                     <label
                       key={option.id}
                       className={`flex items-center justify-between gap-4 rounded-[18px] border px-4 py-4 transition-all cursor-pointer ${
