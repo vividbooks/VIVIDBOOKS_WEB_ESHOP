@@ -676,10 +676,15 @@ export default function ProductBundlesPage() {
                 <div className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-3 py-3 text-[13px] text-gray-700">
                   <p className="font-semibold text-[#001161] m-0 mb-1">Cena u zákazníka</p>
                   <p className="m-0 leading-snug">
-                    Placené tituly se účtují za <strong>katalogové ceny</strong>, posledních {formFreeItemCount || '…'} v pořadí má v košíku 0 Kč. Pole ceny balíčku se u tohoto typu nepoužívá.
+                    Akce <strong>{formPaidItemCount}+{formFreeItemCount} zdarma</strong> platí
+                    {' '}<strong>samostatně pro každý titul</strong>: zákazník musí mít
+                    {' '}{formPaidItemCount + formFreeItemCount} ks
+                    {' '}<em>jednoho titulu</em>, aby z nich {formFreeItemCount || '…'} dostal v
+                    košíku za 0 Kč. Mix titulů (např. 5+5) bonus negeneruje. Pole ceny balíčku se
+                    u tohoto typu nepoužívá.
                   </p>
                   <p className="text-[11px] text-gray-500 m-0 mt-2">
-                    Celkem slotů: {formPaidItemCount + formFreeItemCount} ({formPaidItemCount} placených + {formFreeItemCount} zdarma).
+                    Sada na titul: {formPaidItemCount + formFreeItemCount} ks ({formPaidItemCount} placených + {formFreeItemCount} zdarma).
                   </p>
                 </div>
               ) : (
