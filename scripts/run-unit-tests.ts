@@ -88,8 +88,12 @@ registerTest('workflow promote-main-to-production.yml contains manual promote sa
   assert.ok(/Audit summary/.test(raw), 'audit summary step exists');
 });
 
-registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (not pooled)', () => {
-  /** Akce 10+1 → paidItemCount=10, freeItemCount=1, sada=11 ks. Mix titulů NESMÍ vygenerovat bonus. */
+registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (set size = paidItemCount)', () => {
+  /**
+   * Akce 10+1: paidItemCount=10 = velikost sady (počet ks v košíku spouštějící bonus),
+   * freeItemCount=1 = ks zdarma v sadě. Tj. na každých 10 ks téhož titulu 1 zdarma (zaplatí 9).
+   * Mix titulů NESMÍ vygenerovat bonus.
+   */
   const bundle: ProductBundleRecord = {
     id: 'b1',
     title: 'Matematika 2. stupeň — 10+1',
@@ -120,20 +124,26 @@ registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (not 
     },
   ];
 
-  /** 5+5 → 10 ks celkem, ale ani jeden titul nedosáhl 11 → 0 zdarma. */
+  /** 5+5 mix → ani jeden titul nedosáhl 10 → 0 zdarma. */
   const mix5plus5 = allocateSubjectBundleQuantities(products, bundle, { PM6100: 5, PM6200: 5 });
   assert.ok(mix5plus5, 'allocate should not return null for valid selection');
   assert.equal(mix5plus5!.length, 10, '10 jednotek dohromady');
   assert.equal(mix5plus5!.filter((u) => u.isFree).length, 0, 'mix titulů: 0 ks zdarma');
 
-  /** 11 ks PM6100 → 1 zdarma (10 placených). PM6200 vůbec ne v selekci → bonus per‑titul. */
+  /** 10 ks PM6100 → floor(10/10)=1 sada → 1 zdarma, 9 placených. */
+  const tenPM6100 = allocateSubjectBundleQuantities(products, bundle, { PM6100: 10 });
+  assert.ok(tenPM6100);
+  assert.equal(tenPM6100!.length, 10);
+  assert.equal(tenPM6100!.filter((u) => u.isFree).length, 1, '10 ks → 1 zdarma');
+
+  /** 11 ks PM6100 → floor(11/10)=1 sada → 1 zdarma, 10 placených. */
   const elevenPM6100 = allocateSubjectBundleQuantities(products, bundle, { PM6100: 11 });
   assert.ok(elevenPM6100);
   assert.equal(elevenPM6100!.length, 11);
-  assert.equal(elevenPM6100!.filter((u) => u.isFree).length, 1, '1 ks zdarma u plné sady');
+  assert.equal(elevenPM6100!.filter((u) => u.isFree).length, 1, '11 ks → 1 zdarma');
   assert.equal(elevenPM6100!.filter((u) => u.isFree)[0].productId, 'PM6100');
 
-  /** 11× PM6100 + 5× PM6200 → 1 PM6100 zdarma, PM6200 plná cena (5 < 11). */
+  /** 11× PM6100 + 5× PM6200 → 1 PM6100 zdarma, PM6200 plná cena (5 < 10). */
   const mixedWithSet = allocateSubjectBundleQuantities(products, bundle, { PM6100: 11, PM6200: 5 });
   assert.ok(mixedWithSet);
   assert.equal(mixedWithSet!.length, 16);
@@ -141,7 +151,12 @@ registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (not 
   assert.equal(free.length, 1, 'jen 1 zdarma');
   assert.equal(free[0].productId, 'PM6100', 'zdarma musí být z titulu, který dosáhl sady');
 
-  /** 22× PM6100 → 2 zdarma (2 sady). */
+  /** 21× PM6100 → floor(21/10)=2 sady → 2 zdarma (regression test pro screenshot scenario). */
+  const screenshotCase = allocateSubjectBundleQuantities(products, bundle, { PM6100: 21 });
+  assert.ok(screenshotCase);
+  assert.equal(screenshotCase!.filter((u) => u.isFree).length, 2, '21 ks → 2 zdarma');
+
+  /** 22× PM6100 → floor(22/10)=2 sady → 2 zdarma (popis akce „22 ks → 2 zdarma“). */
   const twoSets = allocateSubjectBundleQuantities(products, bundle, { PM6100: 22 });
   assert.ok(twoSets);
   assert.equal(twoSets!.filter((u) => u.isFree).length, 2);
@@ -150,12 +165,20 @@ registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (not 
   const paidMix = subjectBundleSelectionPaidListSumHaler(products, bundle, { PM6100: 5, PM6200: 5 });
   assert.equal(paidMix, 5 * 19900 + 5 * 24900);
 
-  /** Cena placených: 11× PM6100 → 10×199 = 199000 (1 zdarma). */
+  /** Cena placených: 10× PM6100 → 9×199 = 179100 hal (1 zdarma). */
+  const paidTen = subjectBundleSelectionPaidListSumHaler(products, bundle, { PM6100: 10 });
+  assert.equal(paidTen, 9 * 19900, '10 ks: zaplatí za 9');
+
+  /** Cena placených: 11× PM6100 → 10×199 = 199000 hal (1 zdarma). */
   const paidEleven = subjectBundleSelectionPaidListSumHaler(products, bundle, { PM6100: 11 });
   assert.equal(paidEleven, 10 * 19900);
+
+  /** Cena placených: 21× PM6100 → 19×199 = 378100 hal (2 zdarma) — screenshot. */
+  const paidTwentyOne = subjectBundleSelectionPaidListSumHaler(products, bundle, { PM6100: 21 });
+  assert.equal(paidTwentyOne, 19 * 19900, '21 ks: zaplatí za 19 (2 zdarma)');
 });
 
-registerTest('subjectBundleQtySummary aggregates per-title counts and needs', () => {
+registerTest('subjectBundleQtySummary aggregates per-title counts and needs (set size = paid)', () => {
   const bundle: ProductBundleRecord = {
     id: 'b1',
     title: 'X',
@@ -167,33 +190,56 @@ registerTest('subjectBundleQtySummary aggregates per-title counts and needs', ()
     freeItemCount: 1,
   };
 
-  /** Mix 5+5: žádný bonus, isValidMultiple=false (oba zbytky), needsForNextSet je 6 (closest = 11-5). */
+  /** Mix 5+5: žádný bonus; nejmenší zbývající ks pro další sadu = 10-5 = 5. */
   const s1 = subjectBundleQtySummary(bundle, { PM6100: 5, PM6200: 5 });
   assert.ok(s1);
   assert.equal(s1!.total, 10);
+  assert.equal(s1!.setSize, 10, 'sada má 10 ks v košíku');
+  assert.equal(s1!.paidPerSet, 9, 'placených v sadě = paid − free');
+  assert.equal(s1!.freePerSet, 1);
   assert.equal(s1!.completeSets, 0);
   assert.equal(s1!.freePieces, 0);
   assert.equal(s1!.paidPieces, 10);
-  assert.equal(s1!.needsForNextSet, 6, 'minimální zbývající kusů u libovolného titulu');
+  assert.equal(s1!.needsForNextSet, 5, 'minimální zbývající kusů u libovolného titulu');
   assert.equal(s1!.isValidMultiple, false);
 
-  /** 11+5: 1 sada PM6100 hotová, PM6200 zbytek 5 → potřebuje 6. */
+  /** 11+5: PM6100 1 sada uzavřená (zbytek 1, need=9), PM6200 zbytek 5 (need=5). Min=5. */
   const s2 = subjectBundleQtySummary(bundle, { PM6100: 11, PM6200: 5 });
   assert.ok(s2);
   assert.equal(s2!.completeSets, 1);
   assert.equal(s2!.freePieces, 1);
   assert.equal(s2!.paidPieces, 15);
-  assert.equal(s2!.needsForNextSet, 6, 'PM6200: 11-5 = 6');
+  assert.equal(s2!.needsForNextSet, 5, 'PM6200 zbytek 5: 10-5 = 5');
   assert.equal(s2!.isValidMultiple, false);
 
-  /** Čistých 22 PM6100: 2 sady, vše placený multiple. */
-  const s3 = subjectBundleQtySummary(bundle, { PM6100: 22 });
+  /** Čistých 20 PM6100: 2 sady, žádný zbytek, isValidMultiple=true. */
+  const s3 = subjectBundleQtySummary(bundle, { PM6100: 20 });
   assert.ok(s3);
   assert.equal(s3!.completeSets, 2);
   assert.equal(s3!.freePieces, 2);
-  assert.equal(s3!.paidPieces, 20);
+  assert.equal(s3!.paidPieces, 18);
   assert.equal(s3!.needsForNextSet, 0);
   assert.equal(s3!.isValidMultiple, true);
+
+  /** 21 PM6100 (screenshot): 2 sady, zbytek 1, need=9, isValidMultiple=false ale 2 zdarma. */
+  const s4 = subjectBundleQtySummary(bundle, { PM6100: 21 });
+  assert.ok(s4);
+  assert.equal(s4!.completeSets, 2);
+  assert.equal(s4!.freePieces, 2, '21 ks → 2 zdarma');
+  assert.equal(s4!.paidPieces, 19);
+  assert.equal(s4!.needsForNextSet, 9, 'do třetí sady chybí 9 ks');
+
+  /** Screenshot: PM6100=17, PM6200=17, PM7100=14, PM7200=14, PM8101=18, PM8201=18, PM9100=21, PM9200=21
+      → 2+2+1+1+1+1+1+1 = NEFUN... počítám per titul:
+      17→1, 17→1, 14→1, 14→1, 18→1, 18→1, 21→2, 21→2 → 10 free; min(7,7,4,4,8,8,1,1)→need 10-8=2. */
+  const sScreenshot = subjectBundleQtySummary(bundle, {
+    a: 17, b: 17, c: 14, d: 14, e: 18, f: 18, g: 21, h: 21,
+  });
+  assert.ok(sScreenshot);
+  assert.equal(sScreenshot!.total, 140);
+  assert.equal(sScreenshot!.freePieces, 10, 'celkem 10 zdarma napříč tituly');
+  assert.equal(sScreenshot!.paidPieces, 130);
+  assert.equal(sScreenshot!.needsForNextSet, 2, 'min remainder: 18%10=8 → need=2');
 });
 
 registerTest('deploy-edge-functions.yml has protected deploy requirements', () => {

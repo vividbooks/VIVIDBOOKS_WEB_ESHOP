@@ -392,7 +392,7 @@ export function BundlePage() {
                     </p>
                   ) : (
                     <p className="text-[12px] text-[#001161]/50 mt-2 m-0 leading-snug">
-                      {`Pro bonus potřebujete ${subjectSlots?.total ?? 11} ks jednoho titulu (akce ${subjectSlots?.paid ?? 10}+${subjectSlots?.free ?? 1}).`}
+                      {`Pro bonus potřebujete ${subjectSlots?.total ?? 10} ks jednoho titulu (akce ${subjectSlots?.paid ?? 10}+${subjectSlots?.free ?? 1}).`}
                     </p>
                   )}
                 </div>
@@ -434,7 +434,7 @@ export function BundlePage() {
                     <p className="text-[12px] text-[#001161]/45 mt-2 m-0">Po dokončení sady jednoho titulu zde uvidíte bonus.</p>
                   ) : (
                     <p className="text-[12px] text-[#001161]/45 mt-2 m-0 leading-snug">
-                      {`Bonus se počítá samostatně pro každý titul. Vyberte ${subjectSlots?.total ?? 11} ks stejného titulu.`}
+                      {`Bonus se počítá samostatně pro každý titul. Vyberte ${subjectSlots?.total ?? 10} ks stejného titulu.`}
                     </p>
                   )}
                 </div>
