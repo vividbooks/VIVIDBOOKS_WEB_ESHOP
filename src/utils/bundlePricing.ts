@@ -10,8 +10,11 @@ import {
 
 /**
  * `standard` — jedna cena balíčku se rozdělí mezi vybrané produkty.
- * `nx_plus_one_subject` — předmět + počty kusů; bonus se počítá **per titul** (paid+free na titul,
- * mix titulů bonus negeneruje).
+ * `nx_plus_one_subject` — předmět + počty kusů; bonus se počítá **per titul**.
+ *   Pravidlo: na každých `paidItemCount` ks téhož titulu v košíku se uplatní `freeItemCount`
+ *   ks zdarma (z těch `paidItemCount` ks; placených je tedy `paidItemCount − freeItemCount`).
+ *   Reklamně se označuje jako „N+M zdarma“ (např. „10+1 zdarma“ = na každých 10 ks 1 zdarma,
+ *   zaplatíte 9). Mix titulů bonus negeneruje.
  */
 export type ProductBundleKind = 'standard' | 'nx_plus_one_subject';
 
@@ -74,9 +77,17 @@ export function productsEligibleForSubjectBundle(bundle: ProductBundleRecord, ca
   );
 }
 
+/**
+ * - `paid` — hodnota `paidItemCount` z konfigurace (reklamně „N“ v „N+M zdarma“). Současně
+ *   slouží jako **velikost sady** = počet ks téhož titulu v košíku, na které se uplatní jeden
+ *   bonus (např. paid=10 znamená „za každých 10 ks 1 zdarma“).
+ * - `free` — hodnota `freeItemCount` z konfigurace (kolik ks z této sady je zdarma).
+ * - `total` — alias pro `paid` (velikost sady = počet ks v košíku spouštějící 1 sadu).
+ *   Reálně placených v sadě je `paid − free` (např. 10−1=9).
+ */
 export type NxPlusSubjectSlots = { paid: number; free: number; total: number };
 
-/** Platné sloty pro `nx_plus_one_subject`, jinak `null`. */
+/** Platné sloty pro `nx_plus_one_subject`, jinak `null`. Vyžaduje `free < paid`. */
 export function getNxPlusSubjectSlotCounts(bundle: ProductBundleRecord): NxPlusSubjectSlots | null {
   if (!bundleIsNxPlusOneSubject(bundle)) return null;
   const labels = bundle.bundleSubjectLabels || [];
@@ -84,7 +95,8 @@ export function getNxPlusSubjectSlotCounts(bundle: ProductBundleRecord): NxPlusS
   const free = Math.max(0, Math.floor(Number(bundle.freeItemCount) || 0));
   const paid = Math.max(0, Math.floor(Number(bundle.paidItemCount) || 0));
   if (paid < 1 || free < 1) return null;
-  return { paid, free, total: paid + free };
+  if (free >= paid) return null;
+  return { paid, free, total: paid };
 }
 
 /** Počet „řádků“ balíčku pro UI (tituly / sloty). */
@@ -119,11 +131,15 @@ export type ProductBundleRecord = {
   validTo?: string;
   /** Výchozí `standard` (chybí-li v uložených datech). */
   bundleKind?: ProductBundleKind;
-  /** Jen `nx_plus_one_subject`: kolik kusů zdarma v každé sadě (nejlevnější v sestavě). */
+  /** Jen `nx_plus_one_subject`: kolik kusů ze sady je zdarma (nejlevnější v sestavě). */
   freeItemCount?: number;
   /** Jen `nx_plus_one_subject`: štítky předmětu (OR). */
   bundleSubjectLabels?: string[];
-  /** Jen `nx_plus_one_subject`: počet placených kusů v jedné sadě. */
+  /**
+   * Jen `nx_plus_one_subject`: velikost sady = počet ks téhož titulu v košíku, který spustí
+   * jeden bonus. Reklamně se uvádí jako „N“ v „N+M zdarma“ (např. 10 → akce 10+1, zákazník na
+   * každých 10 ks dostane M zdarma a zaplatí `paid − free`).
+   */
   paidItemCount?: number;
   /** Zobrazit červený bobánek vlevo nahoře na produktové kartě (katalog, předmět, …). */
   productCardBadgeEnabled?: boolean;
@@ -312,10 +328,12 @@ export type SubjectBundleQtyUnit = {
 };
 
 /**
- * Rozdělí kusy v košíku **per titul** — bonus 10+1 (resp. paid+free) platí samostatně pro každý
- * titul. Tj. 11× PM6100 + 5× PM6200 → 1 PM6100 zdarma, PM6200 plná cena (5 ks není násobek sady,
- * tedy bonus se neuplatní). 5× PM6100 + 5× PM6200 → 0 zdarma. Tím se zabrání kombinování titulů
- * pro získání bonusu, jak vyžadují obchodní pravidla.
+ * Rozdělí kusy v košíku **per titul** — bonus „N+M“ (paid=N, free=M) platí samostatně pro
+ * každý titul. Sada má velikost `slots.total` = `paid` ks v košíku; každá uzavřená sada
+ * uvolní `slots.free` ks zdarma. Tj. pro paid=10, free=1:
+ *   - 10× PM6100 → 1 zdarma (paid=9), 21× PM6100 → 2 zdarma (paid=19), 22× PM6100 → 2 zdarma (paid=20).
+ *   - 5× PM6100 + 5× PM6200 → 0 zdarma (mix titulů bonus negeneruje).
+ *   - 11× PM6100 + 5× PM6200 → 1× PM6100 zdarma, PMV6200 plnou cenou.
  *
  * Vrátí `null`, pokud produkt nepatří do štítků balíčku, nemá variantu, nebo je výběr prázdný.
  * Neúplné sady (zbytky < `slots.total` v rámci titulu) NIKDY nevrací `null` — jen se na ně bonus
@@ -383,7 +401,9 @@ export type SubjectBundleQtySummary = {
 };
 
 /**
- * Průběžný souhrn počtů. Bonus se počítá **per titul** (viz `allocateSubjectBundleQuantities`):
+ * Průběžný souhrn počtů. Bonus se počítá **per titul** (viz `allocateSubjectBundleQuantities`).
+ * Sada má velikost `slots.total = paid` (= ks v košíku spouštějících 1 bonus); skutečně placených
+ * v sadě je `paid − free` (= `paidPerSet`), zdarma je `free` (= `freePerSet`).
  * - `completeSets` = součet uzavřených sad přes všechny tituly (každý titul samostatně).
  * - `freePieces` = součet bonusových kusů přes všechny tituly.
  * - `needsForNextSet` = nejmenší počet kusů, který zbývá doplnit u libovolného titulu (s qty>0)
@@ -426,7 +446,7 @@ export function subjectBundleQtySummary(
   return {
     total,
     setSize: slots.total,
-    paidPerSet: slots.paid,
+    paidPerSet: Math.max(0, slots.paid - slots.free),
     freePerSet: slots.free,
     completeSets,
     remainder,

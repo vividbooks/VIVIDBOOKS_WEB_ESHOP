@@ -153,6 +153,11 @@ function bundleIsNxPlusOneSubject(bundle: ProductBundleRecord): boolean {
   return (bundle.productIds || []).length === 0;
 }
 
+/**
+ * `paid` z konfigurace = velikost sady (počet ks v košíku spouštějící 1 bonus). `free` = kolik
+ * z této sady je zdarma. `total` = `paid` (alias) — počet ks na 1 sadu. Reálně placených v sadě
+ * je `paid − free`. Konfigurace musí mít `free < paid`. (Paritní s `src/utils/bundlePricing.ts`.)
+ */
 function getNxPlusSubjectSlotCounts(bundle: ProductBundleRecord): { paid: number; free: number; total: number } | null {
   if (!bundleIsNxPlusOneSubject(bundle)) return null;
   const labels = bundle.bundleSubjectLabels || [];
@@ -160,7 +165,8 @@ function getNxPlusSubjectSlotCounts(bundle: ProductBundleRecord): { paid: number
   const free = Math.max(0, Math.floor(Number(bundle.freeItemCount) || 0));
   const paid = Math.max(0, Math.floor(Number(bundle.paidItemCount) || 0));
   if (paid < 1 || free < 1) return null;
-  return { paid, free, total: paid + free };
+  if (free >= paid) return null;
+  return { paid, free, total: paid };
 }
 
 const KNOWN_SUBJECTS = ['Fyzika', 'Chemie', 'Přírodopis', 'Matematika', 'Anglický jazyk', 'Český jazyk', 'Prvouka'];
@@ -231,9 +237,10 @@ type SubjectBundleQtyUnit = {
 /**
  * Server-side kopie alokace pro `nx_plus_one_subject` balíčky.
  *
- * Bonus se aplikuje **per titul** (paritní s `src/utils/bundlePricing.ts`): počet kusů zdarma
- * se pro každý titul počítá jako `floor(qty / slots.total) * slots.free`. Mix titulů (např.
- * 5× PM6100 + 5× PM6200) tedy nepředstavuje uzavřenou sadu a žádný bonus nedostane.
+ * Bonus se aplikuje **per titul** (paritní s `src/utils/bundlePricing.ts`): pro každý titul
+ * `freeForGroup = floor(qty / slots.total) * slots.free`, kde `slots.total = paidItemCount`
+ * (= velikost sady; např. paid=10 znamená „za každých 10 ks téhož titulu 1 zdarma“). Mix titulů
+ * (např. 5× PM6100 + 5× PM6200) tedy nepředstavuje uzavřenou sadu a žádný bonus nedostane.
  */
 function allocateSubjectBundleQuantities(
   products: any[],

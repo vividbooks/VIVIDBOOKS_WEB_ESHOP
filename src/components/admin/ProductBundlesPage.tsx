@@ -263,7 +263,11 @@ export default function ProductBundlesPage() {
 
   const nxSlices = useMemo(() => {
     if (formBundleKind === 'nx_plus_one_subject') {
-      const total = Math.max(0, formPaidItemCount + formFreeItemCount);
+      /**
+       * Velikost sady = `formPaidItemCount` (počet ks v košíku spouštějící bonus).
+       * Z této sady je `formFreeItemCount` zdarma; reálně placených je `paid − free`.
+       */
+      const total = Math.max(0, formPaidItemCount);
       const fn = Math.min(Math.max(0, formFreeItemCount), Math.max(0, total - 1));
       const fake = Array.from({ length: total }, (_, i) => `preview-${i}`);
       return {
@@ -548,7 +552,7 @@ export default function ProductBundlesPage() {
                         <>{`${formatKcFromHaler(b.bundlePriceHaler || 0)} Kč · `}</>
                       )}
                       {b.bundleKind === 'nx_plus_one_subject'
-                        ? `${b.paidItemCount ?? '?'} plac. + ${b.freeItemCount ?? '?'} zdarma (předmět)`
+                        ? `${b.paidItemCount ?? '?'}+${b.freeItemCount ?? '?'} zdarma · sada ${b.paidItemCount ?? '?'} ks (předmět)`
                         : `${(b.productIds || []).length} produktů`}
                       {b.bundleKind === 'nx_plus_one_subject' ? (
                         <span className="text-emerald-700 font-medium"> · výběr titulů na webu</span>
@@ -648,7 +652,7 @@ export default function ProductBundlesPage() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <Label className="text-[11px]">Počet placených</Label>
+                        <Label className="text-[11px]">Velikost sady (kus, na který se uplatní bonus)</Label>
                         <Input
                           type="number"
                           min={1}
@@ -656,9 +660,12 @@ export default function ProductBundlesPage() {
                           value={formPaidItemCount || ''}
                           onChange={(e) => setFormPaidItemCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
                         />
+                        <p className="text-[10px] text-gray-500 mt-1 leading-snug">
+                          Např. 10 = na každých 10 ks téhož titulu v košíku se uplatní bonus.
+                        </p>
                       </div>
                       <div>
-                        <Label className="text-[11px]">Počet zdarma (poslední v pořadí výběru)</Label>
+                        <Label className="text-[11px]">Počet zdarma v sadě</Label>
                         <Input
                           type="number"
                           min={1}
@@ -666,6 +673,9 @@ export default function ProductBundlesPage() {
                           value={formFreeItemCount || ''}
                           onChange={(e) => setFormFreeItemCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
                         />
+                        <p className="text-[10px] text-gray-500 mt-1 leading-snug">
+                          Kolik kusů ze sady je zdarma (placených zůstává „velikost sady − zdarma").
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -677,14 +687,18 @@ export default function ProductBundlesPage() {
                   <p className="font-semibold text-[#001161] m-0 mb-1">Cena u zákazníka</p>
                   <p className="m-0 leading-snug">
                     Akce <strong>{formPaidItemCount}+{formFreeItemCount} zdarma</strong> platí
-                    {' '}<strong>samostatně pro každý titul</strong>: zákazník musí mít
-                    {' '}{formPaidItemCount + formFreeItemCount} ks
-                    {' '}<em>jednoho titulu</em>, aby z nich {formFreeItemCount || '…'} dostal v
-                    košíku za 0 Kč. Mix titulů (např. 5+5) bonus negeneruje. Pole ceny balíčku se
+                    {' '}<strong>samostatně pro každý titul</strong>: na každých
+                    {' '}{formPaidItemCount} ks <em>téhož titulu</em> v košíku
+                    {' '}{formFreeItemCount || '…'}
+                    {' '}{formFreeItemCount === 1 ? 'kus dostane' : 'kusy dostane'}
+                    {' '}zákazník zdarma (zaplatí
+                    {' '}{Math.max(0, formPaidItemCount - formFreeItemCount)} ks).
+                    {' '}Mix titulů (např. 5+5) bonus negeneruje. Pole ceny balíčku se
                     u tohoto typu nepoužívá.
                   </p>
                   <p className="text-[11px] text-gray-500 m-0 mt-2">
-                    Sada na titul: {formPaidItemCount + formFreeItemCount} ks ({formPaidItemCount} placených + {formFreeItemCount} zdarma).
+                    Sada na titul: {formPaidItemCount} ks (z toho {Math.max(0, formPaidItemCount - formFreeItemCount)} placených + {formFreeItemCount} zdarma).
+                    {' '}Příklad: při {formPaidItemCount * 2 + 1} ks → {2 * (formFreeItemCount || 0)} ks zdarma, {(formPaidItemCount * 2 + 1) - 2 * (formFreeItemCount || 0)} placených.
                   </p>
                 </div>
               ) : (
