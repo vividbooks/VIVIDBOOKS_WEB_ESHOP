@@ -289,6 +289,7 @@ Deno.serve(async (req) => {
     rawPm === 'apple_pay' || rawPm === 'google_pay'
       ? rawPm
       : 'card';
+  const stripePaymentChannel = 'card';
 
   const draftId = typeof payload.checkoutDraftId === 'string'
     ? payload.checkoutDraftId.trim().slice(0, 64)
@@ -506,7 +507,7 @@ Deno.serve(async (req) => {
               automatic_payment_methods: { enabled: true },
               metadata: {
                 checkout_session_id: existingDraft.checkout_session_id || '',
-                payment_method: checkoutPaymentMethod,
+                payment_method: stripePaymentChannel,
                 checkout_draft_id: draftId,
                 ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
               },
@@ -538,7 +539,7 @@ Deno.serve(async (req) => {
                 shipping_price = ${shipping.price ?? 0},
                 pickup_point_id = ${shipping.pickupPointId ?? null},
                 pickup_point_name = ${shipping.pickupPointName ?? null},
-                payment_method = ${checkoutPaymentMethod},
+                payment_method = ${stripePaymentChannel},
                 stripe_payment_intent_id = ${newPi.id},
                 subtotal = ${subtotal},
                 total = ${total},
@@ -562,7 +563,8 @@ Deno.serve(async (req) => {
                 oldTotal: existingDraft.total,
                 newTotal: total,
                 shippingMethod: shipping.method,
-                paymentMethod: checkoutPaymentMethod,
+                selectedPaymentMethod: checkoutPaymentMethod,
+                paymentMethod: stripePaymentChannel,
                 previousStatus: existingDraft.status,
               },
             });
@@ -740,7 +742,7 @@ Deno.serve(async (req) => {
         },
         metadata: {
           checkout_session_id: checkoutSessionId,
-          payment_method: checkoutPaymentMethod,
+          payment_method: stripePaymentChannel,
           ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
         },
       },
@@ -800,7 +802,7 @@ Deno.serve(async (req) => {
               ${shipping.price ?? 0},
               ${shipping.pickupPointId ?? null},
               ${shipping.pickupPointName ?? null},
-              ${checkoutPaymentMethod},
+              ${stripePaymentChannel},
               'pending',
               ${paymentIntent.id},
               ${subtotal},

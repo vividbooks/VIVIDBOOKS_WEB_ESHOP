@@ -415,7 +415,7 @@ type OrderItemFallbackRow = {
 /**
  * Košík + zákazník pro webhook: checkout_sessions (canonical),
  * doplnění session UUID z orders.checkout_session_id když Stripe metadata chybí,
- * případně rekonstrukce z pending řádku orders + order_items.
+ * případně rekonstrukce z rozpracovaného řádku orders + order_items.
  */
 async function loadCheckoutContextForSucceededPayment(
   sql: SqlClient,
@@ -488,7 +488,7 @@ async function loadCheckoutContextForSucceededPayment(
       pickup_point_name
     from public.orders
     where stripe_payment_intent_id = ${paymentIntent.id}
-      and status = 'pending_payment'
+      and status in ('incomplete', 'pending_payment')
     limit 1
   `;
   const po = pendingRows[0];
