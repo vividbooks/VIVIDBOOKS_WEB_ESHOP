@@ -180,6 +180,20 @@ function generateResumeToken(): string {
   return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+function deterministicCheckoutSessionId(idempotencyKey: string): string {
+  const hex = idempotencyKey.toLowerCase().replace(/[^0-9a-f]/g, '').padEnd(32, '0');
+  const variantByte = ((Number.parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80)
+    .toString(16)
+    .padStart(2, '0');
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    `4${hex.slice(13, 16)}`,
+    `${variantByte}${hex.slice(18, 20)}`,
+    hex.slice(20, 32),
+  ].join('-');
+}
+
 function getFunctionBaseUrl(fallbackRequestUrl?: string) {
   const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
   if (supabaseUrl) return supabaseUrl;
@@ -497,7 +511,7 @@ Deno.serve(async (req) => {
          *  (např. React Strict Mode), Stripe vrátí stejnou PI, ne dvě. Hash zahrnuje draft id
          *  + cart hash, takže přepínání dopravy v rámci draftu vždy = jiný klíč = jiná PI. */
         const newPiIdempotencyKey =
-          `eshop-pi-d-${draftId.slice(0, 16)}-${idempotencyKey}`.slice(0, 255);
+          `eshop-pi-v2-d-${draftId.slice(0, 16)}-${idempotencyKey}`.slice(0, 255);
         let newPi: Stripe.PaymentIntent;
         try {
           newPi = await stripe.paymentIntents.create(
@@ -711,7 +725,7 @@ Deno.serve(async (req) => {
       `;
     }
 
-    checkoutSessionId = crypto.randomUUID();
+    checkoutSessionId = deterministicCheckoutSessionId(idempotencyKey);
     resumeToken = generateResumeToken();
 
     await sql`
@@ -746,7 +760,7 @@ Deno.serve(async (req) => {
           ...(schoolInquiryJson ? { order_source: 'school_objednat' } : {}),
         },
       },
-      { idempotencyKey: `eshop-pi-${idempotencyKey}`.slice(0, 255) },
+      { idempotencyKey: `eshop-pi-v2-${idempotencyKey}`.slice(0, 255) },
     );
 
     await sql`
