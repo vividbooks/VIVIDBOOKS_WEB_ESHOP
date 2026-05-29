@@ -212,6 +212,8 @@ export interface AdminOrderListItem {
   poster_fulfillment_status?: string | null;
   /** Zdroj objednávky: `eshop` = web checkout, `pipedrive` = ručně založený deal v CRM. */
   source?: 'eshop' | 'pipedrive' | string | null;
+  /** Způsob platby: `card` / `apple_pay` / `google_pay` (kartou), `transfer` (převodem), `invoice` (faktura). */
+  payment_method?: string | null;
 }
 
 export interface AdminOrderItem {
