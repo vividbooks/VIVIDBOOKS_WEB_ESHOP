@@ -179,20 +179,20 @@ const PAYMENT_OPTIONS: Array<{
     id: 'apple_pay',
     label: 'Apple Pay',
     description:
-      'Na iPhonu nebo Macu přímo v prohlížeči. Na stolním PC zobrazíme QR — platbu dokončíte v telefonu.',
+      'Pokud ji vaše zařízení a prohlížeč podporují, nabídne ji Stripe přímo v platebním formuláři níže.',
     priceLabel: 'Zdarma',
   },
   {
     id: 'google_pay',
     label: 'Google Pay',
     description:
-      'Na Androidu přímo v prohlížeči. Na stolním PC zobrazíme QR — platbu dokončíte v telefonu.',
+      'Pokud ji vaše zařízení a prohlížeč podporují, nabídne ji Stripe přímo v platebním formuláři níže.',
     priceLabel: 'Zdarma',
   },
   {
     id: 'card',
     label: 'Online platba kartou',
-    description: 'Okamžitá platba přes Stripe Payment Element.',
+    description: 'Okamžitá platba přes Stripe. Ve formuláři zvolíte kartu, Apple Pay nebo Google Pay.',
     priceLabel: 'Zdarma',
   },
   {
@@ -588,7 +588,11 @@ export function CheckoutPage() {
    *  / karta / převod (pokud je dostupný). */
   const paymentOptionsVisible = useMemo(
     () => {
-      const visible = PAYMENT_OPTIONS.filter((o) => o.id !== 'transfer' || hasTransferIco);
+      const visible = PAYMENT_OPTIONS.filter((o) => {
+        if (o.id === 'transfer') return hasTransferIco;
+        if (isDesktopPaymentView && (o.id === 'apple_pay' || o.id === 'google_pay')) return false;
+        return true;
+      });
       if (customerType === 'school' && hasTransferIco) {
         const transfer = visible.find((o) => o.id === 'transfer');
         if (transfer) {
@@ -597,7 +601,7 @@ export function CheckoutPage() {
       }
       return visible;
     },
-    [hasTransferIco, customerType],
+    [hasTransferIco, customerType, isDesktopPaymentView],
   );
 
   /** Ručně zvolená platba uživatelem — když je `true`, auto-default ji už nepřepíše.
@@ -615,6 +619,12 @@ export function CheckoutPage() {
       setPaymentMethod('card');
     }
   }, [paymentMethod, hasTransferIco]);
+
+  useEffect(() => {
+    if (isDesktopPaymentView && (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay')) {
+      setPaymentMethod('card');
+    }
+  }, [isDesktopPaymentView, paymentMethod]);
 
   useEffect(() => {
     /** Škola + vyplněné IČO → default = převod (NA FAKTURU), pokud uživatel nezvolil jinak.
@@ -1962,8 +1972,10 @@ export function CheckoutPage() {
                 description={
                   paymentMethod === 'transfer'
                     ? 'Objednávku uložíme a pošleme fakturu se splatností — uhradíte ji bankovním převodem.'
-                    : paymentMethod === 'card'
-                      ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
+                    : paymentMethod === 'card' && isDesktopPaymentView
+                      ? 'Ve Stripe formuláři níže zvolte kartu, Apple Pay nebo Google Pay. Dostupné metody určuje vaše zařízení a prohlížeč.'
+                      : paymentMethod === 'card'
+                        ? 'Platba přes Stripe — karta, Apple Pay nebo Google Pay podle zařízení a prohlížeče (Payment Element).'
                       : (paymentMethod === 'apple_pay' || paymentMethod === 'google_pay') &&
                           isDesktopPaymentView
                         ? 'Na širší obrazovce zobrazíme QR kód. Otevřete odkaz v telefonu a zaplaťte přes Apple Pay nebo Google Pay — desktopová záložka po zaplacení přesměruje na poděkování.'
