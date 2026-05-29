@@ -181,6 +181,7 @@ function generateResumeToken(): string {
 }
 
 function deterministicCheckoutSessionId(idempotencyKey: string): string {
+  // Must stay stable for the same Stripe idempotency key.
   const hex = idempotencyKey.toLowerCase().replace(/[^0-9a-f]/g, '').padEnd(32, '0');
   const variantByte = ((Number.parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80)
     .toString(16)
