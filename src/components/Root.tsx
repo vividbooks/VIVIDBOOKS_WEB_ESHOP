@@ -15,6 +15,7 @@ import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
 import { CookieConsentBar } from './CookieConsentBar';
 import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
+import { EshopHostRedirect } from './EshopHostRedirect';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -33,6 +34,7 @@ function RootInner() {
   return (
     <>
       <ScrollToTop />
+      <EshopHostRedirect />
       <WebflowLegacyRedirect />
       <Toaster
         position="top-center"

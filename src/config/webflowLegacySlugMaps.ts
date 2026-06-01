@@ -1,12 +1,7 @@
 /**
- * Mapování legacy Webflow URL → konkrétní novinky / blog / Shoptet.
+ * Mapování legacy Webflow URL → konkrétní novinky / blog / nový e-shop.
  * Po migraci obsahu v administraci lze hodnoty upřesnit.
  */
-
-export const ESHOP_PUBLIC_ORIGIN = 'https://eshop.vividbooks.com';
-
-/** Příklady tištěných produktů ([eshop](https://eshop.vividbooks.com/)) — krátké /links/ na konkrétní stránky. */
-const ESHOP = ESHOP_PUBLIC_ORIGIN.replace(/\/$/, '');
 
 export type LegacyLinkResolution =
   | { kind: 'internal'; path: string }
@@ -19,39 +14,39 @@ export const LEGACY_SHORT_LINK_TARGETS: Record<string, LegacyLinkResolution> = {
   '/links/skoleni-matematika': { kind: 'internal', path: '/webinare' },
   '/links/letni-vzdelavani-reditelu-zs-balicek': { kind: 'internal', path: '/webinare' },
 
-  '/links/katalog-2025': { kind: 'external', url: `${ESHOP}/` },
+  '/links/katalog-2025': { kind: 'internal', path: '/katalog' },
   '/links/katalog-2026': { kind: 'internal', path: '/katalog' },
-  '/links/katalog-plakaty': { kind: 'external', url: `${ESHOP}/` },
-  '/links/katalog-pro-distributory': { kind: 'external', url: `${ESHOP}/` },
-  '/links/prolistovat': { kind: 'external', url: `${ESHOP}/` },
-  '/links/predobjednavka': { kind: 'external', url: `${ESHOP}/` },
-  '/links/objednat-pracovni-sesity': { kind: 'external', url: `${ESHOP}/` },
+  '/links/katalog-plakaty': { kind: 'internal', path: '/dalsi-produkty' },
+  '/links/katalog-pro-distributory': { kind: 'internal', path: '/katalog' },
+  '/links/prolistovat': { kind: 'internal', path: '/katalog' },
+  '/links/predobjednavka': { kind: 'internal', path: '/objednat' },
+  '/links/objednat-pracovni-sesity': { kind: 'internal', path: '/katalog' },
   '/links/objednatsk': { kind: 'external', url: 'https://old.vividbooks.com/links/objednatsk' },
-  '/links/bleskovy-souboj-trid': { kind: 'external', url: `${ESHOP}/` },
-  '/links/vanocni-souboj-trid': { kind: 'external', url: `${ESHOP}/` },
-  '/links/modernizujte-s-nami-ceske-skoly': { kind: 'external', url: `${ESHOP}/` },
-  '/links/pf2026': { kind: 'external', url: `${ESHOP}/` },
-  '/links/portfolio-vitekskop': { kind: 'external', url: `${ESHOP}/` },
-  '/links/prehled-minuleho-roku-v-cislech': { kind: 'external', url: `${ESHOP}/` },
-  '/links/ucebnice-umeni': { kind: 'external', url: `${ESHOP}/` },
-  '/links/zprava-pro-rodice': { kind: 'external', url: `${ESHOP}/` },
-  '/links/navod': { kind: 'external', url: `${ESHOP}/` },
+  '/links/bleskovy-souboj-trid': { kind: 'internal', path: '/katalog' },
+  '/links/vanocni-souboj-trid': { kind: 'internal', path: '/katalog' },
+  '/links/modernizujte-s-nami-ceske-skoly': { kind: 'internal', path: '/katalog' },
+  '/links/pf2026': { kind: 'internal', path: '/katalog' },
+  '/links/portfolio-vitekskop': { kind: 'internal', path: '/katalog' },
+  '/links/prehled-minuleho-roku-v-cislech': { kind: 'internal', path: '/novinky' },
+  '/links/ucebnice-umeni': { kind: 'internal', path: '/dalsi-produkty' },
+  '/links/zprava-pro-rodice': { kind: 'internal', path: '/katalog' },
+  '/links/navod': { kind: 'internal', path: '/objednat' },
 
-  '/links/prvoukalekce4': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce5': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce7': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce11': { kind: 'external', url: `${ESHOP}/pracovni-ucebnice-prvouky-pro-1-rocnik-1-dil/` },
-  '/links/prvoukalekce14': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce15': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce17': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce21': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce23': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce24': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce25': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce26': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce27': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce30': { kind: 'external', url: `${ESHOP}/prvouka/` },
-  '/links/prvoukalekce32': { kind: 'external', url: `${ESHOP}/prvouka/` },
+  '/links/prvoukalekce4': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce5': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce7': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce11': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce14': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce15': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce17': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce21': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce23': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce24': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce25': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce26': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce27': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce30': { kind: 'internal', path: '/predmet/prvouka' },
+  '/links/prvoukalekce32': { kind: 'internal', path: '/predmet/prvouka' },
 };
 
 /** Starý slug z Webflow /app-news/{slug} → slug novinky na novém webu (`src/data/novinkaPosts.ts` / CMS). */

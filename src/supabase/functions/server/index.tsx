@@ -7974,6 +7974,8 @@ app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
     { url: '/novinky',     changefreq: 'weekly',  priority: '0.8' },
     { url: '/webinare',    changefreq: 'weekly',  priority: '0.8' },
     { url: '/katalog',     changefreq: 'monthly', priority: '0.8' },
+    { url: '/dalsi-produkty', changefreq: 'monthly', priority: '0.7' },
+    { url: '/kontakt',     changefreq: 'monthly', priority: '0.6' },
     { url: '/vyzkousejte', changefreq: 'monthly', priority: '0.9' },
     { url: '/objednat',    changefreq: 'monthly', priority: '0.7' },
   ];

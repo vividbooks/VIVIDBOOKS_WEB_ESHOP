@@ -12,8 +12,29 @@ Tento projekt teď používá sdílenou konfiguraci veřejné domény pro:
 Nemění se automaticky tyto samostatné služby:
 - `https://app.vividbooks.com`
 - `https://api.vividbooks.com`
-- `https://eshop.vividbooks.com`
 - `https://www.vividbooks.cz` (např. GDPR), pokud je sami nepřesměrujete jinam
+
+## Přesměrování `eshop.vividbooks.com` → `www.vividbooks.com`
+
+Starý Shoptet běží na `eshop.vividbooks.com`. Nový katalog a objednávky jsou na `www.vividbooks.com`.
+
+### 1. DNS / Shoptet (nutné pro 301 na celou doménu)
+
+V administraci Shoptetu nastavte **301 redirect celého e-shopu** na `https://www.vividbooks.com/`  
+(nebo v DNS nasměrujte `eshop.vividbooks.com` na stejný hosting jako www a nechte SPA přesměrování).
+
+Export XML z Shoptetu (`/export/…`) zůstává na `eshop.vividbooks.com` — proxy `admin/shoptet-products-xml-fetch` to vyžaduje.
+
+### 2. SPA mapa cest (v repozitáři)
+
+Po nasazení frontendu platí `src/config/eshopLegacyRedirects.ts` — cesty ze sitemap Shoptetu
+(např. `/prvouka/`, `/pracovni-sesit-matematika/…`) se přemapují na `/predmet/…`, `/katalog`, `/objednat`.
+
+### 3. SEO
+
+- V Google Search Console přidejte přesměrování domény nebo change of address.
+- Sitemap nového webu: `https://www.vividbooks.com/sitemap.xml` (statická + produkty z API).
+- Stará sitemap Shoptetu (`eshop.vividbooks.com/sitemap.xml`) po redirectu přestane být relevantní.
 
 ## Cutover na `new.vividbooks.com`
 

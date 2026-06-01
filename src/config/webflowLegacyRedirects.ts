@@ -4,7 +4,6 @@
  */
 import { WEBFLOW_LEGACY_MANUAL_OVERRIDES } from './webflowLegacyManualOverrides';
 import {
-  ESHOP_PUBLIC_ORIGIN,
   LEGACY_APP_NEWS_TO_NOVINKA_SLUG,
   LEGACY_CS_BLOG_SLUG_MAP,
   LEGACY_SHORT_LINK_TARGETS,
@@ -25,6 +24,7 @@ export function webflowLegacyAppOrigin(): string {
 }
 
 type ExactRule = { ruleId: string; path: string; target: string };
+type ExactExternalRule = { ruleId: string; path: string; target: string };
 
 /** Nahradí prefix za targetPrefix a připojí zbytek cesty (zůstatek za prefixem). */
 type PrefixAppendRule = { ruleId: string; prefix: string; targetPrefix: string };
@@ -89,6 +89,10 @@ const LEGACY_EXACT_INTERNAL: ExactRule[] = [
   { ruleId: 'exact.odhlaseni-newsletter', path: '/cs/odhlaseni-z-newsletteru', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
   { ruleId: 'exact.studenti', path: '/cs/studenti', target: '/vyzkousejte' },
   { ruleId: 'exact.webinar-ty', path: '/cs/webinar-ty', target: '/webinare' },
+];
+
+const LEGACY_EXACT_EXTERNAL: ExactExternalRule[] = [
+  { ruleId: 'exact.studenti.old-web', path: '/studenti', target: 'https://old.vividbooks.com/cs/studenti' },
 ];
 
 const LEGACY_PREFIX_APPEND: PrefixAppendRule[] = [
@@ -157,13 +161,12 @@ function resolveUkazky(path: string): LegacyRedirectResolution | null {
 function resolveLegacyShortLink(path: string): LegacyRedirectResolution | null {
   if (!path.startsWith('/links/')) return null;
   const hit = LEGACY_SHORT_LINK_TARGETS[path];
-  const eshopHome = `${ESHOP_PUBLIC_ORIGIN.replace(/\/$/, '')}/`;
   if (hit) {
     if (hit.kind === 'internal')
       return { kind: 'internal', target: normalizeLegacyPathname(hit.path), ruleId: 'mapped.links' };
     return { kind: 'external', target: hit.url, ruleId: 'external.links' };
   }
-  return { kind: 'external', target: eshopHome, ruleId: 'external.links-default' };
+  return { kind: 'internal', target: '/katalog', ruleId: 'fallback.links-default' };
 }
 
 function resolveLegacyCsBlog(path: string): LegacyRedirectResolution | null {
@@ -201,6 +204,10 @@ export function resolveWebflowLegacyRedirect(pathname: string): LegacyRedirectRe
 
   for (const r of LEGACY_EXACT_INTERNAL) {
     if (r.path === path) return { kind: 'internal', target: r.target, ruleId: r.ruleId };
+  }
+
+  for (const r of LEGACY_EXACT_EXTERNAL) {
+    if (r.path === path) return { kind: 'external', target: r.target, ruleId: r.ruleId };
   }
 
   const csBlog = resolveLegacyCsBlog(path);
@@ -303,6 +310,7 @@ export function pathnameLooksLikeWebflowLegacy(pathname: string): boolean {
     p === '/privacy-policy'
     || p === '/hvezda-vyuky'
     || p === '/hviezda-vyucby'
+    || p === '/studenti'
     || p === '/en'
     || p === '/es'
   )

@@ -1,9 +1,12 @@
-const DEFAULT_PUBLIC_SITE_ORIGIN = 'https://new.vividbooks.com';
+import { MARKETING_ORIGIN_PRIMARY_DEFAULT } from './marketingSiteConstants';
+
+const DEFAULT_PUBLIC_SITE_ORIGIN = MARKETING_ORIGIN_PRIMARY_DEFAULT;
 
 export const LEGACY_CZ_SITE_ORIGIN = 'https://www.vividbooks.cz';
 export const APP_SITE_ORIGIN = 'https://app.vividbooks.com';
 export const API_SITE_ORIGIN = 'https://api.vividbooks.com';
-export const ESHOP_SITE_ORIGIN = 'https://eshop.vividbooks.com';
+/** @deprecated Starý Shoptet — nový katalog je na www.vividbooks.com */
+export const ESHOP_SITE_ORIGIN = MARKETING_ORIGIN_PRIMARY_DEFAULT;
 
 export const PUBLIC_SITE_ENV_KEYS = ['VITE_PUBLIC_SITE_URL', 'PUBLIC_SITE_URL', 'SITE_URL'] as const;
 

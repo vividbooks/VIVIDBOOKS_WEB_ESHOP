@@ -487,8 +487,8 @@ const getCategoryLink = (category: string) => {
   if (cat.includes('matematika')) return marketingUrl('/cs/matematika');
   if (cat.includes('fyzika')) return marketingUrl('/cs/fyzika');
   if (cat.includes('chemie')) return marketingUrl('/cs/chemie');
-  if (cat.includes('p\u0159\u00edrodopis')) return marketingUrl('/cs/prirodopis');
-  return 'https://eshop.vividbooks.com';
+  if (cat.includes('p\u0159\u00edrodopis')) return marketingUrl('/predmet/prirodopis');
+  return marketingUrl('/katalog');
 };
 
 const getDefaultDescription = (product: any) => {
@@ -497,7 +497,7 @@ const getDefaultDescription = (product: any) => {
   const type = (product.type || '').toLowerCase();
   const isInteractive = ['online', 'vividboard', 'interactive', 'license'].includes(type);
   if ((cat.includes('fyzika') || cat.includes('chemie')) && isInteractive) {
-    return 'Digit\u00e1ln\u00ed u\u010debnice â€” rozs\u00e1hl\u00fd digit\u00e1ln\u00ed p\u0159\u00edstup s interaktivn\u00edmi lekcemi, badatelsk\u00fdmi listy, testy a procvi\u010dov\u00e1n\u00edm.';
+    return 'Digitální učebnice — rozsáhlý digitální přístup s interaktivními lekcemi, badatelskými listy, testy a procvičováním.';
   }
   if (cat.includes('p\u0159\u00edrodopis') && isInteractive) {
     return 'Digit\u00e1ln\u00ed u\u010debnice P\u0159\u00edrodopisu s 3D modely, interaktivn\u00edmi lekcemi a badatelsk\u00fdmi listy.';
@@ -552,7 +552,7 @@ function CatalogHeroSliderSkeleton({
         className={`relative w-full min-h-0 overflow-hidden select-none ${isPeekMode ? '' : 'rounded-[35px]'}`}
         style={{ height: HERO_SLIDER_HEIGHT_PX }}
         aria-busy="true"
-        aria-label="Na\u010d\u00edt\u00e1 se hlavn\u00ed nab\u00eddka"
+        aria-label="Načítá se hlavní nabídka"
       >
         {isPeekMode ? (
           <>
@@ -1295,8 +1295,8 @@ export default function CatalogGrid() {
       {/* SEO */}
       <SEOHead
         path="/"
-        description="Kompletn\u00ed katalog interaktivn\u00edch digit\u00e1ln\u00edch u\u010debnic a pracovn\u00edch se\u0161it\u016f Vividbooks pro \u010desk\u00e9 z\u00e1kladn\u00ed \u0161koly. Matematika, fyzika, chemie, p\u0159\u00edrodopis a dal\u0161\u00ed."
-        imageAlt="Katalog interaktivnÃ­ch uÄebnic a pracovnÃ­ch seÅ¡itÅ¯ Vividbooks pro zÃ¡kladnÃ­ Å¡koly"
+        description="Kompletní katalog interaktivních digitálních učebnic a pracovních sešitů Vividbooks pro české základní školy. Matematika, fyzika, chemie, přírodopis a další."
+        imageAlt="Katalog interaktivních učebnic a pracovních sešitů Vividbooks pro základní školy"
         imageWidth={1200}
         imageHeight={630}
       />
