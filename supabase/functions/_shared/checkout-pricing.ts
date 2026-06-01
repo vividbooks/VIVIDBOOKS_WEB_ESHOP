@@ -373,6 +373,17 @@ export function validateCheckoutPricing(
     if (!p) {
       return `Neznámý produkt v košíku (${line.productId}).`;
     }
+    /**
+     * Digitální učebnice (rozšířený přístup / licence) se prodávají výhradně jako
+     * Stripe předplatné nebo přes „Poptávka pro školu" – jednorázový nákup v košíku
+     * by skončil platbou za měsíční cenu bez aktivace předplatného. Bug v upsellu
+     * v košíku (objednávka VB-2026-0137) ukázal, že tato položka se může do košíku
+     * dostat. Backend ji proto v platbě kartou / převodem odmítá vždy.
+     */
+    const ptype = String(p.type || '').toLowerCase();
+    if (ptype === 'online' || ptype === 'license') {
+      return 'Digitální přístup nelze objednat přes košík – použijte předplatné nebo poptávku pro školu.';
+    }
     const expected = expectedUnitPriceForLine(p, line.variant);
     if (Math.abs(line.unitPrice - expected) > PRICE_TOLERANCE_HALER) {
       return 'Cena neodpovídá aktuálnímu ceníku. Obnovte stránku a zkuste znovu.';

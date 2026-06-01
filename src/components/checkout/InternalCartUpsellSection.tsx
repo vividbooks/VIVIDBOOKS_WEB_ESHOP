@@ -10,6 +10,7 @@ import {
   getProductUnitPriceInHaler,
   getProductVariantId,
   isAddable,
+  isDigitalProduct,
   parseSubject,
   SUBJECT_COLORS,
 } from '../cartUpsellUtils';
@@ -43,6 +44,12 @@ function MiniBookCard({
   const colors = SUBJECT_COLORS[subject || ''] ?? SUBJECT_COLORS.default;
   const image = getProductImage(product);
   const price = formatProductPrice(product);
+  /**
+   * Digitální produkty (online přístup / licence) nelze koupit jednorázově přes košík –
+   * jdou jen jako Stripe předplatné nebo přes „Poptávka pro školu". Tlačítko proto
+   * vede na detail produktu, ne na addItem.
+   */
+  const isDigital = isDigitalProduct(product);
 
   return (
     <div
@@ -87,14 +94,23 @@ function MiniBookCard({
           type="button"
           onClick={(event) => {
             event.stopPropagation();
+            if (isDigital) {
+              onNavigate(product);
+              return;
+            }
             onAdd(product);
           }}
-          disabled={isAdding || !isAddable(product)}
+          disabled={isAdding || (!isDigital && !isAddable(product))}
           className="w-full flex items-center justify-center gap-1 py-2 rounded-[8px] text-[11px] font-bold transition-all disabled:opacity-50 cursor-pointer"
           style={{ fontFamily: "'Fenomen Sans', sans-serif", background: colors.text, color: '#fff' }}
         >
           {isAdding ? (
             <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+          ) : isDigital ? (
+            <>
+              <Sparkles className="w-3 h-3 shrink-0" />
+              {'Zobrazit detail'}
+            </>
           ) : (
             <>
               <Plus className="w-3 h-3 shrink-0" />
@@ -232,6 +248,15 @@ export function InternalCartUpsellSection({
   ), [cartItems, products]);
 
   const handleAdd = (product: any) => {
+    /**
+     * Digitální produkty (online přístup / licence) se z upsell sekce nepřidávají do košíku
+     * – pro ně existuje Stripe předplatné nebo poptávka pro školu. Proklik vede na detail.
+     */
+    if (isDigitalProduct(product)) {
+      navigate(productDetailPath(product, products));
+      return;
+    }
+
     const variantId = getProductVariantId(product);
     if (!variantId) return;
 
