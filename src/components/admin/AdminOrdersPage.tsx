@@ -93,6 +93,27 @@ function shippingLabel(method: string) {
   }
 }
 
+/** Lidsky čitelný popisek způsobu platby pro admin přehled.
+ *  Stripe Payment Element ukládá kartové platby jako `card` / `apple_pay` / `google_pay`
+ *  (viz `create-payment-intent` a `stripe-webhook`), převod jako `transfer`,
+ *  fakturu (školní objednávky) jako `invoice`. */
+function paymentMethodLabel(method?: string | null) {
+  switch ((method || '').toLowerCase()) {
+    case 'transfer':
+      return 'Převodem';
+    case 'card':
+    case 'apple_pay':
+    case 'google_pay':
+      return 'Kartou';
+    case 'invoice':
+      return 'Faktura';
+    case '':
+      return '—';
+    default:
+      return method || '—';
+  }
+}
+
 export function AdminOrdersPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<AdminOrderListItem[]>([]);
@@ -228,6 +249,7 @@ export function AdminOrdersPage() {
                 <th className="px-3 py-2.5">{'Stav'}</th>
                 <th className="px-3 py-2.5">{'Base.com'}</th>
                 <th className="px-3 py-2.5">{'Platba'}</th>
+                <th className="px-3 py-2.5">{'Způsob platby'}</th>
                 <th className="px-3 py-2.5">{'Doprava'}</th>
                 <th className="px-3 py-2.5 text-right">{'Akce'}</th>
               </tr>
@@ -236,20 +258,20 @@ export function AdminOrdersPage() {
               {loading ? (
                 Array.from({ length: 8 }).map((_, index) => (
                   <tr key={index} className="border-b border-gray-100">
-                    <td className="px-3 py-3" colSpan={10}>
+                    <td className="px-3 py-3" colSpan={11}>
                       <div className="h-8 rounded-xl bg-gray-50 animate-pulse" />
                     </td>
                   </tr>
                 ))
               ) : error ? (
                 <tr>
-                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={10}>
+                  <td className="px-4 py-8 text-red-600 text-[14px]" colSpan={11}>
                     {error}
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={10}>
+                  <td className="px-4 py-10 text-gray-500 text-[14px]" colSpan={11}>
                     {'Žádné objednávky neodpovídají filtru.'}
                   </td>
                 </tr>
@@ -300,6 +322,9 @@ export function AdminOrdersPage() {
                       <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-bold ${badgeClass(order.payment_status || 'pending')}`}>
                         {order.payment_status || 'pending'}
                       </span>
+                    </td>
+                    <td className="px-3 py-3 text-[12px] text-gray-600 whitespace-nowrap">
+                      {paymentMethodLabel(order.payment_method)}
                     </td>
                     <td className="px-3 py-3 text-[12px] text-gray-600">
                       <div className="flex items-center gap-1.5">
