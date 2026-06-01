@@ -213,7 +213,7 @@ path,redirect_kind,target,rule_id,is_fallback
 /links/bleskovy-souboj-trid,external,https://eshop.vividbooks.com/,external.links,false
 /links/hledame-partnera,internal,/kontakt,mapped.links,false
 /links/katalog-2025,external,https://eshop.vividbooks.com/,external.links,false
-/links/katalog-2026,external,https://expert-rotate-11549946.figma.site/?view=catalog,external.links,false
+/links/katalog-2026,internal,/katalog,mapped.links,false
 /links/katalog-plakaty,external,https://eshop.vividbooks.com/,external.links,false
 /links/katalog-pro-distributory,external,https://eshop.vividbooks.com/,external.links,false
 /links/letni-vzdelavani-reditelu-zs-balicek,internal,/webinare,mapped.links,false
@@ -221,7 +221,7 @@ path,redirect_kind,target,rule_id,is_fallback
 /links/navod,external,https://eshop.vividbooks.com/,external.links,false
 /links/nechte-nam-kontakt,internal,/kontakt,mapped.links,false
 /links/objednat-pracovni-sesity,external,https://eshop.vividbooks.com/,external.links,false
-/links/objednatsk,external,https://eshop.vividbooks.com/,external.links,false
+/links/objednatsk,external,https://old.vividbooks.com/links/objednatsk,external.links,false
 /links/pf2026,external,https://eshop.vividbooks.com/,external.links,false
 /links/portfolio-vitekskop,external,https://eshop.vividbooks.com/,external.links,false
 /links/predobjednavka,external,https://eshop.vividbooks.com/,external.links,false

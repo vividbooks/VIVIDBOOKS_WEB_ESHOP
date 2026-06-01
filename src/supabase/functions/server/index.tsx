@@ -1202,7 +1202,12 @@ const ALLOWED_API_ORIGINS = [
 ];
 
 const corsOptions = {
-  origin: ALLOWED_API_ORIGINS,
+  origin: (origin: string) => {
+    if (!origin) return 'https://www.vividbooks.com';
+    if (ALLOWED_API_ORIGINS.includes(origin)) return origin;
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
+    return 'https://www.vividbooks.com';
+  },
   allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'x-user-access-token'],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 };
@@ -7958,6 +7963,7 @@ app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
     { url: '/blog',        changefreq: 'weekly',  priority: '0.8' },
     { url: '/novinky',     changefreq: 'weekly',  priority: '0.8' },
     { url: '/webinare',    changefreq: 'weekly',  priority: '0.8' },
+    { url: '/katalog',     changefreq: 'monthly', priority: '0.8' },
     { url: '/vyzkousejte', changefreq: 'monthly', priority: '0.9' },
     { url: '/objednat',    changefreq: 'monthly', priority: '0.7' },
   ];

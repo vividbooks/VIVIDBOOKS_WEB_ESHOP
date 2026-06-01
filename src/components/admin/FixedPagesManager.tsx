@@ -15,8 +15,8 @@ const FIXED_PAGES: FixedPage[] = [
   {
     id: 'katalog',
     title: 'Katalog produktů',
-    path: '/',
-    description: 'Hlavní stránka s přehledem všech produktů — digitální licence i pracovní sešity.',
+    path: '/katalog',
+    description: 'Čistý katalog pracovních sešitů a učebnic pro školní rok 2026/2027.',
     status: 'active',
     type: 'internal',
   },

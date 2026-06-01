@@ -1,0 +1,1 @@
+const n="https://www.vividbooks.com",e={BASE_URL:"/",DEV:!1,MODE:"production",PROD:!0,SSR:!1};function o(){try{const t=e?.VITE_PUBLIC_SITE_URL;if(t?.trim())return t.trim().replace(/\/$/,"")}catch{}return n}function _(t){const r=o(),i=t.startsWith("/")?t:`/${t}`;return`${r}${i}`}export{_ as m};

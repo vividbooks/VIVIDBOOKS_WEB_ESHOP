@@ -1,12 +1,10 @@
 import React, { useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router';
-import { ProductDetailPage, type SchoolOrderMerchContext } from './ProductDetailPage';
+import { ProductDetailPage } from './ProductDetailPage';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCart } from '../contexts/CartContext';
-import { getProductUnitPriceInHaler } from './cartUpsellUtils';
-import { mergeSchoolOrderDraft, matchSchoolSubjectKeysFromCategory } from '../utils/schoolOrderDraft';
-import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { productDetailPath, productSlug } from '../utils/slugify';
+import { startSchoolOrder } from '../utils/startSchoolOrder';
 
 export function ProductDetailRoute() {
   const { id }     = useParams<{ id: string }>();
@@ -64,57 +62,7 @@ export function ProductDetailRoute() {
       product={product}
       products={products}
       onBack={() => navigate(-1)}
-      onOrder={(ctx?: SchoolOrderMerchContext) => {
-        const predmetQ = product.category ? `&predmet=${encodeURIComponent(product.category)}` : '';
-        const state = { category: product.category };
-
-        if (product.type === 'online' || product.type === 'license') {
-          mergeSchoolOrderDraft({
-            selSubjects: product.category ? [product.category] : [],
-            selTypes: ['digital'],
-            digitalSubjects: product.category ? [product.category] : [],
-          });
-          navigate(`/objednat?step=2${predmetQ}`, { state });
-          return;
-        }
-
-        const subjKeys = matchSchoolSubjectKeysFromCategory(product.category);
-        mergeSchoolOrderDraft({
-          selTypes: ['workbook'],
-          ...(subjKeys.length > 0 ? { selSubjects: subjKeys } : {}),
-        });
-
-        const merchVid = ctx?.shopifyVariantId?.trim();
-        const merchSku = ctx?.shoptetSku?.trim();
-        const fallbackVid = product.shopifyVariantId?.trim();
-        const lineVariantId = merchVid || merchSku || fallbackVid || '';
-        if (
-          (product.type === 'workbook' || product.type === 'merch') &&
-          lineVariantId
-        ) {
-          const pid = String(product.id);
-          const vid = lineVariantId;
-          const already = items.some((i) => i.productId === pid && i.variantId === vid);
-          if (!already) {
-                       const posterMerch =
-              product.type === 'merch' &&
-              (product.availabilityDisplay === 'on_order' || isMerchWallArtBoardsProduct(product));
-            addItem({
-              productId: pid,
-              productName: ctx?.productDisplayName ?? (product.name || 'Produkt'),
-              variantId: vid,
-              variantName: ctx?.variantLabel,
-              quantity: 1,
-              unitPrice: ctx ? ctx.unitPriceHaler : getProductUnitPriceInHaler(product),
-              imageUrl: product.image || undefined,
-              itemGroup: product.category || product.merchCategory || product.type || undefined,
-              ...(posterMerch ? { posterMerch: true as const } : {}),
-            });
-          }
-        }
-
-        navigate(`/objednat?step=2${predmetQ}`, { state });
-      }}
+      onOrder={(ctx) => startSchoolOrder(navigate, { addItem, items }, product, ctx)}
       onProductSelect={(p) => navigate(productDetailPath(p, products))}
     />
   );

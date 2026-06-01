@@ -104,6 +104,10 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/MathCampaignLandingPage'), 'MathCampaignLandingPage'),
         },
         {
+          path: 'katalog',
+          lazy: lazyNamed(() => import('./components/CatalogCleanPage'), 'CatalogCleanPage'),
+        },
+        {
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
           children: [
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },

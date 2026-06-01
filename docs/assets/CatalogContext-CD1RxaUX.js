@@ -1,0 +1,1 @@
+import{r as o}from"./index-E_S9gpfz.js";const t=o.createContext({groupingMode:"subject",setGroupingMode:()=>{},activeSection:null,setActiveSection:()=>{},scrollToSection:()=>{},isDistributorMode:!1,handleDownloadPack:()=>{},isDownloadingPack:!1}),a=()=>o.useContext(t);export{t as C,a as u};

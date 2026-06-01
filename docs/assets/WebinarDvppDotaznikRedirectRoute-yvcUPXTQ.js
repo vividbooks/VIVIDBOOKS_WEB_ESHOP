@@ -1,0 +1,1 @@
+import{k as o,h as i,j as r,N as t}from"./index-E_S9gpfz.js";function p(){const{id:e}=o(),[s]=i();if(!e)return r.jsx(t,{to:"/webinare",replace:!0});const a=new URLSearchParams(s);a.set("dvppDotaznik","1");const n=a.toString();return r.jsx(t,{to:`/webinar/${e}?${n}`,replace:!0})}export{p as WebinarDvppDotaznikRedirectRoute};
