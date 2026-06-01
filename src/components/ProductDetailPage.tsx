@@ -33,6 +33,11 @@ import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
 import { PRINT_BOOK_COVER_DROP_SHADOW } from '../utils/printBookCoverShadow';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 import { dataLayerItemFromProduct, pushViewContent } from '../utils/dataLayerEcommerce';
+import {
+  applyAllDigitalBundleStripe,
+  findAllDigitalBundleProduct,
+  getDigitalSubjectShortLabel,
+} from '../utils/digitalSubscription';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
@@ -625,7 +630,7 @@ interface ProductDetailPageProps {
   products: any[];
   onBack: () => void;
   /** Volitelný kontext při objednávce pro školu (merch s variantami). */
-  onOrder?: (ctx?: SchoolOrderMerchContext) => void;
+  onOrder?: (ctx?: SchoolOrderMerchContext, orderProduct?: any) => void;
   isDistributorMode?: boolean;
   onProductSelect?: (product: any) => void;
 }
@@ -645,6 +650,7 @@ export function ProductDetailPage({
   const [relatedRadaFilter, setRelatedRadaFilter] = useState<RelatedRadaKey | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [digitalSubscriptionBuyer, setDigitalSubscriptionBuyer] = useState<'school' | 'parent'>('parent');
+  const [digitalSubscriptionScope, setDigitalSubscriptionScope] = useState<'subject' | 'all'>('subject');
   const [internalBundleAdding, setInternalBundleAdding] = useState(false);
   const [internalBundleAdded, setInternalBundleAdded] = useState(false);
   const [isLandscape, setIsLandscape] = useState(false);
@@ -829,8 +835,26 @@ export function ProductDetailPage({
     () => isDigitalLicenseSecondStageOnline(product),
     [product.type, product.category],
   );
-  const canDigitalParentSubscribe = !!(product.stripeMonthlyUrl || product.stripeYearlyUrl);
+  const allDigitalBundleProduct = useMemo(
+    () => findAllDigitalBundleProduct(products),
+    [products],
+  );
+  const showAllDigitalScopeToggle = isSecondStageDigitalCta;
+  const activeDigitalSubscriptionProduct = useMemo(() => {
+    if (digitalSubscriptionScope === 'all' && allDigitalBundleProduct) {
+      return allDigitalBundleProduct;
+    }
+    return applyAllDigitalBundleStripe(product);
+  }, [digitalSubscriptionScope, allDigitalBundleProduct, product]);
+  const canDigitalParentSubscribe = !!(
+    activeDigitalSubscriptionProduct.stripeMonthlyUrl || activeDigitalSubscriptionProduct.stripeYearlyUrl
+  );
   const canDigitalSchoolOrder = typeof onOrder === 'function';
+  const digitalSubjectLabel = useMemo(() => getDigitalSubjectShortLabel(product), [product.category]);
+
+  useEffect(() => {
+    setDigitalSubscriptionScope('subject');
+  }, [product.id]);
 
   useEffect(() => {
     if (!isSecondStageDigitalCta) return;
@@ -1577,7 +1601,7 @@ export function ProductDetailPage({
                   {showsOnOrderByAvailability ? (
                     <div
                       className="inline-flex items-center rounded-full border border-[#001161]/18 bg-white/95 px-3 py-1.5 text-[12px] font-semibold font-['Fenomen_Sans',sans-serif] text-[#001161] shadow-sm pb-1"
-                      title="Dod\u00e1n\u00ed po objedn\u00e1vce"
+                      title="Dodání po objednávce"
                     >
                       {'Na objedn\u00e1vku'}
                     </div>
@@ -1774,6 +1798,38 @@ export function ProductDetailPage({
                   </div>
                 )}
 
+                {isSecondStageDigitalCta && showAllDigitalScopeToggle && (
+                  <div className="mb-4">
+                    <p className="font-['Fenomen_Sans',sans-serif] text-[11px] uppercase tracking-[0.15em] text-[#001161]/40 mb-2">
+                      {'Rozsah předplatného'}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { id: 'subject' as const, label: digitalSubjectLabel },
+                        { id: 'all' as const, label: 'Celé Vividbooks' },
+                      ]).map((option) => {
+                        const isActive = digitalSubscriptionScope === option.id;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => setDigitalSubscriptionScope(option.id)}
+                            className={`px-3 py-3 rounded-[14px] border-2 text-left transition-all cursor-pointer min-h-[56px] flex items-center
+                              ${isActive
+                                ? 'border-[#635BFF] bg-[#635BFF]/5'
+                                : 'border-[#001161]/10 bg-white hover:border-[#635BFF]/40'}`}
+                          >
+                            <span className={`font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] font-semibold leading-snug
+                              ${isActive ? 'text-[#635BFF]' : 'text-[#001161]/70'}`}>
+                              {option.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {isSecondStageDigitalCta && (
                   <div className="mb-6 pb-6 border-b border-[#001161]/8">
                     <p className="font-['Fenomen_Sans',sans-serif] text-[11px] uppercase tracking-[0.15em] text-[#001161]/40 mb-1">
@@ -1787,10 +1843,10 @@ export function ProductDetailPage({
                       }`}
                     >
                       {digitalSubscriptionBuyer === 'school'
-                        ? (formatPrice(product) || 'Cena podle po\u010dtu \u017e\u00e1k\u016f')
+                        ? (formatPrice(activeDigitalSubscriptionProduct) || 'Cena podle po\u010dtu \u017e\u00e1k\u016f')
                         : billingCycle === 'monthly'
-                          ? (product.priceMonthly || price)
-                          : (product.priceYearly || price)}
+                          ? (activeDigitalSubscriptionProduct.priceMonthly || formatPrice(activeDigitalSubscriptionProduct))
+                          : (activeDigitalSubscriptionProduct.priceYearly || formatPrice(activeDigitalSubscriptionProduct))}
                     </p>
                   </div>
                 )}
@@ -1802,10 +1858,10 @@ export function ProductDetailPage({
                       <div className="py-1">
                         <div
                           className={`grid gap-2 sm:gap-2.5 mb-4 ${
-                            product.stripeMonthlyUrl && product.stripeYearlyUrl ? 'grid-cols-2' : 'grid-cols-1'
+                            activeDigitalSubscriptionProduct.stripeMonthlyUrl && activeDigitalSubscriptionProduct.stripeYearlyUrl ? 'grid-cols-2' : 'grid-cols-1'
                           }`}
                         >
-                          {product.stripeMonthlyUrl && (
+                          {activeDigitalSubscriptionProduct.stripeMonthlyUrl && (
                             <button
                               type="button"
                               onClick={() => setBillingCycle('monthly')}
@@ -1826,16 +1882,16 @@ export function ProductDetailPage({
                                   {'M\u011bs\u00ed\u010dn\u011b'}
                                 </span>
                               </div>
-                              {product.priceMonthly && (
+                              {activeDigitalSubscriptionProduct.priceMonthly && (
                                 <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
                                   ${billingCycle === 'monthly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
-                                  {product.priceMonthly}
+                                  {activeDigitalSubscriptionProduct.priceMonthly}
                                 </span>
                               )}
                             </button>
                           )}
 
-                          {product.stripeYearlyUrl && (
+                          {activeDigitalSubscriptionProduct.stripeYearlyUrl && (
                             <button
                               type="button"
                               onClick={() => setBillingCycle('yearly')}
@@ -1856,10 +1912,10 @@ export function ProductDetailPage({
                                   {'Ro\u010dn\u011b'}
                                 </span>
                               </div>
-                              {product.priceYearly && (
+                              {activeDigitalSubscriptionProduct.priceYearly && (
                                 <span className={`font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[13px] font-bold tabular-nums text-right shrink-0 max-w-[50%]
                                   ${billingCycle === 'yearly' ? 'text-[#635BFF]' : 'text-[#001161]/50'}`}>
-                                  {product.priceYearly}
+                                  {activeDigitalSubscriptionProduct.priceYearly}
                                 </span>
                               )}
                             </button>
@@ -1868,8 +1924,8 @@ export function ProductDetailPage({
 
                         <a
                           href={billingCycle === 'monthly'
-                            ? (product.stripeMonthlyUrl || product.stripeYearlyUrl)
-                            : (product.stripeYearlyUrl || product.stripeMonthlyUrl)}
+                            ? (activeDigitalSubscriptionProduct.stripeMonthlyUrl || activeDigitalSubscriptionProduct.stripeYearlyUrl)
+                            : (activeDigitalSubscriptionProduct.stripeYearlyUrl || activeDigitalSubscriptionProduct.stripeMonthlyUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-[16px] bg-[#635BFF] hover:bg-[#5248e8] text-white no-underline font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] shadow-[0_6px_20px_rgba(99,91,255,0.32)]"
@@ -1884,7 +1940,7 @@ export function ProductDetailPage({
                       <div className="py-1">
                         <button
                           type="button"
-                          onClick={onOrder}
+                          onClick={() => onOrder(undefined, activeDigitalSubscriptionProduct)}
                           className="w-full py-3.5 px-4 rounded-[16px] bg-[#3d3d3d] hover:bg-[#555] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold transition-all hover:scale-[1.01] active:scale-[0.98] cursor-pointer flex items-center justify-center gap-2"
                         >
                           <School className="w-4 h-4" />
@@ -2209,7 +2265,7 @@ export function ProductDetailPage({
             <iframe
               src={flipbookUrl}
               className="w-full h-full border-none"
-              title="Uk\u00e1zka"
+              title="Ukázka"
               allow="fullscreen; clipboard-read; clipboard-write"
             />
           </div>
@@ -2605,7 +2661,7 @@ export function ProductDetailPage({
                       type="button"
                       onClick={() => setVideoPreviewOpen(false)}
                       className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-xl bg-gray-100 text-gray-500 transition-all hover:bg-gray-200 hover:text-gray-800"
-                      aria-label="Zav\u0159\u00edt"
+                      aria-label="Zavřít"
                     >
                       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -2659,7 +2715,7 @@ export function ProductDetailPage({
                 key="pdp-math-diff-yt"
                 role="dialog"
                 aria-modal="true"
-                aria-label="Video: rozd\u00edl mezi \u0159adami"
+                aria-label="Video: rozdíl mezi řadami"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -2684,7 +2740,7 @@ export function ProductDetailPage({
                       type="button"
                       onClick={() => setMathSeriesDiffVideoOpen(false)}
                       className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                      aria-label="Zav\u0159\u00edt"
+                      aria-label="Zavřít"
                     >
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -2695,7 +2751,7 @@ export function ProductDetailPage({
                     <iframe
                       src={`https://www.youtube.com/embed/${MATH_SERIES_DIFF_YOUTUBE_ID}?rel=0&modestbranding=1&autoplay=1`}
                       className="absolute inset-0 w-full h-full border-0"
-                      title="Rozd\u00edl mezi Pro v\u0161echny a Krok za krokem"
+                      title="Rozdíl mezi Pro všechny a Krok za krokem"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowFullScreen
                     />

@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { publicAnonKey } from '../utils/supabase/info';
+import { edgeFunctionBase } from '../utils/edgeFunctionBase';
 import { promotionCardBadgeTextsForProduct, type ProductBundleRecord } from '../utils/bundlePricing';
+import { applyAllDigitalBundleStripe } from '../utils/digitalSubscription';
 
 interface ProductsContextType {
   products: any[];
@@ -31,8 +33,9 @@ export function ProductsProvider({ children }: { children: ReactNode }) {
   const fetchProducts = useCallback(async () => {
     setIsLoading(true);
     try {
-      const productsUrl = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/products?v=${Date.now()}`;
-      const bundlesUrl = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/product-bundles?v=${Date.now()}`;
+      const apiBase = edgeFunctionBase();
+      const productsUrl = `${apiBase}/products?v=${Date.now()}`;
+      const bundlesUrl = `${apiBase}/product-bundles?v=${Date.now()}`;
       const [pRes, bRes] = await Promise.all([
         fetch(productsUrl, { headers: { Authorization: `Bearer ${publicAnonKey}` } }),
         fetch(bundlesUrl, { headers: { Authorization: `Bearer ${publicAnonKey}` } }),
@@ -40,7 +43,7 @@ export function ProductsProvider({ children }: { children: ReactNode }) {
       if (!pRes.ok) throw new Error(`Server error: ${pRes.status}`);
       const data = await pRes.json();
       if (data.products) {
-        setProducts(data.products);
+        setProducts(data.products.map((p: any) => applyAllDigitalBundleStripe(p)));
       }
       if (bRes.ok) {
         const bJson = await bRes.json();

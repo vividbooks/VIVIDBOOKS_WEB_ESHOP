@@ -148,8 +148,8 @@ const PRODUCT_FIELDS: FieldDef[] = [
   { key: 'shoptetId', label: 'Shoptet ID', type: 'text' },
   { key: 'priceMonthly', label: 'Cena měsíc', type: 'text', placeholder: '290,-/měsíc', showIf: (d) => d.type === 'online' },
   { key: 'priceYearly', label: 'Cena rok', type: 'text', placeholder: '2\u00a0900,-/rok', showIf: (d) => d.type === 'online' },
-  { key: 'stripeMonthlyUrl', label: 'Stripe — měsíční předplatné', type: 'url', fullWidth: true, placeholder: 'https://buy.stripe.com/...', hint: 'Stripe Checkout link na měsíční předplatné', showIf: (d) => d.type === 'online' },
-  { key: 'stripeYearlyUrl', label: 'Stripe — roční předplatné', type: 'url', fullWidth: true, placeholder: 'https://buy.stripe.com/...', hint: 'Stripe Checkout link na roční předplatné', showIf: (d) => d.type === 'online' },
+  { key: 'stripeMonthlyUrl', label: 'Stripe — měsíční předplatné', type: 'url', fullWidth: true, placeholder: 'https://api.vividbooks.com/predplatne/mesicni', hint: 'Stripe Checkout link na měsíční předplatné (all bundle)', showIf: (d) => d.type === 'online' || d.id === '68fcbcb4c96236df1c3a1b9f' },
+  { key: 'stripeYearlyUrl', label: 'Stripe — roční předplatné', type: 'url', fullWidth: true, placeholder: 'https://api.vividbooks.com/predplatne/rocni', hint: 'Stripe Checkout link na roční předplatné (all bundle)', showIf: (d) => d.type === 'online' || d.id === '68fcbcb4c96236df1c3a1b9f' },
 ];
 
 const BLOG_FIELDS: FieldDef[] = [

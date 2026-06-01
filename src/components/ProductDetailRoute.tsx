@@ -62,7 +62,7 @@ export function ProductDetailRoute() {
       product={product}
       products={products}
       onBack={() => navigate(-1)}
-      onOrder={(ctx) => startSchoolOrder(navigate, { addItem, items }, product, ctx)}
+      onOrder={(ctx, orderProduct) => startSchoolOrder(navigate, { addItem, items }, orderProduct ?? product, ctx)}
       onProductSelect={(p) => navigate(productDetailPath(p, products))}
     />
   );

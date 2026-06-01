@@ -21,6 +21,9 @@ import {
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
+import {
+  applyAllDigitalBundleStripe,
+} from '../../../utils/digitalSubscription.ts';
 import { MARKETING_ORIGIN_PRIMARY_DEFAULT, MARKETING_ORIGINS_CANONICAL_SET } from '../../../config/marketingSiteConstants.ts';
 
 const app = new Hono();
@@ -1265,16 +1268,23 @@ app.get('/make-server-93a20b6f/products', async (c) => {
   const products = await getAllProducts();
   const normalized = products.map((p: any) => {
     let next = syncProductPriceAmount(p);
-    if (!next.category) return next;
+    if (!next.category) return applyAllDigitalBundleStripe(next);
     let cat: string = String(next.category).trim();
     if (/^[Mm]atematika[\s\-]+2$/.test(cat)) cat = 'Matematika 2. stupeň';
     if (/^[Mm]atematika[\s\-]+1$/.test(cat)) cat = 'Matematika 1. stupeň';
-    return cat === next.category ? next : { ...next, category: cat };
+    next = cat === next.category ? next : { ...next, category: cat };
+    return applyAllDigitalBundleStripe(next);
   });
   const needsPricePersist = normalized.some((p: any, i: number) => p.priceAmount !== products[i]?.priceAmount);
   const needsCategoryPersist = normalized.some((p: any, i: number) => p.category !== products[i]?.category);
+  const needsStripePersist = normalized.some((p: any, i: number) => (
+    p.stripeMonthlyUrl !== products[i]?.stripeMonthlyUrl
+    || p.stripeYearlyUrl !== products[i]?.stripeYearlyUrl
+    || p.priceMonthly !== products[i]?.priceMonthly
+    || p.priceYearly !== products[i]?.priceYearly
+  ));
   let updatedAt = (await kv.get(KV_KEY))?.updatedAt;
-  if (needsPricePersist || needsCategoryPersist) {
+  if (needsPricePersist || needsCategoryPersist || needsStripePersist) {
     const data = await saveAllProducts(normalized);
     updatedAt = data.updatedAt;
   }
@@ -1287,7 +1297,7 @@ app.put('/make-server-93a20b6f/products/:id', async (c) => {
   const products = await getAllProducts();
   const updated = products.map((p: any) => {
     if (p.id !== id) return p;
-    let next: any = { ...p, ...updates };
+    let next: any = applyAllDigitalBundleStripe({ ...p, ...updates });
     if ('note' in updates) {
       next = applyProductNoteSync(next, updates.note);
     }
