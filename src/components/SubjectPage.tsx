@@ -84,7 +84,21 @@ function subjectPageSortGrade(p: { name?: string; rocnik?: string | number }): n
   return Number.isNaN(parsed) ? 99 : parsed;
 }
 
-function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number }, b: { name?: string; rocnik?: string | number }): number {
+/** Pořadí typu titulu v mřížce — interaktivní licence vždy před tištěnými sešity, Početníček až za díly. */
+function subjectPageProductSortRank(p: { name?: string; type?: string }): number {
+  if (p.type === 'online' || p.type === 'license') return 0;
+  const name = String(p.name || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  if (name.includes('pocetnicek')) return 2;
+  return 1;
+}
+
+function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number; type?: string }, b: { name?: string; rocnik?: string | number; type?: string }): number {
+  const ra = subjectPageProductSortRank(a);
+  const rb = subjectPageProductSortRank(b);
+  if (ra !== rb) return ra - rb;
   const ga = subjectPageSortGrade(a);
   const gb = subjectPageSortGrade(b);
   if (ga !== gb) return ga - gb;
