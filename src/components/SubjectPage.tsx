@@ -66,6 +66,34 @@ function subjectPageExtractRocnik(p: { name?: string; rocnik?: string | number }
   return null;
 }
 
+/** Díl z názvu (1. díl, 2. díl …). */
+function subjectPageExtractPart(p: { name?: string }): number {
+  const m = (p?.name || '').match(/(\d+)\.\s*d[ií]l/i);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/** Ročník pro řazení — preferuje „pro X. ročník“ v názvu, nepoužívá `poradi` (bývá pořadí v DB, ne ročník). */
+function subjectPageSortGrade(p: { name?: string; rocnik?: string | number }): number {
+  const name = p?.name || '';
+  const fromName =
+    name.match(/pro\s+(\d+)\.\s*ro/i)?.[1]
+    ?? name.match(/(\d+)\.\s*ro[cč]n[ií]k/i)?.[1]
+    ?? name.match(/matematika\s+(\d+)\./i)?.[1]
+    ?? subjectPageExtractRocnik(p);
+  const parsed = parseInt(String(fromName ?? ''), 10);
+  return Number.isNaN(parsed) ? 99 : parsed;
+}
+
+function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number }, b: { name?: string; rocnik?: string | number }): number {
+  const ga = subjectPageSortGrade(a);
+  const gb = subjectPageSortGrade(b);
+  if (ga !== gb) return ga - gb;
+  const pa = subjectPageExtractPart(a);
+  const pb = subjectPageExtractPart(b);
+  if (pa !== pb) return pa - pb;
+  return String(a.name || '').localeCompare(String(b.name || ''), 'cs');
+}
+
 /** Text vedle odznaků RVP/MŠMT — ročníky / stupeň (Matematika podle URL). */
 function subjectHeroRocnikLabel(
   baseSubject: string,
@@ -569,16 +597,6 @@ export function SubjectPage({
     );
   };
 
-  const sortByRocnik = (a: any, b: any) => {
-    const ra = parseInt(String(a.rocnik ?? a.poradi ?? ''), 10);
-    const rb = parseInt(String(b.rocnik ?? b.poradi ?? ''), 10);
-    if (!isNaN(ra) && !isNaN(rb)) return ra - rb;
-    const na = parseInt((a.name || '').match(/\d+/)?.[0] ?? '', 10);
-    const nb = parseInt((b.name || '').match(/\d+/)?.[0] ?? '', 10);
-    if (!isNaN(na) && !isNaN(nb)) return na - nb;
-    return 0;
-  };
-
   const matchesSubjectRocnik = (p: any) =>
     subjectRocnikFilter == null || subjectPageExtractRocnik(p) === subjectRocnikFilter;
 
@@ -586,22 +604,22 @@ export function SubjectPage({
 
   const filteredBooks = afterRocnikPool
     .filter(p => showSeriesPanels ? matchesSeries(p) : true)
-    .sort(sortByRocnik);
+    .sort(subjectPageSortByRocnik);
 
   /** Matematika 2. st.: při „Vše“ zobrazit řady jako samostatné bloky (nadpis + mřížka), ne jednu smíšenou mřížku. */
   const mathSeriesBlocks =
     showSeriesPanels && activeSeries === 'all'
       ? (() => {
           const pool = afterRocnikPool;
-          const digital = pool.filter((p: any) => p.type === 'online').sort(sortByRocnik);
+          const digital = pool.filter((p: any) => p.type === 'online').sort(subjectPageSortByRocnik);
           const offline = pool.filter((p: any) => p.type !== 'online');
           const nameLo = (p: any) => (p.name || '').toLowerCase();
           const krok = offline
             .filter((p: any) => nameLo(p).includes('krok za krokem'))
-            .sort(sortByRocnik);
+            .sort(subjectPageSortByRocnik);
           const proVsechny = offline
             .filter((p: any) => !nameLo(p).includes('krok za krokem'))
-            .sort(sortByRocnik);
+            .sort(subjectPageSortByRocnik);
           return [
             { key: 'pro-vsechny' as const, title: 'Pro v\u0161echny', books: proVsechny },
             { key: 'krok' as const, title: 'Krok za krokem', books: krok },
@@ -615,7 +633,7 @@ export function SubjectPage({
   const booksByGrade = isMultiGrade && activeSeries === 'all'
     ? gradeOrder.map(g => ({
         grade: g,
-        books: afterRocnikPool.filter(p => matchesGrade(p, g)).sort(sortByRocnik),
+        books: afterRocnikPool.filter(p => matchesGrade(p, g)).sort(subjectPageSortByRocnik),
       })).filter(g => g.books.length > 0)
     : null;
 
@@ -1173,7 +1191,7 @@ export function SubjectPage({
                 key="math-diff-yt"
                 role="dialog"
                 aria-modal="true"
-                aria-label="Video: rozd\u00edl mezi \u0159adami"
+                aria-label="Video: rozdíl mezi řadami"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
@@ -1198,7 +1216,7 @@ export function SubjectPage({
                       type="button"
                       onClick={() => setMathDiffVideoOpen(false)}
                       className="shrink-0 w-9 h-9 flex items-center justify-center rounded-xl bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer"
-                      aria-label="Zav\u0159\u00edt"
+                      aria-label="Zavřít"
                     >
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1209,7 +1227,7 @@ export function SubjectPage({
                     <iframe
                       src={`https://www.youtube.com/embed/${MATH_SERIES_DIFF_YOUTUBE_ID}?rel=0&modestbranding=1&autoplay=1`}
                       className="absolute inset-0 w-full h-full border-0"
-                      title="Rozd\u00edl mezi Pro v\u0161echny a Krok za krokem"
+                      title="Rozdíl mezi Pro všechny a Krok za krokem"
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                       allowFullScreen
                     />
