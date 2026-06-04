@@ -62,6 +62,18 @@ const GROWTH_INSIGHTS_KEY = 'growth:insights';
 /** Storage pro admin uploady obrázků (sdílený bucket). */
 const UPLOAD_BUCKET = 'make-93a20b6f-uploads';
 
+/** Google Gemini — primárně GEMINI_API_KEY; GEMINI_API_KEY_RAG je zpětně kompatibilní alias v Edge Secrets. */
+function getGeminiApiKey(): string | undefined {
+  const key = (Deno.env.get('GEMINI_API_KEY') || Deno.env.get('GEMINI_API_KEY_RAG') || '').trim();
+  return key || undefined;
+}
+
+function requireGeminiApiKey(message = 'GEMINI_API_KEY není nastaven.'): string {
+  const key = getGeminiApiKey();
+  if (!key) throw new Error(message);
+  return key;
+}
+
 /**
  * Meta + CSS pro čitelnost v dark mode na mobilu (iOS Mail, Apple Mail, část Android/Gmail).
  * Třídy dm-* přepisují inline barvy v @media (prefers-color-scheme: dark).
@@ -647,46 +659,7 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
       await saveCollection(TABS_KEY, merged);
       console.log(`[Tabs] Uloženo ${mapped.length} tabů (celkem ${merged.length} v DB).`);
 
-      // RAG embedding for imported tabs
-      let ragCount = 0;
-      try {
-        const ak = Deno.env.get('GEMINI_API_KEY_RAG');
-        if (ak) {
-          for (const tab of mapped) {
-            const tabText = [tab.subject, tab.tabText, tab.contentHeadline, tab.contentRichText].filter(Boolean).join('\n');
-            if (tabText.trim()) {
-              try {
-                const emb = await embedText(tabText);
-                await saveChunk({
-                  id: `tab_${tab.id}`,
-                  text: tabText,
-                  embedding: emb,
-                  embeddingDims: emb.length,
-                  metadata: {
-                    source: 'tab',
-                    sourceId: tab.id,
-                    subject: tab.subject || '',
-                    title: tab.contentHeadline || tab.tabText || 'Tab',
-                    chunkIndex: 0,
-                    totalChunks: 1,
-                    uploadedAt: new Date().toISOString(),
-                    tokens: Math.round(tabText.length / 4),
-                    quality: qualityScore(tabText),
-                  },
-                });
-                ragCount++;
-              } catch (embErr: any) {
-                console.log(`[Tabs RAG] Chyba embedu tab ${tab.id}: ${embErr.message}`);
-              }
-            }
-          }
-          console.log(`[Tabs RAG] Embeddováno ${ragCount}/${mapped.length} tabů.`);
-        }
-      } catch (ragErr: any) {
-        console.log(`[Tabs RAG batch error] ${ragErr.message}`);
-      }
-
-      return c.json({ success: true, count: mapped.length, total: merged.length, ragEmbedded: ragCount, sample: mapped.slice(0, 3).map((t: any) => ({ tabText: t.tabText, contentHeadline: t.contentHeadline, subject: t.subject, order: t.order })) });
+      return c.json({ success: true, count: mapped.length, total: merged.length, sample: mapped.slice(0, 3).map((t: any) => ({ tabText: t.tabText, contentHeadline: t.contentHeadline, subject: t.subject, order: t.order })) });
     } catch (e: any) {
       console.log(`[Tabs] Chyba: ${e.message}`);
       return c.json({ error: 'Import tabů selhal', details: e.message }, 500);
@@ -2044,8 +2017,8 @@ function extractFirstJsonObject(raw: string): { ok: true; value: unknown } | { o
 /* POST /admin/hero-slide-ai-draft — Gemini navrhne text slidů; neukládá do DB */
 app.post('/make-server-93a20b6f/admin/hero-slide-ai-draft', async (c) => {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven.' }, 500);
 
     const body = await c.req.json();
     const prompt = String(body.prompt || '').trim();
@@ -2452,8 +2425,8 @@ function normalizeDvppGeneratePart(raw: unknown): 'both' | 'questions' | 'learni
 /* POST /admin/webinar-generate-dvpp-quiz — 4 otázky a/nebo shrnutí „co jsme se dozvěděli“ (Gemini) */
 async function adminWebinarGenerateDvppQuizHandler(c: Context) {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven.' }, 500);
 
     const body = await c.req.json();
     const part = normalizeDvppGeneratePart(body?.part);
@@ -2775,17 +2748,6 @@ app.post('/make-server-93a20b6f/admin/tabs', async (c) => {
     if (!item.id) item.id = `tab-${Date.now()}`;
     const items = await getCollection(TABS_KEY);
     await saveCollection(TABS_KEY, [...items, item]);
-    // RAG embedding for tab content
-    try {
-      const ak = Deno.env.get('GEMINI_API_KEY_RAG');
-      if (ak) {
-        const tabText = [item.subject, item.tabText, item.contentHeadline, item.contentRichText].filter(Boolean).join('\n');
-        if (tabText.trim()) {
-          const emb = await embedText(tabText);
-          await saveChunk({ id: `tab_${item.id}`, text: tabText, embedding: emb, embeddingDims: emb.length, metadata: { source: 'tab', sourceId: item.id, subject: item.subject || '', title: item.contentHeadline || item.tabText || 'Tab', chunkIndex: 0, totalChunks: 1, uploadedAt: new Date().toISOString(), tokens: Math.round(tabText.length / 4), quality: qualityScore(tabText) } });
-        }
-      }
-    } catch (ragErr: any) { console.log('[tabs RAG embed error]', ragErr.message); }
     return c.json({ success: true, item });
   } catch (e: any) {
     return c.json({ error: `Chyba tabs POST: ${e.message}` }, 500);
@@ -2799,18 +2761,6 @@ app.put('/make-server-93a20b6f/admin/tabs/:id', async (c) => {
     const items = await getCollection(TABS_KEY);
     const updated = items.map((i: any) => i.id === id ? { ...i, ...updates } : i);
     await saveCollection(TABS_KEY, updated);
-    // Re-embed updated tab
-    try {
-      const ak = Deno.env.get('GEMINI_API_KEY_RAG');
-      if (ak) {
-        const merged = { ...items.find((i: any) => i.id === id), ...updates };
-        const tabText = [merged.subject, merged.tabText, merged.contentHeadline, merged.contentRichText].filter(Boolean).join('\n');
-        if (tabText.trim()) {
-          const emb = await embedText(tabText);
-          await saveChunk({ id: `tab_${id}`, text: tabText, embedding: emb, embeddingDims: emb.length, metadata: { source: 'tab', sourceId: id, subject: merged.subject || '', title: merged.contentHeadline || merged.tabText || 'Tab', chunkIndex: 0, totalChunks: 1, uploadedAt: new Date().toISOString(), tokens: Math.round(tabText.length / 4), quality: qualityScore(tabText) } });
-        }
-      }
-    } catch (ragErr: any) { console.log('[tabs RAG update error]', ragErr.message); }
     return c.json({ success: true });
   } catch (e: any) {
     return c.json({ error: `Chyba tabs PUT: ${e.message}` }, 500);
@@ -8859,8 +8809,8 @@ async function runTextSpecialistAgent(opts: {
   model?: string;
   useRag?: boolean;
 }) {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG není nastaven.');
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) throw new Error('GEMINI_API_KEY není nastaven.');
 
   const selectedModel = (opts.model && TEXT_SPECIALIST_MODELS.includes(opts.model)) ? opts.model : 'gemini-3.1-pro-preview';
   const lastUserMsg = [...opts.messages].reverse().find((m: any) => m.role === 'user');
@@ -9397,7 +9347,7 @@ async function generateGrowthCreativeDrafts(payload: any) {
     ? String(payload.format)
     : 'image_single';
 
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+  const apiKey = getGeminiApiKey();
   let aiRows: any[] = [];
 
   if (apiKey) {
@@ -9874,8 +9824,7 @@ const RAG_INDEX_KEY = 'rag:index';
 const RAG_TREE_KEY  = 'rag:tree';
 
 async function embedText(text: string): Promise<number[]> {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG not set');
+  const apiKey = requireGeminiApiKey('GEMINI_API_KEY not set');
 
   // gemini-embedding-001 confirmed via ListModels — 3072 dims
   const ATTEMPTS = [
@@ -9920,8 +9869,7 @@ async function embedText(text: string): Promise<number[]> {
 }
 
 async function geminiGenerate(prompt: string, model = 'gemini-3-flash-preview'): Promise<string> {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG not set');
+  const apiKey = requireGeminiApiKey('GEMINI_API_KEY not set');
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -10367,7 +10315,7 @@ app.post('/make-server-93a20b6f/rag/ingest-source-v1-disabled', async (c) => {
     console.log(`[RAG ingest] Finished: ${ingested.length} ok, ${failed.length} failed, total index=${newIdx.length}`);
 
     if (ingested.length === 0) {
-      return c.json({ error: `V\u0161echny ${limit} polo\u017eek selhaly p\u0159i embeddingu. Ov\u011b\u0159te kl\u00ed\u010d p\u0159es GET /rag/debug. Prvn\u00ed chyba pravd\u011bpodobn\u011b: zkontrolujte GEMINI_API_KEY_RAG.` }, 500);
+      return c.json({ error: `V\u0161echny ${limit} polo\u017eek selhaly p\u0159i embeddingu. Ov\u011b\u0159te kl\u00ed\u010d p\u0159es GET /rag/debug. Prvn\u00ed chyba pravd\u011bpodobn\u011b: zkontrolujte GEMINI_API_KEY.` }, 500);
     }
     return c.json({ success: true, ingested: ingested.length, failed: failed.length, total: newIdx.length });
   } catch (e: any) {
@@ -10379,7 +10327,7 @@ app.post('/make-server-93a20b6f/rag/ingest-source-v1-disabled', async (c) => {
 // GET /rag/debug [DISABLED — System 2 handles this]
 app.get('/make-server-93a20b6f/rag/debug-v1-disabled', async (c) => {
   return c.json({ error: 'Legacy RAG v1 endpoint is disabled. Use /rag/debug.' }, 410);
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+  const apiKey = getGeminiApiKey();
   const result: any = {
     geminiKeySet: !!apiKey,
     geminiKeyLength: apiKey?.length ?? 0,
@@ -14326,7 +14274,7 @@ async function ingestSource(
 
 /* GET /rag/debug */
 app.get('/make-server-93a20b6f/rag/debug', async (c) => {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+  const apiKey = getGeminiApiKey();
   const geminiKeySet    = !!apiKey;
   const geminiKeyLength = apiKey?.length ?? 0;
   const geminiKeyPrefix = apiKey ? apiKey.slice(0, 8) + '...' : '';
@@ -14406,8 +14354,8 @@ app.get('/make-server-93a20b6f/rag/debug', async (c) => {
 /* POST /rag/chunk — ingest a single text chunk */
 app.post('/make-server-93a20b6f/rag/chunk', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const { text, metadata } = await c.req.json();
     if (!text?.trim()) return c.json({ error: 'Chybi text' }, 400);
     const embedding = await embedText(text);
@@ -14522,8 +14470,8 @@ app.delete('/make-server-93a20b6f/rag/chunk/:id', async (c) => {
 /* POST /rag/ingest-source — ingest a whole data source */
 app.post('/make-server-93a20b6f/rag/ingest-source', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const { source } = await c.req.json();
     if (!['produkty', 'blog', 'novinky', 'webinare', 'tabs', 'mailchimp'].includes(source)) {
       return c.json({ error: 'Neznamy zdroj. Pouzij: produkty | blog | novinky | webinare | tabs | mailchimp' }, 400);
@@ -14541,8 +14489,8 @@ app.post('/make-server-93a20b6f/rag/ingest-source', async (c) => {
 /* POST /rag/ingest-webinar-prepis — index transcript of a single past webinar */
 app.post('/make-server-93a20b6f/rag/ingest-webinar-prepis', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const body = await c.req.json();
     const { webinarId, prepis: prepisFromBody } = body;
     if (!webinarId) return c.json({ error: 'Chybi webinarId' }, 400);
@@ -14650,8 +14598,8 @@ app.get('/make-server-93a20b6f/rag/webinar-prepis-status/:id', async (c) => {
 /* POST /rag/ingest-text — nahraje libovolný text / soubor do RAG */
 app.post('/make-server-93a20b6f/rag/ingest-text', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
 
     const { text, title, sourceTag, description, replaceExisting = false } = await c.req.json();
     if (!text?.trim())  return c.json({ error: 'Chybi text' }, 400);
@@ -14991,8 +14939,8 @@ async function executeRagQueryPipeline(question: string, topK: number): Promise<
   sources: any[];
   chunksUsed: number;
 }> {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) throw new Error('GEMINI_API_KEY_RAG neni nastaven');
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) throw new Error('GEMINI_API_KEY neni nastaven');
 
   const retrieved = await retrieveRagChunksForQuery(question, topK);
   if (!retrieved) {
@@ -15205,8 +15153,8 @@ app.post('/make-server-93a20b6f/external/rag-query', async (c) => {
 /* POST /rag/agent/run — Gemini 2.5 Pro cleaning agent */
 app.post('/make-server-93a20b6f/rag/agent/run', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
 
     const all = await loadAllChunks();
     if (!all.length) return c.json({ success: true, stats: { total: 0, deleted: 0, kept: 0 }, actions: [] });
@@ -15300,8 +15248,8 @@ Napis kratky report (3-4 vety cesky) o stavu znalostni baze.`;
  * Bez liveConnectConstraints — session config nastavuje klient (@google/genai live.connect). */
 async function handleLiveEphemeralToken(c: any) {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
 
     const { GoogleGenAI } = await import('npm:@google/genai@1.46.0');
     const client = new GoogleGenAI({
@@ -17302,8 +17250,8 @@ app.get('/make-server-93a20b6f/rag/feedback-list', async (c) => {
 /* POST /rag/learn — rychlé zaindexování faktu */
 app.post('/make-server-93a20b6f/rag/learn', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const { text, title = 'Nauceny fakt', author = 'admin' } = await c.req.json();
     if (!text?.trim()) return c.json({ error: 'Chybi text' }, 400);
     const embedding = await embedText(text.trim());
@@ -17357,7 +17305,7 @@ app.post('/make-server-93a20b6f/slack/rag', async (c) => {
     if (/^\/nau[cč][^\w]*se:/i.test(slashText.trim())) {
       const factText = slashText.replace(/^\/nau[cč][^\w]*se:/i, '').trim();
       if (!factText) return c.json({ response_type: 'ephemeral', text: '⚠️ Zadej text po `/nauč se:`' });
-      const ak2 = Deno.env.get('GEMINI_API_KEY_RAG');
+      const ak2 = getGeminiApiKey();
       if (ak2) {
         const emb2 = await embedText(factText);
         const id2 = `learn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -17369,7 +17317,7 @@ app.post('/make-server-93a20b6f/slack/rag', async (c) => {
     // RAG dotaz — async response_url
     const bgRag = async () => {
       try {
-        const ak3 = Deno.env.get('GEMINI_API_KEY_RAG');
+        const ak3 = getGeminiApiKey();
         if (!ak3 || !responseUrl) return;
         const qVec = await embedText(slashText);
         const allCh = await loadAllChunks();
@@ -17461,7 +17409,7 @@ app.post('/make-server-93a20b6f/slack/events', async (c) => {
     if (/^\/nau[cč][^\w]*se:/i.test(text)) {
       const factText = text.replace(/^\/nau[cč][^\w]*se:/i, '').trim();
       if (factText) {
-        const ak2 = Deno.env.get('GEMINI_API_KEY_RAG');
+        const ak2 = getGeminiApiKey();
         if (ak2) {
           const emb2 = await embedText(factText);
           const id2 = `learn_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -17475,8 +17423,8 @@ app.post('/make-server-93a20b6f/slack/events', async (c) => {
     // 6) RAG dotaz — zpracuj na pozadí, Slack dostane 200 okamžitě
     const bgRagEvent = async () => {
       try {
-        const ak3 = Deno.env.get('GEMINI_API_KEY_RAG');
-        if (!ak3) { console.log('[slack/events] GEMINI_API_KEY_RAG not set'); return; }
+        const ak3 = getGeminiApiKey();
+        if (!ak3) { console.log('[slack/events] GEMINI_API_KEY not set'); return; }
         console.log('[slack/events] starting RAG for:', text);
         await postMessage(`⏳ _Zpracovávám dotaz od <@${userName}>…_`);
         const qVec = await embedText(text);
@@ -17651,7 +17599,7 @@ app.get('/make-server-93a20b6f/admin/mailchimp/campaigns', async (c) => {
 app.post('/make-server-93a20b6f/admin/mailchimp/sync', async (c) => {
   try {
     const { mcBase, mcAuth } = getMailchimpAuth();
-    const ragApiKey = Deno.env.get('GEMINI_API_KEY_RAG');
+    const ragApiKey = getGeminiApiKey();
     const skipRag = ['1', 'true', 'yes'].includes((c.req.query('skipRag') || '').toLowerCase());
 
     const oneYearAgo = new Date();
@@ -17901,8 +17849,8 @@ app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
  * Volitelně: body.skipBriefPhase === true vynutí přeskočení 1. kroku. */
 app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const body = await c.req.json();
     const { prompt, conversationContext } = body;
     if (!prompt) return c.json({ error: 'Chybi prompt' }, 400);
@@ -18768,8 +18716,8 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
 /* POST /admin/mailchimp/generate-inline-cta — AI navrhne text + URL podle textu nad kurzorem */
 app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) => {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const body = await c.req.json();
     const contextText = (body.contextText || '').toString().slice(0, 6000);
     const subject = (body.subject || '').toString().slice(0, 200);
@@ -18871,8 +18819,8 @@ ODPOVEZ POUZE JSON (zadny markdown):
 /* POST /admin/mailchimp/rewrite-email-selection-plain — jen čistý text pro náhradu výběru v náhledu (bez přegenerování HTML) */
 app.post('/make-server-93a20b6f/admin/mailchimp/rewrite-email-selection-plain', async (c) => {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG neni nastaven' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY neni nastaven' }, 500);
     const body = await c.req.json();
     const instruction = String(body.instruction || '').trim();
     const selectedPlainText = String(body.selectedPlainText || '').trim();
@@ -19293,8 +19241,8 @@ NEGENERUJ samostatnou json:event událost pokud je webinář už součástí sek
 
 app.post('/make-server-93a20b6f/admin/calendar/agent', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven.' }, 500);
 
     const body = await c.req.json();
     const { messages } = body;
@@ -19475,8 +19423,8 @@ self.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
 ══════════════════════════════════════════════════════════════════ */
 app.post('/make-server-93a20b6f/generate-collage-ai', async (c) => {
   try {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven' }, 500);
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven' }, 500);
 
     const body = await c.req.json();
     const { imageUrls, styleReferenceUrls, stylePrompt, aspectRatio, previousOutputUrl, imageModel } = body as {
@@ -20014,7 +19962,7 @@ async function runAdminTool(
     await saveAllProducts(products);
     // Auto-embed do RAG — skip when agent deadline is tight (< 40s remaining)
     const deadline = (globalThis as any).__agentDeadline || Infinity;
-    const apiKeyProd = Deno.env.get('GEMINI_API_KEY_RAG');
+    const apiKeyProd = getGeminiApiKey();
     let ragEmbedded = false;
     let ragSkipped = false;
     if (apiKeyProd && (deadline - Date.now()) > 40_000) {
@@ -20077,7 +20025,7 @@ async function runAdminTool(
     await saveAllProducts([...products, newProduct]);
     // Auto-embed do RAG — skip when deadline tight
     const createDeadline = (globalThis as any).__agentDeadline || Infinity;
-    const apiKeyCreate = Deno.env.get('GEMINI_API_KEY_RAG');
+    const apiKeyCreate = getGeminiApiKey();
     let ragEmbedded = false;
     if (apiKeyCreate && (createDeadline - Date.now()) > 40_000) {
       try {
@@ -20228,8 +20176,8 @@ async function runAdminTool(
     return { result: { count: withImages.length, products: withImages.map((p: any) => ({ id: p.id, name: p.name, category: p.category || p.predmet, imageUrl: p.image || p.coverImage, coverImageUrl: p.coverImage || p.image })) } };
   }
   if (name === 'generate_blog_image') {
-    const geminiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!geminiKey) return { result: { error: 'GEMINI_API_KEY_RAG není nastaven.' } };
+    const geminiKey = getGeminiApiKey();
+    if (!geminiKey) return { result: { error: 'GEMINI_API_KEY není nastaven.' } };
 
     const MAX_INLINE = 8;
     const MAX_STYLE_REFS = 3;
@@ -20541,7 +20489,7 @@ async function runAdminTool(
     console.log(`[AdminAgent] bulk_update_prices_percentage ${args.percentage}% → ${changes.length} produktů`);
     // Auto-embed pro malé batche — skip when deadline tight
     const priceDeadline = (globalThis as any).__agentDeadline || Infinity;
-    const apiKeyPrices = Deno.env.get('GEMINI_API_KEY_RAG');
+    const apiKeyPrices = getGeminiApiKey();
     let priceRagNote = changes.length > 8 ? `${changes.length} produktů — pro RAG spusť rag_index_source` : '';
     if (apiKeyPrices && changes.length > 0 && changes.length <= 8 && (priceDeadline - Date.now()) > 30_000) {
       const existingAll = await loadAllChunks();
@@ -20897,8 +20845,8 @@ async function runAdminTool(
     }
   }
   if (name === 'rag_index_item') {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return { result: { error: 'GEMINI_API_KEY_RAG není nastaven.' } };
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return { result: { error: 'GEMINI_API_KEY není nastaven.' } };
     const src = args.source as string;
     const itemId = args.id as string;
     // Načti item ze správné kolekce
@@ -20967,8 +20915,8 @@ async function runAdminTool(
     return { result: { success: true, source: src, id: itemId, title: item.name || item.title || '', chunksIngested: ingested, oldChunksRemoved: oldChunks.length, preview }, action: { type: 'rag_index_item', source: src, title: item.name || item.title || '', chunks: ingested, preview, reviewPath: '/marketing/rag' } };
   }
   if (name === 'rag_index_source') {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return { result: { error: 'GEMINI_API_KEY_RAG není nastaven.' } };
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return { result: { error: 'GEMINI_API_KEY není nastaven.' } };
     const src = args.source as 'produkty' | 'blog' | 'novinky' | 'webinare' | 'tabs' | 'mailchimp';
     const validSources = ['produkty', 'blog', 'novinky', 'webinare', 'tabs'];
     if (!validSources.includes(src)) return { result: { error: `Neplatný zdroj. Povolené hodnoty: ${validSources.join(', ')}` } };
@@ -21018,17 +20966,6 @@ async function runAdminTool(
     };
     const allTabs = await getCollection(TABS_KEY);
     await saveCollection(TABS_KEY, [...allTabs, newTab]);
-    // RAG embed
-    try {
-      const ak = Deno.env.get('GEMINI_API_KEY_RAG');
-      if (ak) {
-        const tabText = [newTab.subject, newTab.tabText, newTab.contentHeadline, newTab.contentRichText].filter(Boolean).join('\n');
-        if (tabText.trim()) {
-          const emb = await embedText(tabText);
-          await saveChunk({ id: `tab_${newTab.id}`, text: tabText, embedding: emb, embeddingDims: emb.length, metadata: { source: 'tabs', sourceId: newTab.id, subject: newTab.subject, title: newTab.contentHeadline || newTab.tabText, chunkIndex: 0, totalChunks: 1, uploadedAt: new Date().toISOString(), tokens: Math.round(tabText.length / 4), quality: qualityScore(tabText) } });
-        }
-      }
-    } catch (ragErr: any) { console.log('[AdminAgent] create_subject_tab RAG error:', ragErr.message); }
     console.log(`[AdminAgent] create_subject_tab → ${newTab.id} subject="${newTab.subject}" tabText="${newTab.tabText}"`);
     return { result: { success: true, id: newTab.id, subject: newTab.subject, tabText: newTab.tabText }, action: { type: 'create_subject_tab', id: newTab.id, subject: newTab.subject, tabText: newTab.tabText, name: newTab.tabText, reviewPath: '/admin/kolekce/tabs' } };
   }
@@ -21041,17 +20978,6 @@ async function runAdminTool(
     if (!tab) return { result: { error: `Tab ${tabId} nenalezen` } };
     const merged = { ...tab, ...updates };
     await saveCollection(TABS_KEY, allTabs.map((t: any) => t.id === tabId ? merged : t));
-    // RAG re-embed
-    try {
-      const ak = Deno.env.get('GEMINI_API_KEY_RAG');
-      if (ak) {
-        const tabText = [merged.subject, merged.tabText, merged.contentHeadline, merged.contentRichText].filter(Boolean).join('\n');
-        if (tabText.trim()) {
-          const emb = await embedText(tabText);
-          await saveChunk({ id: `tab_${tabId}`, text: tabText, embedding: emb, embeddingDims: emb.length, metadata: { source: 'tabs', sourceId: tabId, subject: merged.subject, title: merged.contentHeadline || merged.tabText, chunkIndex: 0, totalChunks: 1, uploadedAt: new Date().toISOString(), tokens: Math.round(tabText.length / 4), quality: qualityScore(tabText) } });
-        }
-      }
-    } catch (ragErr: any) { console.log('[AdminAgent] update_subject_tab RAG error:', ragErr.message); }
     console.log(`[AdminAgent] update_subject_tab ${tabId} subject="${merged.subject}"`);
     return { result: { success: true, id: tabId }, action: { type: 'update_subject_tab', id: tabId, subject: merged.subject, tabText: merged.tabText, name: merged.tabText, reviewPath: '/admin/kolekce/tabs' } };
   }
@@ -21410,8 +21336,8 @@ function clearAdminAgentGlobals() {
 
 app.post('/make-server-93a20b6f/admin/admin-agent', async (c) => {
   try {
-    const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+    const apiKey = getGeminiApiKey();
+    if (!apiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven.' }, 500);
     const body = await c.req.json();
     const embeddedAssistant = body.embeddedAssistant === true;
     const crmAssistant = body.crmAssistant === true;
@@ -22016,8 +21942,8 @@ app.get('/make-server-93a20b6f/admin/rag-status', async (c) => {
 });
 
 app.post('/make-server-93a20b6f/admin/rag-reindex-all', async (c) => {
-  const apiKey = Deno.env.get('GEMINI_API_KEY_RAG');
-  if (!apiKey) return c.json({ error: 'GEMINI_API_KEY_RAG není nastaven.' }, 500);
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) return c.json({ error: 'GEMINI_API_KEY není nastaven.' }, 500);
   const body = await c.req.json().catch(() => ({}));
   const sources: Array<'produkty' | 'blog' | 'novinky' | 'webinare' | 'tabs'> =
     body.sources || ['blog', 'novinky', 'webinare', 'tabs'];

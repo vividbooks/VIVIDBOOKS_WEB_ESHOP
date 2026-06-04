@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { SEOHead } from './SEOHead';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { Send, Mail, ShoppingCart, Calendar, FileText, Rss, ExternalLink } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
-import { Send, Bot, User, Loader2, Sparkles, ShoppingCart, Calendar, FileText, Rss, ExternalLink, Mail } from 'lucide-react';
 import imgVitekSkop from '../assets/team/vitek-skop.png';
 import imgFrantisekCab from '../assets/team/frantisek-cab.png';
 import { CONTACT_REPRESENTATIVES } from '../data/contactRepresentatives';
@@ -248,7 +248,7 @@ function DistributorCard({ dist }: { dist: typeof DISTRIBUTORS[0] }) {
   );
 }
 
-/* ─── AI Chat ───────────────────────────────────────────────────── */
+/* ─── AI Chat (RAG přes Edge — GEMINI_API_KEY na serveru) ────────── */
 const ff = "'Fenomen Sans', sans-serif";
 
 interface ChatMessage {
@@ -264,23 +264,22 @@ const SUGGESTIONS = [
   'Jak probíhá objednávka pro školu?',
 ];
 
-// ── Source link helper for RAG responses ─────────────────────────────────
-const SOURCE_LINK_CONFIG: Record<string, { label: string; icon: any; color: string; urlFn: (id: string) => string }> = {
+const SOURCE_LINK_CONFIG: Record<string, { label: string; icon: typeof ShoppingCart; color: string; urlFn: (id: string) => string }> = {
   produkty: { label: 'Koupit / zobrazit', icon: ShoppingCart, color: '#7C3AED', urlFn: id => `/produkt/${id}` },
-  webinare: { label: 'Detail webináře',    icon: Calendar,     color: '#0ea5e9', urlFn: id => `/webinar/${id}` },
-  blog:     { label: 'Přečíst článek',     icon: FileText,     color: '#001161', urlFn: id => `/blog/${id}`    },
-  novinky:  { label: 'Číst novinku',       icon: Rss,          color: '#ff6a35', urlFn: id => `/novinky/${id}` },
+  webinare: { label: 'Detail webináře', icon: Calendar, color: '#0ea5e9', urlFn: id => `/webinar/${id}` },
+  blog: { label: 'Přečíst článek', icon: FileText, color: '#001161', urlFn: id => `/blog/${id}` },
+  novinky: { label: 'Číst novinku', icon: Rss, color: '#ff6a35', urlFn: id => `/novinky/${id}` },
 };
 
-function ChatSourceLinks({ sources }: { sources?: any[] }) {
+function ChatSourceLinks({ sources }: { sources?: ChatMessage['sources'] }) {
   if (!sources?.length) return null;
   const actions = sources
     .map(s => {
       const cfg = SOURCE_LINK_CONFIG[s.source ?? ''];
       if (!cfg || !s.sourceId) return null;
-      return { ...cfg, url: cfg.urlFn(s.sourceId), title: s.title || cfg.label, score: s.score };
+      return { ...cfg, url: cfg.urlFn(s.sourceId), title: s.title || cfg.label };
     })
-    .filter(Boolean) as Array<{ url: string; label: string; icon: any; color: string; title: string; score: number }>;
+    .filter(Boolean) as Array<{ url: string; label: string; icon: typeof ShoppingCart; color: string; title: string }>;
 
   if (!actions.length) return null;
   return (
@@ -292,7 +291,7 @@ function ChatSourceLinks({ sources }: { sources?: any[] }) {
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-white text-[11px] font-bold transition-opacity hover:opacity-80"
-          style={{ background: a.color, fontFamily: "'Fenomen Sans', sans-serif" }}
+          style={{ background: a.color, fontFamily: ff }}
         >
           <a.icon className="w-3 h-3" />
           {a.title}
@@ -303,10 +302,9 @@ function ChatSourceLinks({ sources }: { sources?: any[] }) {
   );
 }
 
-// Avatary členů týmu — zobrazujeme střídavě
 const TEAM_AVATARS = [
   { name: 'Gabriela', photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/68499506e61fe43631528e42_gabriela-vividbooks.avif' },
-  { name: 'Iveta',    photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0f591597464fe410a0_obchodni-zastupce-vividbooks-iveta-fiserova.webp' },
+  { name: 'Iveta', photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0f591597464fe410a0_obchodni-zastupce-vividbooks-iveta-fiserova.webp' },
 ];
 
 function TeamAvatar({ idx = 0 }: { idx?: number }) {
@@ -351,9 +349,19 @@ function AiChat() {
       if (!res.ok) throw new Error(data.error ?? 'Chyba serveru');
       setAvatarIdx(prev => (prev + 1) % TEAM_AVATARS.length);
       setMessages(prev => [...prev, { role: 'assistant', text: data.answer, sources: data.sources }]);
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Chyba serveru';
       console.error('[AiChat] error:', e);
-      setMessages(prev => [...prev, { role: 'assistant', text: 'Omlouváme se, teď nevíme. Napište nám na hello@vividbooks.com nebo zavolejte na +420 602 227 674.' }]);
+      setMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: 'Omlouváme se, teď nevíme. Napište nám na hello@vividbooks.com nebo zavolejte na +420 602 227 674.',
+        },
+      ]);
+      if (msg.includes('GEMINI_API_KEY')) {
+        console.warn('[AiChat] Nastavte Supabase Edge Secret GEMINI_API_KEY (nebo legacy GEMINI_API_KEY_RAG).');
+      }
     } finally {
       setLoading(false);
       setTimeout(() => inputRef.current?.focus(), 50);
@@ -367,10 +375,7 @@ function AiChat() {
 
   return (
     <div className="bg-white rounded-[24px] overflow-hidden" style={{ boxShadow: '0 4px 32px rgba(0,17,97,0.10)', border: '1px solid rgba(0,17,97,0.07)' }}>
-
-      {/* Header — vypadá jako messenger záhlaví */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-[#001161]/7 bg-white">
-        {/* Skupinový avatar — vrstvené fotky */}
         <div className="relative w-11 h-8 flex-shrink-0">
           <div className="absolute left-0 top-0 w-8 h-8 rounded-full overflow-hidden border-2 border-white" style={{ boxShadow: '0 1px 4px rgba(0,17,97,0.15)' }}>
             <img src={TEAM_AVATARS[0].photo} alt="Gabriela" className="w-full h-full object-cover object-top" />
@@ -379,7 +384,6 @@ function AiChat() {
             <img src={TEAM_AVATARS[1].photo} alt="Iveta" className="w-full h-full object-cover object-top" />
           </div>
         </div>
-
         <div className="ml-2">
           <p className="text-[#001161] text-[15px] font-bold leading-tight" style={{ fontFamily: ff }}>
             {'Tým Vividbooks'}
@@ -393,10 +397,7 @@ function AiChat() {
         </div>
       </div>
 
-      {/* Messages */}
       <div ref={scrollContainerRef} className="min-h-[260px] max-h-[400px] overflow-y-auto px-5 py-5 flex flex-col gap-3 bg-[#F7F8FC]">
-
-        {/* Uvítací zpráva od týmu */}
         <div className="flex gap-2.5 items-end">
           <TeamAvatar idx={0} />
           <div className="flex flex-col gap-1 max-w-[75%]">
@@ -412,6 +413,7 @@ function AiChat() {
             {SUGGESTIONS.map(s => (
               <button
                 key={s}
+                type="button"
                 onClick={() => ask(s)}
                 className="px-3.5 py-1.5 bg-white border border-[#001161]/12 rounded-full text-[13px] text-[#001161]/65 hover:border-[#4B48CC] hover:text-[#4B48CC] transition-colors cursor-pointer"
                 style={{ fontFamily: ff, boxShadow: '0 1px 3px rgba(0,17,97,0.06)' }}
@@ -460,7 +462,6 @@ function AiChat() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
       <form
         onSubmit={handleSubmit}
         className="flex items-center gap-3 px-4 py-3 border-t border-[#001161]/7 bg-white"
@@ -469,7 +470,7 @@ function AiChat() {
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder={'Napi\u0161te zprávu\u2026'}
+          placeholder={'Napište zprávu…'}
           disabled={loading}
           className="flex-1 bg-[#F7F8FC] rounded-full px-4 py-2.5 text-[14px] text-[#001161] placeholder:text-[#001161]/30 border border-[#001161]/8 focus:border-[#4B48CC] focus:outline-none transition-colors disabled:opacity-50"
           style={{ fontFamily: ff }}
@@ -521,7 +522,6 @@ export function ContactPage() {
           </h1>
         </div>
 
-        {/* Štítek "Jsme online" těsně nad chatem */}
         <div className="flex items-center gap-2 mb-2 px-1">
           <span className="w-2 h-2 rounded-full bg-[#4ade80] flex-shrink-0" />
           <span

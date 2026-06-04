@@ -257,7 +257,6 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/ReferenceStylesSettingsPage')),
         },
         { path: 'image-agent', lazy: lazyDefault(() => import('./components/admin/ImageAgentPage')) },
-        { path: 'rag', lazy: lazyDefault(() => import('./components/admin/RagPage')) },
       ],
     },
     {

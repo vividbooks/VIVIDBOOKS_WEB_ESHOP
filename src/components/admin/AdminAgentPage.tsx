@@ -101,13 +101,6 @@ interface Action {
   tabText?: string;
 }
 
-interface RagStatus {
-  totalChunks: number;
-  bySource: Record<string, number>;
-  lastUpdated: Record<string, string>;
-  lastFullReindex: string | null;
-}
-
 async function writeTextToClipboard(text: string): Promise<void> {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(text);
@@ -320,7 +313,6 @@ const SUGGESTIONS = [
   { label: '🔎 Připrav SEO brief pro landing page matematiky', icon: Brain },
   { label: '🖼️ Předej image specialistovi cover vizuál pro blog o fyzice', icon: Wand2 },
   { label: '📧 Napiš email kampaň pro nové produkty', icon: Mail },
-  { label: '🧠 Co je v RAGu a co chybí?', icon: Brain },
 ];
 
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`; }
@@ -1149,201 +1141,6 @@ function ChatImage({ src, className = '' }: { src: string; className?: string })
   );
 }
 
-/* ══════════════════════════════════════════════════
-   RAG STATUS PANEL
-   ══════════════════════════════════════════════════ */
-function RagStatusPanel({ onSendPrompt }: { onSendPrompt: (t: string) => void }) {
-  const [status, setStatus] = useState<RagStatus | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [reindexing, setReindexing] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [reindexLog, setReindexLog] = useState<string | null>(null);
-
-  const loadStatus = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${SERVER}/admin/rag-status`, { headers: AUTH });
-      if (res.ok) setStatus(await res.json());
-    } catch {}
-    setLoading(false);
-  };
-
-  useEffect(() => { loadStatus(); }, []);
-
-  const runReindex = async (sources?: string[]) => {
-    setReindexing(true);
-    setReindexLog(null);
-    try {
-      const res = await fetch(`${SERVER}/admin/rag-reindex-all`, {
-        method: 'POST', headers: AUTH,
-        body: JSON.stringify({ sources: sources || ['blog', 'novinky', 'webinare', 'tabs'] }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      const summary = Object.entries(data.sources || {})
-        .map(([k, v]: any) => `${SOURCE_LABELS[k] || k}: ${v.ok ? `${v.ingested}✓` : `✗ ${v.error}`}`)
-        .join(' · ');
-      setReindexLog(summary);
-      toast.success('Reindex dokončen', { description: summary });
-      await loadStatus();
-    } catch (e: any) {
-      toast.error('Reindex selhal', { description: e.message });
-    }
-    setReindexing(false);
-  };
-
-  const fmtDate = (iso: string | null) => {
-    if (!iso) return 'nikdy';
-    const d = new Date(iso);
-    const now = new Date();
-    const diffH = Math.round((now.getTime() - d.getTime()) / 3600000);
-    if (diffH < 1) return 'před chvílí';
-    if (diffH < 24) return `před ${diffH} h`;
-    return d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'short' });
-  };
-
-  const totalMissing = status
-    ? ['produkty', 'blog', 'novinky', 'webinare'].filter(s => !(status.bySource[s] > 0)).length
-    : 0;
-
-  return (
-    <div className="border-t border-gray-100">
-      {/* Header — always visible */}
-      <button
-        onClick={() => setExpanded(v => !v)}
-        className="w-full flex items-center gap-2 px-4 py-2.5 hover:bg-gray-50 transition-colors cursor-pointer"
-      >
-        <div className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 ${totalMissing > 0 ? 'bg-amber-100' : 'bg-cyan-100'}`}>
-          <Brain className={`w-3 h-3 ${totalMissing > 0 ? 'text-amber-600' : 'text-cyan-600'}`} />
-        </div>
-        <div className="flex-1 text-left min-w-0">
-          <p style={FF} className="text-[12px] font-bold text-[#001161] leading-none">RAG Index</p>
-          {status ? (
-            <p style={FF} className="text-[10px] text-[#001161]/40 leading-none mt-0.5">
-              {status.totalChunks} chunků · {fmtDate(status.lastFullReindex)}
-            </p>
-          ) : (
-            <p style={FF} className="text-[10px] text-[#001161]/30 leading-none mt-0.5">načítám…</p>
-          )}
-        </div>
-        {totalMissing > 0 && (
-          <span className="shrink-0 w-4 h-4 rounded-full bg-amber-500 text-white text-[9px] font-bold flex items-center justify-center" style={FF}>
-            {totalMissing}
-          </span>
-        )}
-        {expanded
-          ? <ChevronUp className="w-3.5 h-3.5 text-[#001161]/30 shrink-0" />
-          : <ChevronDown className="w-3.5 h-3.5 text-[#001161]/30 shrink-0" />
-        }
-      </button>
-
-      {/* Expanded panel */}
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden"
-          >
-            <div className="px-3 pb-3 flex flex-col gap-2">
-              {/* Per-source bars */}
-              {status ? (
-                <div className="flex flex-col gap-1.5">
-                  {SOURCE_ORDER.filter(s => s !== 'mailchimp').map(src => {
-                    const count = status.bySource[src] || 0;
-                    const hasData = count > 0;
-                    const lastUpd = status.lastUpdated[src];
-                    return (
-                      <div key={src} className="flex items-center gap-2">
-                        <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${hasData ? 'bg-cyan-500' : 'bg-amber-400'}`} />
-                        <span style={FF} className="text-[11px] text-[#001161]/60 w-16 shrink-0">{SOURCE_LABELS[src]}</span>
-                        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all ${hasData ? 'bg-cyan-400' : 'bg-amber-300'}`}
-                            style={{ width: `${Math.min(100, (count / Math.max(1, status.totalChunks)) * 100 * SOURCE_ORDER.length)}%` }}
-                          />
-                        </div>
-                        <span style={FF} className={`text-[10px] w-7 text-right shrink-0 font-bold ${hasData ? 'text-cyan-700' : 'text-amber-600'}`}>{count}</span>
-                        {lastUpd && (
-                          <span style={FF} className="text-[9px] text-[#001161]/25 shrink-0 hidden xl:block">{fmtDate(lastUpd)}</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 py-1">
-                  <Loader2 className="w-3 h-3 animate-spin text-[#001161]/30" />
-                  <span style={FF} className="text-[11px] text-[#001161]/40">Načítám statistiky…</span>
-                </div>
-              )}
-
-              {/* Reindex log */}
-              {reindexLog && (
-                <div className="bg-cyan-50 border border-cyan-200 rounded-lg px-2.5 py-1.5">
-                  <p style={FF} className="text-[10px] text-cyan-700 leading-snug">{reindexLog}</p>
-                </div>
-              )}
-
-              {/* Missing sources warning */}
-              {status && totalMissing > 0 && (
-                <div className="flex items-start gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                  <AlertCircle className="w-3 h-3 text-amber-600 mt-0.5 shrink-0" />
-                  <p style={FF} className="text-[10px] text-amber-700 leading-snug">
-                    {['produkty', 'blog', 'novinky', 'webinare'].filter(s => !(status.bySource[s] > 0)).map(s => SOURCE_LABELS[s]).join(', ')} bez chunků
-                  </p>
-                </div>
-              )}
-
-              {/* Action buttons */}
-              <div className="flex flex-col gap-1">
-                <button
-                  onClick={() => runReindex()}
-                  disabled={reindexing}
-                  className="flex items-center justify-center gap-1.5 w-full px-2.5 py-1.5 bg-cyan-600 hover:bg-cyan-700 disabled:bg-gray-200 text-white rounded-lg text-[11px] font-bold transition-colors cursor-pointer"
-                  style={FF}
-                >
-                  {reindexing
-                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Indexuji…</>
-                    : <><RefreshCw className="w-3 h-3" /> Přeindexovat vše</>
-                  }
-                </button>
-                <div className="grid grid-cols-2 gap-1">
-                  <button
-                    onClick={() => runReindex(['produkty'])}
-                    disabled={reindexing}
-                    className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 disabled:opacity-50 text-[#001161]/70 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                    style={FF}
-                  >
-                    <Package className="w-2.5 h-2.5" /> Produkty
-                  </button>
-                  <button
-                    onClick={() => onSendPrompt('rag_get_stats — zobraz mi aktuální stav RAG indexu')}
-                    disabled={reindexing}
-                    className="flex items-center justify-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-[#001161]/70 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                    style={FF}
-                  >
-                    <Activity className="w-2.5 h-2.5" /> Detail
-                  </button>
-                </div>
-                <button
-                  onClick={loadStatus}
-                  disabled={loading}
-                  className="flex items-center justify-center gap-1 w-full px-2 py-1 text-[#001161]/40 hover:text-[#001161]/60 text-[10px] transition-colors cursor-pointer"
-                  style={FF}
-                >
-                  <RefreshCw className={`w-2.5 h-2.5 ${loading ? 'animate-spin' : ''}`} /> Obnovit statistiky
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 /** Historie Web operátora — stejný vzor jako AgentTab (asistent) */
 function WebOperatorHistoryPanel({
   chatIndex,
@@ -1719,7 +1516,7 @@ export function AdminAgentPage({
           id: genId(),
           role: 'assistant',
           content:
-            'Ahoj! Jsem váš **Web operátor** pro Vividbooks.\n\n📋 **Moje role**:\n• Číst a zapisovat produkty, předměty, blog, novinky, webináře a další obsah v CMS\n• Spravovat publikaci, notifikace, taby předmětů a RAG indexaci\n• **Delegovat** texty marketing specialistovi, SEO briefy SEO specialistovi a vizuály image specialistovi\n\nZkus: *„Uprav hero text u Matematiky 2"* nebo *„Uprav cenu u písanek o 10 %"*.\n\nCo pro vás mohu udělat? 👇',
+            'Ahoj! Jsem váš **Web operátor** pro Vividbooks.\n\n📋 **Moje role**:\n• Číst a zapisovat produkty, předměty, blog, novinky, webináře a další obsah v CMS\n• Spravovat publikaci, notifikace a taby předmětů\n• **Delegovat** texty marketing specialistovi, SEO briefy SEO specialistovi a vizuály image specialistovi\n\nZkus: *„Uprav hero text u Matematiky 2"* nebo *„Uprav cenu u písanek o 10 %"*.\n\nCo pro vás mohu udělat? 👇',
           ts: Date.now(),
         },
       ];

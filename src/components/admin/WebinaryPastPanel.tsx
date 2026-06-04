@@ -53,8 +53,6 @@ const MONTH_NAMES = [
   'Červenec','Srpen','Září','Říjen','Listopad','Prosinec',
 ];
 
-type RagStatus = { count: number; loading: boolean; lastIndexed?: string };
-
 type PastPanelTab = 'uprava' | 'dotaznik';
 
 type DotaznikSubTab = 'clanek' | 'dotaznik' | 'vysledky' | 'poslat';
@@ -256,8 +254,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
   const upd = (patch: Partial<FormState>) => setForm(f => ({ ...f, ...patch }));
 
   const [saving, setSaving]       = useState(false);
-  const [ragStatus, setRagStatus] = useState<Record<string, RagStatus>>({});
-  const [indexing, setIndexing]   = useState<string | null>(null);
   const [pastPanelTab, setPastPanelTab] = useState<PastPanelTab>('uprava');
   const [dotaznikSubTab, setDotaznikSubTab] = useState<DotaznikSubTab>('dotaznik');
   const [generatingDvppQuestions, setGeneratingDvppQuestions] = useState(false);
@@ -659,17 +655,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     };
   }, [selected?.id, isNew, mailchimpTagOverride]);
 
-  const loadRagStatus = useCallback(async (webinarId: string) => {
-    setRagStatus(prev => ({ ...prev, [webinarId]: { ...prev[webinarId], loading: true, count: prev[webinarId]?.count ?? 0 } }));
-    try {
-      const res  = await fetch(`${SERVER}/rag/webinar-prepis-status/${webinarId}`, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
-      const data = await res.json();
-      setRagStatus(prev => ({ ...prev, [webinarId]: { count: data.count ?? 0, loading: false } }));
-    } catch {
-      setRagStatus(prev => ({ ...prev, [webinarId]: { count: 0, loading: false } }));
-    }
-  }, []);
-
   function handleSelect(item: any) {
     setIsNew(false);
     setSelected(item);
@@ -677,7 +662,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     const dvpp = matchDvppVideo(item, dvppVideos);
     setMatchedDvpp(dvpp);
     setForm(itemToForm(item, dvpp));
-    loadRagStatus(item.id);
   }
 
   function handleNewRecord() {
@@ -980,7 +964,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         setIsNew(false);
         setSelected(newWebinar);
         setForm(itemToForm(newWebinar, null));
-        if (newWebinar.id) loadRagStatus(newWebinar.id);
       } else {
         const res = await fetch(`${SERVER}/admin/webinare/${selected.id}`, {
           method: 'PUT',
@@ -1011,43 +994,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     finally { setSaving(false); }
   }
 
-  async function handleIndexRag() {
-    const webinarId = selected?.id;
-    if (!webinarId) return;
-    if (!form.prepis.trim()) {
-      toast.error('Nejdříve vyplň přepis výše.');
-      return;
-    }
-    setIndexing(webinarId);
-    try {
-      // Send prepis directly in body — server will use it even if not saved yet
-      const res = await fetch(`${SERVER}/rag/ingest-webinar-prepis`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({ webinarId, prepis: form.prepis }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      const n = data.ingested ?? 0;
-      if (n === 0) {
-        toast.warning('Indexace skončila s 0 chunky — zkontroluj přepis (délka, jen mezery?) nebo log edge funkce (embedding / DB).');
-      } else {
-        toast.success(`RAG: ${n} chunků indexováno`);
-      }
-      const { past } = await loadList();
-      const fresh = past.find((w: any) => w.id === webinarId);
-      if (fresh && typeof fresh.prepis === 'string' && fresh.prepis.length > 0) {
-        setForm((f) => ({ ...f, prepis: fresh.prepis }));
-      }
-      await loadRagStatus(webinarId);
-      setRagStatus(prev => ({
-        ...prev,
-        [webinarId]: { ...(prev[webinarId] || { count: 0, loading: false }), lastIndexed: new Date().toLocaleTimeString('cs-CZ') },
-      }));
-    } catch (e: any) { toast.error(`RAG chyba: ${e.message}`); }
-    finally { setIndexing(null); }
-  }
-
   const searchTrim = search.trim();
   const q = searchTrim.toLowerCase();
   const filtered = items.filter((w) => {
@@ -1066,8 +1012,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       };
     });
   };
-  const status   = selected ? ragStatus[selected.id] : null;
-
   const kvAndMailchimpBlocks =
     !isNew && selected?.id ? (
       <>
@@ -1485,7 +1429,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
               item.certificateLinkMode === 'survey' || dvpp?.certificateLinkMode === 'survey'
             );
             const hasPrepis = !!item.prepis;
-            const st        = ragStatus[item.id];
             return (
               <button key={item.id} onClick={() => handleSelect(item)}
                 className={`w-full text-left px-3 py-3 border-b border-gray-50 flex items-start gap-2.5 transition-all ${isSel ? 'bg-[#001161]' : 'hover:bg-gray-50'}`}>
@@ -1522,11 +1465,6 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     {hasPrepis && (
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${isSel ? 'bg-purple-800 text-purple-200' : 'bg-purple-50 text-purple-500'}`}>
                         <FileText className="w-2 h-2" /> {'Přepis'}
-                      </span>
-                    )}
-                    {st && st.count > 0 && (
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 ${isSel ? 'bg-amber-800 text-amber-200' : 'bg-amber-50 text-amber-600'}`}>
-                        <Brain className="w-2 h-2" /> RAG {st.count}
                       </span>
                     )}
                   </div>
@@ -1969,7 +1907,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                   </div>
                   <div>
                     <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">{'Přepis webináře'}</h3>
-                    <p className="text-[11px] text-gray-400 mt-0.5">{'Textový přepis — pro RAG indexaci'}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">{'Textový přepis webináře'}</p>
                   </div>
                 </div>
                 {form.prepis && (
@@ -1993,87 +1931,11 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                 style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
               />
               {form.prepis && (
-                <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 flex items-center justify-between text-[11px] text-gray-400">
-                  <span>{'~'}{Math.ceil(form.prepis.length / 1600)}{' chunků po indexaci'}</span>
-                  <span>gemini-embedding-001 · 3072 dim.</span>
+                <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 text-[11px] text-gray-400">
+                  <span>{form.prepis.length.toLocaleString('cs-CZ')}{' znaků'}</span>
                 </div>
               )}
             </div>
-
-            {/* ── RAG INDEXACE ── */}
-            {!isNew && selected && (
-              <div className="bg-white rounded-2xl border border-gray-200 p-5">
-                <div className="flex items-center gap-2.5 mb-4">
-                  <div className="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center">
-                    <Brain className="w-4 h-4 text-amber-500" />
-                  </div>
-                  <div>
-                    <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">RAG Indexace</h3>
-                    <p className="text-[11px] text-gray-400 mt-0.5">{'Přepis se embeduje do znalostní báze'}</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3 mb-4">
-                  {[
-                    { label: 'Chunků v RAG',       val: status?.loading ? null : (status?.count ?? 0) },
-                    { label: 'Chunků po indexaci',  val: form.prepis ? Math.ceil(form.prepis.length / 1600) : 0 },
-                    { label: 'Znaků přepisu',       val: form.prepis ? form.prepis.length.toLocaleString('cs-CZ') : '—' },
-                  ].map(s => (
-                    <div key={s.label} className="bg-gray-50 rounded-xl p-3 text-center">
-                      <div className="text-[18px] font-bold text-[#001161]" style={{ fontFamily: "'Cooper Light', serif" }}>
-                        {s.val === null ? <Loader2 className="w-4 h-4 animate-spin mx-auto text-gray-400" /> : s.val}
-                      </div>
-                      <div className="text-[10px] text-gray-400 mt-0.5">{s.label}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {status && status.count > 0 && (
-                  <div className="flex items-center gap-2 px-3 py-2.5 bg-emerald-50 border border-emerald-200 rounded-xl mb-4">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <span className="text-[12px] text-emerald-700 font-bold">
-                      {`Indexováno — ${status.count} chunků v RAG`}
-                      {status.lastIndexed && ` · naposledy ${status.lastIndexed}`}
-                    </span>
-                  </div>
-                )}
-
-                {!form.prepis && (
-                  <div className="flex items-center gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl mb-4">
-                    <Info className="w-4 h-4 text-amber-500 shrink-0" />
-                    <span className="text-[12px] text-amber-700">{'Nejdříve vyplň přepis výše. Po indexaci se uloží do záznamu webináře.'}</span>
-                  </div>
-                )}
-
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 border-2 border-[#7C3AED] bg-white text-[#7C3AED] hover:bg-purple-50 disabled:opacity-40 rounded-xl text-[14px] font-bold transition-colors"
-                  >
-                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                    {saving ? 'Ukládám…' : 'Uložit'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleIndexRag}
-                    disabled={!form.prepis.trim() || !!indexing}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl text-[14px] font-bold transition-colors"
-                  >
-                    {indexing === selected?.id
-                      ? <><Loader2 className="w-4 h-4 animate-spin" />{'Indexuji přepis do RAG…'}</>
-                      : <><Brain className="w-4 h-4" />{'Indexovat přepis do RAG'}</>
-                    }
-                  </button>
-                </div>
-
-                <p className="mt-3 text-[11px] text-gray-400 text-center leading-relaxed">
-                  {'„Uložit“ zapíše přepis do záznamu webináře. „Indexovat“ navíc uloží embeddingy do RAG ('}
-                  <code className="text-[10px] bg-gray-100 px-1 rounded">rag_chunks</code>
-                  {').'}
-                </p>
-              </div>
-            )}
             </>
             )}
 
@@ -2564,7 +2426,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
               <Clock className="w-10 h-10 text-gray-300" />
             </div>
             <p className="text-[15px] font-semibold text-gray-500">{'Vyberte minulý webinář'}</p>
-            <p className="text-[12px] text-gray-400 mt-1 mb-5">{'Přidejte záznam, certifikát a přepis pro RAG indexaci'}</p>
+            <p className="text-[12px] text-gray-400 mt-1 mb-5">{'Přidejte záznam, certifikát a přepis'}</p>
             <button onClick={handleNewRecord}
               className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-purple-700 text-white px-5 py-2.5 rounded-xl text-[13px] font-bold transition-colors">
               <Plus className="w-4 h-4" />

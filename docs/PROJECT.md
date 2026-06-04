@@ -65,7 +65,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `SUPABASE_SERVICE_ROLE_KEY` | Service role — privilegované operace. |
 | `DATABASE_URL` / `SUPABASE_DB_URL` | Přímý Postgres (mnoho worker funkcí). |
 | `PUBLIC_SITE_URL` | Odkazy v e‑mailech, sitemapě, `robots.txt`, AI CTA a webinářových odpovědích. Alternativně `SITE_URL` v části e‑mail kódu. |
-| `GEMINI_API_KEY_RAG` | Google Gemini v Edge (RAG, agent, kampaně, …). |
+| `GEMINI_API_KEY` | Google Gemini v Edge (RAG, admin AI, e-maily, obrázky, agenti). Volitelný alias `GEMINI_API_KEY_RAG` (stejný klíč). |
 
 ---
 
@@ -109,7 +109,7 @@ Pokud necháváte právní/GDPR stránku dál na `www.vividbooks.cz`, ponechte `
 | `ASSISTANT_ALLOWED_EMAILS` | Povolené účty. |
 | `GOOGLE_MAPS_API_KEY` | Mapy (kde je route používá). |
 | `FIRECRAWL_API_KEY` | Nástroje vyžadující Firecrawl. |
-| `GEMINI_API_KEY` | Fallback vedle `GEMINI_API_KEY_RAG`. |
+| `GEMINI_API_KEY_RAG` | Zpětně kompatibilní alias pro `GEMINI_API_KEY` (asistent `make-server-954b19ad`). |
 
 Asistent / scrape synchronizace blogu a webinářů nově bere veřejný host z `PUBLIC_SITE_URL`, takže při migraci domény už nemusí být `www.vividbooks.com` natvrdo v kódu.
 

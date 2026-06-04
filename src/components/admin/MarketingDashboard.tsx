@@ -151,20 +151,6 @@ export default function MarketingDashboard() {
           </div>
         </button>
 
-        <button
-          onClick={() => navigate('/marketing/rag')}
-          className="bg-gradient-to-br from-amber-50 to-amber-100 rounded-2xl p-6 border border-amber-200 text-left hover:shadow-md transition-all flex items-start gap-4"
-        >
-          <div className="w-10 h-10 bg-amber-200 rounded-xl flex items-center justify-center shrink-0">
-            <Brain className="w-5 h-5 text-amber-700" />
-          </div>
-          <div>
-            <h3 className="font-bold text-amber-800 text-[14px]">{'RAG Znalosti'}</h3>
-            <p className="text-[12px] text-amber-600 mt-0.5">
-              {'Vektorov\u00e1 datab\u00e1ze firemn\u00edch znalost\u00ed pro AI agenta'}
-            </p>
-          </div>
-        </button>
       </div>
 
       <div className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
