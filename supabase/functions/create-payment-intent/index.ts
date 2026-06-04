@@ -329,6 +329,19 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
+  /** Školy / B2B (IČO vyplněno) nesmí platit kartou. Platba kartou by spustila okamžitý dispatch
+   *  do Base.com přes stripe-webhook, kdežto u školy chceme deal v Pipedrivu (otevřený), který
+   *  obchodník po fakturaci převede na won → pipedrive-inbound-deal pak naloží do Base.com s
+   *  platbou převodem. Frontend tuto volbu pro IČO zákazníky neukazuje, ale serverová kontrola
+   *  blokuje obejití (přímý POST). Klient má v takovém případě zavolat submit-transfer-order. */
+  const customerIco = String((customer as CheckoutCustomer).ico || '').trim().replace(/\s/g, '');
+  if (customerIco.length > 0) {
+    return jsonResponse(req, {
+      error: 'Pro objednávky s IČO použijte platbu převodem (na fakturu). Vyberte v kroku Platba možnost „Na fakturu (převodem)".',
+      requiresTransferPayment: true,
+    }, 400);
+  }
+
   const normalizedCustomerPhone = normalizeCzechPhone((customer as CheckoutCustomer).phone);
   if (!normalizedCustomerPhone) {
     return jsonResponse(req, { error: PHONE_CZ_HINT }, 400);

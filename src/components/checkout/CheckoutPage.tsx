@@ -585,11 +585,19 @@ export function CheckoutPage() {
 
   /** Škola má fakturační flow jako primární — `transfer` (= „Na fakturu (převodem)") posuneme na začátek
    *  seznamu, ať ho vidí jako první. Pro jednotlivce (nebo školu bez IČO) zůstává pořadí Apple Pay / Google Pay
-   *  / karta / převod (pokud je dostupný). */
+   *  / karta / převod (pokud je dostupný).
+   *
+   *  **B2B s IČO = pouze převod.** Kartové platby by spustily okamžitý dispatch do Base.com přes
+   *  stripe-webhook, kdežto u školy chceme deal v Pipedrivu, který obchodník po fakturaci převede
+   *  na won → pipedrive-inbound-deal naloží do Base.com s platbou převodem. Proto jakmile je IČO
+   *  vyplněno, kartu / Apple Pay / Google Pay v UI nezobrazujeme. */
   const paymentOptionsVisible = useMemo(
     () => {
       const visible = PAYMENT_OPTIONS.filter((o) => {
         if (o.id === 'transfer') return hasTransferIco;
+        if (hasTransferIco && (o.id === 'card' || o.id === 'apple_pay' || o.id === 'google_pay')) {
+          return false;
+        }
         if (isDesktopPaymentView && (o.id === 'apple_pay' || o.id === 'google_pay')) return false;
         return true;
       });
@@ -603,10 +611,6 @@ export function CheckoutPage() {
     },
     [hasTransferIco, customerType, isDesktopPaymentView],
   );
-
-  /** Ručně zvolená platba uživatelem — když je `true`, auto-default ji už nepřepíše.
-   *  Resume flow (`?resume=…`) ji shora forsuje na `card`, to ale není uživatelská volba, tak ref nesahá. */
-  const paymentMethodUserChangedRef = useRef(false);
 
   useEffect(() => {
     if (resumeFlowActive && paymentMethod !== 'card') {
@@ -627,14 +631,17 @@ export function CheckoutPage() {
   }, [isDesktopPaymentView, paymentMethod]);
 
   useEffect(() => {
-    /** Škola + vyplněné IČO → default = převod (NA FAKTURU), pokud uživatel nezvolil jinak.
-     *  Spouští se při přepnutí customerType na 'school' i po vyplnění IČO v kroku 2. */
-    if (paymentMethodUserChangedRef.current) return;
+    /** B2B s IČO = vždy převod (na fakturu). Karta / Apple Pay / Google Pay by spustily okamžitou
+     *  úhradu přes Stripe a tím i automatické odeslání do Base.com. Pro školy chceme: deal v
+     *  Pipedrivu → po fakturaci won → pipedrive-inbound-deal naloží Base.com s platbou převodem.
+     *  Forsujeme bez ohledu na předchozí uživatelskou volbu — backend kartu pro IČO navíc odmítá
+     *  (defensive). Resume flow vynecháváme: ten dokončuje existující kartovou objednávku, kde
+     *  Stripe PI už je vytvořený (řeší se historické případy před touto změnou). */
     if (resumeFlowActive) return;
-    if (customerType === 'school' && hasTransferIco && paymentMethod !== 'transfer') {
+    if (hasTransferIco && paymentMethod !== 'transfer') {
       setPaymentMethod('transfer');
     }
-  }, [customerType, hasTransferIco, resumeFlowActive, paymentMethod]);
+  }, [hasTransferIco, paymentMethod, resumeFlowActive]);
 
   /** Krok 2: vždy povolit klik — platnost řeší `validateCustomerStep()` (jinak by byl „Pokračovat“ disabled a uživatel neviděl chyby u polí). */
   const canGoForward = (
@@ -1984,7 +1991,6 @@ export function CheckoutPage() {
                 options={paymentOptionsVisible}
                 selectedId={paymentMethod}
                 onSelect={(id) => {
-                  paymentMethodUserChangedRef.current = true;
                   setPaymentMethod(id as PaymentMethodOption);
                 }}
               >
