@@ -18,6 +18,7 @@ type OrderListRow = {
   items_summary: string | null;
   poster_fulfillment_status: string | null;
   source: string;
+  payment_method: string | null;
 };
 
 type OrderDetailRow = {
@@ -952,6 +953,7 @@ Deno.serve(async (req) => {
           o.shipping_method,
           o.tracking_number,
           o.poster_fulfillment_status,
+          o.payment_method,
           ${sourceProjection} as source,
           string_agg((oi.quantity::text || '× ' || oi.product_name), ', ' order by oi.id) as items_summary
         from public.orders o
@@ -977,6 +979,7 @@ Deno.serve(async (req) => {
           o.shipping_method,
           o.tracking_number,
           o.poster_fulfillment_status,
+          o.payment_method,
           pdi.order_id
           ${hasSourceColumn ? sql`, o.source` : sql``}
         order by o.created_at desc
