@@ -21,6 +21,7 @@ import {
   COOPER_ACCESS_INTRO_MUTED_STYLE,
 } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
+import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { SubjectWebinarsSlider } from './SubjectWebinarsSlider';
 import { SubjectMethodPrinciplesSection } from './SubjectMethodPrinciplesSection';
@@ -1068,6 +1069,7 @@ export function SubjectPage({
           displayName={cfg.displayName}
           light={true}
           ecosystemHeading={true}
+          tabOverrides={getMatematika2TabOverrides(subject)}
         />
       )}
 
@@ -1080,6 +1082,7 @@ export function SubjectPage({
             displayName={cfg.displayName}
             light={true}
             ecosystemHeading={true}
+            tabOverrides={getMatematika2TabOverrides(subject)}
           />
 
           {/* Základní vs. rozšířený — stejný úvodní text jako u bloku na PDP (FyzikaAccessJourney) */}

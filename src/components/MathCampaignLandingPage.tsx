@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router';
 import { AnimatePresence, animate, motion, useMotionValue } from 'motion/react';
-import { Check, X } from 'lucide-react';
+import { Play, X } from 'lucide-react';
 import { SEOHead, faqJsonLd } from './SEOHead';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { ProductComplianceBadge } from './ProductComplianceBadge';
@@ -19,7 +19,17 @@ import {
   MATH_METHODOLOGY_PLAYLIST_URL,
   MATH_METHODOLOGY_PLAYLIST_VIDEOS,
 } from '../data/mathMethodologyYoutubePlaylist';
-import { MATH_CAMPAIGN_WEBINAR_VIDEOS } from '../data/mathCampaignWebinarVideos';
+import {
+  MATH_CAMPAIGN_RVP_RECORDING_VIDEO,
+  MATH_CAMPAIGN_WEBINAR_VIDEOS,
+} from '../data/mathCampaignWebinarVideos';
+import { useDvppVideos } from '../contexts/DvppVideosContext';
+import { extractYoutubeId } from './DvppVideoCard';
+import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
+import { formatTypography } from '../utils/formatTypography';
+import imgCampaign3dObjekty from '../assets/campaign/aplikace-3d-objekty.png';
+import imgCampaignAlgebraickeDlazdice from '../assets/campaign/aplikace-algebraicke-dlazdice.png';
+import imgCampaignZlomky from '../assets/campaign/aplikace-zlomky.png';
 import logoPaths from '../imports/svg-fupfguvmdt';
 
 const FF = "'Fenomen Sans', sans-serif";
@@ -57,6 +67,8 @@ const MATH2_ECOSYSTEM_EXTRA_TABS: SubjectExtraTab[] = [
     contentHeadline: 'Aplikace 3D objekty',
     contentRichText:
       'Nová aplikace 3D objekty umožňuje žákům interaktivně prohlížet, otáčet a přibližovat trojrozměrné modely včetně jejich rozvinutých sítí. Nástroj výrazně usnadňuje pochopení prostorových vztahů a umí automaticky generovat cvičení na výpočty povrchů a objemů. Vše je intuitivní a plně optimalizované pro interaktivní tabule i tablety.',
+    contentImage: imgCampaign3dObjekty,
+    contentImageFit: 'contain',
     bgColor: '#ffffff',
     order: 8,
   },
@@ -65,9 +77,10 @@ const MATH2_ECOSYSTEM_EXTRA_TABS: SubjectExtraTab[] = [
     tabText: 'Aplikace Algebraické dlaždice',
     contentHeadline: 'Aplikace Algebraické dlaždice',
     contentRichText:
-      'Digitální aplikace Algebraické dlaždice převádí abstraktní matematické výrazy a rovnice do názorné geometrické podoby. Žáci mohou na obrazovce skládat a eliminovat kladné i záporné tvary, což jim pomáhá přirozeně pochopit zjednodušování výrazů, rozklady na součin nebo řešení rovnic. Nástroj nahrazuje memorování pravidel smysluplnou manipulativní hrou.\n\nDoporučujeme přednášku profesorky Naďy Vondrové z projektu SYPO: Algebraické dlaždice jako cesta k pochopení úprav algebraických výrazů.',
+      'Digitální aplikace Algebraické dlaždice převádí abstraktní matematické výrazy a rovnice do názorné geometrické podoby. Žáci mohou na obrazovce skládat a eliminovat kladné i záporné tvary, což jim pomáhá přirozeně pochopit zjednodušování výrazů, rozklady na součin nebo řešení rovnic. Nástroj nahrazuje memorování pravidel smysluplnou manipulativní hrou.\n\nDoporučujeme přednášku profesorky Naďi Vondrové z projektu SYPO: Algebraické dlaždice jako cesta k pochopení úprav algebraických výrazů.',
     contentLinkUrl: SYPO_ALGEBRA_TILES_LECTURE_URL,
     contentLinkLabel: 'Pustit přednášku →',
+    contentImage: imgCampaignAlgebraickeDlazdice,
     bgColor: '#ffffff',
     order: 9,
   },
@@ -77,52 +90,10 @@ const MATH2_ECOSYSTEM_EXTRA_TABS: SubjectExtraTab[] = [
     contentHeadline: 'Aplikace Zlomky',
     contentRichText:
       'Digitální aplikace Zlomky pomáhá žákům budovat skutečné porozumění matematice pomocí interaktivních vizualizací. Nástroj umožňuje zlomky názorně zobrazovat, porovnávat, rozšiřovat a procvičovat formou jednoduchých aktivit. Je ideální pro vizuální podporu výuky a pomáhá žákům bezpečně zvládnout jinak abstraktní koncepty.',
+    contentImage: imgCampaignZlomky,
+    contentImageFit: 'contain',
     bgColor: '#ffffff',
     order: 10,
-  },
-];
-
-const RVP_BLOCKS = [
-  {
-    title: 'Algebra a pravidelnosti',
-    items: [
-      'Pravidelnosti v číselných řadách a jejich algebraický zápis',
-      'Nerovnice se znázorněním na číselné ose',
-      'Grafické řešení rovnic průsečíkem dvou funkcí',
-      'Nepřímá úměrnost a kvadratická funkce y = ax²',
-      'Hyperbola a parabola: rozpoznání grafu a předpisu',
-    ],
-  },
-  {
-    title: 'Geometrie',
-    items: [
-      'Posunutí a otočení v kartézské soustavě souřadnic',
-      'Otočení o 90° a 180°',
-      'Půdorys, nárys a bokorys mnohostěnů',
-      'Řezy těles a prostorová představivost',
-      'Objem nekolmého hranolu a převody jednotek času',
-    ],
-  },
-  {
-    title: 'Statistika a pravděpodobnost',
-    badge: 'největší nárůst v RVP',
-    items: [
-      'Intuitivní kombinatorika a pravděpodobnost',
-      'Zápis pravděpodobnosti zlomkem a skládání jevů',
-      'Aritmetický průměr, modus a medián',
-      'Reálné percentilové grafy',
-      'Stromové a Vennovy diagramy',
-    ],
-  },
-  {
-    title: 'Zavedená témata',
-    items: [
-      'Zlomky, desetinná čísla, procenta a poměry',
-      'Lineární rovnice a soustavy rovnic',
-      'Rovinná geometrie, trojúhelníky, kruh a rovnoběžníky',
-      'Hranoly, válce, jehlany a kužele',
-      'Pythagorova a Thaletova věta',
-    ],
   },
 ];
 
@@ -130,7 +101,6 @@ type SeriesEntry = {
   id: string;
   title: string;
   body: string;
-  points: string[];
   kind: 'print' | 'digital';
   price: string;
   priceDetail: string;
@@ -148,7 +118,6 @@ const SERIES: SeriesEntry[] = [
     priceDetail: 'za sešit',
     body:
       'Hutnější řada pro běžnou třídu, procvičování a automatizaci výpočtů. Každá kapitola pracuje s více úrovněmi obtížnosti.',
-    points: ['Tři úrovně obtížnosti', 'Drilové série', 'Příprava na SŠ', 'V doložkovém řízení MŠMT'],
   },
   {
     id: 'krok',
@@ -158,7 +127,6 @@ const SERIES: SeriesEntry[] = [
     priceDetail: 'za sešit',
     body:
       'Řada pro vyvozování nové látky a budování matematické představivosti. Úlohy vedou žáky po malých krocích k principu.',
-    points: ['Konstruktivistický přístup', 'Otevřené otázky', 'Skupinová diskuze', 'Soulad s RVP 2025/26'],
   },
   {
     id: 'digital',
@@ -168,43 +136,24 @@ const SERIES: SeriesEntry[] = [
     priceDetail: 'od 15 ks sešitů pro žáky',
     priceNote: 'Pro rodiče od 290 Kč / měsíc nebo 2 900 Kč / rok',
     body:
-      'Interaktivní učebnice ke každému sešitu — tisíce příkladů, soutěže, pracovní listy a metodické komentáře. Lze i samostatně.',
-    points: [
-      'Rýsování a 3D geometrie na tabuli',
-      'Animované postupy a okamžitá zpětná vazba',
-      'Statistika, testy a metodické komentáře',
-    ],
+      'Digitální přístup ke každému sešitu — tisíce příkladů, soutěže, pracovní listy a metodické komentáře. Lze i samostatně.',
   },
 ];
 
 const SERIES_PREVIEW_H = 200;
 
-const SERIES_CARD_THEME: Record<
-  SeriesFilterId,
-  {
-    card: string;
-    border: string;
-    borderActive: string;
-    check: string;
-  }
-> = {
+const SERIES_CARD_THEME: Record<SeriesFilterId, { card: string; border: string }> = {
   'pro-vsechny': {
     card: 'bg-[#fff7ed]',
     border: 'border-[#f5a623]/30',
-    borderActive: 'border-[#e8942a] shadow-[0_10px_32px_rgba(232,148,42,0.18)] ring-2 ring-[#f5a623]/25',
-    check: 'bg-white/90 text-[#e8942a] ring-[#f5a623]/25',
   },
   krok: {
     card: 'bg-[#ecfdf5]',
     border: 'border-[#059669]/28',
-    borderActive: 'border-[#059669] shadow-[0_10px_32px_rgba(5,150,105,0.16)] ring-2 ring-[#059669]/20',
-    check: 'bg-white/90 text-[#059669] ring-[#059669]/25',
   },
   digital: {
     card: 'bg-[#f3eeff]',
     border: 'border-[#7C3AED]/28',
-    borderActive: 'border-[#7C3AED] shadow-[0_10px_32px_rgba(124,58,237,0.18)] ring-2 ring-[#7C3AED]/22',
-    check: 'bg-white/90 text-[#7C3AED] ring-[#7C3AED]/25',
   },
 };
 
@@ -643,6 +592,10 @@ function HeroCoverCarousel({
 }
 
 
+function formatTextNode(value: React.ReactNode): React.ReactNode {
+  return typeof value === 'string' ? formatTypography(value) : value;
+}
+
 function SectionTitle({
   eyebrow,
   title,
@@ -658,15 +611,15 @@ function SectionTitle({
     <div className={`mb-8 ${align === 'center' ? 'mx-auto text-center' : ''}`}>
       {eyebrow ? (
         <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40" style={{ fontFamily: FF }}>
-          {eyebrow}
+          {formatTypography(eyebrow)}
         </p>
       ) : null}
       <h2 className="text-[#001161] text-[28px] leading-[1.08] md:text-[36px]" style={{ fontFamily: COOPER }}>
-        {title}
+        {formatTextNode(title)}
       </h2>
       {body ? (
         <p className={`mt-3 max-w-[720px] text-[15px] leading-relaxed text-[#001161]/65 md:text-[16px] ${align === 'center' ? 'mx-auto' : ''}`} style={{ fontFamily: FF }}>
-          {body}
+          {formatTextNode(body)}
         </p>
       ) : null}
     </div>
@@ -676,31 +629,16 @@ function SectionTitle({
 function SeriesOverviewCard({
   series,
   books,
-  active,
-  onSelect,
 }: {
   series: SeriesEntry;
   books: Book[];
-  active: boolean;
-  onSelect: () => void;
 }) {
   const isDigital = series.kind === 'digital';
   const theme = SERIES_CARD_THEME[series.id as SeriesFilterId];
 
   return (
     <article
-      role="button"
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          onSelect();
-        }
-      }}
-      className={`group flex h-full cursor-pointer flex-col overflow-hidden rounded-[22px] border text-left transition duration-200 ${theme.card} ${
-        active ? theme.borderActive : `${theme.border} hover:shadow-md`
-      }`}
+      className={`flex h-full flex-col overflow-hidden rounded-[22px] border text-left ${theme.card} ${theme.border}`}
     >
       <div className="px-6 pt-6 md:px-7 md:pt-7">
         <h3 className="text-[#001161] text-[22px] leading-[1.08] lg:text-[24px]" style={{ fontFamily: COOPER }}>
@@ -729,20 +667,9 @@ function SeriesOverviewCard({
             </p>
           ) : null}
         </div>
-        <p className="mt-3 line-clamp-2 text-[14px] leading-relaxed text-[#001161]/68 md:text-[15px]" style={{ fontFamily: FF }}>
-          {series.body}
+        <p className="mt-3 text-[14px] leading-relaxed text-[#001161]/68 md:text-[15px]" style={{ fontFamily: FF }}>
+          {formatTypography(series.body)}
         </p>
-
-        <ul className="mt-5 space-y-2.5">
-          {series.points.slice(0, 3).map((point) => (
-            <li key={point} className="flex items-start gap-2.5 text-[13px] leading-snug text-[#001161]/75" style={{ fontFamily: FF }}>
-              <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ring-1 ${theme.check}`}>
-                <Check className="h-3 w-3" />
-              </span>
-              <span className="line-clamp-1">{point}</span>
-            </li>
-          ))}
-        </ul>
       </div>
     </article>
   );
@@ -806,16 +733,6 @@ function CampaignSeriesExplorer({
     [booksBySeries],
   );
 
-  const [activeSeries, setActiveSeries] = useState<SeriesFilterId>(
-    (availableSeries[0]?.id as SeriesFilterId) ?? 'pro-vsechny',
-  );
-
-  useEffect(() => {
-    if (!availableSeries.some((series) => series.id === activeSeries)) {
-      setActiveSeries((availableSeries[0]?.id as SeriesFilterId) ?? 'pro-vsechny');
-    }
-  }, [activeSeries, availableSeries]);
-
   if (availableSeries.length === 0) return null;
 
   return (
@@ -826,8 +743,6 @@ function CampaignSeriesExplorer({
             key={series.id}
             series={series}
             books={booksBySeries[series.id as SeriesFilterId] ?? []}
-            active={activeSeries === series.id}
-            onSelect={() => setActiveSeries(series.id as SeriesFilterId)}
           />
         ))}
       </div>
@@ -1025,9 +940,15 @@ function MethodologyVideosSection() {
   );
 }
 
-function RvpTopicsSection() {
-  const [activeTopicIndex, setActiveTopicIndex] = useState(0);
-  const activeTopic = RVP_BLOCKS[activeTopicIndex] ?? RVP_BLOCKS[0];
+function RvpVideoSection() {
+  const navigate = useNavigate();
+  const { videos } = useDvppVideos();
+  const recording = useMemo(
+    () => videos.find((video) => video.id === MATH_CAMPAIGN_RVP_RECORDING_VIDEO.id),
+    [videos],
+  );
+  const youtubeId = extractYoutubeId(recording?.youtubeUrl ?? '');
+  const recordingPath = `/webinare/zaznam/${MATH_CAMPAIGN_RVP_RECORDING_VIDEO.id}`;
 
   return (
     <section id="rvp" className="scroll-mt-24 px-6 py-14 md:px-12 md:py-16">
@@ -1035,63 +956,52 @@ function RvpTopicsSection() {
         <SectionTitle
           align="center"
           eyebrow="RVP 2025/26"
-          title={<>Nová témata bez hledání materiálů navíc</>}
-          body="RVP část je oddělená od obecné metodiky: tady učitel rychle vidí, co je v materiálech pokryté a kde najde webináře k novým tématům."
+          title={MATH_CAMPAIGN_RVP_RECORDING_VIDEO.title}
+          body="Záznam webináře k novým tématům revize RVP a k tomu, jak jsou zpracovaná v materiálech Vividbooks Matematika."
         />
 
         <div className="mx-auto max-w-[920px]">
-          <div className="rounded-[28px] border border-[#001161]/10 bg-[#f8f9fc] p-4 md:p-5">
-            <div className="flex flex-wrap justify-center gap-2">
-              {RVP_BLOCKS.map((block, index) => {
-                const active = index === activeTopicIndex;
-                return (
-                  <button
-                    key={block.title}
-                    type="button"
-                    onClick={() => setActiveTopicIndex(index)}
-                    className={`rounded-full px-4 py-2 text-[13px] font-bold transition ${
-                      active
-                        ? 'bg-[#001161] text-white shadow-[0_8px_18px_rgba(0,17,97,0.18)]'
-                        : 'bg-white text-[#001161]/62 ring-1 ring-[#001161]/10 hover:text-[#001161]'
-                    }`}
-                    style={{ fontFamily: FF }}
-                    aria-pressed={active}
-                  >
-                    {block.title}
-                  </button>
-                );
-              })}
-            </div>
-
-            <AnimatePresence mode="wait">
-              <motion.article
-                key={activeTopic.title}
-                className="mt-5 rounded-[22px] bg-white p-6 shadow-sm ring-1 ring-[#001161]/8 md:p-7"
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+          <div className="overflow-hidden rounded-[22px] border border-[#001161]/10 bg-[#f8f9fc] shadow-sm ring-1 ring-[#001161]/6">
+            {youtubeId ? (
+              <div className="relative aspect-video w-full bg-black">
+                <iframe
+                  src={`https://www.youtube.com/embed/${youtubeId}?rel=0&modestbranding=1`}
+                  className="absolute inset-0 h-full w-full border-0"
+                  title={MATH_CAMPAIGN_RVP_RECORDING_VIDEO.title}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => navigate(recordingPath)}
+                className="group relative block aspect-video w-full cursor-pointer overflow-hidden bg-[#DEE4F1] text-left"
+                aria-label={`Přehrát: ${MATH_CAMPAIGN_RVP_RECORDING_VIDEO.title}`}
               >
-                <div className="h-1 w-20 rounded-full bg-[#4B48CC]/70" />
-                <h3 className="mt-4 text-[26px] leading-tight text-[#001161] md:text-[30px]" style={{ fontFamily: COOPER }}>
-                  {activeTopic.title}
-                  {activeTopic.badge ? (
-                    <span className="ml-2 align-middle rounded-full bg-[#f5f7fd] px-2.5 py-1 text-[11px] font-bold text-[#4B48CC] ring-1 ring-[#001161]/10" style={{ fontFamily: FF }}>
-                      {activeTopic.badge}
-                    </span>
-                  ) : null}
-                </h3>
-                <ul className="mt-5 grid gap-3">
-                  {activeTopic.items.map((item) => (
-                    <li key={item} className="flex gap-3 text-[15px] leading-relaxed text-[#001161]/70" style={{ fontFamily: FF }}>
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#4B48CC]/70" />
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-              </motion.article>
-            </AnimatePresence>
+                <ImageWithFallback
+                  src={MATH_CAMPAIGN_RVP_RECORDING_VIDEO.thumbnail}
+                  alt={MATH_CAMPAIGN_RVP_RECORDING_VIDEO.title}
+                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                />
+                <div className="absolute inset-0 flex items-center justify-center bg-[#001161]/10 transition group-hover:bg-[#001161]/20">
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/95 shadow-lg">
+                    <Play className="ml-1 h-7 w-7 text-[#001161]" fill="#001161" aria-hidden />
+                  </span>
+                </div>
+              </button>
+            )}
           </div>
+
+          <p className="mt-4 text-center">
+            <Link
+              to={recordingPath}
+              className="text-[14px] font-bold text-[#4B48CC] underline underline-offset-2 transition hover:opacity-75"
+              style={{ fontFamily: FF }}
+            >
+              Celý záznam webináře včetně DVPP certifikátu →
+            </Link>
+          </p>
         </div>
       </div>
     </section>
@@ -1299,6 +1209,7 @@ export function MathCampaignLandingPage() {
             hideSectionHeading
             excludeTabTexts={MATH2_ECOSYSTEM_EXCLUDED_TABS}
             extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
+            tabOverrides={getMatematika2TabOverrides('Matematika 2. stupeň')}
           />
         </section>
 
@@ -1326,23 +1237,27 @@ export function MathCampaignLandingPage() {
 
         <MethodologyVideosSection />
 
-        <RvpTopicsSection />
+        <RvpVideoSection />
 
 
         <section id="kontakt" className="px-6 py-14 text-center md:px-12" style={{ background: `linear-gradient(135deg, ${cfg.heroColor} 0%, ${cfg.heroColorDark} 100%)` }}>
           <div className="mx-auto max-w-[760px]">
             <h2 className="text-[#001161] text-[34px] leading-tight md:text-[52px]" style={{ fontFamily: COOPER }}>
-              Chcete matematiku pro 2. stupeň vyzkoušet?
+              {formatTypography('Chcete matematiku pro')}
+              <br />
+              {formatTypography('2. stupeň vyzkoušet?')}
             </h2>
             <p className="mx-auto mt-4 max-w-[560px] text-[16px] leading-relaxed text-[#001161]/65" style={{ fontFamily: FF }}>
-              Ozvěte se nám. Pošleme ukázkové materiály, vysvětlíme rozdíl mezi řadami a připravíme nabídku pro vaši školu.
+              {formatTypography(
+                'Ozvěte se nám. Pošleme ukázkové materiály, vysvětlíme rozdíl mezi řadami a připravíme nabídku pro vaši školu.',
+              )}
             </p>
             <div className="mt-7 flex flex-wrap justify-center gap-3">
               <a
                 href="mailto:skoly@vividbooks.cz?subject=Matematika%202.%20stupe%C5%88%20-%20uk%C3%A1zka"
                 className="inline-flex items-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-3.5 text-[15px] font-bold text-white transition hover:scale-[1.03] hover:bg-[#6D28D9]"
               >
-                Napsat si o ukázku
+                {formatTypography('Napsat si o ukázku')}
               </a>
               <button
                 type="button"

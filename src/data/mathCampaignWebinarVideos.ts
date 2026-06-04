@@ -10,12 +10,20 @@ function campaignRecordingVideo(id: string, title: string, thumbnail: string): Y
   };
 }
 
+/** Záznam v sekci RVP na kampaňové LP. */
+export const MATH_CAMPAIGN_RVP_RECORDING_VIDEO = {
+  id: '69aaaafe5c6ac28075b4d82d',
+  title: 'Jak na nová témata podle nového RVP',
+  thumbnail:
+    'https://cdn.prod.website-files.com/5dfa34b974e1f6fab1ef33cd/69844dc899c1db460d8b0432_nova%20temata.png',
+} as const;
+
 /** DVPP / metodické webináře pro kampaň Matematika 2. stupeň (pořadí dle zadání). */
 export const MATH_CAMPAIGN_WEBINAR_VIDEOS: YoutubePlaylistVideo[] = [
   campaignRecordingVideo(
-    '69aaaafe5c6ac28075b4d82d',
-    'Jak na nová témata podle nového RVP',
-    'https://cdn.prod.website-files.com/5dfa34b974e1f6fab1ef33cd/69844dc899c1db460d8b0432_nova%20temata.png',
+    MATH_CAMPAIGN_RVP_RECORDING_VIDEO.id,
+    MATH_CAMPAIGN_RVP_RECORDING_VIDEO.title,
+    MATH_CAMPAIGN_RVP_RECORDING_VIDEO.thumbnail,
   ),
   campaignRecordingVideo(
     '699e11a62ac6b2499623464a',

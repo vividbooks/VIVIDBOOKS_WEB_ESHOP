@@ -33,6 +33,8 @@ export type SubjectExtraTab = {
   contentHeadline: string;
   contentRichText: string;
   contentImage?: string;
+  /** Výchozí cover — u screenshotů aplikací použij contain. */
+  contentImageFit?: 'cover' | 'contain';
   bgColor?: string;
   order?: number;
   contentLinkUrl?: string;
@@ -64,6 +66,14 @@ function filterExcludedTabs(items: any[], excludeTabTexts?: string[]) {
   if (!excludeTabTexts?.length) return items;
   const excluded = new Set(excludeTabTexts.map((text) => text.trim()));
   return items.filter((tab) => !excluded.has(String(tab.tabText ?? '').trim()));
+}
+
+function tabImageMaxHeight(tab: { contentImageFit?: 'cover' | 'contain' }) {
+  return tab.contentImageFit === 'contain' ? '320px' : '240px';
+}
+
+function tabImageObjectFit(tab: { contentImageFit?: 'cover' | 'contain' }): 'cover' | 'contain' {
+  return tab.contentImageFit === 'contain' ? 'contain' : 'cover';
 }
 
 const ECOSYSTEM_HEADING_TITLE_DEFAULT = 'U\u010debnice jako ekosyst\u00e9m: ';
@@ -321,12 +331,15 @@ export function SubjectTabsSection({
             onTouchEnd={(event) => handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0)}
           >
             {activeTab.contentImage && (
-              <div className="w-full" style={{ maxHeight: '240px', overflow: 'hidden' }}>
+              <div
+                className={`w-full overflow-hidden ${tabImageObjectFit(activeTab) === 'contain' ? 'bg-white' : ''}`}
+                style={{ maxHeight: tabImageMaxHeight(activeTab) }}
+              >
                 <img
                   src={activeTab.contentImage}
                   alt={activeTab.contentHeadline || activeTab.tabText}
-                  className="w-full object-cover object-top"
-                  style={{ maxHeight: '240px' }}
+                  className={`w-full ${tabImageObjectFit(activeTab) === 'contain' ? 'object-contain object-center' : 'object-cover object-top'}`}
+                  style={{ maxHeight: tabImageMaxHeight(activeTab) }}
                 />
               </div>
             )}
@@ -444,11 +457,19 @@ export function SubjectTabsSection({
 
             {/* Obrázek — pravá polovina */}
             {activeTab.contentImage && (
-              <motion.div className="w-full shrink-0 self-stretch overflow-hidden md:w-1/2">
+              <motion.div
+                className={`w-full shrink-0 self-stretch overflow-hidden md:w-1/2 ${tabImageObjectFit(activeTab) === 'contain' ? 'bg-white' : ''}`}
+              >
                 <img
                   src={activeTab.contentImage}
                   alt={activeTab.contentHeadline || activeTab.tabText}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top left', display: 'block' }}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: tabImageObjectFit(activeTab),
+                    objectPosition: tabImageObjectFit(activeTab) === 'contain' ? 'center' : 'top left',
+                    display: 'block',
+                  }}
                 />
               </motion.div>
             )}

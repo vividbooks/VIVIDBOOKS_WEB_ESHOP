@@ -16,6 +16,7 @@ import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
+import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { getMerchVariantUnitPriceInHaler } from '../utils/productPrice';
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
@@ -2413,7 +2414,12 @@ export function ProductDetailPage({
                 </h2>
               </div>
             </div>
-            <SubjectTabsSection subject={getTabSubjectName(product.category)} displayName={baseSubject} light={true} />
+            <SubjectTabsSection
+              subject={getTabSubjectName(product.category)}
+              displayName={baseSubject}
+              light={true}
+              tabOverrides={getMatematika2TabOverrides(getTabSubjectName(product.category))}
+            />
             {(() => {
               const cat = (product.category || '').toLowerCase();
               const isMat2 = baseSubject === 'Matematika' && (cat.includes('2') || cat.includes('druh'));
