@@ -42,14 +42,22 @@ function SidebarCTA() {
 
 /* ── Block renderer (fallback pro statická data) ───────────────── */
 function ContentBlock({ block }: { block: NovinkaBlock }) {
+  const prose = "font-['Fenomen_Sans',sans-serif] text-[#001161] text-[16px] leading-[1.8] mb-5";
   if (block.type === 'paragraph') {
-    return (
-      <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[16px] leading-[1.8] mb-5">
-        {block.text}
-      </p>
-    );
+    if (block.html) {
+      return <div className={`${prose} novinka-richtext`} dangerouslySetInnerHTML={{ __html: block.html }} />;
+    }
+    return <p className={prose}>{block.text}</p>;
   }
   if (block.type === 'heading') {
+    if (block.html) {
+      return (
+        <h2
+          className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[18px] md:text-[20px] leading-snug mt-10 mb-4 novinka-richtext"
+          dangerouslySetInnerHTML={{ __html: block.html }}
+        />
+      );
+    }
     return (
       <h2 className="font-['Fenomen_Sans',sans-serif] font-black text-[#001161] text-[18px] md:text-[20px] leading-snug mt-10 mb-4">
         {block.text}
@@ -76,9 +84,13 @@ function ContentBlock({ block }: { block: NovinkaBlock }) {
   if (block.type === 'quote') {
     return (
       <blockquote className="my-8 bg-[#F0F2F8] rounded-[16px] px-6 py-5 border-l-4 border-[#ff6a35]">
+        {block.html ? (
+          <div className="font-['Cooper_Light',serif] text-[#001161] text-[19px] leading-snug italic mb-2 novinka-richtext" dangerouslySetInnerHTML={{ __html: block.html }} />
+        ) : (
         <p className="font-['Cooper_Light',serif] text-[#001161] text-[19px] leading-snug italic mb-2">
           {'\u201e'}{block.text}{'\u201c'}
         </p>
+        )}
         {block.author && (
           <p className="font-['Fenomen_Sans',sans-serif] text-[#001161]/50 text-[13px]">
             {'— '}{block.author}

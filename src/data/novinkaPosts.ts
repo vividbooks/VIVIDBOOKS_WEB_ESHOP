@@ -11,13 +11,14 @@ export interface NovinkaPost {
   coverImage?: string;    // volitelný obrázek přes celou dlaždici
   tileText?: string;      // velký text zobrazený na dlaždici (např. "10%")
   content: NovinkaBlock[];
+  contentHtml?: string;   // rich HTML z editoru (odkazy, formátování)
 }
 
 export type NovinkaBlock =
-  | { type: 'paragraph'; text: string }
-  | { type: 'heading'; text: string }
+  | { type: 'paragraph'; text: string; html?: string }
+  | { type: 'heading'; text: string; html?: string }
   | { type: 'image'; src: string; alt: string; caption?: string }
-  | { type: 'quote'; text: string; author?: string };
+  | { type: 'quote'; text: string; author?: string; html?: string };
 
 export const NOVINKA_POSTS: NovinkaPost[] = [
   {

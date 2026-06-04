@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useEditor, EditorContent, NodeViewWrapper, ReactNodeViewRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TiptapImage from '@tiptap/extension-image';
+import Link from '@tiptap/extension-link';
 import { Node as TiptapNode, mergeAttributes } from '@tiptap/core';
 import {
   Plus, Search, Save, X, Globe, Lock, Loader2, ExternalLink,
   RefreshCw, FileText, Image, Video, Bold, Italic, List,
-  Undo2, Redo2, Quote, Trash2, Calendar, User, Check,
+  Undo2, Redo2, Quote, Trash2, Calendar, User, Check, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
@@ -14,6 +15,7 @@ import { useNovinky } from '../../contexts/NovinkyContext';
 import type { NovinkaPost, NovinkaBlock } from '../../data/novinkaPosts';
 import { ImagePicker } from './ImagePicker';
 import { sortNovinkyPosts } from '../../utils/sortNovinkyPosts';
+import { jsonDocToBlocks, resolvePostEditorHtml } from '../../utils/cmsEditorHtml';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -31,56 +33,6 @@ function extractYoutubeId(url: string): string | null {
 }
 function emptyPost(): Partial<NovinkaPost> {
   return { title: '', slug: '', category: '', author: '', date: todayCs(), excerpt: '', coverImage: '', content: [], published: false };
-}
-
-/* blocks → HTML */
-function blocksToHtml(blocks: NovinkaBlock[]): string {
-  if (!blocks?.length) return '<p></p>';
-  return blocks.map(b => {
-    if (b.type === 'paragraph') return `<p>${b.text || ''}</p>`;
-    if (b.type === 'heading')   return `<h2>${b.text || ''}</h2>`;
-    if (b.type === 'quote')     return `<blockquote><p>${b.text || ''}</p>${b.author ? `<p>\u2014 ${b.author}</p>` : ''}</blockquote>`;
-    if (b.type === 'image')     return b.src ? `<img src="${b.src}" alt="${b.alt || ''}" title="${b.caption || ''}">` : '';
-    return '';
-  }).join('');
-}
-
-/* TipTap JSON → blocks */
-function nodeText(n: any): string {
-  if (n.type === 'text') return n.text || '';
-  if (n.content) return n.content.map(nodeText).join('');
-  return '';
-}
-function jsonToBlocks(doc: any): NovinkaBlock[] {
-  const out: NovinkaBlock[] = [];
-  function walk(node: any) {
-    if (node.type === 'paragraph') {
-      const t = nodeText(node).trim();
-      if (t) out.push({ type: 'paragraph', text: t });
-    } else if (node.type === 'heading') {
-      const t = nodeText(node).trim();
-      if (t) out.push({ type: 'heading', text: t });
-    } else if (node.type === 'blockquote') {
-      const kids = node.content || [];
-      const t = kids[0] ? nodeText(kids[0]).trim() : '';
-      const a = kids[1] ? nodeText(kids[1]).trim().replace(/^\u2014\s*/, '') : '';
-      if (t) out.push({ type: 'quote', text: t, author: a });
-    } else if (node.type === 'image') {
-      const { src, alt, title } = node.attrs || {};
-      if (src) out.push({ type: 'image', src, alt: alt || '', caption: title || '' });
-    } else if (node.type === 'youtubeEmbed') {
-      // novinky nemá video blok ale přidáme jako paragraph placeholder
-    } else if (node.type === 'bulletList' || node.type === 'orderedList') {
-      (node.content || []).forEach((item: any) => {
-        const t = nodeText(item).trim();
-        if (t) out.push({ type: 'paragraph', text: `• ${t}` });
-      });
-    } else if (node.content) {
-      node.content.forEach(walk);
-    }
-  }
-  (doc.content || []).forEach(walk);
-  return out;
 }
 
 /* ─ YouTube extension ────────────────────────────────────────────── */
@@ -149,6 +101,16 @@ function ToolbarBtn({ active, title, onClick, children }: {
 function Toolbar({ editor, onImage, onVideo }: { editor: any; onImage: () => void; onVideo: () => void }) {
   if (!editor) return null;
   const sep = <div className="w-px h-5 bg-gray-200 mx-0.5" />;
+  const setLink = () => {
+    const prev = editor.getAttributes('link').href as string | undefined;
+    const url = window.prompt('URL odkazu', prev || 'https://');
+    if (url === null) return;
+    if (url === '') {
+      editor.chain().focus().extendMarkRange('link').unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
+  };
   return (
     <div className="flex items-center gap-0.5 px-3 py-2 border-b border-gray-200 bg-[#fafafa] flex-wrap sticky top-0 z-10">
       <ToolbarBtn active={editor.isActive('bold')} title="Tučné (Ctrl+B)" onClick={() => editor.chain().focus().toggleBold().run()}>
@@ -170,6 +132,10 @@ function Toolbar({ editor, onImage, onVideo }: { editor: any; onImage: () => voi
       </ToolbarBtn>
       <ToolbarBtn active={editor.isActive('bulletList')} title="Odrážky" onClick={() => editor.chain().focus().toggleBulletList().run()}>
         <List className="w-3.5 h-3.5" />
+      </ToolbarBtn>
+      {sep}
+      <ToolbarBtn active={editor.isActive('link')} title="Odkaz" onClick={setLink}>
+        <Link2 className="w-3.5 h-3.5 text-teal-600" />
       </ToolbarBtn>
       {sep}
       <ToolbarBtn active={false} title="Vložit obrázek" onClick={onImage}>
@@ -255,8 +221,8 @@ export default function NovinkyEditor() {
 
   useEffect(() => {
     if (!editor || !selected) return;
-    const html = blocksToHtml((selected.content as NovinkaBlock[]) || []);
-    editor.commands.setContent(html, false);
+    const html = resolvePostEditorHtml(selected as NovinkaPost & { contentHtml?: string });
+    editor.commands.setContent(html || '<p></p>', false);
     editor.commands.focus('start');
   }, [selected?.id, editor]);
 
@@ -303,8 +269,9 @@ export default function NovinkyEditor() {
     if (!selected.slug?.trim()) { toast.error('Slug je povinný.'); return; }
     setSaving(true);
     try {
-      const blocks = jsonToBlocks(editor.getJSON());
-      const payload = { ...selected, content: blocks, contentHtml: editor.getHTML(), updatedAt: new Date().toISOString() };
+      const contentHtml = editor.getHTML();
+      const blocks = jsonDocToBlocks(editor.getJSON()) as NovinkaBlock[];
+      const payload = { ...selected, content: blocks, contentHtml, updatedAt: new Date().toISOString() };
       const url = isNew ? `${SERVER}/admin/novinky` : `${SERVER}/admin/novinky/${selected.id}`;
       const method = isNew ? 'POST' : 'PUT';
       const res = await fetch(url, {
@@ -314,6 +281,7 @@ export default function NovinkyEditor() {
       });
       if (!res.ok) { const e = await res.json(); throw new Error(e.error || res.statusText); }
       toast.success(isNew ? 'Novinka uložena!' : 'Uloženo!');
+      setSelected(prev => (prev ? { ...prev, content: blocks, contentHtml } : prev));
       await loadList();
       refreshContext();
       setIsNew(false);
@@ -381,7 +349,9 @@ export default function NovinkyEditor() {
 
   const pubCount   = items.filter(p => (p as any).published === true).length;
   const draftCount = items.filter(p => (p as any).published !== true).length;
-  const previewBlocks = editor ? jsonToBlocks(editor.getJSON()) : ((selected?.content as NovinkaBlock[]) || []);
+  const previewHtml = editor
+    ? editor.getHTML()
+    : resolvePostEditorHtml((selected || {}) as NovinkaPost & { contentHtml?: string });
 
   return (
     <>
@@ -396,6 +366,8 @@ export default function NovinkyEditor() {
         .vvb-prose-editor li { margin-bottom: 0.3rem; }
         .vvb-prose-editor strong { font-weight: 700; }
         .vvb-prose-editor em { font-style: italic; }
+        .vvb-prose-editor a, .vvb-prose-editor .editor-link { color: #ff6a35; text-decoration: underline; cursor: pointer; }
+        .vvb-prose-editor a:hover { opacity: 0.8; }
         .vvb-prose-editor .editor-img, .vvb-prose-editor img { max-width: 100%; border-radius: 12px; margin: 1rem 0; display: block; }
         .vvb-prose-editor p.is-editor-empty:first-child::before { content: 'Za\u010dn\u011bte ps\u00e1t novinku\u2026'; color: #c0c4d0; pointer-events: none; float: left; height: 0; }
         .vvb-prose-editor .ProseMirror-selectednode { outline: 2px solid #001161; border-radius: 4px; }
@@ -698,20 +670,10 @@ export default function NovinkyEditor() {
                   {selected.excerpt && (
                     <p className="text-[16px] text-[#001161]/70 leading-relaxed mb-6 border-l-4 border-teal-400 pl-4">{selected.excerpt}</p>
                   )}
-                  <div className="space-y-4">
-                    {previewBlocks.map((b, i) => {
-                      if (b.type === 'paragraph') return <p key={i} className="text-[15px] text-[#001161] leading-[1.8]">{b.text}</p>;
-                      if (b.type === 'heading')   return <h2 key={i} className="text-[20px] font-black text-[#001161] mt-6">{b.text}</h2>;
-                      if (b.type === 'quote')     return (
-                        <blockquote key={i} className="border-l-4 border-[#ff6a35] bg-[#f0f2f8] rounded-xl pl-5 pr-4 py-4">
-                          <p className="text-[15px] italic text-[#001161]">{b.text}</p>
-                          {b.author && <p className="text-[12px] text-gray-500 mt-1">&mdash; {b.author}</p>}
-                        </blockquote>
-                      );
-                      if (b.type === 'image')     return <img key={i} src={b.src} alt={b.alt} className="w-full rounded-2xl" />;
-                      return null;
-                    })}
-                  </div>
+                  <div
+                    className="novinka-richtext"
+                    dangerouslySetInnerHTML={{ __html: previewHtml || '<p></p>' }}
+                  />
                 </div>
               </div>
             )}
