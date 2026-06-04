@@ -13,6 +13,7 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useNovinky } from '../../contexts/NovinkyContext';
 import type { NovinkaPost, NovinkaBlock } from '../../data/novinkaPosts';
 import { ImagePicker } from './ImagePicker';
+import { sortNovinkyPosts } from '../../utils/sortNovinkyPosts';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -242,7 +243,7 @@ export default function NovinkyEditor() {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       const data = await res.json();
-      setItems(data.items || []);
+      setItems(sortNovinkyPosts(data.items || []));
     } catch (e: any) {
       toast.error(`Chyba: ${e.message}`);
     } finally {
@@ -415,7 +416,7 @@ export default function NovinkyEditor() {
             </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hledat\u2026"
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hledat…"
                 className="w-full pl-8 pr-3 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:border-[#001161] outline-none transition-all" />
             </div>
             <div className="flex gap-1">
@@ -540,7 +541,7 @@ export default function NovinkyEditor() {
                       type="text"
                       value={selected.title || ''}
                       onChange={e => updateField('title', e.target.value)}
-                      placeholder="N\u00e1zev novinky\u2026"
+                      placeholder="Název novinky…"
                       className="w-full text-[26px] font-black text-[#001161] border-none outline-none bg-transparent placeholder-gray-200 leading-tight mb-2 font-['Fenomen_Sans',sans-serif]"
                     />
                     <div className="h-px bg-gray-100 mb-0" />
@@ -557,7 +558,7 @@ export default function NovinkyEditor() {
                       <h3 className="text-[15px] font-bold text-[#001161] mb-4">Vlo\u017eit obr\u00e1zek</h3>
                       <div className="space-y-3">
                         <ImagePicker
-                          label="Obr\u00e1zek *"
+                          label="Obrázek *"
                           value={imgUrl}
                           onChange={setImgUrl}
                           previewHeight={140}
@@ -590,7 +591,7 @@ export default function NovinkyEditor() {
                         <div>
                           <label className="text-[11px] font-bold text-gray-500 uppercase tracking-wide block mb-1">YouTube URL *</label>
                           <input autoFocus type="url" value={vidUrl} onChange={e => setVidUrl(e.target.value)} onKeyDown={e => e.key === 'Enter' && insertVideo()}
-                            placeholder="https://youtube.com/watch?v=\u2026"
+                            placeholder="https://youtube.com/watch?v=…"
                             className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-[#001161] outline-none" />
                         </div>
                         <div>
@@ -664,7 +665,7 @@ export default function NovinkyEditor() {
                   </div>
                   <div>
                     <ImagePicker
-                      label="Cover obr\u00e1zek"
+                      label="Cover obrázek"
                       value={selected.coverImage || ''}
                       onChange={url => updateField('coverImage', url)}
                       previewHeight={160}

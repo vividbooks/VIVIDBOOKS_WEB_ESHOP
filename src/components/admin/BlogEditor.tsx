@@ -14,6 +14,7 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useBlogPosts } from '../../contexts/BlogContext';
 import type { BlogPost, BlogBlock } from '../../data/blogPosts';
 import { ImagePicker } from './ImagePicker';
+import { sortBlogPosts } from '../../utils/sortBlogPosts';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -273,7 +274,7 @@ export default function BlogEditor() {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
       });
       const data = await res.json();
-      setItems(data.items || []);
+      setItems(sortBlogPosts(data.items || []));
     } catch (e: any) {
       toast.error(`Chyba: ${e.message}`);
     } finally {

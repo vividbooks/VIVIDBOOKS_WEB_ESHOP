@@ -44,6 +44,50 @@ const OFFERS_KEY = 'vividbooks_special_offers_v1';
 const BUNDLES_KEY = 'vividbooks_product_bundles_v1';
 const BLOG_KEY = 'vividbooks_blog_posts_v3'; // force-redeploy v3 trigger
 const NOVINKY_KEY = 'vividbooks_novinky_posts_v1';
+
+const CS_MONTH_INDEX: Record<string, number> = {
+  ledna: 0, unora: 1, brezna: 2, dubna: 3, kvetna: 4, cervna: 5, cervence: 6,
+  srpna: 7, zari: 8, rijna: 9, listopadu: 10, prosince: 11,
+};
+function normCsMonth(s: string) {
+  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+function parseCsDateMs(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const s = String(value).trim();
+  if (!s) return null;
+  const iso = Date.parse(s);
+  if (!Number.isNaN(iso)) return iso;
+  const m = s.match(/^(\d{1,2})\.\s*([^\s.]+)\s+(\d{4})$/);
+  if (m) {
+    const day = parseInt(m[1], 10);
+    const month = CS_MONTH_INDEX[normCsMonth(m[2])];
+    const year = parseInt(m[3], 10);
+    if (month != null && day >= 1 && day <= 31) return new Date(year, month, day).getTime();
+  }
+  return null;
+}
+function cmsIdTimestampMs(id: unknown): number | null {
+  if (typeof id !== 'string') return null;
+  const m = id.match(/(?:novinka|blog)-(\d{10,})$/);
+  if (!m) return null;
+  const t = parseInt(m[1], 10);
+  return Number.isFinite(t) ? t : null;
+}
+function cmsSortTime(post: any): number {
+  return (
+    parseCsDateMs(post?.date) ??
+    parseCsDateMs(post?.updatedAt) ??
+    parseCsDateMs(post?.createdAt) ??
+    cmsIdTimestampMs(post?.id) ??
+    0
+  );
+}
+function sortCmsItems(items: any[]): any[] {
+  return [...items].sort((a, b) => cmsSortTime(b) - cmsSortTime(a));
+}
+
 const WEBINARS_KEY = 'vividbooks_webinars_v1';
 const FIXED_PAGES_KEY = 'vividbooks_fixed_pages_v1';
 const HERO_SLIDES_KEY = 'vividbooks_hero_slides_v1';
@@ -352,7 +396,7 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
           importedAt: new Date().toISOString(),
         };
       }).filter((p: any) => p.title);
-      await saveCollection(BLOG_KEY, mapped);
+      await saveCollection(BLOG_KEY, sortCmsItems(mapped));
       console.log(`[Blog] Uloženo ${mapped.length} příspěvků.`);
       return c.json({ success: true, count: mapped.length, sample: mapped.slice(0, 2).map((p: any) => ({ title: p.title, slug: p.slug, author: p.author, category: p.category, hasImage: !!p.coverImage })) });
     } catch (e: any) {
@@ -408,7 +452,7 @@ app.post('/make-server-93a20b6f/import-webflow', async (c) => {
           importedAt: new Date().toISOString(),
         };
       }).filter((p: any) => p.title);
-      await saveCollection(NOVINKY_KEY, mapped);
+      await saveCollection(NOVINKY_KEY, sortCmsItems(mapped));
       console.log(`[Novinky] Ulozeno ${mapped.length} novinek.`);
       return c.json({ success: true, count: mapped.length, sample: mapped.slice(0, 3).map((p: any) => ({ title: p.title, slug: p.slug, date: p.date, hasImage: !!p.coverImage })) });
     } catch (e: any) {
@@ -1545,7 +1589,7 @@ async function saveCollection(key: string, items: any[]) {
 /* ── Blog CRUD ─────────────────────────────────────────────────── */
 app.get('/make-server-93a20b6f/admin/blog', async (c) => {
   try {
-    const items = await getCollection(BLOG_KEY);
+    const items = sortCmsItems(await getCollection(BLOG_KEY));
     return c.json({ items });
   } catch (e: any) {
     return c.json({ error: `Chyba blog GET: ${e.message}` }, 500);
@@ -1558,7 +1602,7 @@ app.post('/make-server-93a20b6f/admin/blog', async (c) => {
     if (!item.id) item.id = `blog-${Date.now()}`;
     if (!item.slug) item.slug = item.id;
     const items = await getCollection(BLOG_KEY);
-    await saveCollection(BLOG_KEY, [...items, item]);
+    await saveCollection(BLOG_KEY, sortCmsItems([item, ...items]));
     return c.json({ success: true, item });
   } catch (e: any) {
     return c.json({ error: `Chyba blog POST: ${e.message}` }, 500);
@@ -1571,7 +1615,7 @@ app.put('/make-server-93a20b6f/admin/blog/:id', async (c) => {
     const updates = await c.req.json();
     const items = await getCollection(BLOG_KEY);
     const updated = items.map((i: any) => i.id === id ? { ...i, ...updates } : i);
-    await saveCollection(BLOG_KEY, updated);
+    await saveCollection(BLOG_KEY, sortCmsItems(updated));
     return c.json({ success: true });
   } catch (e: any) {
     return c.json({ error: `Chyba blog PUT: ${e.message}` }, 500);
@@ -1594,7 +1638,7 @@ app.post('/make-server-93a20b6f/admin/blog/publish-all', async (c) => {
   try {
     const items = await getCollection(BLOG_KEY);
     const updated = items.map((i: any) => ({ ...i, published: true }));
-    await saveCollection(BLOG_KEY, updated);
+    await saveCollection(BLOG_KEY, sortCmsItems(updated));
     console.log(`[Blog] publish-all: ${updated.length} článků nastaveno na published=true`);
     return c.json({ success: true, count: updated.length });
   } catch (e: any) {
@@ -1605,7 +1649,7 @@ app.post('/make-server-93a20b6f/admin/blog/publish-all', async (c) => {
 /* ── Novinky CRUD ──────────────────────────────────────────────── */
 app.get('/make-server-93a20b6f/admin/novinky', async (c) => {
   try {
-    const items = await getCollection(NOVINKY_KEY);
+    const items = sortCmsItems(await getCollection(NOVINKY_KEY));
     return c.json({ items });
   } catch (e: any) {
     return c.json({ error: `Chyba novinky GET: ${e.message}` }, 500);
@@ -1618,7 +1662,7 @@ app.post('/make-server-93a20b6f/admin/novinky', async (c) => {
     if (!item.id) item.id = `novinka-${Date.now()}`;
     if (!item.slug) item.slug = item.id;
     const items = await getCollection(NOVINKY_KEY);
-    await saveCollection(NOVINKY_KEY, [...items, item]);
+    await saveCollection(NOVINKY_KEY, sortCmsItems([item, ...items]));
     return c.json({ success: true, item });
   } catch (e: any) {
     return c.json({ error: `Chyba novinky POST: ${e.message}` }, 500);
@@ -1631,7 +1675,7 @@ app.put('/make-server-93a20b6f/admin/novinky/:id', async (c) => {
     const updates = await c.req.json();
     const items = await getCollection(NOVINKY_KEY);
     const updated = items.map((i: any) => i.id === id ? { ...i, ...updates } : i);
-    await saveCollection(NOVINKY_KEY, updated);
+    await saveCollection(NOVINKY_KEY, sortCmsItems(updated));
     return c.json({ success: true });
   } catch (e: any) {
     return c.json({ error: `Chyba novinky PUT: ${e.message}` }, 500);
@@ -8150,7 +8194,7 @@ app.post('/make-server-93a20b6f/import-webflow-blog', async (c) => {
       };
     }).filter((p: any) => p.title);
 
-    await saveCollection(BLOG_KEY, mapped);
+    await saveCollection(BLOG_KEY, sortCmsItems(mapped));
     console.log(`[Blog] Uloženo ${mapped.length} příspěvků do Supabase.`);
     return c.json({ success: true, count: mapped.length, sample: mapped.slice(0, 2).map((p: any) => ({ id: p.id, title: p.title, slug: p.slug, author: p.author, date: p.date, category: p.category, hasImage: !!p.coverImage, blocks: p.content.length })) });
   } catch (e: any) {
@@ -8465,7 +8509,7 @@ app.post('/make-server-93a20b6f/migrate-images', async (c) => {
         updated.push(cur);
       }
 
-      await saveCollection(BLOG_KEY, updated);
+      await saveCollection(BLOG_KEY, sortCmsItems(updated));
       results['blog'] = { total: items.length, migrated, skipped, errors };
       console.log(`[migrate-images] Blog: migrated=${migrated}, skipped=${skipped}, errors=${errors}`);
     }
@@ -20133,7 +20177,7 @@ async function runAdminTool(
     };
   }
   if (name === 'get_blog_posts') {
-    const items = await getCollection(BLOG_KEY);
+    const items = sortCmsItems(await getCollection(BLOG_KEY));
     const limit = args.limit || 20;
     return { result: { count: items.length, posts: items.slice(0, limit) } };
   }
@@ -20326,7 +20370,7 @@ async function runAdminTool(
       createdAt: ts,
     };
     const items = await getCollection(BLOG_KEY);
-    await saveCollection(BLOG_KEY, [...items, item]);
+    await saveCollection(BLOG_KEY, sortCmsItems([item, ...items]));
     console.log(`[AdminAgent] create_blog_post: "${item.title}" — ${contentBlocks.length} bloků, cover=${!!coverImage}`);
     return { result: { success: true, id: item.id, title: item.title, blocksCount: contentBlocks.length, hasCover: !!coverImage }, action: { type: 'create_blog_post', id: item.id, title: item.title, reviewPath: `/admin/blog` } };
   }
@@ -20368,13 +20412,13 @@ async function runAdminTool(
     return { result: { success: true, id: args.id }, action: { type: 'delete_notification', id: args.id, reviewPath: '/admin/kolekce/notifikace' } };
   }
   if (name === 'get_novinky') {
-    const items = await getCollection(NOVINKY_KEY);
+    const items = sortCmsItems(await getCollection(NOVINKY_KEY));
     return { result: { count: items.length, novinky: items.slice(0, 20).map((n: any) => ({ id: n.id, title: n.title, slug: n.slug, published: n.published })) } };
   }
   if (name === 'create_novinka') {
     const item = { id: `novinka-${Date.now()}`, slug: `novinka-${Date.now()}`, published: false, date: new Date().toLocaleDateString('cs-CZ'), ...args, createdAt: ts };
     const items = await getCollection(NOVINKY_KEY);
-    await saveCollection(NOVINKY_KEY, [...items, item]);
+    await saveCollection(NOVINKY_KEY, sortCmsItems([item, ...items]));
     return { result: { success: true, id: item.id, title: item.title }, action: { type: 'create_novinka', id: item.id, title: item.title, reviewPath: `/admin/novinky` } };
   }
   if (name === 'update_novinka') {
@@ -20382,7 +20426,7 @@ async function runAdminTool(
     const idx = items.findIndex((n: any) => n.id === args.id);
     if (idx === -1) return { result: { error: `Novinka ${args.id} nenalezena` } };
     items[idx] = { ...items[idx], ...args.fields, updatedAt: ts };
-    await saveCollection(NOVINKY_KEY, items);
+    await saveCollection(NOVINKY_KEY, sortCmsItems(items));
     return { result: { success: true, id: args.id }, action: { type: 'update_novinka', id: args.id, reviewPath: '/admin/novinky' } };
   }
   if (name === 'delete_novinka') {
@@ -20399,7 +20443,7 @@ async function runAdminTool(
     const idx = items.findIndex((p: any) => p.id === args.id);
     if (idx === -1) return { result: { error: `Blog ${args.id} nenalezen` } };
     items[idx] = { ...items[idx], ...args.fields, updatedAt: ts };
-    await saveCollection(BLOG_KEY, items);
+    await saveCollection(BLOG_KEY, sortCmsItems(items));
     return { result: { success: true, id: args.id, title: items[idx].title }, action: { type: 'update_blog_post', id: args.id, title: items[idx].title, reviewPath: '/admin/blog' } };
   }
   if (name === 'publish_blog_post') {
@@ -20407,7 +20451,7 @@ async function runAdminTool(
     const idx = items.findIndex((p: any) => p.id === args.id);
     if (idx === -1) return { result: { error: `Blog ${args.id} nenalezen` } };
     items[idx] = { ...items[idx], published: args.published, updatedAt: ts };
-    await saveCollection(BLOG_KEY, items);
+    await saveCollection(BLOG_KEY, sortCmsItems(items));
     return { result: { success: true, id: args.id, published: args.published }, action: { type: 'publish_blog_post', id: args.id, published: args.published, reviewPath: '/admin/blog' } };
   }
   if (name === 'delete_blog_post') {
@@ -20747,7 +20791,7 @@ async function runAdminTool(
       updatedHtml = updatedHtml + imgHtml;
     }
     items[idx] = { ...post, content: updatedContent, contentHtml: updatedHtml, updatedAt: ts };
-    await saveCollection(BLOG_KEY, items);
+    await saveCollection(BLOG_KEY, sortCmsItems(items));
     console.log(`[AdminAgent] add_image_to_blog_post: "${post.title}" ← ${imageUrl.slice(0, 60)} position=${position}`);
     return {
       result: { success: true, id: args.id, title: post.title, imageUrl, position, totalImages: updatedContent.filter((b: any) => b.type === 'image').length },
@@ -20779,7 +20823,7 @@ async function runAdminTool(
       updatedContent = [...updatedContent, sliderBlock];
     }
     items[idx] = { ...post, content: updatedContent, updatedAt: ts };
-    await saveCollection(BLOG_KEY, items);
+    await saveCollection(BLOG_KEY, sortCmsItems(items));
     console.log(`[AdminAgent] add_slider_to_blog_post: "${post.title}" ← ${imageUrls.length} obrázků position=${position}`);
     return {
       result: { success: true, id: args.id, title: post.title, imageCount: imageUrls.length, position },
@@ -20810,7 +20854,7 @@ async function runAdminTool(
       updatedContent = [...updatedContent, tabsBlock];
     }
     items[idx] = { ...post, content: updatedContent, updatedAt: ts };
-    await saveCollection(BLOG_KEY, items);
+    await saveCollection(BLOG_KEY, sortCmsItems(items));
     console.log(`[AdminAgent] add_tabs_to_blog_post: "${post.title}" ← ${tabs.length} tabů position=${position}`);
     return {
       result: { success: true, id: args.id, title: post.title, tabCount: tabs.length, position, tabLabels: tabs.map((t: any) => t.label) },
@@ -21687,7 +21731,7 @@ app.post('/make-server-93a20b6f/admin/commit-blog-draft', async (c) => {
       createdAt: ts,
     };
     const items = await getCollection(BLOG_KEY);
-    await saveCollection(BLOG_KEY, [...items, item]);
+    await saveCollection(BLOG_KEY, sortCmsItems([item, ...items]));
     console.log(`[CommitBlogDraft] Uložen: "${item.title}" id=${item.id}`);
     // Auto-indexace do RAG
     try {

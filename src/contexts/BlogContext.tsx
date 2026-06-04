@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode } from
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { BLOG_POSTS } from '../data/blogPosts';
 import type { BlogPost } from '../data/blogPosts';
+import { sortBlogPosts } from '../utils/sortBlogPosts';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -45,18 +46,18 @@ export function BlogProvider({ children }: { children: ReactNode }) {
       const data = await res.json();
       const items: BlogPost[] = data.items || [];
       if (items.length > 0) {
-        setAllPosts(items);
+        setAllPosts(sortBlogPosts(items));
         setSource('supabase');
         console.log(`[BlogContext] Nacten ${items.length} prispevku z Supabase.`);
       } else {
         console.log('[BlogContext] Supabase je prazdne, pouzivam staticka data.');
-        setAllPosts(BLOG_POSTS);
+        setAllPosts(sortBlogPosts(BLOG_POSTS));
         setSource('static');
       }
     } catch (e: any) {
       console.error('[BlogContext] Chyba pri nacitani blogu:', e.message);
       setError(e.message);
-      setAllPosts(BLOG_POSTS);
+      setAllPosts(sortBlogPosts(BLOG_POSTS));
       setSource('static');
     } finally {
       setLoading(false);
