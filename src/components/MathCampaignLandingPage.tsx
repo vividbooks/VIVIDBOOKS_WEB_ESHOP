@@ -25,7 +25,7 @@ import {
 } from '../data/mathCampaignWebinarVideos';
 import { useDvppVideos } from '../contexts/DvppVideosContext';
 import { extractYoutubeId } from './DvppVideoCard';
-import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
+import { MATEMATIKA_2_TAB_OVERRIDES } from '../data/matematika2SubjectTabOverrides';
 import { formatTypography } from '../utils/formatTypography';
 import imgCampaign3dObjekty from '../assets/campaign/aplikace-3d-objekty.png';
 import imgCampaignAlgebraickeDlazdice from '../assets/campaign/aplikace-algebraicke-dlazdice.png';
@@ -1209,7 +1209,7 @@ export function MathCampaignLandingPage() {
             hideSectionHeading
             excludeTabTexts={MATH2_ECOSYSTEM_EXCLUDED_TABS}
             extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
-            tabOverrides={getMatematika2TabOverrides('Matematika 2. stupeň')}
+            tabOverrides={MATEMATIKA_2_TAB_OVERRIDES}
           />
         </section>
 

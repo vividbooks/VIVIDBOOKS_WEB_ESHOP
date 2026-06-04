@@ -13,13 +13,16 @@ export function isMatematika2TabsSubject(subject: string): boolean {
   );
 }
 
+/** Stabilní reference — nesmí se vytvářet v renderu (jinak se znovu načítají taby). */
+export const MATEMATIKA_2_TAB_OVERRIDES: Record<string, SubjectTabContentOverride> = {
+  [APLIKACE_RYSOVANI_TAB_TEXT]: {
+    contentRichText: APLIKACE_RYSOVANI_CONTENT_RICH_TEXT,
+  },
+};
+
 export function getMatematika2TabOverrides(
   subject: string,
 ): Record<string, SubjectTabContentOverride> | undefined {
   if (!isMatematika2TabsSubject(subject)) return undefined;
-  return {
-    [APLIKACE_RYSOVANI_TAB_TEXT]: {
-      contentRichText: APLIKACE_RYSOVANI_CONTENT_RICH_TEXT,
-    },
-  };
+  return MATEMATIKA_2_TAB_OVERRIDES;
 }

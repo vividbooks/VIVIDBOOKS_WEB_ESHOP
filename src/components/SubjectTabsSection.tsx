@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion } from 'motion/react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -174,12 +174,21 @@ export function SubjectTabsSection({
   ecosystemHeadingBody = ECOSYSTEM_HEADING_BODY_DEFAULT,
   ecosystemHeadingStacked = false,
 }: SubjectTabsSectionProps) {
-  const [tabs, setTabs] = useState<any[]>([]);
+  const [rawTabs, setRawTabs] = useState<any[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const swipeStartX = useRef<number | null>(null);
   const windowWidth = useWindowWidth();
   const mobile = windowWidth < 768;
+
+  const tabs = useMemo(
+    () =>
+      filterExcludedTabs(
+        mergeExtraTabs(applyTabOverrides(rawTabs, tabOverrides), extraTabs),
+        excludeTabTexts,
+      ),
+    [rawTabs, tabOverrides, extraTabs, excludeTabTexts],
+  );
 
   useEffect(() => {
     // Normalize subject name to match DB keys
@@ -191,20 +200,34 @@ export function SubjectTabsSection({
       return s.replace(/[\s\-]+\d+\.?\s*stupe.*$/i, '').trim();
     };
     const fetchSubject = normalizeSubject(subject);
+    let cancelled = false;
     setLoading(true);
     fetch(`${SERVER}/public/tabs?subject=${encodeURIComponent(fetchSubject)}`, { headers: AUTH })
       .then(r => r.json())
       .then(d => {
-        const items = filterExcludedTabs(
-          mergeExtraTabs(applyTabOverrides(d.items || [], tabOverrides), extraTabs),
-          excludeTabTexts,
-        );
-        setTabs(items);
-        if (items.length > 0) setActiveTabId(items[0].id);
+        if (cancelled) return;
+        setRawTabs(Array.isArray(d.items) ? d.items : []);
       })
-      .catch(() => setTabs([]))
-      .finally(() => setLoading(false));
-  }, [subject, tabOverrides, extraTabs, excludeTabTexts]);
+      .catch(() => {
+        if (!cancelled) setRawTabs([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [subject]);
+
+  useEffect(() => {
+    if (tabs.length === 0) {
+      setActiveTabId(null);
+      return;
+    }
+    if (!activeTabId || !tabs.some((tab) => tab.id === activeTabId)) {
+      setActiveTabId(tabs[0].id);
+    }
+  }, [tabs, activeTabId]);
 
   const activeTab = tabs.find(t => t.id === activeTabId);
   const activeTabIndex = tabs.findIndex((tab) => tab.id === activeTabId);

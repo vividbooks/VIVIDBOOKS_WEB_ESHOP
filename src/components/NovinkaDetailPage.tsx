@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ChevronLeft, Clock, User } from 'lucide-react';
+import { Clock, User } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import type { NovinkaPost, NovinkaBlock } from '../data/novinkaPosts';
 import { useNovinky } from '../contexts/NovinkyContext';
@@ -108,7 +108,6 @@ interface NovinkaDetailPageProps {
 }
 
 export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
-  const navigate = useNavigate();
   const { posts } = useNovinky();
 
   const contentHtml = (post as any).contentHtml as string | undefined;
@@ -143,23 +142,6 @@ export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
           url: publicSiteUrl(`/novinky/${post.slug}`),
         })}
       />
-
-      {/* Breadcrumb */}
-      <div className="relative z-30 border-b border-[#001161]/6 bg-white md:sticky md:top-14 md:bg-white/90 md:backdrop-blur-md">
-        <div className="max-w-[1100px] mx-auto px-6 h-11 flex items-center gap-2">
-          <button
-            onClick={() => navigate('/novinky')}
-            className="flex items-center gap-1.5 text-[#001161]/60 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] transition-colors cursor-pointer group"
-          >
-            <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            {'Novinky'}
-          </button>
-          <span className="text-[#001161]/20 text-[13px]">/</span>
-          <span className="font-['Fenomen_Sans',sans-serif] text-[13px] truncate max-w-[300px] text-[#001161]/50">
-            {post.category}
-          </span>
-        </div>
-      </div>
 
       <div className="max-w-[1100px] mx-auto px-6 pt-8 pb-24">
 
