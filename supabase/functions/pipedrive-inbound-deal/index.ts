@@ -38,6 +38,11 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  * (doprava v Base přijde jako `delivery_method` z `orders.shipping_*`). Pokud po filtraci
  * nezbude **žádná** položka, webhook se odbavuje jako `skipped: no_valid_products`.
  *
+ * **Ceny položek se přebírají 1:1 z PD** (`item_price`, fallback `sum`). Nulová cena se
+ * **nepřepisuje** — pokud má položka v PD 0 Kč, v `order_items` (a tím pádem i v Base) bude
+ * uložená jako 0 Kč. Stejně tak nulová celková částka dealu se nedoplňuje žádným fallbackem;
+ * jen se do `admin_note` přidá upozornění, ať si obchodník nulové ceny v adminu ověřil.
+ *
  * Adresa zákazníka se skládá ve třech fázích, stejně jako u manuálního zadání v eshop checkoutu:
  *   1) strukturovaná pole PD Person (`postal_address.route`, `street_number`, `subpremise`,
  *      `locality`, `postal_code`, …),
@@ -120,8 +125,8 @@ const ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON =
 const ADMIN_NOTE_MISSING_EMAIL =
   'Pipedrive import: u osoby u dealu chybí e-mail. Doplňte platný kontakt v objednávce.';
 
-const ADMIN_NOTE_ZERO_VALUE_FALLBACK =
-  'Pipedrive import: deal měl nulovou částku nebo nešly načíst produkty; použita minimální řádka 1 Kč — zkontrolujte položky.';
+const ADMIN_NOTE_ZERO_VALUE_TOTAL =
+  'Pipedrive import: deal má nulovou celkovou částku (všechny položky 0 Kč) — zkontrolujte ceny v PD, pokud to není záměr.';
 
 const ADMIN_NOTE_ADDRESS_INCOMPLETE =
   'Pipedrive import: adresa není kompletní (chybí ulice / město / PSČ). Doplňte v PD u Person nebo Organization a aktualizujte objednávku.';
@@ -1043,11 +1048,18 @@ Deno.serve(async (req) => {
         skippedItems.push({ pipedriveProductId: pdProductId, name: prName });
         continue;
       }
+      /**
+       * Cena se bere **přesně z PD položky** (`item_price`, fallback `sum`). Pokud je v PD
+       * nulová, zachováme `0` — obchod si to tak přeje (např. dárek, vzorek, slevová položka
+       * zdarma). Dříve tu byl fallback `deal.value / qty`, který nuly automaticky přepisoval
+       * na podíl celkové hodnoty dealu (např. 0 Kč → 227,24 Kč) a vznikaly tím nesmyslné
+       * záznamy v Base. Nulové ceny ponecháme tak, jak je obchodník v Pipedrive nastavil.
+       */
       lines.push({
         productId: code,
         productName: prName,
         quantity: qty,
-        unitPriceHaler: unit > 0 ? unit : moneyToHaler((Number(deal.value) || 0) / Math.max(1, qty)),
+        unitPriceHaler: unit,
         pipedriveProductId: pdProductId,
         pipedriveProductCode: code,
       });
@@ -1098,14 +1110,13 @@ Deno.serve(async (req) => {
     );
   }
 
-  let subtotal = lines.reduce((s, l) => s + l.unitPriceHaler * l.quantity, 0);
-  /** Nulová hodnota položek — minimální řádek 1 Kč, ať import nespadne na 400 (extrémní edge case). */
-  let usedZeroValueFallback = false;
-  if (subtotal <= 0) {
-    usedZeroValueFallback = true;
-    lines[0].unitPriceHaler = 100;
-    subtotal = 100 * (lines[0].quantity || 1);
-  }
+  const subtotal = lines.reduce((s, l) => s + l.unitPriceHaler * l.quantity, 0);
+  /**
+   * Pokud má deal v součtu 0 Kč (všechny položky 0), **nepřepisujeme** žádnou cenu —
+   * obchod požaduje, aby 0 Kč v PD znamenala 0 Kč v Base. Jen do `admin_note` přidáme
+   * upozornění, ať si obchodník v adminu mohl ověřit, že to není překlep.
+   */
+  const hasZeroTotal = subtotal <= 0;
 
   const total = subtotal + shippingPrice;
   const hasIco = Boolean(ico && ico.replace(/\D/g, '').length > 0);
@@ -1124,10 +1135,10 @@ Deno.serve(async (req) => {
   let adminNote: string | null = missingPipedriveContact
     ? (missingEmailOnly ? ADMIN_NOTE_MISSING_EMAIL : ADMIN_NOTE_MISSING_PIPEDRIVE_PERSON)
     : null;
-  if (usedZeroValueFallback) {
+  if (hasZeroTotal) {
     adminNote = adminNote
-      ? `${adminNote}\n\n${ADMIN_NOTE_ZERO_VALUE_FALLBACK}`
-      : ADMIN_NOTE_ZERO_VALUE_FALLBACK;
+      ? `${adminNote}\n\n${ADMIN_NOTE_ZERO_VALUE_TOTAL}`
+      : ADMIN_NOTE_ZERO_VALUE_TOTAL;
   }
   if (addressIncomplete) {
     adminNote = adminNote
@@ -1156,7 +1167,7 @@ Deno.serve(async (req) => {
     missingPipedriveContact
       ? `Kontakt z PD: chybí${missingEmailOnly ? ' (jen e‑mail)' : ''}`
       : null,
-    usedZeroValueFallback ? 'Cenový fallback: 1 Kč (deal měl nulovou částku).' : null,
+    hasZeroTotal ? 'Deal má nulovou celkovou částku (všechny položky 0 Kč).' : null,
   ].filter(Boolean).join('\n');
   if (pipedriveMetadataLines) {
     adminNote = adminNote
@@ -1697,7 +1708,7 @@ Deno.serve(async (req) => {
       orderId: row.id,
       missingPipedriveContact,
       missingEmailOnly,
-      usedZeroValueFallback,
+      hasZeroTotal,
     });
     return jsonResponse(
       req,
