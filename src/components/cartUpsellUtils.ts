@@ -221,13 +221,7 @@ export function getCartUpsellRecommendations(cartLines: CartUpsellLine[], produc
   let digitalCard: { items: any[]; subjects: string[] } | null = null;
   if (hasPrint && !hasDigital && subjects.size > 0) {
     const cartSubjects = [...subjects];
-    const items = allProducts.filter((product) => {
-      if (!isDigitalProduct(product)) return false;
-      if (varIds.has(getProductVariantId(product))) return false;
-      return cartSubjects.some((subject) => catMatch(product, subject));
-    }).slice(0, 4);
-
-    digitalCard = { items, subjects: cartSubjects };
+    digitalCard = { items: [], subjects: cartSubjects };
   }
 
   return {
