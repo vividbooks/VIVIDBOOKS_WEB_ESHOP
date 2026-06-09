@@ -1,7 +1,11 @@
 import { apiUrl } from './publicSiteUrl';
+import { projectId, publicAnonKey } from './supabase/info';
 
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
 export const FREE_TRIAL_AJAX_URL = apiUrl('/web/free-trial-ajax');
+
+const TRIAL_PIPEDRIVE_UPSELL_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-active-subscription-pipedrive`;
 
 export type FreeTrialFields = {
   name: string;
@@ -114,6 +118,51 @@ export function freeTrialErrorMessage(data: Record<string, unknown> | null): str
   return parseFreeTrialError(data).message;
 }
 
+/**
+ * Fire-and-forget vytvoření Pipedrive upsell dealu, když legacy `/web/free-trial-ajax`
+ * vrátí reason "You have active subscription trial yet." — škola už má aktivní
+ * předplatné, ale konkrétní uživatel přesto poslal žádost o trial.
+ *
+ * Edge funkce `trial-active-subscription-pipedrive` v `make-server-93a20b6f`:
+ *   - založí (nebo doplní) Pipedrive organizaci a person
+ *   - vytvoří deal v pipeline 7 (CZ-Sales-Upsell-CZ2), stage 40 (Kontaktováno [CZ2])
+ *     s labelem 359 ("Trial web (interactive) - 2.0", deal field 12463)
+ *   - přiřadí deal owner přes „current deal owner" (org pole 4056)
+ *   - založí aktivitu "Kontaktovat" s notou "Zákazník žádá o trial." pro deal ownera
+ *
+ * Volání je „nejlepší úsilí" — chyba se neeskaluje na UI, jen zaloguje do konzole.
+ */
+export async function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrialFields): Promise<void> {
+  try {
+    const { fullName } = splitFullNameForTrial(fields.name);
+    const body = {
+      schoolName: fields.schoolName,
+      ico: fields.vat,
+      name: fullName || fields.name,
+      email: fields.email,
+      phone: fields.phone,
+      position: fields.position,
+    };
+    const res = await fetch(TRIAL_PIPEDRIVE_UPSELL_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${publicAnonKey}`,
+      },
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn(
+        `[trial-pipedrive-upsell] HTTP ${res.status}: ${text.slice(0, 200)}`,
+      );
+    }
+  } catch (error) {
+    console.warn('[trial-pipedrive-upsell] error:', error);
+  }
+}
+
 export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
   const body = buildFreeTrialFormBody(fields);
   const res = await fetch(FREE_TRIAL_AJAX_URL, {
@@ -148,6 +197,12 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
 
   if (!res.ok) {
     const err = parseFreeTrialError(data);
+    /** Škola už má aktivní předplatné, ale uživatel přesto poslal žádost o trial:
+     *  fire-and-forget založení upsell dealu v Pipedrive (pipeline 7, stage 40,
+     *  label „Trial web (interactive) - 2.0" 359, aktivita pro deal ownera). */
+    if (err.code === 'active_subscription_trial') {
+      void notifyTrialActiveSubscriptionToPipedrive(fields);
+    }
     return {
       status: 'error',
       code: err.code,
@@ -170,5 +225,8 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   }
 
   const err = parseFreeTrialError(data);
+  if (err.code === 'active_subscription_trial') {
+    void notifyTrialActiveSubscriptionToPipedrive(fields);
+  }
   return { status: 'error', code: err.code, message: err.message };
 }

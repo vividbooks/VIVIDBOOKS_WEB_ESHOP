@@ -12863,6 +12863,233 @@ async function createPipedriveActivity(
   return data?.data || null;
 }
 
+/**
+ * Vytvoří v Pipedrivu deal pro upsell trial — používá se ve chvíli, kdy legacy
+ * Vividbooks API (`/web/free-trial-ajax`) odmítne žádost s reason
+ * "You have active subscription trial yet." (= škola už má aktivní předplatné,
+ * ale konkrétní uživatel přesto požádal o zkušební přístup z e‑shopu).
+ *
+ * Pipeline / stage / label / aktivita:
+ *   - Pipeline 7 (CZ-Sales-Upsell-CZ2), stage 40 (Kontaktováno [CZ2])
+ *   - Label „Trial web (interactive) - 2.0" (option ID 359, deal field ID 12463)
+ *   - Aktivita typu `call` (Kontaktovat), splatná dnes, přiřazená deal ownerovi,
+ *     poznámka `Zákazník žádá o trial.`
+ *
+ * Owner se určuje sjednoceně přes `resolvePipedriveDealOwnerUserId`:
+ *   custom org pole „current deal owner" (ID 4056) → owner z existujících dealů.
+ *
+ * Idempotence: pokud už existuje **otevřený** deal v pipeline 7 s tímto labelem
+ * pro danou organizaci, nový deal se nezakládá (deduplikace v rámci pipeline)
+ * — zaeviduje se jen nová aktivita pro deal ownera, aby obchodník věděl, že
+ * zákazník žádal znovu.
+ */
+async function syncTrialActiveSubscriptionToPipedrive(params: {
+  schoolName: string;
+  ico: string;
+  contactName: string;
+  email: string;
+  phone: string;
+  position: string;
+}): Promise<{
+  skipped: boolean;
+  reason?: 'missing_api_token' | 'missing_org' | 'missing_contact_name';
+  orgId?: number | null;
+  personId?: number | null;
+  dealId?: number | null;
+  activityId?: number | null;
+  noteId?: number | null;
+  deduplicated?: boolean;
+  ownerUserId?: number | null;
+  pipelineId?: number;
+  stageId?: number;
+}> {
+  const apiToken = getPipedriveApiToken();
+  if (!apiToken) return { skipped: true, reason: 'missing_api_token' };
+
+  const schoolName = String(params.schoolName || '').trim();
+  const ico = String(params.ico || '').replace(/\D/g, '').slice(0, 10);
+  const contactName = String(params.contactName || '').trim();
+  const email = String(params.email || '').trim();
+  const phone = String(params.phone || '').trim();
+  const position = String(params.position || '').trim();
+
+  if (!contactName) return { skipped: true, reason: 'missing_contact_name' };
+
+  const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
+    schoolName,
+    ico,
+    /** Adresa není v trial formuláři dostupná. */
+    address: '',
+    strictIcoMatch: ico.length > 0,
+  });
+  if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' };
+
+  const pipelineId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_PIPELINE_ID', 7);
+  const stageId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_STAGE_ID', 40);
+  /** Stejné pole jako u školní objednávky (ID 12463), jiná option ID 359 = „Trial web (interactive) - 2.0". */
+  const labelFieldId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_LABEL_FIELD_ID', 12463);
+  const labelOptionId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_LABEL_OPTION_ID', 359);
+  const fallbackOwnerId =
+    pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_FALLBACK_OWNER_ID', 0) ||
+    pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
+
+  const ownerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
+    orgId: orgLookup.orgId,
+    lookupOwnerUserId: orgLookup.ownerUserId,
+    fallbackOwnerUserId: fallbackOwnerId,
+    contextLabel: 'Pipedrive trial upsell',
+  });
+
+  const person = await findOrCreatePipedrivePerson(apiToken, {
+    orgId: orgLookup.orgId,
+    name: contactName,
+    email,
+    phone,
+    position,
+  }).catch((error: any) => {
+    console.log(`[Pipedrive trial upsell] Person sync error: ${error.message}`);
+    return null;
+  });
+  const personId = parsePipedriveNumericId(person?.id);
+
+  /** Idempotence: existuje pro tuto organizaci v dané pipeline a labelu už otevřený deal?
+   *  Pokud ano, nezakládáme duplicit — jen aktivitu (pro obchodníka stopa, že žádost přišla znovu). */
+  let dealId: number | null = null;
+  let deduplicated = false;
+  try {
+    const existingDeals = await getPipedriveOrganizationDeals(apiToken, orgLookup.orgId).catch(() => []);
+    const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken).catch(() => ({} as Record<string, string>));
+    const trialLabelName = dealLabelIdToName[String(labelOptionId)] || '';
+    const isOpenInOurPipeline = (deal: any) =>
+      String(deal?.status || '').toLowerCase() === 'open' &&
+      parsePipedriveNumericId(deal?.pipeline_id) === pipelineId;
+    const dealHasOurLabel = (deal: any): boolean => {
+      const names = dealLabelNamesFromDeal(deal, dealLabelIdToName);
+      if (trialLabelName && names.includes(trialLabelName)) return true;
+      /** Záchranná cesta — porovnání přes raw ID v poli `label`/`labels`. */
+      const raw = deal?.label ?? deal?.labels;
+      const tokens: string[] = [];
+      if (Array.isArray(raw)) {
+        for (const item of raw) {
+          if (item == null) continue;
+          if (typeof item === 'object') tokens.push(String((item as any).id ?? (item as any).value ?? ''));
+          else tokens.push(String(item));
+        }
+      } else if (raw != null && raw !== '') {
+        tokens.push(...String(raw).split(',').map((s) => s.trim()));
+      }
+      return tokens.includes(String(labelOptionId));
+    };
+    const existingTrialDeal = existingDeals.find((d: any) => isOpenInOurPipeline(d) && dealHasOurLabel(d));
+    if (existingTrialDeal) {
+      dealId = parsePipedriveNumericId(existingTrialDeal.id);
+      deduplicated = true;
+      console.log(
+        `[Pipedrive trial upsell] existing open deal id=${dealId} org=${orgLookup.orgId} pipeline=${pipelineId} label=${labelOptionId} — skipping create, only adding activity`,
+      );
+    }
+  } catch (error: any) {
+    console.log(`[Pipedrive trial upsell] dedup check error: ${error.message}`);
+  }
+
+  if (!dealId) {
+    const labelExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, labelFieldId, [labelOptionId]);
+    const titleSchool = schoolName || (ico ? `IČO ${ico}` : 'Trial upsell');
+    const todayShort = new Date().toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
+    const payload: Record<string, any> = {
+      title: `Trial (web) — ${titleSchool} — ${todayShort}`,
+      org_id: orgLookup.orgId,
+      pipeline_id: pipelineId,
+      stage_id: stageId,
+    };
+    if (ownerUserId != null && ownerUserId > 0) payload.user_id = ownerUserId;
+    if (personId) payload.person_id = personId;
+    if (labelExtra && Object.keys(labelExtra).length) Object.assign(payload, labelExtra);
+    try {
+      const created = await pipedriveRequest<any>(apiToken, '/deals', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      dealId = parsePipedriveNumericId(created?.data?.id);
+      console.log(
+        `[Pipedrive trial upsell] deal created id=${dealId} org=${orgLookup.orgId} owner=${ownerUserId ?? 'null'} pipeline=${pipelineId} stage=${stageId} label=${labelOptionId}`,
+      );
+    } catch (error: any) {
+      console.log(`[Pipedrive trial upsell] deal create error: ${error.message}`);
+    }
+  }
+
+  let activity: any = null;
+  let note: any = null;
+  if (ownerUserId && dealId) {
+    const { todayISO } = buildTodayContextBlock();
+    const subject = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_SUBJECT') || '').trim()
+      || `Kontaktovat zákazníka: ${schoolName || ico || contactName}`;
+    const activityType = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_TYPE') || '').trim() || 'call';
+    const noteText = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_NOTE') || '').trim() || 'Zákazník žádá o trial.';
+    const noteBody = [
+      noteText,
+      contactName ? `Kontakt: ${contactName}` : '',
+      email ? `E‑mail: ${email}` : '',
+      phone ? `Telefon: ${phone}` : '',
+      position ? `Pozice: ${position}` : '',
+      schoolName ? `Škola: ${schoolName}` : '',
+      ico ? `IČO: ${ico}` : '',
+      deduplicated ? '⚠️ Zákazník žádal o trial znovu (otevřený deal už existoval).' : '',
+    ].filter(Boolean).join('\n');
+    try {
+      activity = await createPipedriveActivity(apiToken, {
+        subject,
+        userId: ownerUserId,
+        dueDate: todayISO,
+        note: noteBody,
+        dealId,
+        orgId: orgLookup.orgId,
+        personId,
+        type: activityType,
+      });
+      console.log(
+        `[Pipedrive trial upsell] activity created id=${parsePipedriveNumericId(activity?.id) ?? 'null'} deal=${dealId} owner=${ownerUserId}`,
+      );
+    } catch (error: any) {
+      console.log(`[Pipedrive trial upsell] activity create error: ${error.message}`);
+    }
+
+    /** Pro nově založený deal přidáme i samostatnou poznámku — usnadní vyhledávání
+     *  v deal feedu, kde activity note bývá v menším bloku. U deduplikace nevytváříme
+     *  duplikátní poznámku — všechno potřebné je v activity note. */
+    if (!deduplicated) {
+      try {
+        note = await createPipedriveNote(apiToken, {
+          content: noteBody.replace(/\n/g, '<br>'),
+          dealId,
+          orgId: orgLookup.orgId,
+          personId,
+        });
+      } catch (error: any) {
+        console.log(`[Pipedrive trial upsell] note create error: ${error.message}`);
+      }
+    }
+  } else if (!ownerUserId) {
+    console.log(
+      `[Pipedrive trial upsell] activity skipped — žádný owner pro org ${orgLookup.orgId} (current_deal_owner pole prázdné a žádné existující dealy).`,
+    );
+  }
+
+  return {
+    skipped: false,
+    orgId: orgLookup.orgId,
+    personId,
+    dealId,
+    activityId: parsePipedriveNumericId(activity?.id),
+    noteId: parsePipedriveNumericId(note?.id),
+    deduplicated,
+    ownerUserId,
+    pipelineId,
+    stageId,
+  };
+}
+
 type PipedriveFieldMap = Record<string, { name: string; options: Record<string, string> }>;
 
 function getServiceSupabaseClient() {
@@ -13286,6 +13513,61 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   } catch (error: any) {
     console.log(`[Pipedrive] Chyba: ${error.message}`);
     return c.json({ status: 'unknown', message: 'Nepodařilo se ověřit v Pipedrive.' });
+  }
+});
+
+/**
+ * POST /trial-active-subscription-pipedrive
+ *
+ * Volá se z `/vyzkousejte` po tom, co legacy Vividbooks API
+ * (`https://api.vividbooks.com/web/free-trial-ajax`) odmítne žádost s reason
+ * "You have active subscription trial yet." (= škola už má aktivní předplatné).
+ * Cíl: v Pipedrivu založit upsell deal v pipeline CZ‑Sales‑Upsell‑CZ2 (ID 7),
+ * stage Kontaktováno [CZ2] (ID 40), label „Trial web (interactive) - 2.0"
+ * (option ID 359 na deal poli ID 12463), s aktivitou „Kontaktovat" pro deal
+ * ownera (current deal owner z organizace, pole ID 4056).
+ *
+ * Idempotentní v rámci pipeline 7: pokud už pro org existuje otevřený deal
+ * s tímto labelem, nový se nezakládá — vytvoří se jen nová aktivita.
+ *
+ * Endpoint nevyžaduje admin auth (volá se z anon kontextu, stejně jako
+ * `school-pipedrive-check`, `check-trial-email` apod.). Body je důvěryhodný
+ * jen v rozsahu „co zákazník právě vyplnil ve formuláři" — Pipedrive owner
+ * a label se určují server‑side, aby je nešlo přepsat zvenčí.
+ */
+app.post('/make-server-93a20b6f/trial-active-subscription-pipedrive', async (c) => {
+  try {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const schoolName = String(body.schoolName ?? body.school ?? '').trim();
+    const icoRaw = String(body.ico ?? body.vat ?? '').replace(/\D/g, '').slice(0, 10);
+    if (!schoolName && !icoRaw) {
+      return c.json({ skipped: true, reason: 'missing_school' }, 400);
+    }
+
+    const contactName = String(body.name ?? body.contactName ?? '').trim();
+    const email = String(body.email ?? '').trim();
+    const phone = String(body.phone ?? '').trim();
+    const position = String(body.position ?? '').trim();
+    if (!contactName) {
+      return c.json({ skipped: true, reason: 'missing_contact_name' }, 400);
+    }
+    if (!email || !isValidEmailFormat(email)) {
+      return c.json({ skipped: true, reason: 'invalid_email' }, 400);
+    }
+
+    const result = await syncTrialActiveSubscriptionToPipedrive({
+      schoolName,
+      ico: icoRaw,
+      contactName,
+      email,
+      phone,
+      position,
+    });
+
+    return c.json({ success: true, ...result });
+  } catch (error: any) {
+    console.log(`[Pipedrive trial upsell] endpoint error: ${error?.message ?? error}`);
+    return c.json({ success: false, error: String(error?.message ?? error) }, 500);
   }
 });
 
