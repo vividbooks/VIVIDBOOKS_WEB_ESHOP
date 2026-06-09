@@ -12864,35 +12864,128 @@ async function createPipedriveActivity(
 }
 
 /**
- * Vytvoří v Pipedrivu deal pro upsell trial — používá se ve chvíli, kdy legacy
- * Vividbooks API (`/web/free-trial-ajax`) odmítne žádost s reason
- * "You have active subscription trial yet." (= škola už má aktivní předplatné,
- * ale konkrétní uživatel přesto požádal o zkušební přístup z e‑shopu).
- *
- * Pipeline / stage / label / aktivita:
- *   - Pipeline 7 (CZ-Sales-Upsell-CZ2), stage 40 (Kontaktováno [CZ2])
- *   - Label „Trial web (interactive) - 2.0" (option ID 359, deal field ID 12463)
- *   - Aktivita typu `call` (Kontaktovat), splatná dnes, přiřazená deal ownerovi,
- *     poznámka `Zákazník žádá o trial.`
- *
- * Owner se určuje sjednoceně přes `resolvePipedriveDealOwnerUserId`:
- *   custom org pole „current deal owner" (ID 4056) → owner z existujících dealů.
- *
- * Idempotence: pokud už existuje **otevřený** deal v pipeline 7 s tímto labelem
- * pro danou organizaci, nový deal se nezakládá (deduplikace v rámci pipeline)
- * — zaeviduje se jen nová aktivita pro deal ownera, aby obchodník věděl, že
- * zákazník žádal znovu.
+ * Scénář volání Pipedrive z trial formuláře — určuje pipeline / stage /
+ * popis aktivity / fallback ownera. Label je vždy stejný (option 359 na poli
+ * 12463 = „Trial web (interactive) - 2.0"), liší se obchodní pipeline.
  */
-async function syncTrialActiveSubscriptionToPipedrive(params: {
-  schoolName: string;
-  ico: string;
-  contactName: string;
-  email: string;
-  phone: string;
-  position: string;
-}): Promise<{
+type TrialPipedriveScenario =
+  | 'active_subscription'      // legacy reason "You have active subscription trial yet."
+  | 'email_used_in_school';    // legacy reason "Email is used yet." (opětovná žádost o kód)
+
+interface TrialPipedriveScenarioConfig {
+  pipelineId: number;
+  stageId: number;
+  /** Default owner, pokud current_deal_owner ani lookup z dealů nevrátí nikoho.
+   *  U trial flow z eshopu (akvizice) je default Gabriela Švédová (user_id 18026774). */
+  fallbackOwnerUserId: number;
+  /** ENV názvy, ze kterých lze hodnoty výše přepsat. */
+  envKeys: {
+    pipelineId: string;
+    stageId: string;
+    activityType: string;
+    activitySubject: string;
+    activityNote: string;
+    fallbackOwnerId: string;
+  };
+  defaults: {
+    activityType: string;
+    activitySubject: string;
+    activityNote: string;
+  };
+  /** Lidsky čitelný prefix do logů (např. „Pipedrive trial upsell"). */
+  logPrefix: string;
+  /** Default deal title prefix. */
+  dealTitlePrefix: string;
+}
+
+function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): TrialPipedriveScenarioConfig {
+  if (scenario === 'active_subscription') {
+    return {
+      pipelineId: 7,
+      stageId: 40,
+      fallbackOwnerUserId: 0,
+      envKeys: {
+        pipelineId: 'PIPEDRIVE_TRIAL_UPSELL_PIPELINE_ID',
+        stageId: 'PIPEDRIVE_TRIAL_UPSELL_STAGE_ID',
+        activityType: 'PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_TYPE',
+        activitySubject: 'PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_SUBJECT',
+        activityNote: 'PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_NOTE',
+        fallbackOwnerId: 'PIPEDRIVE_TRIAL_UPSELL_FALLBACK_OWNER_ID',
+      },
+      defaults: {
+        activityType: 'call',
+        activitySubject: '',
+        activityNote: 'Zákazník žádá o trial.',
+      },
+      logPrefix: 'Pipedrive trial upsell',
+      dealTitlePrefix: 'Trial (web) — upsell',
+    };
+  }
+  /** email_used_in_school = opětovná žádost o kód v akviziční pipeline. */
+  return {
+    pipelineId: 6,
+    stageId: 37,
+    /** Gabriela Švédová — default obchodník pro nové žádosti, když u organizace
+     *  v Pipedrive není vyplněno custom pole „current deal owner" (ID 4056). */
+    fallbackOwnerUserId: 18026774,
+    envKeys: {
+      pipelineId: 'PIPEDRIVE_TRIAL_REREQUEST_PIPELINE_ID',
+      stageId: 'PIPEDRIVE_TRIAL_REREQUEST_STAGE_ID',
+      activityType: 'PIPEDRIVE_TRIAL_REREQUEST_ACTIVITY_TYPE',
+      activitySubject: 'PIPEDRIVE_TRIAL_REREQUEST_ACTIVITY_SUBJECT',
+      activityNote: 'PIPEDRIVE_TRIAL_REREQUEST_ACTIVITY_NOTE',
+      fallbackOwnerId: 'PIPEDRIVE_TRIAL_REREQUEST_FALLBACK_OWNER_ID',
+    },
+    defaults: {
+      activityType: 'call',
+      activitySubject: '',
+      activityNote: 'Opětovná žádost o kód.',
+    },
+    logPrefix: 'Pipedrive trial re-request',
+    dealTitlePrefix: 'Trial (web) — opětovná žádost',
+  };
+}
+
+/**
+ * Vytvoří v Pipedrivu deal pro trial flow z e‑shopu (`/vyzkousejte`).
+ *
+ * Sdílená logika pro dva scénáře, do kterých zákazník padá podle odpovědi
+ * legacy Vividbooks API (`/web/free-trial-ajax`):
+ *
+ *   - `active_subscription` — reason „You have active subscription trial yet."
+ *     (škola už má aktivní předplatné). Deal vznikne v pipeline `CZ-Sales-Upsell-CZ2`
+ *     (ID 7), stage `Kontaktováno [CZ2]` (ID 40), default owner = current_deal_owner.
+ *
+ *   - `email_used_in_school` — reason „Email is used yet." (opětovná žádost o trial
+ *     kód u školy, kde už trial existuje). Deal vznikne v pipeline
+ *     `CZ-Sales-Akvizice-CZ1` (ID 6), stage `Lead / Prospekt [CZ1]` (ID 37),
+ *     default owner = Gabriela Švédová (18026774), když current_deal_owner chybí.
+ *
+ * V obou případech:
+ *   - organizace se hledá podle CIN/IČO (org pole ID 4033) přes
+ *     `upsertPipedriveSchoolOrganization` — při shodě se použije existující,
+ *     jinak se založí nová z údajů z formuláře (`strictIcoMatch` zapnutý).
+ *   - label „Trial web (interactive) - 2.0" (option 359 na deal poli 12463).
+ *   - aktivita typu `call` splatná dnes, přiřazená deal ownerovi, s notou
+ *     odpovídající scénáři.
+ *
+ * Idempotence: pokud už pro org existuje **otevřený** deal v této pipeline
+ * s tímto labelem, nový deal se nezakládá — jen se přidá aktivita.
+ */
+async function syncTrialPipedriveDeal(
+  scenario: TrialPipedriveScenario,
+  params: {
+    schoolName: string;
+    ico: string;
+    contactName: string;
+    email: string;
+    phone: string;
+    position: string;
+  },
+): Promise<{
   skipped: boolean;
   reason?: 'missing_api_token' | 'missing_org' | 'missing_contact_name';
+  scenario: TrialPipedriveScenario;
   orgId?: number | null;
   personId?: number | null;
   dealId?: number | null;
@@ -12904,8 +12997,9 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
   stageId?: number;
 }> {
   const apiToken = getPipedriveApiToken();
-  if (!apiToken) return { skipped: true, reason: 'missing_api_token' };
+  if (!apiToken) return { skipped: true, reason: 'missing_api_token', scenario };
 
+  const cfg = getTrialPipedriveScenarioConfig(scenario);
   const schoolName = String(params.schoolName || '').trim();
   const ico = String(params.ico || '').replace(/\D/g, '').slice(0, 10);
   const contactName = String(params.contactName || '').trim();
@@ -12913,7 +13007,7 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
   const phone = String(params.phone || '').trim();
   const position = String(params.position || '').trim();
 
-  if (!contactName) return { skipped: true, reason: 'missing_contact_name' };
+  if (!contactName) return { skipped: true, reason: 'missing_contact_name', scenario };
 
   const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
     schoolName,
@@ -12922,22 +13016,24 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
     address: '',
     strictIcoMatch: ico.length > 0,
   });
-  if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org' };
+  if (!orgLookup.orgId) return { skipped: true, reason: 'missing_org', scenario };
 
-  const pipelineId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_PIPELINE_ID', 7);
-  const stageId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_STAGE_ID', 40);
-  /** Stejné pole jako u školní objednávky (ID 12463), jiná option ID 359 = „Trial web (interactive) - 2.0". */
-  const labelFieldId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_LABEL_FIELD_ID', 12463);
-  const labelOptionId = pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_LABEL_OPTION_ID', 359);
+  const pipelineId = pipedriveEnvInt(cfg.envKeys.pipelineId, cfg.pipelineId);
+  const stageId = pipedriveEnvInt(cfg.envKeys.stageId, cfg.stageId);
+  /** Společný label field/option pro oba scénáře (id 12463 / option 359 = „Trial web (interactive) - 2.0"). */
+  const labelFieldId = pipedriveEnvInt('PIPEDRIVE_TRIAL_LABEL_FIELD_ID', 12463);
+  const labelOptionId = pipedriveEnvInt('PIPEDRIVE_TRIAL_LABEL_OPTION_ID', 359);
   const fallbackOwnerId =
-    pipedriveEnvInt('PIPEDRIVE_TRIAL_UPSELL_FALLBACK_OWNER_ID', 0) ||
+    pipedriveEnvInt(cfg.envKeys.fallbackOwnerId, 0) ||
+    pipedriveEnvInt('PIPEDRIVE_TRIAL_FALLBACK_OWNER_ID', 0) ||
+    cfg.fallbackOwnerUserId ||
     pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
 
   const ownerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
     orgId: orgLookup.orgId,
     lookupOwnerUserId: orgLookup.ownerUserId,
     fallbackOwnerUserId: fallbackOwnerId,
-    contextLabel: 'Pipedrive trial upsell',
+    contextLabel: cfg.logPrefix,
   });
 
   const person = await findOrCreatePipedrivePerson(apiToken, {
@@ -12947,7 +13043,7 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
     phone,
     position,
   }).catch((error: any) => {
-    console.log(`[Pipedrive trial upsell] Person sync error: ${error.message}`);
+    console.log(`[${cfg.logPrefix}] Person sync error: ${error.message}`);
     return null;
   });
   const personId = parsePipedriveNumericId(person?.id);
@@ -12985,19 +13081,19 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
       dealId = parsePipedriveNumericId(existingTrialDeal.id);
       deduplicated = true;
       console.log(
-        `[Pipedrive trial upsell] existing open deal id=${dealId} org=${orgLookup.orgId} pipeline=${pipelineId} label=${labelOptionId} — skipping create, only adding activity`,
+        `[${cfg.logPrefix}] existing open deal id=${dealId} org=${orgLookup.orgId} pipeline=${pipelineId} label=${labelOptionId} — skipping create, only adding activity`,
       );
     }
   } catch (error: any) {
-    console.log(`[Pipedrive trial upsell] dedup check error: ${error.message}`);
+    console.log(`[${cfg.logPrefix}] dedup check error: ${error.message}`);
   }
 
   if (!dealId) {
     const labelExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, labelFieldId, [labelOptionId]);
-    const titleSchool = schoolName || (ico ? `IČO ${ico}` : 'Trial upsell');
+    const titleSchool = schoolName || (ico ? `IČO ${ico}` : 'Trial');
     const todayShort = new Date().toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
     const payload: Record<string, any> = {
-      title: `Trial (web) — ${titleSchool} — ${todayShort}`,
+      title: `${cfg.dealTitlePrefix} — ${titleSchool} — ${todayShort}`,
       org_id: orgLookup.orgId,
       pipeline_id: pipelineId,
       stage_id: stageId,
@@ -13012,10 +13108,10 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
       });
       dealId = parsePipedriveNumericId(created?.data?.id);
       console.log(
-        `[Pipedrive trial upsell] deal created id=${dealId} org=${orgLookup.orgId} owner=${ownerUserId ?? 'null'} pipeline=${pipelineId} stage=${stageId} label=${labelOptionId}`,
+        `[${cfg.logPrefix}] deal created id=${dealId} org=${orgLookup.orgId} owner=${ownerUserId ?? 'null'} pipeline=${pipelineId} stage=${stageId} label=${labelOptionId}`,
       );
     } catch (error: any) {
-      console.log(`[Pipedrive trial upsell] deal create error: ${error.message}`);
+      console.log(`[${cfg.logPrefix}] deal create error: ${error.message}`);
     }
   }
 
@@ -13023,10 +13119,11 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
   let note: any = null;
   if (ownerUserId && dealId) {
     const { todayISO } = buildTodayContextBlock();
-    const subject = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_SUBJECT') || '').trim()
+    const subject = (Deno.env.get(cfg.envKeys.activitySubject) || '').trim()
+      || cfg.defaults.activitySubject
       || `Kontaktovat zákazníka: ${schoolName || ico || contactName}`;
-    const activityType = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_TYPE') || '').trim() || 'call';
-    const noteText = (Deno.env.get('PIPEDRIVE_TRIAL_UPSELL_ACTIVITY_NOTE') || '').trim() || 'Zákazník žádá o trial.';
+    const activityType = (Deno.env.get(cfg.envKeys.activityType) || '').trim() || cfg.defaults.activityType;
+    const noteText = (Deno.env.get(cfg.envKeys.activityNote) || '').trim() || cfg.defaults.activityNote;
     const noteBody = [
       noteText,
       contactName ? `Kontakt: ${contactName}` : '',
@@ -13049,10 +13146,10 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
         type: activityType,
       });
       console.log(
-        `[Pipedrive trial upsell] activity created id=${parsePipedriveNumericId(activity?.id) ?? 'null'} deal=${dealId} owner=${ownerUserId}`,
+        `[${cfg.logPrefix}] activity created id=${parsePipedriveNumericId(activity?.id) ?? 'null'} deal=${dealId} owner=${ownerUserId}`,
       );
     } catch (error: any) {
-      console.log(`[Pipedrive trial upsell] activity create error: ${error.message}`);
+      console.log(`[${cfg.logPrefix}] activity create error: ${error.message}`);
     }
 
     /** Pro nově založený deal přidáme i samostatnou poznámku — usnadní vyhledávání
@@ -13067,17 +13164,18 @@ async function syncTrialActiveSubscriptionToPipedrive(params: {
           personId,
         });
       } catch (error: any) {
-        console.log(`[Pipedrive trial upsell] note create error: ${error.message}`);
+        console.log(`[${cfg.logPrefix}] note create error: ${error.message}`);
       }
     }
   } else if (!ownerUserId) {
     console.log(
-      `[Pipedrive trial upsell] activity skipped — žádný owner pro org ${orgLookup.orgId} (current_deal_owner pole prázdné a žádné existující dealy).`,
+      `[${cfg.logPrefix}] activity skipped — žádný owner pro org ${orgLookup.orgId} (current_deal_owner pole prázdné, žádné dealy a fallback owner=0).`,
     );
   }
 
   return {
     skipped: false,
+    scenario,
     orgId: orgLookup.orgId,
     personId,
     dealId,
@@ -13517,25 +13615,19 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
 });
 
 /**
- * POST /trial-active-subscription-pipedrive
- *
- * Volá se z `/vyzkousejte` po tom, co legacy Vividbooks API
- * (`https://api.vividbooks.com/web/free-trial-ajax`) odmítne žádost s reason
- * "You have active subscription trial yet." (= škola už má aktivní předplatné).
- * Cíl: v Pipedrivu založit upsell deal v pipeline CZ‑Sales‑Upsell‑CZ2 (ID 7),
- * stage Kontaktováno [CZ2] (ID 40), label „Trial web (interactive) - 2.0"
- * (option ID 359 na deal poli ID 12463), s aktivitou „Kontaktovat" pro deal
- * ownera (current deal owner z organizace, pole ID 4056).
- *
- * Idempotentní v rámci pipeline 7: pokud už pro org existuje otevřený deal
- * s tímto labelem, nový se nezakládá — vytvoří se jen nová aktivita.
+ * Sdílené tělo pro trial‑pipedrive endpointy (`/trial-active-subscription-pipedrive`
+ * a `/trial-email-used-pipedrive`). Validace body je stejná — liší se jen scénář
+ * (a tedy pipeline / stage / default owner / poznámka aktivity).
  *
  * Endpoint nevyžaduje admin auth (volá se z anon kontextu, stejně jako
- * `school-pipedrive-check`, `check-trial-email` apod.). Body je důvěryhodný
- * jen v rozsahu „co zákazník právě vyplnil ve formuláři" — Pipedrive owner
- * a label se určují server‑side, aby je nešlo přepsat zvenčí.
+ * `school-pipedrive-check`, `check-trial-email` apod.). Body je důvěryhodný jen
+ * v rozsahu „co zákazník právě vyplnil ve formuláři" — Pipedrive owner, label,
+ * pipeline a stage se určují server‑side, aby je nešlo přepsat zvenčí.
  */
-app.post('/make-server-93a20b6f/trial-active-subscription-pipedrive', async (c) => {
+async function handleTrialPipedriveEndpoint(
+  c: Parameters<Parameters<typeof app.post>[1]>[0],
+  scenario: TrialPipedriveScenario,
+) {
   try {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     const schoolName = String(body.schoolName ?? body.school ?? '').trim();
@@ -13555,7 +13647,7 @@ app.post('/make-server-93a20b6f/trial-active-subscription-pipedrive', async (c) 
       return c.json({ skipped: true, reason: 'invalid_email' }, 400);
     }
 
-    const result = await syncTrialActiveSubscriptionToPipedrive({
+    const result = await syncTrialPipedriveDeal(scenario, {
       schoolName,
       ico: icoRaw,
       contactName,
@@ -13566,10 +13658,52 @@ app.post('/make-server-93a20b6f/trial-active-subscription-pipedrive', async (c) 
 
     return c.json({ success: true, ...result });
   } catch (error: any) {
-    console.log(`[Pipedrive trial upsell] endpoint error: ${error?.message ?? error}`);
+    console.log(`[Pipedrive trial ${scenario}] endpoint error: ${error?.message ?? error}`);
     return c.json({ success: false, error: String(error?.message ?? error) }, 500);
   }
-});
+}
+
+/**
+ * POST /trial-active-subscription-pipedrive
+ *
+ * Volá se z `/vyzkousejte` po tom, co legacy Vividbooks API
+ * (`https://api.vividbooks.com/web/free-trial-ajax`) odmítne žádost s reason
+ * "You have active subscription trial yet." (= škola už má aktivní předplatné).
+ *
+ * Pipeline `CZ‑Sales‑Upsell‑CZ2` (ID 7), stage `Kontaktováno [CZ2]` (ID 40),
+ * label „Trial web (interactive) - 2.0" (option ID 359 / pole 12463), aktivita
+ * „Kontaktovat" splatná dnes, poznámka „Zákazník žádá o trial.". Owner přes
+ * current_deal_owner (4056) → owner z existujících dealů.
+ *
+ * Idempotentní v rámci pipeline 7.
+ */
+app.post('/make-server-93a20b6f/trial-active-subscription-pipedrive', (c) =>
+  handleTrialPipedriveEndpoint(c, 'active_subscription'));
+
+/**
+ * POST /trial-email-used-pipedrive
+ *
+ * Volá se z `/vyzkousejte` po tom, co legacy Vividbooks API odmítne žádost
+ * s reason "Email is used yet." (= e‑mail je u školy už evidovaný, typicky
+ * proto, že trial byl v admin vystavený dřív; uživatel teď žádá o kód znovu).
+ *
+ * Pipeline `CZ‑Sales‑Akvizice‑CZ1` (ID 6), stage `Lead / Prospekt [CZ1]`
+ * (ID 37), label „Trial web (interactive) - 2.0" (option ID 359 / pole 12463),
+ * aktivita „Kontaktovat" splatná dnes, poznámka „Opětovná žádost o kód.".
+ *
+ * Organizace se hledá podle CIN/IČO (org pole 4033) přes
+ * `upsertPipedriveSchoolOrganization` — když se shoduje, použije se existující;
+ * jinak se založí nová z údajů z formuláře.
+ *
+ * Owner: 1) current_deal_owner (org pole 4056), 2) owner z existujících dealů
+ * org, 3) `PIPEDRIVE_TRIAL_REREQUEST_FALLBACK_OWNER_ID` (ENV),
+ * 4) **Gabriela Švédová (user_id 18026774)** jako kódový fallback pro nové
+ * organizace bez obchodníka.
+ *
+ * Idempotentní v rámci pipeline 6.
+ */
+app.post('/make-server-93a20b6f/trial-email-used-pipedrive', (c) =>
+  handleTrialPipedriveEndpoint(c, 'email_used_in_school'));
 
 app.post('/make-server-93a20b6f/admin/pipedrive/ensure-school', async (c) => {
   const apiToken = getPipedriveApiToken();

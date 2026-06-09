@@ -7,6 +7,9 @@ export const FREE_TRIAL_AJAX_URL = apiUrl('/web/free-trial-ajax');
 const TRIAL_PIPEDRIVE_UPSELL_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-active-subscription-pipedrive`;
 
+const TRIAL_PIPEDRIVE_REREQUEST_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-email-used-pipedrive`;
+
 export type FreeTrialFields = {
   name: string;
   email: string;
@@ -119,20 +122,23 @@ export function freeTrialErrorMessage(data: Record<string, unknown> | null): str
 }
 
 /**
- * Fire-and-forget vytvoření Pipedrive upsell dealu, když legacy `/web/free-trial-ajax`
- * vrátí reason "You have active subscription trial yet." — škola už má aktivní
- * předplatné, ale konkrétní uživatel přesto poslal žádost o trial.
+ * Společné fire-and-forget volání edge endpointů pro trial flow do Pipedrive.
  *
- * Edge funkce `trial-active-subscription-pipedrive` v `make-server-93a20b6f`:
- *   - založí (nebo doplní) Pipedrive organizaci a person
- *   - vytvoří deal v pipeline 7 (CZ-Sales-Upsell-CZ2), stage 40 (Kontaktováno [CZ2])
- *     s labelem 359 ("Trial web (interactive) - 2.0", deal field 12463)
- *   - přiřadí deal owner přes „current deal owner" (org pole 4056)
- *   - založí aktivitu "Kontaktovat" s notou "Zákazník žádá o trial." pro deal ownera
+ * Dva scénáře — liší se pipeline / stage / default owner / poznámka aktivity,
+ * label je stejný (option 359 na poli 12463 = „Trial web (interactive) - 2.0"):
+ *
+ *   - `trial-active-subscription-pipedrive` — když legacy API vrátí
+ *     `active_subscription_trial` (škola už má aktivní předplatné). Pipeline 7
+ *     `CZ-Sales-Upsell-CZ2`, stage 40 `Kontaktováno [CZ2]`.
+ *
+ *   - `trial-email-used-pipedrive` — když legacy API vrátí `email_used_in_school`
+ *     (uživatel/škola už trial v Vividbooks adminu má, žádá o kód znovu).
+ *     Pipeline 6 `CZ-Sales-Akvizice-CZ1`, stage 37 `Lead / Prospekt [CZ1]`.
+ *     Default owner Gabriela Švédová, když organizace nemá current_deal_owner.
  *
  * Volání je „nejlepší úsilí" — chyba se neeskaluje na UI, jen zaloguje do konzole.
  */
-export async function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrialFields): Promise<void> {
+async function postTrialPipedriveSync(url: string, label: string, fields: FreeTrialFields): Promise<void> {
   try {
     const { fullName } = splitFullNameForTrial(fields.name);
     const body = {
@@ -143,7 +149,7 @@ export async function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrial
       phone: fields.phone,
       position: fields.position,
     };
-    const res = await fetch(TRIAL_PIPEDRIVE_UPSELL_URL, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -155,12 +161,20 @@ export async function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrial
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       console.warn(
-        `[trial-pipedrive-upsell] HTTP ${res.status}: ${text.slice(0, 200)}`,
+        `[${label}] HTTP ${res.status}: ${text.slice(0, 200)}`,
       );
     }
   } catch (error) {
-    console.warn('[trial-pipedrive-upsell] error:', error);
+    console.warn(`[${label}] error:`, error);
   }
+}
+
+export function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrialFields): Promise<void> {
+  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_UPSELL_URL, 'trial-pipedrive-upsell', fields);
+}
+
+export function notifyTrialEmailUsedToPipedrive(fields: FreeTrialFields): Promise<void> {
+  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_REREQUEST_URL, 'trial-pipedrive-rerequest', fields);
 }
 
 export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
@@ -197,12 +211,7 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
 
   if (!res.ok) {
     const err = parseFreeTrialError(data);
-    /** Škola už má aktivní předplatné, ale uživatel přesto poslal žádost o trial:
-     *  fire-and-forget založení upsell dealu v Pipedrive (pipeline 7, stage 40,
-     *  label „Trial web (interactive) - 2.0" 359, aktivita pro deal ownera). */
-    if (err.code === 'active_subscription_trial') {
-      void notifyTrialActiveSubscriptionToPipedrive(fields);
-    }
+    triggerTrialPipedriveSync(err.code, fields);
     return {
       status: 'error',
       code: err.code,
@@ -225,8 +234,28 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   }
 
   const err = parseFreeTrialError(data);
-  if (err.code === 'active_subscription_trial') {
-    void notifyTrialActiveSubscriptionToPipedrive(fields);
-  }
+  triggerTrialPipedriveSync(err.code, fields);
   return { status: 'error', code: err.code, message: err.message };
+}
+
+/**
+ * Routing fire-and-forget Pipedrive volání podle reason code z legacy
+ * `/web/free-trial-ajax`:
+ *
+ *  - `active_subscription_trial` → upsell pipeline (CZ-Sales-Upsell-CZ2)
+ *  - `email_used_in_school`      → akviziční pipeline (CZ-Sales-Akvizice-CZ1)
+ *
+ *  Generic / nejasné chyby Pipedrive nevolají (např. „request failed").
+ */
+function triggerTrialPipedriveSync(
+  code: 'email_used_in_school' | 'active_subscription_trial' | 'generic',
+  fields: FreeTrialFields,
+): void {
+  if (code === 'active_subscription_trial') {
+    void notifyTrialActiveSubscriptionToPipedrive(fields);
+    return;
+  }
+  if (code === 'email_used_in_school') {
+    void notifyTrialEmailUsedToPipedrive(fields);
+  }
 }
