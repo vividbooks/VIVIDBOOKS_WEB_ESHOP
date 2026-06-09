@@ -14,6 +14,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *      **platbou převodem** (`payment_method = 'transfer'`) a předáme do Base.com — díky tomu se
  *      i v BL/Base objednávka založí se způsobem platby „Bankovní převod“ a dopravou „PPL"
  *      (viz `paymentMethodLabel` a `deliveryMethodLabel` v `process-export-queue`).
+ *      Název společnosti (`orders.school_name` → Base `delivery_company`/`invoice_company`,
+ *      iDoklad `CompanyName`) se ukládá zkrácený jako **„ZŠ - <ulice + číslo>"**
+ *      (viz `buildInboundShortCompanyName`); plný název PD organizace zůstává v `admin_note`.
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
@@ -550,6 +553,20 @@ function normalizeInboundExplicitOrderNumber(raw: string): string | null {
   return t;
 }
 
+/**
+ * Název společnosti pro objednávky zakládané z PD webhooku (scénář A). Z `orders.school_name`
+ * se plní Base `delivery_company` / `invoice_company` i iDoklad `CompanyName` — obchod chce
+ * místo dlouhého názvu PD organizace jen krátký štítek **„ZŠ - <název ulice + číslo>"**
+ * (ulice po obohacení adresy, tedy včetně čísla popisného/orientačního). Plný název organizace
+ * z Pipedrive se pro dohledání ukládá do `admin_note`. Pokud ulici neznáme, ponechá se
+ * původní název organizace (lepší dlouhý název než prázdný / jen „ZŠ -").
+ */
+function buildInboundShortCompanyName(street: string, fullOrgName: string | null): string | null {
+  const s = street.replace(/\s+/g, ' ').trim();
+  if (!s || s === '—') return fullOrgName;
+  return `ZŠ - ${s}`.slice(0, 200);
+}
+
 function verifyInboundToken(req: Request, url: URL): boolean {
   const secret = (Deno.env.get('PIPEDRIVE_INBOUND_WEBHOOK_SECRET') || '').trim();
   if (!secret) return false;
@@ -998,6 +1015,15 @@ Deno.serve(async (req) => {
     });
   }
 
+  /**
+   * Do `school_name` (a tím i do Base / iDokladu) jde u objednávek z PD jen krátký název
+   * „ZŠ - <ulice + číslo>" — viz `buildInboundShortCompanyName`. Musí se počítat až tady,
+   * po `enrichCzechAddressParts` (ulice může pocházet z geocodingu / ARES / názvu organizace).
+   * Plný název PD organizace si držíme zvlášť pro `admin_note`.
+   */
+  const pipedriveOrgFullName = schoolName;
+  schoolName = buildInboundShortCompanyName(street, schoolName);
+
   const products = await pipedriveApiGet<unknown[]>(apiToken, `/deals/${dealId}/products`, { limit: 100 });
 
   /**
@@ -1163,6 +1189,9 @@ Deno.serve(async (req) => {
 
   const pipedriveMetadataLines = [
     `[Pipedrive inbound] deal ${dealId}${deal.title ? ` — ${String(deal.title).slice(0, 200)}` : ''}`,
+    pipedriveOrgFullName && pipedriveOrgFullName !== schoolName
+      ? `Organizace v PD: ${pipedriveOrgFullName.slice(0, 200)}`
+      : null,
     inboundExplicitOrderCandidate ? `Číslo faktury (PD pole 12530): ${inboundExplicitOrderCandidate}` : null,
     missingPipedriveContact
       ? `Kontakt z PD: chybí${missingEmailOnly ? ' (jen e‑mail)' : ''}`

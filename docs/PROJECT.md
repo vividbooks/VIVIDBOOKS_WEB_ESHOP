@@ -160,7 +160,7 @@ Důsledky pro ostatní logiku (vše už upravené):
 
 Webhook `pipedrive-inbound-deal` volaný z Pipedrive po `won` rozlišuje dva scénáře přes pole „Eshop ID" (custom field UI ID 12586, hash `26e4a2f8…`):
 
-- **A) Pole prázdné** (deal vznikl ručně v CRM) → INSERT do `orders` s `source='pipedrive'`, doprava PPL, paid, push do `export_queue` (`basecom` + `idoklad`) a synchronní spuštění `process-export-queue`. V admin seznamu (`/admin/objednavky`) má badge „Pipedrive".
+- **A) Pole prázdné** (deal vznikl ručně v CRM) → INSERT do `orders` s `source='pipedrive'`, doprava PPL, paid, push do `export_queue` (`basecom` + `idoklad`) a synchronní spuštění `process-export-queue`. V admin seznamu (`/admin/objednavky`) má badge „Pipedrive". Název společnosti (`orders.school_name` → Base `delivery_company`/`invoice_company`) se ukládá zkrácený jako **„ZŠ - <ulice + číslo>"** (ulice po obohacení adresy); plný název PD organizace je v `admin_note`. Bez známé ulice zůstává plný název organizace.
 - **B) Pole vyplněné** (deal vznikl synchronizací z e‑shopu — typicky platba převodem) NEBO existuje `orders.pipedrive_deal_id = <deal>` → UPDATE existující objednávky: `DELETE` + `INSERT` všech `order_items` z dealu, přepočet `subtotal`/`shipping`/`total`, `payment_status='paid'`, `paid_at = coalesce(paid_at, now())`. Pak push do `export_queue` jen pro service, kde ještě není `pending`/`processing`/`done` řádek (idempotence). Audit: `order_events.event_type = 'pipedrive_inbound_update'`. `source` zůstává `eshop`.
 
 Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`, default `eshop`). Filtr v admin seznamu: query `?source=eshop|pipedrive` na `admin-orders` Edge funkci.
