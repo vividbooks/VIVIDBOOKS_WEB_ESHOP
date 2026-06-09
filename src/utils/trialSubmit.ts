@@ -10,6 +10,9 @@ const TRIAL_PIPEDRIVE_UPSELL_URL =
 const TRIAL_PIPEDRIVE_REREQUEST_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-email-used-pipedrive`;
 
+const TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-existing-active-pipedrive`;
+
 export type FreeTrialFields = {
   name: string;
   email: string;
@@ -177,6 +180,19 @@ export function notifyTrialEmailUsedToPipedrive(fields: FreeTrialFields): Promis
   return postTrialPipedriveSync(TRIAL_PIPEDRIVE_REREQUEST_URL, 'trial-pipedrive-rerequest', fields);
 }
 
+/**
+ * Škola **aktuálně má** aktivní trial (legacy vrátila existující kódy) — pošle
+ * aktivitu do akviziční pipeline (6/37) s notou „Škola aktuálně má trial a žádá
+ * si o další." Volá se ze `submitFreeTrialAjax` po detekci `kind: 'existing_trial'`.
+ */
+export function notifyTrialExistingActiveToPipedrive(fields: FreeTrialFields): Promise<void> {
+  return postTrialPipedriveSync(
+    TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL,
+    'trial-pipedrive-existing-active',
+    fields,
+  );
+}
+
 export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
   const body = buildFreeTrialFormBody(fields);
   const res = await fetch(FREE_TRIAL_AJAX_URL, {
@@ -230,6 +246,9 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   }
 
   if (codes) {
+    /** Škola aktuálně má aktivní trial — fire-and-forget zápis do Pipedrive
+     *  (akviziční pipeline, aktivita „Aktuálně aktivní trial"). */
+    void notifyTrialExistingActiveToPipedrive(fields);
     return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'existing_trial' };
   }
 
