@@ -1417,7 +1417,7 @@ export function TrialPage() {
     return (
       <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
         className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-        <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte" description="14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
+        <SEOHead title="Vyzkoušejte zdarma" path="/vyzkousejte" description="14denní zkušební přístup k digitálním učebnicím Vividbooks zdarma." />
         <div className="w-full max-w-[520px]">
           <div className="bg-gradient-to-br from-[#7C3AED]/10 to-[#5B4FD8]/5 border border-[#7C3AED]/20 rounded-[28px] p-8 text-center">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#7C3AED]/15 mb-5">
@@ -1474,8 +1474,8 @@ export function TrialPage() {
   return (
     <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
       className="min-h-[80vh] flex items-center justify-center px-4 py-12">
-      <SEOHead title="Vyzkou\u0161ejte zdarma" path="/vyzkousejte"
-        description="Z\u00edskejte 14denn\u00ed zku\u0161ebn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks zdarma." />
+      <SEOHead title="Vyzkoušejte zdarma" path="/vyzkousejte"
+        description="Získejte 14denní zkušební přístup k digitálním učebnicím Vividbooks zdarma." />
       <div className="w-full max-w-[520px]">
 
         <div className="text-center mb-10">
