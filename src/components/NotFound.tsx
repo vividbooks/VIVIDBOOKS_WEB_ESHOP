@@ -7,9 +7,9 @@ export function NotFound() {
   return (
     <div className="flex items-center justify-center min-h-[70vh]">
       <SEOHead
-        title="Str\u00e1nka nenalezena"
+        title="Stránka nenalezena"
         noIndex={true}
-        description="Str\u00e1nka, kterou hled\u00e1te, neexistuje nebo byla p\u0159esunuta."
+        description="Stránka, kterou hledáte, neexistuje nebo byla přesunuta."
       />
       <div className="text-center">
         <p className="font-['Cooper_Light',serif] text-[#001161] text-[80px] leading-none mb-4 opacity-20">404</p>

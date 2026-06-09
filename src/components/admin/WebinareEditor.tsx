@@ -107,10 +107,10 @@ function Toolbar({ editor, onImage, onVideo }: { editor: any; onImage: () => voi
   const sep = <div className="w-px h-5 bg-gray-200 mx-0.5" />;
   return (
     <div className="flex items-center gap-0.5 px-3 py-2 border-b border-gray-200 bg-[#fafafa] flex-wrap">
-      <ToolbarBtn active={editor.isActive('bold')} title="Tu\u010dn\u00e9" onClick={() => editor.chain().focus().toggleBold().run()}>
+      <ToolbarBtn active={editor.isActive('bold')} title="Tučné" onClick={() => editor.chain().focus().toggleBold().run()}>
         <Bold className="w-3.5 h-3.5" />
       </ToolbarBtn>
-      <ToolbarBtn active={editor.isActive('italic')} title="Kurz\u00edva" onClick={() => editor.chain().focus().toggleItalic().run()}>
+      <ToolbarBtn active={editor.isActive('italic')} title="Kurzíva" onClick={() => editor.chain().focus().toggleItalic().run()}>
         <Italic className="w-3.5 h-3.5" />
       </ToolbarBtn>
       {sep}
@@ -118,24 +118,24 @@ function Toolbar({ editor, onImage, onVideo }: { editor: any; onImage: () => voi
         <span className="text-[11px] font-black">H2</span>
       </ToolbarBtn>
       {sep}
-      <ToolbarBtn active={editor.isActive('blockquote')} title="Cit\u00e1t" onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+      <ToolbarBtn active={editor.isActive('blockquote')} title="Citát" onClick={() => editor.chain().focus().toggleBlockquote().run()}>
         <Quote className="w-3.5 h-3.5" />
       </ToolbarBtn>
-      <ToolbarBtn active={editor.isActive('bulletList')} title="Odr\u00e1\u017eky" onClick={() => editor.chain().focus().toggleBulletList().run()}>
+      <ToolbarBtn active={editor.isActive('bulletList')} title="Odrážky" onClick={() => editor.chain().focus().toggleBulletList().run()}>
         <List className="w-3.5 h-3.5" />
       </ToolbarBtn>
       {sep}
-      <ToolbarBtn active={false} title="Vlo\u017eit obr\u00e1zek" onClick={onImage}>
+      <ToolbarBtn active={false} title="Vložit obrázek" onClick={onImage}>
         <Image className="w-3.5 h-3.5 text-green-600" />
       </ToolbarBtn>
-      <ToolbarBtn active={false} title="Vlo\u017eit YouTube" onClick={onVideo}>
+      <ToolbarBtn active={false} title="Vložit YouTube" onClick={onVideo}>
         <Video className="w-3.5 h-3.5 text-red-500" />
       </ToolbarBtn>
       {sep}
-      <ToolbarBtn active={false} title="Zp\u011bt" onClick={() => editor.chain().focus().undo().run()}>
+      <ToolbarBtn active={false} title="Zpět" onClick={() => editor.chain().focus().undo().run()}>
         <Undo2 className="w-3.5 h-3.5" />
       </ToolbarBtn>
-      <ToolbarBtn active={false} title="Vp\u0159ed" onClick={() => editor.chain().focus().redo().run()}>
+      <ToolbarBtn active={false} title="Vpřed" onClick={() => editor.chain().focus().redo().run()}>
         <Redo2 className="w-3.5 h-3.5" />
       </ToolbarBtn>
     </div>
@@ -903,7 +903,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                               next[qi] = { ...next[qi], label: e.target.value };
                               updateField('surveyQuestions', next);
                             }}
-                            placeholder="Text ot\u00e1zky"
+                            placeholder="Text otázky"
                             className="w-full px-2 py-1.5 text-[13px] border border-gray-200 rounded-lg bg-white"
                           />
                           <select

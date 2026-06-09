@@ -34,7 +34,7 @@ export function BlogPage() {
       <SEOHead
         title="Blog"
         path="/blog"
-        description="Blog Vividbooks \u2014 inspirace, rozhovory s u\u010diteli a novinky ze sv\u011bta modern\u00edho vzd\u011bl\u00e1v\u00e1n\u00ed na \u010desk\u00fdch z\u00e1kladn\u00edch \u0161kol\u00e1ch."
+        description="Blog Vividbooks — inspirace, rozhovory s učiteli a novinky ze světa moderního vzdělávání na českých základních školách."
       />
 
       {/* Hero */}
