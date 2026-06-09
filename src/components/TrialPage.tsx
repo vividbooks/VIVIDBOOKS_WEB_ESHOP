@@ -701,11 +701,12 @@ export function TrialRegistrationForm({
   const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
 
   /**
-   * Informaci o tom, že škola právě testuje / nedávno testovala / má aktivní
-   * licenci, ukazujeme až ve chvíli, kdy uživatel klikne na „Získat přístup
-   * zdarma". Před kliknutím se uživatel kompletně vyplní formulář bez
-   * jakéhokoli zásahu blokačních karet — díky tomu vždy získáme jeho kontakt
-   * (a po kliknutí pak v Pipedrive založíme příslušný deal).
+   * Informace o tom, že škola právě testuje / nedávno testovala / má aktivní
+   * licenci, se zobrazuje na **samostatné výsledkové stránce** (nahrazuje
+   * formulář, stejně jako success view) až po kliknutí na „Získat přístup
+   * zdarma". Před kliknutím uživatel kompletně vyplní formulář bez jakéhokoli
+   * zásahu blokačních karet — díky tomu vždy získáme jeho kontakt (a po
+   * kliknutí pak v Pipedrive založíme příslušný deal).
    */
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
@@ -726,9 +727,9 @@ export function TrialRegistrationForm({
     pdStatus !== null &&
     ico.length >= 6;
 
-  /** Blokační karty se vykreslují až po kliknutí na „Získat přístup zdarma". */
-  const schoolHasActiveLicense = schoolHasActiveLicenseRaw && submitAttempted;
-  const schoolHasRecentTrialBlock = schoolHasRecentTrialBlockRaw && submitAttempted;
+  /** Po kliknutí na submit s blokačním stavem → místo formuláře výsledková stránka. */
+  const showBlockingResultPage =
+    submitAttempted && (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw);
 
   const trialNextEligibleDisplay = useMemo(() => {
     if (!trialNextEligibleAt) return null;
@@ -902,9 +903,9 @@ export function TrialRegistrationForm({
     /**
      * Validace polí prošla. Pokud Pipedrive škole hlásí blokační stav
      * (právě testuje / nedávno testovala / má aktivní licenci / rozjetý deal),
-     * tady poprvé odhalíme kartu uživateli a souběžně pošleme fire‑and‑forget
-     * deal do Pipedrive — legacy `/web/free-trial-ajax` se v tomto případě vůbec
-     * nevolá (uživatel beztak nemá nárok na nový kód).
+     * přepneme na samostatnou výsledkovou stránku (nahradí formulář) a souběžně
+     * pošleme fire‑and‑forget deal do Pipedrive — legacy `/web/free-trial-ajax`
+     * se v tomto případě vůbec nevolá (uživatel beztak nemá nárok na nový kód).
      *
      *   pdStatus = 'active_subscription' → upsell (pipeline 7, „Zákazník žádá o trial.")
      *   pdStatus = 'active_trial'         → existing_active_trial (pipeline 6, „Škola aktuálně má trial a žádá si o další.")
@@ -914,6 +915,9 @@ export function TrialRegistrationForm({
     if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) {
       setSubmitAttempted(true);
       setFormError('');
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
       const blockingPayload: FreeTrialFields = {
         name: form.name.trim(),
         email: form.email.trim(),
@@ -1042,34 +1046,30 @@ export function TrialRegistrationForm({
             </a>
             <TrialTrainingVideosList />
           </motion.div>
-        ) : (
-          <form onSubmit={handleSubmit} className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4">
+        ) : showBlockingResultPage ? (
+          /* ══ Výsledková stránka po kliknutí na „Získat přístup zdarma" —
+                škola právě testuje / nedávno testovala / má aktivní licenci.
+                Nahrazuje formulář (stejně jako success view). ══ */
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4"
+          >
+            <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest pl-1">
+              {'Informace o va\u0161\u00ed \u0161kole'}
+            </p>
 
-            <div id="trial-field-school" className="pb-1 rounded-[18px] p-1 -m-1">
-              <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mb-2 pl-1">
-                {'Informace o \u0161kole'}
-              </p>
-              <SchoolSearch
-                schoolName={schoolName} ico={ico}
-                onSelect={(name, icoVal) => { setSchoolName(name); setIco(icoVal); }}
-                onIcoChange={setIco}
-                pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
-                colleagues={colleagues} owner={owner} products={products}
-                hidePipedriveStatusCard={
-                  // Blokační statusy (aktivní předplatné / zk. přístup / rozjetý
-                  // deal / 6m cooldown) ukazujeme až po kliknutí na „Získat
-                  // přístup zdarma". Malé informační karty (new/known/past_request)
-                  // jdou hned.
-                  schoolHasRecentTrialBlockRaw
-                  || (schoolHasActiveLicenseRaw && !submitAttempted)
-                }
-                pipedriveDebug={showPipedriveIcoDebugControls()
-                  ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
-                  : undefined}
-              />
-            </div>
+            <SchoolSearch
+              readOnly
+              schoolName={schoolName} ico={ico}
+              onSelect={() => {}}
+              onIcoChange={() => {}}
+              pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
+              colleagues={colleagues} owner={owner} products={products}
+              hidePipedriveStatusCard={schoolHasRecentTrialBlockRaw}
+            />
 
-            {schoolHasRecentTrialBlock && (() => {
+            {schoolHasRecentTrialBlockRaw && (() => {
               const extendMail = owner?.email || 'hello@vividbooks.com';
               const extendSubject = encodeURIComponent('Prodlou\u017een\u00ed p\u0159\u00edstupu k u\u010debn\u00edcm Vividbooks');
               const extendBody = encodeURIComponent(
@@ -1178,6 +1178,42 @@ export function TrialRegistrationForm({
               </motion.div>
               );
             })()}
+
+            <button
+              type="button"
+              onClick={() => setSubmitAttempted(false)}
+              className="w-full flex items-center justify-center gap-2 bg-white hover:bg-[#F0F2F8] border border-[#001161]/15 text-[#001161] font-bold text-[14px] px-6 py-3.5 rounded-xl transition-all cursor-pointer"
+              style={FF}
+            >
+              {'Zp\u011bt na formul\u00e1\u0159'}
+            </button>
+          </motion.div>
+        ) : (
+          <form onSubmit={handleSubmit} className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4">
+
+            <div id="trial-field-school" className="pb-1 rounded-[18px] p-1 -m-1">
+              <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mb-2 pl-1">
+                {'Informace o \u0161kole'}
+              </p>
+              <SchoolSearch
+                schoolName={schoolName} ico={ico}
+                onSelect={(name, icoVal) => { setSchoolName(name); setIco(icoVal); }}
+                onIcoChange={setIco}
+                pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
+                colleagues={colleagues} owner={owner} products={products}
+                hidePipedriveStatusCard={
+                  // Blokační statusy (aktivní předplatné / zk. přístup / rozjetý
+                  // deal / 6m cooldown) se ve formuláři nikdy neukazují — zobrazí
+                  // se na samostatné výsledkové stránce po kliknutí na „Získat
+                  // přístup zdarma". Malé informační karty (new/known/past_request)
+                  // jdou hned.
+                  schoolHasRecentTrialBlockRaw || schoolHasActiveLicenseRaw
+                }
+                pipedriveDebug={showPipedriveIcoDebugControls()
+                  ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
+                  : undefined}
+              />
+            </div>
 
             <div className="space-y-2 py-1">
               <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest text-center pl-1">
@@ -1347,8 +1383,6 @@ export function TrialRegistrationForm({
                 !gdprConsent
                 || submitting
                 || (!!emailCheck && !emailCheck.canRequest)
-                || schoolHasActiveLicense
-                || schoolHasRecentTrialBlock
               }
               className="w-full flex items-center justify-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[16px] px-6 py-4 rounded-xl transition-all hover:scale-[1.02] cursor-pointer shadow-lg shadow-[#7C3AED]/25"
               style={FF}>
