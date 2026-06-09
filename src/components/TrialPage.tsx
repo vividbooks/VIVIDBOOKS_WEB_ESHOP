@@ -697,22 +697,39 @@ export function TrialRegistrationForm({
   const isTeacher = form.position === 'U\u010ditel/ka';
   const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
 
-  /** Rozšířená fialová karta + bez formuláře — předplatné, zkušební přístup nebo rozjetý krok v CRM. */
-  const schoolHasActiveLicense =
+  /**
+   * Vyplněné kontaktní údaje — teprve potom ukazujeme blokační stavy z Pipedrive
+   * (aktivní předplatné / zkušební přístup / rozjetý deal / 6m cooldown).
+   * Cíl: uživatel nejprve dovyplní jméno, e-mail, telefon, pozici a teprve potom
+   * vidí informaci, že škola už má přístup.
+   */
+  const personalDataComplete =
+    form.name.trim().length > 0 &&
+    form.email.trim().length > 0 &&
+    isValidEmailFormat(form.email.trim()) &&
+    form.phone.trim().length > 0 &&
+    form.position.length > 0;
+
+  /** Stav z Pipedrive (nezávisle na tom, jestli má uživatel vyplněné osobní údaje) */
+  const schoolHasActiveLicenseRaw =
     (pdStatus === 'active_subscription' ||
       pdStatus === 'active_trial' ||
       pdStatus === 'in_progress') &&
     !!pdMessage &&
     !pdLoading;
 
-  const schoolHasRecentTrialBlock =
+  const schoolHasRecentTrialBlockRaw =
     trialCooldownActive &&
     !pdLoading &&
-    !schoolHasActiveLicense &&
+    !schoolHasActiveLicenseRaw &&
     pdStatus !== 'unknown' &&
     pdStatus !== 'invalid' &&
     pdStatus !== null &&
     ico.length >= 6;
+
+  /** Zobrazujeme blokační karty teprve po vyplnění osobních údajů. */
+  const schoolHasActiveLicense = schoolHasActiveLicenseRaw && personalDataComplete;
+  const schoolHasRecentTrialBlock = schoolHasRecentTrialBlockRaw && personalDataComplete;
 
   const trialNextEligibleDisplay = useMemo(() => {
     if (!trialNextEligibleAt) return null;
@@ -841,7 +858,7 @@ export function TrialRegistrationForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (schoolHasActiveLicense || schoolHasRecentTrialBlock) return;
+    if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) return;
     const flash = (id: string) => setTimeout(() => flashInvalidField(document.getElementById(id)), 0);
 
     if (!gdprConsent) {
@@ -1002,7 +1019,13 @@ export function TrialRegistrationForm({
                 onIcoChange={setIco}
                 pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
                 colleagues={colleagues} owner={owner} products={products}
-                hidePipedriveStatusCard={schoolHasRecentTrialBlock}
+                hidePipedriveStatusCard={
+                  // Blokační statusy (aktivní předplatné / zk. přístup / rozjetý
+                  // deal / 6m cooldown) ukazujeme až po vyplnění osobních údajů.
+                  // Malé informační karty (new/known/past_request) jdou hned.
+                  schoolHasRecentTrialBlockRaw
+                  || (schoolHasActiveLicenseRaw && !personalDataComplete)
+                }
                 pipedriveDebug={showPipedriveIcoDebugControls()
                   ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
                   : undefined}
@@ -1119,8 +1142,6 @@ export function TrialRegistrationForm({
               );
             })()}
 
-            {!schoolHasActiveLicense && !schoolHasRecentTrialBlock && (
-              <>
             <div className="space-y-2 py-1">
               <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest text-center pl-1">
                 {'Kontaktn\u00ed \u00fadaje'}
@@ -1289,6 +1310,8 @@ export function TrialRegistrationForm({
                 !gdprConsent
                 || submitting
                 || (!!emailCheck && !emailCheck.canRequest)
+                || schoolHasActiveLicense
+                || schoolHasRecentTrialBlock
               }
               className="w-full flex items-center justify-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[16px] px-6 py-4 rounded-xl transition-all hover:scale-[1.02] cursor-pointer shadow-lg shadow-[#7C3AED]/25"
               style={FF}>
@@ -1298,8 +1321,6 @@ export function TrialRegistrationForm({
             </button>
 
             <p style={FF} className="text-[13px] text-[#001161]/40 pt-1">{'* Povinn\u00e9 pole'}</p>
-              </>
-            )}
           </form>
         )}
     </>
