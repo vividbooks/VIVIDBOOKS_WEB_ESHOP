@@ -12895,8 +12895,6 @@ interface TrialPipedriveScenarioConfig {
   };
   /** Lidsky čitelný prefix do logů (např. „Pipedrive trial upsell"). */
   logPrefix: string;
-  /** Default deal title prefix. */
-  dealTitlePrefix: string;
 }
 
 function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): TrialPipedriveScenarioConfig {
@@ -12919,7 +12917,6 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Zákazník žádá o trial.',
       },
       logPrefix: 'Pipedrive trial upsell',
-      dealTitlePrefix: 'Trial (web) — upsell',
     };
   }
   if (scenario === 'existing_active_trial') {
@@ -12943,7 +12940,6 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Škola aktuálně má trial a žádá si o další.',
       },
       logPrefix: 'Pipedrive trial existing-active',
-      dealTitlePrefix: 'Trial (web) — aktivní trial',
     };
   }
   /** email_used_in_school = opětovná žádost o kód v akviziční pipeline. */
@@ -12967,7 +12963,6 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
       activityNote: 'Opětovná žádost o kód.',
     },
     logPrefix: 'Pipedrive trial re-request',
-    dealTitlePrefix: 'Trial (web) — opětovná žádost',
   };
 }
 
@@ -13115,10 +13110,11 @@ async function syncTrialPipedriveDeal(
 
   if (!dealId) {
     const labelExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, labelFieldId, [labelOptionId]);
-    const titleSchool = schoolName || (ico ? `IČO ${ico}` : 'Trial');
-    const todayShort = new Date().toLocaleDateString('cs-CZ', { day: 'numeric', month: 'numeric', year: 'numeric' });
+    /** Název dealu = jen název organizace + „trial 2.0." (preferujeme jméno org
+     *  z Pipedrive; fallback je název školy z formuláře, krajně IČO). */
+    const titleOrg = (orgLookup.orgName || '').trim() || schoolName || (ico ? `IČO ${ico}` : 'Škola');
     const payload: Record<string, any> = {
-      title: `${cfg.dealTitlePrefix} — ${titleSchool} — ${todayShort}`,
+      title: `${titleOrg} - trial 2.0.`,
       org_id: orgLookup.orgId,
       pipeline_id: pipelineId,
       stage_id: stageId,
