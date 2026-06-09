@@ -8,6 +8,9 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import {
   submitFreeTrialAjax,
+  notifyTrialActiveSubscriptionToPipedrive,
+  notifyTrialEmailUsedToPipedrive,
+  notifyTrialExistingActiveToPipedrive,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
@@ -698,19 +701,15 @@ export function TrialRegistrationForm({
   const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
 
   /**
-   * Vyplněné kontaktní údaje — teprve potom ukazujeme blokační stavy z Pipedrive
-   * (aktivní předplatné / zkušební přístup / rozjetý deal / 6m cooldown).
-   * Cíl: uživatel nejprve dovyplní jméno, e-mail, telefon, pozici a teprve potom
-   * vidí informaci, že škola už má přístup.
+   * Informaci o tom, že škola právě testuje / nedávno testovala / má aktivní
+   * licenci, ukazujeme až ve chvíli, kdy uživatel klikne na „Získat přístup
+   * zdarma". Před kliknutím se uživatel kompletně vyplní formulář bez
+   * jakéhokoli zásahu blokačních karet — díky tomu vždy získáme jeho kontakt
+   * (a po kliknutí pak v Pipedrive založíme příslušný deal).
    */
-  const personalDataComplete =
-    form.name.trim().length > 0 &&
-    form.email.trim().length > 0 &&
-    isValidEmailFormat(form.email.trim()) &&
-    form.phone.trim().length > 0 &&
-    form.position.length > 0;
+  const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  /** Stav z Pipedrive (nezávisle na tom, jestli má uživatel vyplněné osobní údaje) */
+  /** Stav z Pipedrive (nezávisle na tom, jestli uživatel klikl na submit) */
   const schoolHasActiveLicenseRaw =
     (pdStatus === 'active_subscription' ||
       pdStatus === 'active_trial' ||
@@ -727,9 +726,9 @@ export function TrialRegistrationForm({
     pdStatus !== null &&
     ico.length >= 6;
 
-  /** Zobrazujeme blokační karty teprve po vyplnění osobních údajů. */
-  const schoolHasActiveLicense = schoolHasActiveLicenseRaw && personalDataComplete;
-  const schoolHasRecentTrialBlock = schoolHasRecentTrialBlockRaw && personalDataComplete;
+  /** Blokační karty se vykreslují až po kliknutí na „Získat přístup zdarma". */
+  const schoolHasActiveLicense = schoolHasActiveLicenseRaw && submitAttempted;
+  const schoolHasRecentTrialBlock = schoolHasRecentTrialBlockRaw && submitAttempted;
 
   const trialNextEligibleDisplay = useMemo(() => {
     if (!trialNextEligibleAt) return null;
@@ -858,7 +857,6 @@ export function TrialRegistrationForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) return;
     const flash = (id: string) => setTimeout(() => flashInvalidField(document.getElementById(id)), 0);
 
     if (!gdprConsent) {
@@ -900,6 +898,44 @@ export function TrialRegistrationForm({
       flash('trial-field-deputy-stages');
       return;
     }
+
+    /**
+     * Validace polí prošla. Pokud Pipedrive škole hlásí blokační stav
+     * (právě testuje / nedávno testovala / má aktivní licenci / rozjetý deal),
+     * tady poprvé odhalíme kartu uživateli a souběžně pošleme fire‑and‑forget
+     * deal do Pipedrive — legacy `/web/free-trial-ajax` se v tomto případě vůbec
+     * nevolá (uživatel beztak nemá nárok na nový kód).
+     *
+     *   pdStatus = 'active_subscription' → upsell (pipeline 7, „Zákazník žádá o trial.")
+     *   pdStatus = 'active_trial'         → existing_active_trial (pipeline 6, „Škola aktuálně má trial a žádá si o další.")
+     *   trialCooldownActive (nedávno)     → email_used_in_school (pipeline 6, „Opětovná žádost o kód.")
+     *   pdStatus = 'in_progress'          → bez auto‑syncu (sales už má otevřený deal v CRM)
+     */
+    if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) {
+      setSubmitAttempted(true);
+      setFormError('');
+      const blockingPayload: FreeTrialFields = {
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        position: form.position,
+        schoolName: schoolName.trim(),
+        vat: ico.trim(),
+        gdpr: gdprConsent,
+        newsletter: newsletterConsent,
+        teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
+        schoolStages: isDeputy ? schoolStages : [],
+      };
+      if (pdStatus === 'active_subscription') {
+        void notifyTrialActiveSubscriptionToPipedrive(blockingPayload);
+      } else if (pdStatus === 'active_trial') {
+        void notifyTrialExistingActiveToPipedrive(blockingPayload);
+      } else if (schoolHasRecentTrialBlockRaw) {
+        void notifyTrialEmailUsedToPipedrive(blockingPayload);
+      }
+      return;
+    }
+
     setSubmitting(true);
     setFormError('');
     try {
@@ -1021,10 +1057,11 @@ export function TrialRegistrationForm({
                 colleagues={colleagues} owner={owner} products={products}
                 hidePipedriveStatusCard={
                   // Blokační statusy (aktivní předplatné / zk. přístup / rozjetý
-                  // deal / 6m cooldown) ukazujeme až po vyplnění osobních údajů.
-                  // Malé informační karty (new/known/past_request) jdou hned.
+                  // deal / 6m cooldown) ukazujeme až po kliknutí na „Získat
+                  // přístup zdarma". Malé informační karty (new/known/past_request)
+                  // jdou hned.
                   schoolHasRecentTrialBlockRaw
-                  || (schoolHasActiveLicenseRaw && !personalDataComplete)
+                  || (schoolHasActiveLicenseRaw && !submitAttempted)
                 }
                 pipedriveDebug={showPipedriveIcoDebugControls()
                   ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
