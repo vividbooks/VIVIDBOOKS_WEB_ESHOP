@@ -12871,7 +12871,8 @@ async function createPipedriveActivity(
 type TrialPipedriveScenario =
   | 'active_subscription'      // legacy reason "You have active subscription trial yet."
   | 'email_used_in_school'     // legacy reason "Email is used yet." (opětovná žádost o kód)
-  | 'existing_active_trial';   // legacy odpověděla existujícími trial kódy (kind=existing_trial) — škola aktuálně má trial
+  | 'existing_active_trial'    // legacy odpověděla existujícími trial kódy (kind=existing_trial) — škola aktuálně má trial
+  | 'open_deal_in_progress';   // škola má v CRM otevřený (rozjednaný) deal a přesto vyplnila trial formulář
 
 interface TrialPipedriveScenarioConfig {
   pipelineId: number;
@@ -12940,6 +12941,30 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Škola aktuálně má trial a žádá si o další.',
       },
       logPrefix: 'Pipedrive trial existing-active',
+    };
+  }
+  if (scenario === 'open_deal_in_progress') {
+    /** Škola má v CRM rozjednaný obchod (status in_progress na webu) — i tak musí
+     *  každé vyplnění formuláře vytvořit deal. Stejná akviziční pipeline 6/37;
+     *  pokud už existuje otevřený trial deal s labelem, dedup přidá jen aktivitu. */
+    return {
+      pipelineId: 6,
+      stageId: 37,
+      fallbackOwnerUserId: 18026774,
+      envKeys: {
+        pipelineId: 'PIPEDRIVE_TRIAL_OPEN_DEAL_PIPELINE_ID',
+        stageId: 'PIPEDRIVE_TRIAL_OPEN_DEAL_STAGE_ID',
+        activityType: 'PIPEDRIVE_TRIAL_OPEN_DEAL_ACTIVITY_TYPE',
+        activitySubject: 'PIPEDRIVE_TRIAL_OPEN_DEAL_ACTIVITY_SUBJECT',
+        activityNote: 'PIPEDRIVE_TRIAL_OPEN_DEAL_ACTIVITY_NOTE',
+        fallbackOwnerId: 'PIPEDRIVE_TRIAL_OPEN_DEAL_FALLBACK_OWNER_ID',
+      },
+      defaults: {
+        activityType: 'call',
+        activitySubject: 'Žádost o trial — škola v jednání',
+        activityNote: 'Škola má v CRM rozjednaný obchod a vyplnila webový formulář o trial.',
+      },
+      logPrefix: 'Pipedrive trial open-deal',
     };
   }
   /** email_used_in_school = opětovná žádost o kód v akviziční pipeline. */
@@ -13746,6 +13771,25 @@ app.post('/make-server-93a20b6f/trial-email-used-pipedrive', (c) =>
  */
 app.post('/make-server-93a20b6f/trial-existing-active-pipedrive', (c) =>
   handleTrialPipedriveEndpoint(c, 'existing_active_trial'));
+
+/**
+ * POST /trial-open-deal-pipedrive
+ *
+ * Volá se z `/vyzkousejte`, když má škola v CRM **rozjednaný obchod**
+ * (`school-pipedrive-check` vrátí status `in_progress`) a uživatel přesto
+ * odešle trial formulář. Každé vyplnění formuláře musí v Pipedrive vytvořit
+ * deal — pipeline `CZ‑Sales‑Akvizice‑CZ1` (ID 6), stage `Lead / Prospekt [CZ1]`
+ * (ID 37), label „Trial web (interactive) - 2.0" (option 359 / pole 12463).
+ * Aktivita „Žádost o trial — škola v jednání" splatná dnes.
+ *
+ * Owner stejně jako u re-request: current_deal_owner (4056) → owner z dealů →
+ * ENV → Gabriela Švédová (user_id 18026774).
+ *
+ * Idempotentní v rámci pipeline 6 — když už pro org existuje otevřený trial
+ * deal s labelem, jen se přidá aktivita.
+ */
+app.post('/make-server-93a20b6f/trial-open-deal-pipedrive', (c) =>
+  handleTrialPipedriveEndpoint(c, 'open_deal_in_progress'));
 
 app.post('/make-server-93a20b6f/admin/pipedrive/ensure-school', async (c) => {
   const apiToken = getPipedriveApiToken();
