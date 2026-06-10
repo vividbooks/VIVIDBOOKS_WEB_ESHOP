@@ -13,6 +13,9 @@ const TRIAL_PIPEDRIVE_REREQUEST_URL =
 const TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-existing-active-pipedrive`;
 
+const TRIAL_PIPEDRIVE_OPEN_DEAL_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-open-deal-pipedrive`;
+
 export type FreeTrialFields = {
   name: string;
   email: string;
@@ -103,13 +106,13 @@ export function parseFreeTrialError(data: Record<string, unknown> | null): {
     return {
       code: 'email_used_in_school',
       message:
-        'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce.',
+        'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce. Brzy vás bude kontaktovat náš obchodní zástupce a navrhne další postup.',
     };
   }
   if (reason === 'You have active subscription trial yet.') {
     return {
       code: 'active_subscription_trial',
-      message: 'Vaše škola už má aktivní předplatné.',
+      message: 'Vaše škola už má aktivní předplatné. Brzy vás bude kontaktovat náš obchodní zástupce a navrhne další postup.',
     };
   }
   if (reason) return { code: 'generic', message: reason };
@@ -189,6 +192,20 @@ export function notifyTrialExistingActiveToPipedrive(fields: FreeTrialFields): P
   return postTrialPipedriveSync(
     TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL,
     'trial-pipedrive-existing-active',
+    fields,
+  );
+}
+
+/**
+ * Škola má v CRM **rozjednaný obchod** (`pdStatus === 'in_progress'`) a přesto
+ * vyplnila trial formulář. I tady musí vzniknout deal (pipeline 6/37) — když už
+ * pro organizaci existuje otevřený trial deal, server jen přidá aktivitu
+ * (deduplikace v `syncTrialPipedriveDeal`).
+ */
+export function notifyTrialOpenDealToPipedrive(fields: FreeTrialFields): Promise<void> {
+  return postTrialPipedriveSync(
+    TRIAL_PIPEDRIVE_OPEN_DEAL_URL,
+    'trial-pipedrive-open-deal',
     fields,
   );
 }

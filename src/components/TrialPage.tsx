@@ -11,6 +11,7 @@ import {
   notifyTrialActiveSubscriptionToPipedrive,
   notifyTrialEmailUsedToPipedrive,
   notifyTrialExistingActiveToPipedrive,
+  notifyTrialOpenDealToPipedrive,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
@@ -112,7 +113,7 @@ function TrialEmailUsedInSchoolPanel({
         <AlertCircle className="w-4 h-4 shrink-0 text-violet-700 mt-0.5" aria-hidden />
         <p style={FF} className="text-[13px] text-[#001161]/85 leading-relaxed m-0">
           {
-            'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce.'
+            'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce. Brzy vás bude kontaktovat náš obchodní zástupce a navrhne další postup. Pokud nechcete čekat, ozvěte se mu vy na kontakty níže.'
           }
         </p>
       </div>
@@ -451,6 +452,9 @@ export function SchoolSearch({
                         : isOpenDealProgress
                           ? 'Nov\u00e9 p\u0159\u00edstupov\u00e9 k\u00f3dy z tohoto formul\u00e1\u0159e te\u010f nez\u00edsk\u00e1te. Pokud pot\u0159ebujete pomoct s p\u0159\u00edstupem, obra\u0165te se na kolegy n\u00ed\u017ee nebo napi\u0161te kontaktu z t\u00fdmu Vividbooks v kart\u011b.'
                           : 'Nov\u00e9 p\u0159\u00edstupov\u00e9 k\u00f3dy z tohoto formul\u00e1\u0159e nez\u00edsk\u00e1te \u2014 \u0161kola u\u017e m\u00e1 aktivn\u00ed p\u0159\u00edstup k u\u010debn\u00edcm.'}
+                    </p>
+                    <p style={FF} className="text-[13px] text-[#001161]/80 leading-snug m-0">
+                      {'Brzy v\u00e1s bude kontaktovat n\u00e1\u0161 obchodn\u00ed z\u00e1stupce a navrhne dal\u0161\u00ed postup. Pokud nechcete \u010dekat, ozv\u011bte se mu vy na kontakty n\u00ed\u017ee.'}
                     </p>
                     <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45">
                       {'Co m\u016f\u017eete ud\u011blat'}
@@ -885,8 +889,25 @@ export function TrialRegistrationForm({
       return;
     }
     if (emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid) {
-      setFormError(`S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od ${emailCheck.cooldownDateStr}.`);
-      flash('trial-field-email');
+      /**
+       * E-mail už máme v databázi (cooldown žádosti o trial). Nový trial
+       * nevznikne, ale každé vyplnění formuláře musí v Pipedrive založit deal —
+       * fire-and-forget sync + karta s kontaktem obchodního zástupce.
+       */
+      void notifyTrialEmailUsedToPipedrive({
+        name: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        position: form.position,
+        schoolName: schoolName.trim(),
+        vat: ico.trim(),
+        gdpr: gdprConsent,
+        newsletter: newsletterConsent,
+        teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
+        schoolStages: isDeputy ? schoolStages : [],
+      });
+      setEmailUsedInSchool(true);
+      setFormError('');
       return;
     }
     if (isTeacher && subjects2nd.length === 0 && subjects1st.length === 0) {
@@ -910,7 +931,8 @@ export function TrialRegistrationForm({
      *   pdStatus = 'active_subscription' → upsell (pipeline 7, „Zákazník žádá o trial.")
      *   pdStatus = 'active_trial'         → existing_active_trial (pipeline 6, „Škola aktuálně má trial a žádá si o další.")
      *   trialCooldownActive (nedávno)     → email_used_in_school (pipeline 6, „Opětovná žádost o kód.")
-     *   pdStatus = 'in_progress'          → bez auto‑syncu (sales už má otevřený deal v CRM)
+     *   pdStatus = 'in_progress'          → open_deal_in_progress (pipeline 6; když má org otevřený
+     *                                       trial deal, server jen přidá aktivitu — deduplikace)
      */
     if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) {
       setSubmitAttempted(true);
@@ -934,6 +956,8 @@ export function TrialRegistrationForm({
         void notifyTrialActiveSubscriptionToPipedrive(blockingPayload);
       } else if (pdStatus === 'active_trial') {
         void notifyTrialExistingActiveToPipedrive(blockingPayload);
+      } else if (pdStatus === 'in_progress') {
+        void notifyTrialOpenDealToPipedrive(blockingPayload);
       } else if (schoolHasRecentTrialBlockRaw) {
         void notifyTrialEmailUsedToPipedrive(blockingPayload);
       }
@@ -1092,6 +1116,9 @@ export function TrialRegistrationForm({
                   <div className="rounded-xl border border-amber-200/80 bg-white/70 px-3.5 py-3 space-y-2.5">
                     <p style={FF} className="text-[13px] text-[#001161]/80 leading-relaxed m-0">
                       {'Zku\u0161ebn\u00ed p\u0159\u00edstupy vyd\u00e1v\u00e1me ka\u017ed\u00e9 \u0161kole jednou za \u0161est m\u011bs\u00edc\u016f.'}
+                    </p>
+                    <p style={FF} className="text-[13px] text-[#001161]/80 leading-relaxed m-0">
+                      {'Brzy v\u00e1s bude kontaktovat n\u00e1\u0161 obchodn\u00ed z\u00e1stupce a navrhne dal\u0161\u00ed postup. Pokud nechcete \u010dekat, ozv\u011bte se mu vy na kontakt n\u00ed\u017ee.'}
                     </p>
                     <div className="rounded-lg bg-amber-50/90 border border-amber-100 px-3 py-2.5">
                       <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-2">
@@ -1257,6 +1284,9 @@ export function TrialRegistrationForm({
                       <p style={FF} className="text-[12px] text-amber-700 mt-0.5">
                         {'Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od '}{emailCheck.cooldownDateStr}{' ('}{emailCheck.daysLeft}{' dn\u00ed).'}
                       </p>
+                      <p style={FF} className="text-[12px] text-amber-700 mt-0.5">
+                        {'Formul\u00e1\u0159 m\u016f\u017eete p\u0159esto odeslat \u2014 brzy v\u00e1s pak bude kontaktovat n\u00e1\u0161 obchodn\u00ed z\u00e1stupce a navrhne dal\u0161\u00ed postup.'}
+                      </p>
                     </div>
                   </motion.div>
                 )}
@@ -1382,7 +1412,9 @@ export function TrialRegistrationForm({
               disabled={
                 !gdprConsent
                 || submitting
-                || (!!emailCheck && !emailCheck.canRequest)
+                /** E-mail v cooldownu odeslání neblokuje — vznikne deal v Pipedrive
+                 *  a karta s kontaktem obchodníka. Blokuje jen neplatný formát. */
+                || !!emailCheck?.emailInvalid
               }
               className="w-full flex items-center justify-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-[16px] px-6 py-4 rounded-xl transition-all hover:scale-[1.02] cursor-pointer shadow-lg shadow-[#7C3AED]/25"
               style={FF}>
