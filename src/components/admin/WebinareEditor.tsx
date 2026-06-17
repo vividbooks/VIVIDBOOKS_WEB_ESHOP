@@ -7,7 +7,7 @@ import {
   Plus, Search, Save, X, Globe, Lock, Loader2, ExternalLink,
   RefreshCw, Radio, Image, Video, Bold, Italic, List,
   Undo2, Redo2, Quote, Trash2, Calendar, Clock, User, Link2,
-  CheckCircle, Circle, Copy, Check,
+  CheckCircle, Circle, Copy, Check, Send,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
@@ -15,7 +15,7 @@ import { useWebinars } from '../../contexts/WebinarsContext';
 import type { Webinar, WebinarSurveyQuestion, WebinarSurveyQuestionType } from '../../data/webinars';
 import { DEFAULT_WEBINAR_SURVEY_QUESTIONS } from '../../utils/webinarSurveyDefaults';
 import { ImagePicker } from './ImagePicker';
-import { compareWebinarsBySchedule, computeWebinarIsPastFromSchedule, DEFAULT_WEBINAR_DURATION_MIN } from '../../utils/webinarEventTimestamp';
+import { compareWebinarsBySchedule, computeWebinarIsPastFromSchedule, DEFAULT_WEBINAR_DURATION_MIN, webinarEventTimestampMs } from '../../utils/webinarEventTimestamp';
 import { publicSiteUrl } from '../../utils/publicSiteUrl';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -24,6 +24,28 @@ const MONTHS_CS = ['Leden','Únor','Březen','Duben','Květen','Červen','Červe
 
 function slugify(t: string) {
   return t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+function pragueWallClockNow(): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const pick = (type: string) => Number(parts.find((p) => p.type === type)?.value || 0);
+  return { y: pick('year'), m: pick('month'), d: pick('day') };
+}
+
+function isWebinarTodayInPrague(w: { day?: number; monthNum?: number; year?: number }): boolean {
+  const p = pragueWallClockNow();
+  return w.year === p.y && (w.monthNum || 1) === p.m && (w.day || 1) === p.d;
+}
+
+/** Stejné okno jako cron (15–50 min před začátkem). */
+function isInT30ReminderWindow(w: { day?: number; monthNum?: number; year?: number; time?: string }): boolean {
+  const delta = webinarEventTimestampMs(w) - Date.now();
+  return delta >= 15 * 60 * 1000 && delta <= 50 * 60 * 1000;
 }
 
 function emptyWebinar(): Partial<Webinar> {
@@ -165,6 +187,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
     typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null
   );
   const [reminderTestBusy, setReminderTestBusy] = useState(false);
+  const [bulkReminderBusy, setBulkReminderBusy] = useState(false);
 
   function handleCopyLive() {
     const url = publicSiteUrl(`/webinar/${selected?.slug || selected?.id}/live`);
@@ -229,6 +252,60 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
     } else {
       await persistDevReminderFlags({ devSimulateReminderMorning: false });
       setSelected(prev => (prev ? { ...prev, devSimulateReminderMorning: false } : prev));
+    }
+  }
+
+  async function sendBulkReminder(kind: 'morning' | 't30') {
+    const id = selected?.id;
+    if (!id || isNew) return;
+    setBulkReminderBusy(true);
+    let regCount = 0;
+    const label = kind === 't30' ? 'Za chvíli začíná webinář' : 'Dnes vás čeká webinář';
+    try {
+      const regRes = await fetch(`${SERVER}/webinar-registrace/${encodeURIComponent(String(id))}`, {
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+      const regData = await regRes.json().catch(() => ({}));
+      regCount = typeof regData.count === 'number' ? regData.count : 0;
+      if (!regRes.ok) {
+        toast.error(typeof regData.error === 'string' ? regData.error : `HTTP ${regRes.status}`);
+        return;
+      }
+      if (regCount <= 0) {
+        toast.error('Žádná registrace — připomínka se posílá jen registrovaným.');
+        return;
+      }
+      if (
+        !confirm(
+          `Poslat připomínku „${label}“?\n\n` +
+            `Odešle se všem ${regCount} registrovaným, kteří tuto připomínku ještě nedostali.\n\n` +
+            `Akci nelze vrátit zpět.`,
+        )
+      ) {
+        return;
+      }
+      const res = await fetch(`${SERVER}/admin/webinar-reminder-bulk-send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        body: JSON.stringify({ webinarId: id, kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(typeof data.error === 'string' ? data.error : `HTTP ${res.status}`);
+        return;
+      }
+      const sent = typeof data.sent === 'number' ? data.sent : 0;
+      const skipped = typeof data.skipped === 'number' ? data.skipped : 0;
+      const failed = typeof data.failed === 'number' ? data.failed : 0;
+      const shortLabel = kind === 't30' ? 'Za chvíli' : 'Dnes';
+      toast.success(`Odesláno ${sent} připomínek „${shortLabel}". Přeskočeno (už odesláno): ${skipped}.`);
+      if (failed > 0) {
+        toast.error(`${failed} e-mailů se nepodařilo odeslat — zkontrolujte Centrálu alertů / Mandrill.`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || String(e));
+    } finally {
+      setBulkReminderBusy(false);
     }
   }
 
@@ -480,6 +557,20 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
   const upcomingCount = items.filter(w => !w.isPast).length;
   const pastCount     = items.filter(w => !!w.isPast).length;
 
+  const canSendBulkMorningReminder =
+    selected &&
+    !isNew &&
+    !selected.isPast &&
+    isWebinarTodayInPrague(selected) &&
+    webinarEventTimestampMs(selected) > Date.now();
+
+  const canSendBulkT30Reminder =
+    selected &&
+    !isNew &&
+    !selected.isPast &&
+    webinarEventTimestampMs(selected) > Date.now() &&
+    (isInT30ReminderWindow(selected) || selected.devSimulateReminderT30 === true);
+
   return (
     <>
       <style>{`
@@ -512,7 +603,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
             </div>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hledat\u2026"
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hledat…"
                 className="w-full pl-8 pr-3 py-1.5 text-[12px] border border-gray-200 rounded-lg bg-gray-50 focus:bg-white focus:border-[#001161] outline-none transition-all" />
             </div>
             <div className="flex gap-1">
@@ -589,6 +680,38 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                 {selected.isPast ? <CheckCircle className="w-3.5 h-3.5" /> : <Circle className="w-3.5 h-3.5" />}
                 {selected.isPast ? 'Minul\u00fd' : 'Pl\u00e1novan\u00fd'}
               </button>
+              {canSendBulkMorningReminder && (
+                <button
+                  type="button"
+                  disabled={bulkReminderBusy || saving}
+                  onClick={() => void sendBulkReminder('morning')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-all shrink-0 disabled:opacity-50"
+                  title="Hromadná připomínka „Dnes vás čeká webinář“ pro všechny registrované"
+                >
+                  {bulkReminderBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  {bulkReminderBusy ? 'Odesílám…' : 'Poslat připomínku „Dnes“'}
+                </button>
+              )}
+              {canSendBulkT30Reminder && (
+                <button
+                  type="button"
+                  disabled={bulkReminderBusy || saving}
+                  onClick={() => void sendBulkReminder('t30')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-bold border border-amber-200 bg-amber-50 text-amber-900 hover:bg-amber-100 transition-all shrink-0 disabled:opacity-50"
+                  title="Hromadná připomínka „Za chvíli začíná webinář“ (15–50 min před startem)"
+                >
+                  {bulkReminderBusy ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  {bulkReminderBusy ? 'Odesílám…' : 'Poslat připomínku „Za chvíli“'}
+                </button>
+              )}
               {!isNew && (
                 <button onClick={handleDelete} disabled={saving}
                   className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Smazat">
@@ -764,11 +887,11 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                           </button>
                         </div>
                         <p className="text-[10px] text-gray-400 leading-snug px-0.5">
-                          {'Cron v produkci: '}
-                          <code className="text-[9px] bg-gray-100 px-1 rounded">POST \u2026/cron/webinar-reminders</code>
-                          {' + '}
+                          {'Cron v produkci: pg_cron job '}
+                          <code className="text-[9px] bg-gray-100 px-1 rounded">webinar-reminders-every-ten-minutes</code>
+                          {' (každých 10 min) + secret '}
                           <code className="text-[9px] bg-gray-100 px-1 rounded">WEBINAR_REMINDER_CRON_SECRET</code>
-                          {'. Po otestov\xe1n\xed v\xfdvoj vypn\u011bte \u2014 m\u016f\u017ee pos\xedlat opakovan\u011b.'}
+                          {'. Viz supabase/manual/set_webinar_reminder_cron.sql. Po otestování vývoj vypněte.'}
                         </p>
                       </div>
                     </div>

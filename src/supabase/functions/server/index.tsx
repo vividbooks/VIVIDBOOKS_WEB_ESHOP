@@ -6574,6 +6574,126 @@ app.post('/make-server-93a20b6f/cron/webinar-mark-past', async (c) => {
   }
 });
 
+/** Hromadná připomínka všem registrovaným (admin akce). „morning“ = Dnes, „t30“ = Za chvíli. */
+async function adminWebinarReminderBulkSendHandler(c: Context) {
+  try {
+    const body = await c.req.json();
+    const webinarId = String(body?.webinarId || '').trim();
+    const kind = body?.kind === 't30' ? 't30' : 'morning';
+    const force = body?.force === true;
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+
+    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
+      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    }
+
+    const items = (await getCollection(WEBINARS_KEY)) as any[];
+    const w = items.find((x: any) => x.id === webinarId);
+    if (!w) return c.json({ error: 'Webinář nenalezen.' }, 404);
+
+    if (w.isPast) {
+      return c.json({ error: 'Webinář je označen jako minulý (isPast).' }, 400);
+    }
+
+    const startMs = webinarStartEpochMsPrague(w);
+    if (startMs <= Date.now()) {
+      return c.json({ error: 'Webinář už podle rozvrhu začal — připomínky se neposílají.' }, 400);
+    }
+
+    const nowMs = Date.now();
+    const p = pragueWallClockFromMs(nowMs);
+    const y = w.year;
+    const m = w.monthNum || 1;
+    const d = w.day || 1;
+    const isEventDay = p.y === y && p.m === m && p.d === d;
+
+    if (kind === 'morning' && !isEventDay) {
+      return c.json({
+        error: 'Hromadná připomínka „Dnes“ lze poslat jen v den webináře (časová zóna Praha).',
+      }, 400);
+    }
+
+    if (kind === 't30') {
+      const delta = startMs - nowMs;
+      const inT30 = delta >= 15 * 60 * 1000 && delta <= 50 * 60 * 1000;
+      if (!inT30 && !force) {
+        return c.json({
+          error:
+            'Hromadná připomínka „Za chvíli“ lze poslat jen 15–50 min před začátkem webináře (čas Praha).',
+        }, 400);
+      }
+    }
+
+    const regs = (await kv.getByPrefix(`webinar_reg_${w.id}_`)) as any[];
+    if (!regs?.length) {
+      return c.json({
+        error: 'Žádná registrace na tento webinář — připomínky chodí jen registrovaným.',
+      }, 400);
+    }
+
+    const baseUrl = getPublicSiteOrigin();
+    const liveUrl = `${baseUrl}/webinar/${w.slug || w.id}/live`;
+    let sent = 0;
+    let skipped = 0;
+    const failures: { email: string; detail?: string }[] = [];
+
+    for (const reg of regs) {
+      const cleanEmail = String(reg.email || '').toLowerCase().trim();
+      if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) continue;
+      const name = String(reg.name || '').trim();
+      const firstName = name.split(/\s+/)[0] || name || 'dobrý den';
+      const eh = md5(cleanEmail);
+      const dedupeKey =
+        kind === 't30' ? webinarReminderT30Key(w.id, eh) : webinarReminderMorningKey(w.id, eh);
+
+      if (!force && (await kv.get(dedupeKey))) {
+        skipped++;
+        continue;
+      }
+
+      const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, cleanEmail, baseUrl);
+      const { html, subject } =
+        kind === 't30'
+          ? buildWebinarReminderT30Email(w, firstName, liveUrl, surveyPageUrl)
+          : buildWebinarReminderMorningEmail(w, firstName, liveUrl, surveyPageUrl);
+
+      const result = await sendMandrillHtmlResult({
+        toEmail: cleanEmail,
+        toName: name || cleanEmail,
+        subject,
+        html,
+      });
+
+      if (result.ok) {
+        await kv.set(dedupeKey, { sentAt: new Date().toISOString(), manualBulk: true });
+        sent++;
+      } else {
+        failures.push({ email: cleanEmail, detail: result.detail });
+      }
+    }
+
+    console.log(
+      `[webinar-reminder-bulk] webinarId=${webinarId} kind=${kind} sent=${sent} skipped=${skipped} failed=${failures.length}`,
+    );
+
+    return c.json({
+      ok: true,
+      kind,
+      sent,
+      skipped,
+      failed: failures.length,
+      total: regs.length,
+      failures: failures.slice(0, 20),
+    });
+  } catch (e: any) {
+    console.log(`[webinar-reminder-bulk] ${e.message}`);
+    return c.json({ error: e.message || String(e) }, 500);
+  }
+}
+
+app.post('/make-server-93a20b6f/admin/webinar-reminder-bulk-send', adminWebinarReminderBulkSendHandler);
+app.post('/admin/webinar-reminder-bulk-send', adminWebinarReminderBulkSendHandler);
+
 /** Okamžitý test připomínky (bez cronu) — první registrace v KV, stejná šablona jako produkce. */
 app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => {
   try {
@@ -11542,26 +11662,30 @@ function pickMostRecentPipedriveDeal(deals: any[]): any | null {
   return [...deals].sort((a, b) => pipedriveDealRecencyScoreMs(b) - pipedriveDealRecencyScoreMs(a))[0];
 }
 
-/** Nejnovější čas z trial dealu v CRM (podle won_time, add_time, update_time, stage_change_time). */
+/** Datum založení trial dealu — cooldown počítáme od žádosti, ne od pozdější úpravy v CRM. */
+function pipedriveTrialDealCreatedMs(deal: any): number | null {
+  return parsePipedriveDealTimestampMs(deal?.add_time);
+}
+
+/** Nejnovější trial podle data založení dealu (add_time), ne update_time / lost_time. */
 function getLatestPipedriveTrialDealInfo(
   deals: any[],
   dealLabelIdToName?: Record<string, string> | null,
 ): { lastMs: number; lastIso: string } | null {
   const trialDeals = (Array.isArray(deals) ? deals : []).filter((d) => isPipedriveTrialDeal(d, dealLabelIdToName));
-  /* Od minulé žádosti: primárně uzavřené (lost) dealy; jinak jakýkoli trial (např. jen otevřený). */
-  const lostTrials = trialDeals.filter((d: any) => String(d?.status || '').toLowerCase() === 'lost');
-  const pool = lostTrials.length > 0 ? lostTrials : trialDeals;
+  if (!trialDeals.length) return null;
   let bestMs = 0;
-  for (const d of pool) {
-    const candidates = [d?.won_time, d?.add_time, d?.update_time, d?.stage_change_time];
-    for (const c of candidates) {
-      const ms = parsePipedriveDealTimestampMs(c);
-      if (ms != null && ms > bestMs) bestMs = ms;
-    }
+  for (const d of trialDeals) {
+    const ms = pipedriveTrialDealCreatedMs(d);
+    if (ms != null && ms > bestMs) bestMs = ms;
   }
   if (bestMs <= 0) return null;
   return { lastMs: bestMs, lastIso: new Date(bestMs).toISOString() };
 }
+
+const PIPEDRIVE_TRIAL_DEFAULT_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
+/** Pokud je lost_time mnohem později než add_time, jde o pozdní uzavření starého dealu v CRM — ne o konec přístupu. */
+const PIPEDRIVE_TRIAL_LOST_SANE_WINDOW_MS = 120 * 24 * 60 * 60 * 1000;
 
 /** Odhad data ukončení / vypršení přístupů z uzavřených trial dealů (ne open). */
 function getLatestTrialAccessEndedMs(deals: any[], dealLabelIdToName?: Record<string, string> | null): number | null {
@@ -11570,9 +11694,16 @@ function getLatestTrialAccessEndedMs(deals: any[], dealLabelIdToName?: Record<st
     .filter((d: any) => d?.status !== 'open');
   let bestMs = 0;
   for (const d of closedTrials) {
-    const ms = parsePipedriveDealTimestampMs(
-      d.lost_time || d.won_time || d.close_time || d.update_time,
-    );
+    const addMs = pipedriveTrialDealCreatedMs(d);
+    const lostMs = parsePipedriveDealTimestampMs(d?.lost_time || d?.close_time || d?.won_time);
+    let ms: number | null = null;
+    if (addMs != null && lostMs != null && lostMs - addMs <= PIPEDRIVE_TRIAL_LOST_SANE_WINDOW_MS) {
+      ms = lostMs;
+    } else if (addMs != null) {
+      ms = addMs + PIPEDRIVE_TRIAL_DEFAULT_LENGTH_MS;
+    } else {
+      ms = lostMs;
+    }
     if (ms != null && ms > bestMs) bestMs = ms;
   }
   return bestMs > 0 ? bestMs : null;
@@ -13605,7 +13736,7 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
 }
 
 /** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
-const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 2;
+const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 3;
 
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
