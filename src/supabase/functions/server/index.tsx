@@ -4501,6 +4501,13 @@ function webinarReminderT30Key(webinarId: string, emailHash: string): string {
   return `webinar_rem_t30_${webinarId}_${emailHash}`;
 }
 
+/** Admin test mail — vždy sem (lze přepsat Edge secret WEBINAR_ADMIN_TEST_EMAIL). */
+function webinarAdminTestRecipientEmail(): string {
+  const fromEnv = Deno.env.get('WEBINAR_ADMIN_TEST_EMAIL')?.trim().toLowerCase();
+  if (fromEnv && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEnv)) return fromEnv;
+  return 'vitekskop@gmail.com';
+}
+
 function remEscHtmlReminder(s: string) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -6694,7 +6701,7 @@ async function adminWebinarReminderBulkSendHandler(c: Context) {
 app.post('/make-server-93a20b6f/admin/webinar-reminder-bulk-send', adminWebinarReminderBulkSendHandler);
 app.post('/admin/webinar-reminder-bulk-send', adminWebinarReminderBulkSendHandler);
 
-/** Okamžitý test připomínky (bez cronu) — první registrace v KV, stejná šablona jako produkce. */
+/** Okamžitý test připomínky (bez cronu) — obsah z první registrace, doručení na admin test e-mail. */
 app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => {
   try {
     const body = await c.req.json();
@@ -6727,21 +6734,22 @@ app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => 
     }
 
     const reg = regs[0];
-    const cleanEmail = String(reg.email || '').toLowerCase().trim();
-    if (!cleanEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
+    const regEmail = String(reg.email || '').toLowerCase().trim();
+    if (!regEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
     const name = String(reg.name || '').trim();
     const firstName = name.split(/\s+/)[0] || name || 'dobrý den';
+    const testToEmail = webinarAdminTestRecipientEmail();
     const baseUrl = getPublicSiteOrigin();
     const liveUrl = `${baseUrl}/webinar/${w.slug || w.id}/live`;
 
-    const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, cleanEmail, baseUrl);
+    const surveyPageUrl = await resolveSurveyInviteUrlForRegistrant(w, regEmail, baseUrl);
     const { html, subject } = kind === 't30'
       ? buildWebinarReminderT30Email(w, firstName, liveUrl, surveyPageUrl)
       : buildWebinarReminderMorningEmail(w, firstName, liveUrl, surveyPageUrl);
 
     const result = await sendMandrillHtmlResult({
-      toEmail: cleanEmail,
-      toName: name || cleanEmail,
+      toEmail: testToEmail,
+      toName: name || testToEmail,
       subject,
       html,
     });
@@ -6754,20 +6762,20 @@ app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => 
         dedupeKey: `webinar-reminder-test-${webinarId}-mandrill`,
         title: 'Test připomínky webináře — Mandrill neodeslal',
         message: result.detail || 'Neznámá chyba',
-        payload: { webinarId, kind, to: cleanEmail },
+        payload: { webinarId, kind, to: testToEmail, sampleRegistrant: regEmail },
         webinarId,
         webinarTitle: String(w.title || ''),
-        contactEmail: cleanEmail,
+        contactEmail: testToEmail,
       });
-      return c.json({ ok: false, detail: result.detail, to: cleanEmail, kind });
+      return c.json({ ok: false, detail: result.detail, to: testToEmail, kind });
     }
-    return c.json({ ok: true, to: cleanEmail, kind });
+    return c.json({ ok: true, to: testToEmail, kind });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }
 });
 
-/** Okamžitý test potvrzovacího e-mailu po registraci — první registrace v KV, stejná šablona jako produkce. */
+/** Okamžitý test potvrzovacího e-mailu po registraci — obsah z první registrace, doručení na admin test e-mail. */
 app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c) => {
   try {
     const body = await c.req.json();
@@ -6791,9 +6799,10 @@ app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c)
     }
 
     const reg = regs[0];
-    const cleanEmail = String(reg.email || '').toLowerCase().trim();
-    if (!cleanEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
+    const regEmail = String(reg.email || '').toLowerCase().trim();
+    if (!regEmail) return c.json({ error: 'První registrace nemá e-mail.' }, 400);
     const name = String(reg.name || '').trim();
+    const testToEmail = webinarAdminTestRecipientEmail();
     const slug = String(w.slug || w.id);
 
     const lobbyToken = crypto.randomUUID();
@@ -6801,7 +6810,7 @@ app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c)
     await kv.set(`webinar_lobby_${lobbyToken}`, {
       webinarId: w.id,
       webinarSlug: slug,
-      email: cleanEmail,
+      email: regEmail,
       name: name.trim(),
       createdAt: new Date().toISOString(),
       expiresAt: lobbyExpiresAt,
@@ -6843,8 +6852,8 @@ app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c)
     });
 
     const result = await sendMandrillWebinarRegistrationConfirmationResult({
-      toEmail: cleanEmail,
-      toName: name || cleanEmail,
+      toEmail: testToEmail,
+      toName: name || testToEmail,
       subject: payload.subject,
       html: payload.html,
       attachments: payload.attachments,
@@ -6858,14 +6867,14 @@ app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c)
         dedupeKey: `webinar-registration-test-${webinarId}-mandrill`,
         title: 'Test potvrzovacího e-mailu webináře — Mandrill neodeslal',
         message: result.detail || 'Neznámá chyba',
-        payload: { webinarId, to: cleanEmail },
+        payload: { webinarId, to: testToEmail, sampleRegistrant: regEmail },
         webinarId,
         webinarTitle: String(w.title || ''),
-        contactEmail: cleanEmail,
+        contactEmail: testToEmail,
       });
-      return c.json({ ok: false, detail: result.detail, to: cleanEmail });
+      return c.json({ ok: false, detail: result.detail, to: testToEmail });
     }
-    return c.json({ ok: true, to: cleanEmail });
+    return c.json({ ok: true, to: testToEmail });
   } catch (e: any) {
     return c.json({ error: e.message || String(e) }, 500);
   }

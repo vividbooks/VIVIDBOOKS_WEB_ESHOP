@@ -858,7 +858,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                       </div>
                       <div className="mt-2 space-y-2">
                         <p className="text-[10px] text-gray-500 leading-snug px-0.5">
-                          {'Nejrychlej\u0161\xed test: ode\u0161lete si zku\u0161ebn\xed mail na e-mail prvn\xed registrace (bez cronu). P\u0159ep\xedna\u010de v\xfdvoje jen \u0159\xedd\xed automatick\xfd b\u011bh p\u0159ipom\xednek.'}
+                          {'Nejrychlej\u0161\xed test: zku\u0161ebn\xed mail v\u017edy na vitekskop@gmail.com (obsah z prvn\xed registrace, bez cronu). P\u0159ep\xedna\u010de v\xfdvoje jen \u0159\xedd\xed automatick\xfd b\u011bh p\u0159ipom\xednek.'}
                         </p>
                         <div className="flex flex-wrap gap-2">
                           <button
