@@ -56,8 +56,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
   const [colleagues, setColleagues] = useState<string[]>([]);
   const [owner, setOwner] = useState<PdOwner | null>(null);
   const [products, setProducts] = useState<string[]>([]);
-  const [trialCooldownActive, setTrialCooldownActive] = useState(false);
-  const [trialNextEligibleAt, setTrialNextEligibleAt] = useState<string | null>(null);
 
   const [emailCheck, setEmailCheck] = useState<{
     canRequest: boolean;
@@ -90,8 +88,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
       setColleagues([]);
       setOwner(null);
       setProducts([]);
-      setTrialCooldownActive(false);
-      setTrialNextEligibleAt(null);
       return;
     }
     if (pdTimer.current) clearTimeout(pdTimer.current);
@@ -107,16 +103,12 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
         setOwner((data.owner as PdOwner | null) ?? null);
         setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
-        setTrialCooldownActive(!!data.trialCooldownActive);
-        setTrialNextEligibleAt(typeof data.trialNextEligibleAt === 'string' ? data.trialNextEligibleAt : null);
       } catch {
         setPdStatus('unknown');
         setPdMessage('');
         setColleagues([]);
         setOwner(null);
         setProducts([]);
-        setTrialCooldownActive(false);
-        setTrialNextEligibleAt(null);
       } finally {
         setPdLoading(false);
       }

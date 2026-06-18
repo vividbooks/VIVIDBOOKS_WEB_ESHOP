@@ -662,9 +662,6 @@ export function TrialRegistrationForm({
   const [colleagues, setColleagues] = useState<string[]>([]);
   const [owner, setOwner] = useState<PdOwner | null>(null);
   const [products, setProducts] = useState<string[]>([]);
-  /** CRM: od posledního trial dealu podle IČO neuplynulo 6×30 dní */
-  const [trialCooldownActive, setTrialCooldownActive] = useState(false);
-  const [trialNextEligibleAt, setTrialNextEligibleAt] = useState<string | null>(null);
   /** Dev: poslední odpověď school-pipedrive-check (jen když je zapnutý debug UI) */
   const [pdCheckRaw, setPdCheckRaw] = useState<unknown | null>(null);
   const [pdCheckDebugOpen, setPdCheckDebugOpen] = useState(false);
@@ -733,8 +730,6 @@ export function TrialRegistrationForm({
       setColleagues([]);
       setOwner(null);
       setProducts([]);
-      setTrialCooldownActive(false);
-      setTrialNextEligibleAt(null);
       setPdCheckRaw(null);
       setPdCheckDebugOpen(false);
       return;
@@ -762,8 +757,6 @@ export function TrialRegistrationForm({
           setColleagues([]);
           setOwner(null);
           setProducts([]);
-          setTrialCooldownActive(false);
-          setTrialNextEligibleAt(null);
           return;
         }
         if (debugHud) {
@@ -777,8 +770,6 @@ export function TrialRegistrationForm({
         setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
         setOwner((data.owner as PdOwner | null) ?? null);
         setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
-        setTrialCooldownActive(!!data.trialCooldownActive);
-        setTrialNextEligibleAt(typeof data.trialNextEligibleAt === 'string' ? data.trialNextEligibleAt : null);
         if (typeof data.orgName === 'string' && data.orgName) {
           setSchoolName((prev) => (prev.trim() ? prev : data.orgName as string));
         }
@@ -794,8 +785,6 @@ export function TrialRegistrationForm({
         setColleagues([]);
         setOwner(null);
         setProducts([]);
-        setTrialCooldownActive(false);
-        setTrialNextEligibleAt(null);
       } finally {
         setPdLoading(false);
       }
