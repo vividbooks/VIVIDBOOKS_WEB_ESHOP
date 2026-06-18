@@ -11485,12 +11485,6 @@ type PipedriveSchoolLookup = {
   org?: any | null;
   deals?: any[];
   ownerUserId?: number | null;
-  /** ISO — poslední trial deal (název trial / zkušební / zkusit) */
-  lastTrialDealAt: string | null;
-  /** true = od posledního trial dealu neuplynulo 6 „měsíců“ (30d) — formulář trial na webu má blokovat */
-  trialCooldownActive: boolean;
-  /** ISO — nejdřívější datum, kdy lze trial z formuláře znovu (lastTrial + cooldown) */
-  trialNextEligibleAt: string | null;
   /**
    * Jen při `lookupSchoolInPipedrive(..., { includePipedriveRaw: true })` —
    * skutečná JSON těla z Pipedrive (dealy org., hit z search), ne náš souhrn.
@@ -11534,9 +11528,6 @@ function parsePipedriveNumericId(value: unknown) {
   const num = Number(value);
   return Number.isFinite(num) && num > 0 ? num : null;
 }
-
-/** Minimální odstup mezi zkušebními žádostmi pro stejné IČO (6×30 dní, shodně s KV newsletter — přibližné měsíce). */
-const PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 
 let pipedriveDealLabelOptionsCache: { expiresAt: number; options: Record<string, string> } | null = null;
 
@@ -11676,22 +11667,6 @@ function pipedriveTrialDealCreatedMs(deal: any): number | null {
   return parsePipedriveDealTimestampMs(deal?.add_time);
 }
 
-/** Nejnovější trial podle data založení dealu (add_time), ne update_time / lost_time. */
-function getLatestPipedriveTrialDealInfo(
-  deals: any[],
-  dealLabelIdToName?: Record<string, string> | null,
-): { lastMs: number; lastIso: string } | null {
-  const trialDeals = (Array.isArray(deals) ? deals : []).filter((d) => isPipedriveTrialDeal(d, dealLabelIdToName));
-  if (!trialDeals.length) return null;
-  let bestMs = 0;
-  for (const d of trialDeals) {
-    const ms = pipedriveTrialDealCreatedMs(d);
-    if (ms != null && ms > bestMs) bestMs = ms;
-  }
-  if (bestMs <= 0) return null;
-  return { lastMs: bestMs, lastIso: new Date(bestMs).toISOString() };
-}
-
 const PIPEDRIVE_TRIAL_DEFAULT_LENGTH_MS = 14 * 24 * 60 * 60 * 1000;
 /** Pokud je lost_time mnohem později než add_time, jde o pozdní uzavření starého dealu v CRM — ne o konec přístupu. */
 const PIPEDRIVE_TRIAL_LOST_SANE_WINDOW_MS = 120 * 24 * 60 * 60 * 1000;
@@ -11796,15 +11771,6 @@ function summarizePipedriveSchoolState(params: {
     }
   }
 
-  const trialInfo = getLatestPipedriveTrialDealInfo(deals, labelMap);
-  const nowMs = Date.now();
-  const trialCooldownActive = Boolean(
-    trialInfo && nowMs - trialInfo.lastMs < PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS,
-  );
-  const trialNextEligibleAt = trialInfo
-    ? new Date(trialInfo.lastMs + PIPEDRIVE_TRIAL_REPEAT_COOLDOWN_MS).toISOString()
-    : null;
-
   return {
     status,
     message,
@@ -11820,9 +11786,6 @@ function summarizePipedriveSchoolState(params: {
     org: params.org || null,
     deals,
     ownerUserId: params.ownerUserId,
-    lastTrialDealAt: trialInfo?.lastIso ?? null,
-    trialCooldownActive,
-    trialNextEligibleAt,
   };
 }
 
@@ -12693,9 +12656,6 @@ async function lookupSchoolInPipedrive(
       org: null,
       deals: [],
       ownerUserId: null,
-      lastTrialDealAt: null,
-      trialCooldownActive: false,
-      trialNextEligibleAt: null,
     };
     if (includePipedriveRaw) {
       (result as PipedriveSchoolLookup).pipedriveApi = {
@@ -12840,9 +12800,6 @@ async function upsertPipedriveSchoolOrganization(
       org: created?.data || null,
       deals: [],
       ownerUserId: null,
-      lastTrialDealAt: null,
-      trialCooldownActive: false,
-      trialNextEligibleAt: null,
     } as PipedriveSchoolLookup;
   }
 
@@ -13233,40 +13190,26 @@ async function syncTrialPipedriveDeal(
   });
   const personId = parsePipedriveNumericId(person?.id);
 
-  /** Idempotence: existuje pro tuto organizaci v dané pipeline a labelu už otevřený deal?
-   *  Pokud ano, nezakládáme duplicit — jen aktivitu (pro obchodníka stopa, že žádost přišla znovu). */
+  /** Trial deal zakládáme VŽDY. Jediná výjimka (dedup): škola už má **aktuálně
+   *  aktivní trial** = otevřený trial deal (stejná detekce jako stav `active_trial`
+   *  v `summarizePipedriveSchoolState`). V tom případě nezakládáme duplicit — jen
+   *  přidáme aktivitu (pro obchodníka stopa, že žádost přišla znovu).
+   *  Žádné omezení na konkrétní pipeline/label: o duplicitu jde i tehdy, když je
+   *  otevřený trial v jiné pipeline. */
   let dealId: number | null = null;
   let deduplicated = false;
   try {
     const existingDeals = await getPipedriveOrganizationDeals(apiToken, orgLookup.orgId).catch(() => []);
     const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken).catch(() => ({} as Record<string, string>));
-    const trialLabelName = dealLabelIdToName[String(labelOptionId)] || '';
-    const isOpenInOurPipeline = (deal: any) =>
-      String(deal?.status || '').toLowerCase() === 'open' &&
-      parsePipedriveNumericId(deal?.pipeline_id) === pipelineId;
-    const dealHasOurLabel = (deal: any): boolean => {
-      const names = dealLabelNamesFromDeal(deal, dealLabelIdToName);
-      if (trialLabelName && names.includes(trialLabelName)) return true;
-      /** Záchranná cesta — porovnání přes raw ID v poli `label`/`labels`. */
-      const raw = deal?.label ?? deal?.labels;
-      const tokens: string[] = [];
-      if (Array.isArray(raw)) {
-        for (const item of raw) {
-          if (item == null) continue;
-          if (typeof item === 'object') tokens.push(String((item as any).id ?? (item as any).value ?? ''));
-          else tokens.push(String(item));
-        }
-      } else if (raw != null && raw !== '') {
-        tokens.push(...String(raw).split(',').map((s) => s.trim()));
-      }
-      return tokens.includes(String(labelOptionId));
-    };
-    const existingTrialDeal = existingDeals.find((d: any) => isOpenInOurPipeline(d) && dealHasOurLabel(d));
+    const existingTrialDeal = existingDeals.find(
+      (d: any) =>
+        String(d?.status || '').toLowerCase() === 'open' && isPipedriveTrialDeal(d, dealLabelIdToName),
+    );
     if (existingTrialDeal) {
       dealId = parsePipedriveNumericId(existingTrialDeal.id);
       deduplicated = true;
       console.log(
-        `[${cfg.logPrefix}] existing open deal id=${dealId} org=${orgLookup.orgId} pipeline=${pipelineId} label=${labelOptionId} — skipping create, only adding activity`,
+        `[${cfg.logPrefix}] org ${orgLookup.orgId} už má aktivní (otevřený) trial deal id=${dealId} — nezakládám nový, jen přidávám aktivitu`,
       );
     }
   } catch (error: any) {
@@ -13745,7 +13688,7 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
 }
 
 /** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
-const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 3;
+const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 4;
 
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
@@ -13781,9 +13724,6 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
       wonDeals: result.wonDeals,
       totalDeals: result.totalDeals,
       matchedBy: result.matchedBy,
-      lastTrialDealAt: result.lastTrialDealAt,
-      trialCooldownActive: result.trialCooldownActive,
-      trialNextEligibleAt: result.trialNextEligibleAt,
       ...(includePipedriveRaw
         ? {
             pipedriveApi: result.pipedriveApi ?? null,

@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { motion } from 'motion/react';
-import { AlertCircle, CheckCircle, Clock, ExternalLink, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { SchoolSearch, type PdOwner, type PipedriveStatus } from './TrialPage';
 import { submitFreeTrialAjax, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -56,8 +56,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
   const [colleagues, setColleagues] = useState<string[]>([]);
   const [owner, setOwner] = useState<PdOwner | null>(null);
   const [products, setProducts] = useState<string[]>([]);
-  const [trialCooldownActive, setTrialCooldownActive] = useState(false);
-  const [trialNextEligibleAt, setTrialNextEligibleAt] = useState<string | null>(null);
 
   const [emailCheck, setEmailCheck] = useState<{
     canRequest: boolean;
@@ -74,29 +72,13 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
 
   const ico = form.ico.replace(/\D/g, '').slice(0, 10);
 
-  const schoolHasActiveLicense =
-    (pdStatus === 'active_subscription' || pdStatus === 'active_trial' || pdStatus === 'in_progress') &&
-    !!pdMessage &&
-    !pdLoading;
-
-  const schoolHasRecentTrialBlock =
-    trialCooldownActive &&
-    !pdLoading &&
-    !schoolHasActiveLicense &&
-    pdStatus !== 'unknown' &&
-    pdStatus !== 'invalid' &&
-    pdStatus !== null &&
-    ico.length >= 6;
-
-  const trialNextEligibleDisplay = useMemo(() => {
-    if (!trialNextEligibleAt) return null;
-    const d = new Date(trialNextEligibleAt);
-    if (Number.isNaN(d.getTime())) return null;
-    return {
-      dateStr: d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }),
-      daysLeft: Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
-    };
-  }, [trialNextEligibleAt]);
+  /**
+   * Trial nabízíme/zakládáme vždy. Jediná výjimka: škola **právě testuje**
+   * (`pdStatus === 'active_trial'`). Žádný 6měsíční cooldown ani „e‑mail už
+   * použit" — vše ostatní projde a trial se založí.
+   */
+  const schoolHasActiveTrial =
+    pdStatus === 'active_trial' && !!pdMessage && !pdLoading;
 
   const pdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -106,8 +88,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
       setColleagues([]);
       setOwner(null);
       setProducts([]);
-      setTrialCooldownActive(false);
-      setTrialNextEligibleAt(null);
       return;
     }
     if (pdTimer.current) clearTimeout(pdTimer.current);
@@ -123,16 +103,12 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
         setOwner((data.owner as PdOwner | null) ?? null);
         setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
-        setTrialCooldownActive(!!data.trialCooldownActive);
-        setTrialNextEligibleAt(typeof data.trialNextEligibleAt === 'string' ? data.trialNextEligibleAt : null);
       } catch {
         setPdStatus('unknown');
         setPdMessage('');
         setColleagues([]);
         setOwner(null);
         setProducts([]);
-        setTrialCooldownActive(false);
-        setTrialNextEligibleAt(null);
       } finally {
         setPdLoading(false);
       }
@@ -163,17 +139,13 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
   }, [form.email, notTeacher]);
 
   const handleOneClickTrial = async () => {
-    if (schoolHasActiveLicense || schoolHasRecentTrialBlock) return;
+    if (schoolHasActiveTrial) return;
     if (!form.gdpr) {
       setTrialError('Chyb\u00ed souhlas se zpracov\u00e1n\u00edm \u00fadaj\u016f z registrace.');
       return;
     }
     if (emailCheck?.emailInvalid && emailCheck.message) {
       setTrialError(emailCheck.message);
-      return;
-    }
-    if (emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid) {
-      setTrialError(`S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od ${emailCheck.cooldownDateStr}.`);
       return;
     }
     if (!isValidEmailFormat(form.email.trim())) {
@@ -294,11 +266,9 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           {'Vyzkou\u0161ejte Vividbooks'}
         </h3>
         <p style={FF} className="text-[13px] text-[#001161]/60 leading-relaxed">
-          {schoolHasActiveLicense
+          {schoolHasActiveTrial
             ? 'M\u00e1te p\u0159\u00edstup do Vividbooks? Ve va\u0161\u00ed \u0161kole u\u017e digit\u00e1ln\u00ed u\u010debnice vyu\u017e\u00edvaj\u00ed kolegov\u00e9. Kontakt a p\u0159\u00edpadn\u00e9 k\u00f3dy najdete n\u00ed\u017ee.'
-            : schoolHasRecentTrialBlock
-              ? 'Va\u0161e \u0161kola ned\u00e1vno \u017e\u00e1dala o zku\u0161ebn\u00ed p\u0159\u00edstup. Mo\u017enosti m\u00e1te n\u00ed\u017ee.'
-              : 'M\u00e1te z\u00e1jem o 14denn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm? Sta\u010d\u00ed jeden klik \u2014 stejn\u011b jako u zku\u0161ebn\u00edho formul\u00e1\u0159e v\u00e1m p\u0159ijde potvrzen\u00ed a p\u0159\u00edstupov\u00e9 k\u00f3dy.'}
+            : 'M\u00e1te z\u00e1jem o 14denn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm? Sta\u010d\u00ed jeden klik \u2014 stejn\u011b jako u zku\u0161ebn\u00edho formul\u00e1\u0159e v\u00e1m p\u0159ijde potvrzen\u00ed a p\u0159\u00edstupov\u00e9 k\u00f3dy.'}
         </p>
       </div>
 
@@ -314,55 +284,10 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         colleagues={colleagues}
         owner={owner}
         products={products}
-        hidePipedriveStatusCard={schoolHasRecentTrialBlock}
+        hidePipedriveStatusCard={false}
       />
 
-      {schoolHasRecentTrialBlock && (
-        <motion.div
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="overflow-hidden rounded-2xl border border-amber-200 bg-amber-50/90"
-        >
-          <div className="flex items-center gap-2.5 px-4 pt-4 pb-2">
-            <Clock className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-            <p style={FF} className="text-[14px] font-bold text-amber-900">
-              {'Tato \u0161kola dostala p\u0159\u00edstup ned\u00e1vno'}
-            </p>
-          </div>
-          <div className="space-y-3 px-4 pb-4">
-            <div className="space-y-2.5 rounded-xl border border-amber-200/80 bg-white/70 px-3.5 py-3">
-              <p style={FF} className="m-0 text-[13px] text-[#001161]/80 leading-relaxed">
-                {'Zku\u0161ebn\u00ed p\u0159\u00edstupy vyd\u00e1v\u00e1me ka\u017ed\u00e9 \u0161kole jednou za \u0161est m\u011bs\u00edc\u016f.'}
-              </p>
-              {trialNextEligibleDisplay && (
-                <p style={FF} className="m-0 text-[12px] text-amber-900">
-                  {'Dal\u0161\u00ed \u017e\u00e1dost z formul\u00e1\u0159e bude mo\u017en\u00e1 od '}
-                  <span className="font-bold">{trialNextEligibleDisplay.dateStr}</span>
-                  {trialNextEligibleDisplay.daysLeft > 0 ? (
-                    <>
-                      {' ('}
-                      {'za '}
-                      <span className="font-semibold text-[#001161]">{trialNextEligibleDisplay.daysLeft}</span>
-                      {'\u00a0dn\u00ed).'}
-                    </>
-                  ) : (
-                    '.'
-                  )}
-                </p>
-              )}
-              <p style={FF} className="m-0 text-[12px] text-[#001161]/70">
-                {'Pot\u0159ebujete d\u0159\u00edv? Napi\u0161te na '}
-                <a href="mailto:hello@vividbooks.com" className="font-bold text-amber-900 underline underline-offset-2">
-                  hello@vividbooks.com
-                </a>
-                {owner?.name ? ` (${owner.name})` : ''}.
-              </p>
-            </div>
-          </div>
-        </motion.div>
-      )}
-
-      {!schoolHasActiveLicense && !schoolHasRecentTrialBlock && (
+      {!schoolHasActiveTrial && (
         <div className="space-y-2">
           <button
             type="button"
@@ -370,7 +295,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
             disabled={
               trialSubmitting
               || !form.gdpr
-              || (!!emailCheck && !emailCheck.canRequest)
             }
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-5 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9] disabled:cursor-not-allowed disabled:opacity-50"
             style={FF}
@@ -389,12 +313,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
             {emailCheck?.emailInvalid && emailCheck.message && (
               <p style={FF} className="text-[12px] text-red-700 text-center">
                 {emailCheck.message}
-              </p>
-            )}
-            {emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid && (
-              <p style={FF} className="text-[12px] text-amber-800 text-center">
-                {'S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n. Dal\u0161\u00ed od '}
-                {emailCheck.cooldownDateStr}.
               </p>
             )}
           </div>
