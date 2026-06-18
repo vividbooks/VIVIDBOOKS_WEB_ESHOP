@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router';
@@ -8,10 +8,7 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import {
   submitFreeTrialAjax,
-  notifyTrialActiveSubscriptionToPipedrive,
-  notifyTrialEmailUsedToPipedrive,
   notifyTrialExistingActiveToPipedrive,
-  notifyTrialOpenDealToPipedrive,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
@@ -714,36 +711,17 @@ export function TrialRegistrationForm({
    */
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  /** Stav z Pipedrive (nezávisle na tom, jestli uživatel klikl na submit) */
-  const schoolHasActiveLicenseRaw =
-    (pdStatus === 'active_subscription' ||
-      pdStatus === 'active_trial' ||
-      pdStatus === 'in_progress') &&
-    !!pdMessage &&
-    !pdLoading;
+  /**
+   * Trial zakládáme VŽDY. Jediná výjimka: škola **právě testuje** (má aktivní
+   * zkušební přístup, `pdStatus === 'active_trial'`). Žádný 6měsíční cooldown,
+   * žádné „e‑mail už použit", žádné blokování kvůli aktivnímu předplatnému ani
+   * rozjednanému dealu — to vše projde dál a trial se založí.
+   */
+  const schoolHasActiveTrialRaw =
+    pdStatus === 'active_trial' && !!pdMessage && !pdLoading;
 
-  const schoolHasRecentTrialBlockRaw =
-    trialCooldownActive &&
-    !pdLoading &&
-    !schoolHasActiveLicenseRaw &&
-    pdStatus !== 'unknown' &&
-    pdStatus !== 'invalid' &&
-    pdStatus !== null &&
-    ico.length >= 6;
-
-  /** Po kliknutí na submit s blokačním stavem → místo formuláře výsledková stránka. */
-  const showBlockingResultPage =
-    submitAttempted && (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw);
-
-  const trialNextEligibleDisplay = useMemo(() => {
-    if (!trialNextEligibleAt) return null;
-    const d = new Date(trialNextEligibleAt);
-    if (Number.isNaN(d.getTime())) return null;
-    return {
-      dateStr: d.toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }),
-      daysLeft: Math.max(0, Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24))),
-    };
-  }, [trialNextEligibleAt]);
+  /** Po kliknutí na submit s aktivním trialem → místo formuláře výsledková stránka. */
+  const showBlockingResultPage = submitAttempted && schoolHasActiveTrialRaw;
 
   // Pipedrive check on IČO
   const pdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -888,28 +866,6 @@ export function TrialRegistrationForm({
       flash('trial-field-email');
       return;
     }
-    if (emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid) {
-      /**
-       * E-mail už máme v databázi (cooldown žádosti o trial). Nový trial
-       * nevznikne, ale každé vyplnění formuláře musí v Pipedrive založit deal —
-       * fire-and-forget sync + karta s kontaktem obchodního zástupce.
-       */
-      void notifyTrialEmailUsedToPipedrive({
-        name: form.name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim(),
-        position: form.position,
-        schoolName: schoolName.trim(),
-        vat: ico.trim(),
-        gdpr: gdprConsent,
-        newsletter: newsletterConsent,
-        teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
-        schoolStages: isDeputy ? schoolStages : [],
-      });
-      setEmailUsedInSchool(true);
-      setFormError('');
-      return;
-    }
     if (isTeacher && subjects2nd.length === 0 && subjects1st.length === 0) {
       setFormError('Vyberte pros\u00edm alespo\u0148 jeden p\u0159edm\u011bt.');
       flash('trial-field-subjects');
@@ -922,19 +878,14 @@ export function TrialRegistrationForm({
     }
 
     /**
-     * Validace polí prošla. Pokud Pipedrive škole hlásí blokační stav
-     * (právě testuje / nedávno testovala / má aktivní licenci / rozjetý deal),
-     * přepneme na samostatnou výsledkovou stránku (nahradí formulář) a souběžně
-     * pošleme fire‑and‑forget deal do Pipedrive — legacy `/web/free-trial-ajax`
-     * se v tomto případě vůbec nevolá (uživatel beztak nemá nárok na nový kód).
-     *
-     *   pdStatus = 'active_subscription' → upsell (pipeline 7, „Zákazník žádá o trial.")
-     *   pdStatus = 'active_trial'         → existing_active_trial (pipeline 6, „Škola aktuálně má trial a žádá si o další.")
-     *   trialCooldownActive (nedávno)     → email_used_in_school (pipeline 6, „Opětovná žádost o kód.")
-     *   pdStatus = 'in_progress'          → open_deal_in_progress (pipeline 6; když má org otevřený
-     *                                       trial deal, server jen přidá aktivitu — deduplikace)
+     * Validace polí prošla. Trial zakládáme vždy — jediná výjimka je, když škola
+     * **právě testuje** (`pdStatus === 'active_trial'`). V tom případě nevoláme
+     * legacy `/web/free-trial-ajax`, jen přepneme na výsledkovou stránku a do
+     * Pipedrive pošleme fire‑and‑forget deal „škola aktuálně má trial a žádá si
+     * o další" (pipeline 6; když už org otevřený trial deal má, server jen přidá
+     * aktivitu — deduplikace).
      */
-    if (schoolHasActiveLicenseRaw || schoolHasRecentTrialBlockRaw) {
+    if (schoolHasActiveTrialRaw) {
       setSubmitAttempted(true);
       setFormError('');
       if (typeof window !== 'undefined') {
@@ -952,15 +903,7 @@ export function TrialRegistrationForm({
         teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
         schoolStages: isDeputy ? schoolStages : [],
       };
-      if (pdStatus === 'active_subscription') {
-        void notifyTrialActiveSubscriptionToPipedrive(blockingPayload);
-      } else if (pdStatus === 'active_trial') {
-        void notifyTrialExistingActiveToPipedrive(blockingPayload);
-      } else if (pdStatus === 'in_progress') {
-        void notifyTrialOpenDealToPipedrive(blockingPayload);
-      } else if (schoolHasRecentTrialBlockRaw) {
-        void notifyTrialEmailUsedToPipedrive(blockingPayload);
-      }
+      void notifyTrialExistingActiveToPipedrive(blockingPayload);
       return;
     }
 
@@ -1090,121 +1033,8 @@ export function TrialRegistrationForm({
               onIcoChange={() => {}}
               pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
               colleagues={colleagues} owner={owner} products={products}
-              hidePipedriveStatusCard={schoolHasRecentTrialBlockRaw}
+              hidePipedriveStatusCard={false}
             />
-
-            {schoolHasRecentTrialBlockRaw && (() => {
-              const extendMail = owner?.email || 'hello@vividbooks.com';
-              const extendSubject = encodeURIComponent('Prodlou\u017een\u00ed p\u0159\u00edstupu k u\u010debn\u00edcm Vividbooks');
-              const extendBody = encodeURIComponent(
-                `Dobr\u00fd den,\n\npros\u00edm o prodlou\u017een\u00ed / up\u0159esn\u011bn\u00ed p\u0159\u00edstupu k digit\u00e1ln\u00edm u\u010debnic\u00edm Vividbooks pro \u0161kolu:\n${schoolName || ''}\nI\u010cO: ${ico}\n\nD\u011bkuji.`,
-              );
-              const extendHref = `mailto:${extendMail}?subject=${extendSubject}&body=${extendBody}`;
-              return (
-              <motion.div
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="rounded-2xl overflow-hidden border border-amber-200 bg-amber-50/90"
-              >
-                <div className="flex items-center gap-2.5 px-4 pt-4 pb-2">
-                  <Clock className="w-4 h-4 shrink-0 text-amber-600" aria-hidden />
-                  <p style={FF} className="text-[14px] font-bold text-amber-900">
-                    {'Tato \u0161kola dostala p\u0159\u00edstup ned\u00e1vno'}
-                  </p>
-                </div>
-                <div className="px-4 pb-4 space-y-3">
-                  <div className="rounded-xl border border-amber-200/80 bg-white/70 px-3.5 py-3 space-y-2.5">
-                    <p style={FF} className="text-[13px] text-[#001161]/80 leading-relaxed m-0">
-                      {'Zku\u0161ebn\u00ed p\u0159\u00edstupy vyd\u00e1v\u00e1me ka\u017ed\u00e9 \u0161kole jednou za \u0161est m\u011bs\u00edc\u016f.'}
-                    </p>
-                    <p style={FF} className="text-[13px] text-[#001161]/80 leading-relaxed m-0">
-                      {'Brzy v\u00e1s bude kontaktovat n\u00e1\u0161 obchodn\u00ed z\u00e1stupce a navrhne dal\u0161\u00ed postup. Pokud nechcete \u010dekat, ozv\u011bte se mu vy na kontakt n\u00ed\u017ee.'}
-                    </p>
-                    <div className="rounded-lg bg-amber-50/90 border border-amber-100 px-3 py-2.5">
-                      <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-2">
-                        {'Napi\u0161te n\u00e1m'}
-                      </p>
-                      <div className="flex gap-3 items-start">
-                        <div className="w-12 h-12 rounded-full overflow-hidden shrink-0 border border-amber-200/80 bg-amber-100/40 shadow-sm">
-                          <ImageWithFallback
-                            src={TEAM_PHOTOS['gabriela@vividbooks.com']}
-                            alt="Gabriela"
-                            className="w-full h-full object-cover object-top"
-                          />
-                        </div>
-                        <p style={FF} className="text-[13px] text-[#001161]/80 leading-snug m-0 flex-1 min-w-0 pt-0.5">
-                          {'Pot\u0159ebujete p\u0159\u00edstup d\u0159\u00edv? Napi\u0161te pros\u00edm na '}
-                          <a
-                            href={extendHref}
-                            className="inline-flex items-center gap-1.5 font-bold text-amber-900 underline underline-offset-2 hover:opacity-80"
-                            style={FF}
-                          >
-                            <Mail className="w-4 h-4 shrink-0" aria-hidden />
-                            {extendMail}
-                          </a>
-                          {owner?.name ? (
-                            <span className="text-[#001161]/70">
-                              {' ('}
-                              {owner.name}
-                              {').'}
-                            </span>
-                          ) : (
-                            '.'
-                          )}
-                        </p>
-                      </div>
-                    </div>
-                    <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 pt-0.5 m-0">
-                      {'Dal\u0161\u00ed \u017e\u00e1dost p\u0159es tento formul\u00e1\u0159'}
-                    </p>
-                    <ul className="space-y-2 list-none m-0 p-0">
-                      <li className="flex gap-2.5" style={FF}>
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-                        <span className="text-[13px] text-[#001161]/75 leading-snug">
-                          {trialNextEligibleDisplay ? (
-                            <>
-                              {'Nov\u00fd p\u0159\u00edstup z tohoto formul\u00e1\u0159e bude mo\u017en\u00fd od '}
-                              <span className="font-bold text-amber-900">{trialNextEligibleDisplay.dateStr}</span>
-                              {trialNextEligibleDisplay.daysLeft > 0 ? (
-                                <>
-                                  {' ('}
-                                  {'za '}
-                                  <span className="font-semibold text-[#001161]">{trialNextEligibleDisplay.daysLeft}</span>
-                                  {'\u00a0dn\u00ed).'}
-                                </>
-                              ) : (
-                                '.'
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              {'Term\u00edn dal\u0161\u00edho p\u0159\u00edstupu z formul\u00e1\u0159e v\u00e1m r\u00e1di potvrd\u00edme na '}
-                              <a href="mailto:hello@vividbooks.com" className="font-bold text-amber-800 underline underline-offset-2 hover:opacity-80">
-                                hello@vividbooks.com
-                              </a>
-                              .
-                            </>
-                          )}
-                        </span>
-                      </li>
-                      {colleagues.length > 0 ? (
-                        <li className="flex gap-2.5" style={FF}>
-                          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-                          <span className="text-[13px] text-[#001161]/75 leading-snug">
-                            <span className="font-bold text-[#001161]">
-                              {'Kolegov\u00e9 s p\u0159\u00edstupem ve va\u0161\u00ed \u0161kole'}
-                            </span>
-                            {': '}
-                            <span className="font-semibold text-[#001161]">{colleagues.join(', ')}</span>
-                          </span>
-                        </li>
-                      ) : null}
-                    </ul>
-                  </div>
-                </div>
-              </motion.div>
-              );
-            })()}
 
             <button
               type="button"
@@ -1229,12 +1059,12 @@ export function TrialRegistrationForm({
                 pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
                 colleagues={colleagues} owner={owner} products={products}
                 hidePipedriveStatusCard={
-                  // Blokační statusy (aktivní předplatné / zk. přístup / rozjetý
-                  // deal / 6m cooldown) se ve formuláři nikdy neukazují — zobrazí
-                  // se na samostatné výsledkové stránce po kliknutí na „Získat
-                  // přístup zdarma". Malé informační karty (new/known/past_request)
-                  // jdou hned.
-                  schoolHasRecentTrialBlockRaw || schoolHasActiveLicenseRaw
+                  // Stav „škola právě testuje" (active_trial) se ve formuláři
+                  // neukazuje — zobrazí se na samostatné výsledkové stránce po
+                  // kliknutí na „Získat přístup zdarma". Ostatní informační karty
+                  // (new/known/past_request/aktivní předplatné/rozjetý deal) jdou
+                  // hned a žádost o trial neblokují.
+                  schoolHasActiveTrialRaw
                 }
                 pipedriveDebug={showPipedriveIcoDebugControls()
                   ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
@@ -1261,9 +1091,7 @@ export function TrialRegistrationForm({
                     : emailCheck
                       ? emailCheck.emailInvalid
                         ? <AlertCircle className="w-4 h-4 text-red-500" />
-                        : emailCheck.canRequest
-                          ? <CheckCircle2 className="w-4 h-4 text-green-500" />
-                          : <AlertCircle className="w-4 h-4 text-amber-500" />
+                        : <CheckCircle2 className="w-4 h-4 text-green-500" />
                       : null}
                 </div>
               </div>
@@ -1273,28 +1101,6 @@ export function TrialRegistrationForm({
                     className="mt-2 flex items-start gap-2.5 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                     <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                     <p style={FF} className="text-[13px] text-red-800">{emailCheck.message}</p>
-                  </motion.div>
-                )}
-                {emailCheck && !emailCheck.canRequest && !emailCheck.emailInvalid && (
-                  <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                    className="mt-2 flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-                    <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                    <div>
-                      <p style={FF} className="text-[13px] text-amber-800 font-bold">{'S t\u00edmto e-mailem byl trial ji\u017e po\u017e\u00e1d\u00e1n'}</p>
-                      <p style={FF} className="text-[12px] text-amber-700 mt-0.5">
-                        {'Dal\u0161\u00ed \u017e\u00e1dost m\u016f\u017eete podat od '}{emailCheck.cooldownDateStr}{' ('}{emailCheck.daysLeft}{' dn\u00ed).'}
-                      </p>
-                      <p style={FF} className="text-[12px] text-amber-700 mt-0.5">
-                        {'Formul\u00e1\u0159 m\u016f\u017eete p\u0159esto odeslat \u2014 brzy v\u00e1s pak bude kontaktovat n\u00e1\u0161 obchodn\u00ed z\u00e1stupce a navrhne dal\u0161\u00ed postup.'}
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-                {emailCheck?.canRequest && emailCheck.alreadyRequested && emailCheck.cooldownExpired && (
-                  <motion.div initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
-                    className="mt-2 flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5">
-                    <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
-                    <p style={FF} className="text-[12px] text-green-700">{'P\u0159edchoz\u00ed trial vypr\u0161el \u2014 m\u016f\u017eete \u017e\u00e1dat znovu.'}</p>
                   </motion.div>
                 )}
               </AnimatePresence>
