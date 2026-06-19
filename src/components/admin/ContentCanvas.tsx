@@ -1115,7 +1115,18 @@ function StructuredCanvas({
       const res = await fetch(`${SERVER}/admin/mailchimp/sync?skipRag=1`, { method: 'POST', headers: AUTH });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Sync selhal');
-      toast.success(`Synced ${data.campaigns ?? 0} Mailchimp kampaní`);
+      if ((data.campaigns ?? 0) === 0) {
+        toast.error('Mailchimp sync proběhl, ale nebyly nalezeny žádné kampaně k indexaci.');
+        return;
+      }
+      const ingestRes = await fetch(`${SERVER}/rag/ingest-source`, {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ source: 'mailchimp' }),
+      });
+      const ingestData = await ingestRes.json();
+      if (!ingestRes.ok || ingestData.error) throw new Error(ingestData.error || 'RAG ingest selhal');
+      toast.success(`Synced ${data.campaigns} kampaní, ${ingestData.ingested} zaindexováno do RAG`);
     } catch (e: any) {
       toast.error(`Sync: ${e.message}`);
     } finally {

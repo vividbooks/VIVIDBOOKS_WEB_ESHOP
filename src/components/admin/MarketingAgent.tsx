@@ -297,7 +297,18 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
       const res = await fetch(`${SERVER}/admin/mailchimp/sync?skipRag=1`, { method: 'POST', headers: AUTH_H });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Sync selhal');
-      toast.success(`Synced ${data.campaigns ?? 0} Mailchimp kampaní`);
+      if ((data.campaigns ?? 0) === 0) {
+        toast.error('Mailchimp sync proběhl, ale nebyly nalezeny žádné kampaně k indexaci.');
+        return;
+      }
+      const ingestRes = await fetch(`${SERVER}/rag/ingest-source`, {
+        method: 'POST',
+        headers: AUTH_H,
+        body: JSON.stringify({ source: 'mailchimp' }),
+      });
+      const ingestData = await ingestRes.json();
+      if (!ingestRes.ok || ingestData.error) throw new Error(ingestData.error || 'RAG ingest selhal');
+      toast.success(`Synced ${data.campaigns} kampaní, ${ingestData.ingested} zaindexováno do RAG`);
     } catch (e: any) {
       toast.error(`Sync chyba: ${e.message}`);
     } finally {

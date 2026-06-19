@@ -104,6 +104,10 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/MathCampaignLandingPage'), 'MathCampaignLandingPage'),
         },
         {
+          path: 'kampane/editor-sesitu',
+          lazy: lazyNamed(() => import('./components/WorkbookEditorLandingPage'), 'WorkbookEditorLandingPage'),
+        },
+        {
           path: 'katalog',
           lazy: lazyNamed(() => import('./components/CatalogCleanPage'), 'CatalogCleanPage'),
         },
@@ -252,6 +256,7 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/MarketingAgent')),
         },
         { path: 'seo-agent', lazy: lazyDefault(() => import('./components/admin/SeoAgent')) },
+        { path: 'rag', lazy: lazyDefault(() => import('./components/admin/RagPage')) },
         {
           path: 'image-agent/referencni-styly',
           lazy: lazyDefault(() => import('./components/admin/ReferenceStylesSettingsPage')),

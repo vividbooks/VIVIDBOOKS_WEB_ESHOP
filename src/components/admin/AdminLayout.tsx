@@ -111,11 +111,12 @@ const MARKETING_SIDEBAR = [
     ],
   },
   {
-    section: 'AI',
+    section: 'AI & RAG',
     items: [
       { label: 'Growth Agent', icon: Sparkles, path: '/marketing/growth-agent', badge: 'AI', badgeColor: 'purple' },
       { label: 'Marketing Agent', icon: Sparkles, path: '/marketing/marketing-agent', badge: 'AI', badgeColor: 'purple' },
       { label: 'SEO Agent', icon: Brain, path: '/marketing/seo-agent', badge: 'AI', badgeColor: 'amber' },
+      { label: 'RAG Znalosti', icon: Brain, path: '/marketing/rag', badge: 'Návrh', badgeColor: 'amber' },
     ],
   },
 ];
@@ -190,6 +191,7 @@ const SETTINGS_ITEMS_BASE: Array<{
   { label: 'Aktivita škol', icon: Layers, disabled: true },
   { label: 'Migrace obsahu', icon: Upload, path: '/admin/migrace' },
   { label: 'Referenční styly', icon: Palette, path: '/marketing/image-agent/referencni-styly', highlight: true },
+  { label: 'RAG Databáze', icon: Brain, path: '/marketing/rag', highlight: true },
   { label: 'AI Agent', icon: Bot, disabled: true, highlight: true, future: true },
   { label: 'Zobrazit Vividbooks', icon: Eye, path: '/' },
   { label: 'Vyčistit kategorie', icon: Trash2, disabled: true },
@@ -338,7 +340,7 @@ export default function AdminLayout() {
     novinky: 'Novinky', webinare: 'Webináře', stranky: 'Stránky',
     migrace: 'Migrace', 'hero-slidy': 'Hero slidy', predmety: 'Předměty',
     notifikace: 'Notifikace', popupy: 'Popup Manager', registrace: 'Registrace',
-    tabs: 'Taby', 'marketing-agent': 'Marketing Agent',
+    tabs: 'Taby', rag: 'RAG Znalosti', 'marketing-agent': 'Marketing Agent',
     'seo-agent': 'SEO Agent', 'image-agent': 'Image Agent', 'referencni-styly': 'Referenční styly',
     skoly: 'Rejstřík škol', shopify: 'Shopify',
     objednavky: 'Objednávky',

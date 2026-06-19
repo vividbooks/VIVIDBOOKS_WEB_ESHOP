@@ -7,6 +7,7 @@ import {
   Loader2,
   PanelLeft,
   Plus,
+  BookOpen,
   Layers,
   Paperclip,
   Sparkles,
@@ -23,6 +24,7 @@ import {
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import ContentCanvas, { CanvasDataSource, detectCanvasType } from './admin/ContentCanvas';
+import { ragQuery } from '../utils/ragApi';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
@@ -271,6 +273,13 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
   const [canvasContent, setCanvasContent] = useState<string | null>(null);
   const [canvasTitle, setCanvasTitle] = useState('');
   const [canvasDataSource, setCanvasDataSource] = useState<CanvasDataSource | null>(null);
+  const [ragOpen, setRagOpen] = useState(false);
+  const [ragQuestion, setRagQuestion] = useState('');
+  const [ragAnswer, setRagAnswer] = useState('');
+  const [ragSources, setRagSources] = useState<any[]>([]);
+  const [ragLoading, setRagLoading] = useState(false);
+  const [ragStatus, setRagStatus] = useState<any | null>(null);
+
   const messagesScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -503,6 +512,28 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
     }
   }
 
+  async function openRag() {
+    setRagOpen(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/rag-status`, { headers: AUTH });
+      if (res.ok) setRagStatus(await res.json());
+    } catch {}
+  }
+
+  async function runRagQuery() {
+    if (!ragQuestion.trim()) return;
+    setRagLoading(true);
+    try {
+      const data = await ragQuery(ragQuestion.trim(), 5);
+      setRagAnswer(data.answer || '');
+      setRagSources(data.sources || []);
+    } catch (err: any) {
+      toast.error('RAG dotaz selhal', { description: err.message });
+    } finally {
+      setRagLoading(false);
+    }
+  }
+
   return (
     <div className={embedded ? 'w-full h-full min-h-0 flex flex-col bg-black text-white overflow-hidden' : 'fixed inset-0 h-dvh max-h-dvh min-h-0 flex flex-col bg-black text-white overflow-hidden'}>
       <div className={`flex flex-col lg:flex-row min-h-0 overflow-hidden relative ${embedded ? 'flex-1' : 'flex-1 h-full'}`}>
@@ -524,11 +555,18 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
                   {embedded ? 'Textový asistent' : 'Web operátor'}
                 </h1>
                 <p style={FF} className="text-[#8E8E93] text-xs">
-                  {embedded ? 'Formulace e-mailů (bez změn na webu)' : 'Web operátor, Canvas'}
+                  {embedded ? 'RAG · formulace e-mailů (bez změn na webu)' : 'Web operátor, RAG, Canvas'}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                onClick={openRag}
+                className="p-2 rounded-lg text-[#8E8E93] hover:text-purple-400 hover:bg-white/5 transition-colors cursor-pointer"
+                title="Znalostní knihovna"
+              >
+                <BookOpen className="w-5 h-5" />
+              </button>
               <button
                 onClick={newChat}
                 className="p-2 rounded-lg text-[#8E8E93] hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
@@ -782,6 +820,74 @@ export default function VividAssistantPage({ embedded = false, initialMessage }:
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {ragOpen && (
+          <motion.div className="fixed inset-0 z-[70] flex flex-col justify-end md:justify-center md:items-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="absolute inset-0 bg-black/65" onClick={() => setRagOpen(false)} />
+            <motion.div
+              initial={{ y: 80, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 80, opacity: 0 }}
+              className="relative w-full md:max-w-2xl md:rounded-3xl bg-[#16161b] border border-white/8 shadow-2xl overflow-hidden"
+            >
+              <div className="px-5 py-4 border-b border-white/6 flex items-center justify-between">
+                <div>
+                  <p style={FF} className="text-[18px] font-bold text-white">RAG knihovna</p>
+                  <p style={FF} className="text-[12px] text-white/40">Napojená na aktuální systém</p>
+                </div>
+                <button onClick={() => setRagOpen(false)} className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/60">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+                {ragStatus && (
+                  <div className="rounded-2xl bg-white/[0.04] border border-white/6 p-4">
+                    <p style={FF} className="text-[13px] font-bold text-white">Stav indexu</p>
+                    <p style={FF} className="text-[12px] text-white/45 mt-2">
+                      {ragStatus.totalChunks} chunků · {Object.keys(ragStatus.bySource || {}).length} zdrojů
+                    </p>
+                  </div>
+                )}
+                <div className="rounded-2xl bg-white/[0.04] border border-white/6 p-4">
+                  <p style={FF} className="text-[13px] font-bold text-white mb-3">Položit dotaz do RAGu</p>
+                  <div className="flex gap-2">
+                    <input
+                      value={ragQuestion}
+                      onChange={(e) => setRagQuestion(e.target.value)}
+                      placeholder="Např. Co už víme o matematice 2. stupně?"
+                      className="flex-1 rounded-2xl bg-[#0f0f13] border border-white/6 px-4 py-3 text-[14px] text-white outline-none"
+                      style={FF}
+                    />
+                    <button onClick={runRagQuery} disabled={ragLoading} className="rounded-2xl bg-white text-[#111827] px-4 py-3 text-[13px] font-bold cursor-pointer disabled:opacity-40" style={FF}>
+                      {ragLoading ? '…' : 'Dotaz'}
+                    </button>
+                  </div>
+                </div>
+                {ragAnswer && (
+                  <div className="rounded-2xl bg-white/[0.04] border border-white/6 p-4">
+                    <p style={FF} className="text-[13px] font-bold text-white mb-2">Odpověď</p>
+                    <p style={FF} className="text-[14px] text-white/80 leading-relaxed">{ragAnswer}</p>
+                    {ragSources.length > 0 && (
+                      <p style={FF} className="text-[11px] text-white/35 mt-3">{ragSources.length} použitých zdrojů</p>
+                    )}
+                    <button
+                      onClick={() => {
+                        setInput(`Použij toto z RAGu jako kontext:\n\n${ragAnswer}`);
+                        setRagOpen(false);
+                        setTimeout(() => inputRef.current?.focus(), 60);
+                      }}
+                      className="mt-3 rounded-full border border-white/10 px-3 py-2 text-[12px] text-white/80 cursor-pointer"
+                      style={FF}
+                    >
+                      Vložit do chatu
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

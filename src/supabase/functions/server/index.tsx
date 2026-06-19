@@ -118,6 +118,36 @@ function requireGeminiApiKey(message = 'GEMINI_API_KEY není nastaven.'): string
   return key;
 }
 
+/** generateContent — gemini-2.0-flash Google ukončil (404). */
+const GENERATE_CONTENT_FLASH_MODEL = 'gemini-2.5-flash';
+const GENERATE_CONTENT_FLASH_FALLBACK = 'gemini-3-flash-preview';
+/** DVPP dotazník + článek z přepisu — nejchytřejší model (stejný jako textoví specialisté). */
+const WEBINAR_DVPP_GEMINI_MODELS = ['gemini-3.1-pro-preview', GENERATE_CONTENT_FLASH_MODEL];
+
+function geminiGenerateContentUrl(model: string, apiKey: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+}
+
+async function fetchGeminiGenerateContent(
+  apiKey: string,
+  body: Record<string, unknown>,
+  models: string[] = [GENERATE_CONTENT_FLASH_MODEL, GENERATE_CONTENT_FLASH_FALLBACK],
+): Promise<Response> {
+  let lastRes: Response | null = null;
+  for (const model of models) {
+    const res = await fetch(geminiGenerateContentUrl(model, apiKey), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) return res;
+    if (res.status !== 404) return res;
+    lastRes = res;
+    console.log(`[gemini] model ${model} unavailable (404), trying fallback`);
+  }
+  return lastRes!;
+}
+
 /**
  * Meta + CSS pro čitelnost v dark mode na mobilu (iOS Mail, Apple Mail, část Android/Gmail).
  * Třídy dm-* přepisují inline barvy v @media (prefers-color-scheme: dark).
@@ -2102,18 +2132,13 @@ Pravidla:
 
     const userMsg = `Požadavek uživatele:\n${prompt}\n\nProdukty v katalogu (kontext, nekopíruj názvy bezhlavě):\n${productSummaries || '(žádné produkty po filtru — navrhni obecný slide podle zadání)'}`;
 
-    const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-    const gRes = await fetch(gUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: `${system}\n\n${userMsg}` }] }],
-        generationConfig: {
-          temperature: 0.75,
-          maxOutputTokens: 1024,
-          responseMimeType: 'application/json',
-        },
-      }),
+    const gRes = await fetchGeminiGenerateContent(geminiKey, {
+      contents: [{ role: 'user', parts: [{ text: `${system}\n\n${userMsg}` }] }],
+      generationConfig: {
+        temperature: 0.75,
+        maxOutputTokens: 1024,
+        responseMimeType: 'application/json',
+      },
     });
     if (!gRes.ok) {
       const errT = await gRes.text();
@@ -2213,21 +2238,16 @@ async function geminiCallJson(
   systemAndUser: string,
   maxTokens: number,
   temperature: number,
+  models: string[] = [GENERATE_CONTENT_FLASH_MODEL, GENERATE_CONTENT_FLASH_FALLBACK],
 ): Promise<string> {
-  const gUrl =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-  const gRes = await fetch(gUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: systemAndUser }] }],
-      generationConfig: {
-        temperature,
-        maxOutputTokens: maxTokens,
-        responseMimeType: 'application/json',
-      },
-    }),
-  });
+  const gRes = await fetchGeminiGenerateContent(geminiKey, {
+    contents: [{ role: 'user', parts: [{ text: systemAndUser }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+      responseMimeType: 'application/json',
+    },
+  }, models);
   if (!gRes.ok) {
     const errT = await gRes.text();
     console.log(`[geminiCallJson] HTTP ${gRes.status}: ${errT.slice(0, 400)}`);
@@ -2250,20 +2270,15 @@ async function geminiCallText(
   prompt: string,
   maxTokens: number,
   temperature: number,
+  models: string[] = [GENERATE_CONTENT_FLASH_MODEL, GENERATE_CONTENT_FLASH_FALLBACK],
 ): Promise<string> {
-  const gUrl =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`;
-  const gRes = await fetch(gUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature,
-        maxOutputTokens: maxTokens,
-      },
-    }),
-  });
+  const gRes = await fetchGeminiGenerateContent(geminiKey, {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      maxOutputTokens: maxTokens,
+    },
+  }, models);
   if (!gRes.ok) {
     const errT = await gRes.text();
     console.log(`[geminiCallText] HTTP ${gRes.status}: ${errT.slice(0, 400)}`);
@@ -2320,7 +2335,7 @@ Odpověz POUZE JSON objektem ve tvaru:
 {"questions":[{"question":"...","options":["","","",""],"correctIndex":0}, ... přesně 4 prvky ]}`;
 
   const userMsg = `Název webináře: ${title}\nLektor: ${lecturer}\n\nPřepis:\n${truncatedPrepis}`;
-  const text = await geminiCallJson(geminiKey, `${system}\n\n${userMsg}`, 4096, 0.4);
+  const text = await geminiCallJson(geminiKey, `${system}\n\n${userMsg}`, 4096, 0.4, [...WEBINAR_DVPP_GEMINI_MODELS]);
   const extracted = extractFirstJsonObject(text);
   if (!extracted.ok) {
     console.log(`[dvpp-quiz-only] parse: ${extracted.reason} | head=${text.slice(0, 200)}`);
@@ -2342,6 +2357,7 @@ async function geminiGenerateWebinarLearningsArticle(
     `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
     8192,
     0.45,
+    [...WEBINAR_DVPP_GEMINI_MODELS],
   );
   const extracted = extractFirstJsonObject(text);
   let rawHtml = '';
@@ -2370,6 +2386,7 @@ async function geminiGenerateWebinarLearningsFallback(
     `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
     8192,
     0.4,
+    [...WEBINAR_DVPP_GEMINI_MODELS],
   );
   const extracted = extractFirstJsonObject(text);
   let rawHtml = '';
@@ -2397,6 +2414,7 @@ async function geminiGenerateWebinarLearningsPlainHtml(
     `${WEBINAR_LEARNINGS_PLAIN_HTML_SYSTEM}\n\n${userMsg}`,
     8192,
     0.35,
+    [...WEBINAR_DVPP_GEMINI_MODELS],
   );
   const loose = extractLearningsHtmlFromLooseModelText(text);
   return sanitizeWebinarLearningsHtml(loose);
@@ -14919,11 +14937,9 @@ app.get('/make-server-93a20b6f/rag/debug', async (c) => {
     }
     // Test generation (to verify key works at all)
     try {
-      const genRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }] }) }
-      );
+      const genRes = await fetchGeminiGenerateContent(apiKey, {
+        contents: [{ role: 'user', parts: [{ text: 'Say OK' }] }],
+      });
       const genBody = await genRes.text();
       if (genRes.ok) {
         generateTest = { status: genRes.status, ok: true };
