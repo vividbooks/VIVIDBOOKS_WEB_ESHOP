@@ -14,6 +14,7 @@ import { AdminPanel } from './AdminPanel';
 import { WebflowDebugPanel } from './WebflowDebugPanel';
 import { PopupRenderer } from './PopupRenderer';
 import { CookieConsentBar } from './CookieConsentBar';
+import { GoogleConsentBridge } from './GoogleConsentBridge';
 import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
 import { EshopHostRedirect } from './EshopHostRedirect';
 
@@ -57,6 +58,7 @@ function RootInner() {
       {/* Popup Manager renderer */}
       <PopupRenderer />
       <CookieConsentBar />
+      <GoogleConsentBridge />
       <Outlet />
     </>
   );
