@@ -15,6 +15,7 @@ import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { useWebinars } from '../../contexts/WebinarsContext';
 import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 import { parseJsonResponseBody } from '../../utils/parseJsonResponseBody';
+import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -330,7 +331,9 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
       ]);
       const webinarData = await webinarRes.json();
       const dvppData    = await dvppRes.json();
-      const past = (webinarData.items || []).filter((w: any) => !!w.isPast);
+      const past = (webinarData.items || [])
+        .filter((w: any) => !!w.isPast)
+        .sort(compareWebinarsBySchedule);
       const dvpp = dvppData.videos ?? [];
       setItems(past);
       setDvppVideos(dvpp);
@@ -1049,10 +1052,12 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
 
   const searchTrim = search.trim();
   const q = searchTrim.toLowerCase();
-  const filtered = items.filter((w) => {
-    if (!q) return true;
-    return (w.title || '').toLowerCase().includes(q);
-  });
+  const filtered = items
+    .filter((w) => {
+      if (!q) return true;
+      return (w.title || '').toLowerCase().includes(q);
+    })
+    .sort(compareWebinarsBySchedule);
   const videoId  = form.recordingUrl ? extractYoutubeId(form.recordingUrl) : null;
   const toggleTopic = (topicId: string) => {
     setForm((f) => {
