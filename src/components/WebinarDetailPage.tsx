@@ -7,6 +7,7 @@ import { useDvppVideos } from '../contexts/DvppVideosContext';
 import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
@@ -281,14 +282,14 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     if (q.trim().length < 2) { setSchoolResults([]); setSchoolOpen(false); return; }
     setSchoolSearching(true);
     try {
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/school-search?q=${encodeURIComponent(q)}`,
-        { headers: { Authorization: `Bearer ${publicAnonKey}` } }
-      );
-      const data = await res.json();
-      setSchoolResults(data.results || []);
-      setSchoolOpen((data.results || []).length > 0);
-    } catch { setSchoolResults([]); }
+      const results = await fetchSchoolSearchResults({ q });
+      setSchoolResults(results);
+      setSchoolOpen(results.length > 0);
+    } catch {
+      setSchoolResults([]);
+      setSchoolOpen(false);
+      setError('Našeptávač škol teď neodpovídá — zkuste to za chvíli, nebo doplňte název školy a IČO ručně.');
+    }
     finally { setSchoolSearching(false); }
   };
 

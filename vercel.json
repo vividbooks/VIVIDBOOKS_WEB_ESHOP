@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/api/edge/:path*",
+      "destination": "https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/:path*"
+    },
+    {
       "source": "/(.*\\..*)",
       "destination": "/$1"
     },

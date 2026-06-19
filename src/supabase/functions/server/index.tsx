@@ -123,6 +123,8 @@ const GENERATE_CONTENT_FLASH_MODEL = 'gemini-2.5-flash';
 const GENERATE_CONTENT_FLASH_FALLBACK = 'gemini-3-flash-preview';
 /** DVPP dotazník + článek z přepisu — nejchytřejší model (stejný jako textoví specialisté). */
 const WEBINAR_DVPP_GEMINI_MODELS = ['gemini-3.1-pro-preview', GENERATE_CONTENT_FLASH_MODEL];
+/** Dlouhý metodický článek z přepisu — bez JSON obalu, s možností navázání. */
+const WEBINAR_LEARNINGS_MAX_OUTPUT_TOKENS = 16384;
 
 function geminiGenerateContentUrl(model: string, apiKey: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -2233,6 +2235,36 @@ Povolené tagy: h2, h3, p, ul, ol, li, strong, em, br. Bez <a>, bez obrázků.
 ZÁKAZ: v obsahu nesmí být viditelné znaky „\\n“ / „\\n\\n“ — jen validní HTML; každý odstavec v <p>...</p>, odrážky pouze jako <ul><li>…</li></ul>.
 Odpověz VÝLUČNĚ HTML (žádný JSON, žádné \`\`\` ploty), začni rovnou značkou <h2> nebo <p>.`;
 
+function plainTextLenFromLearningsHtml(html: string): number {
+  return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length;
+}
+
+/** Detekce useknutého článku (MAX_TOKENS, JSON limit, model skončil uprostřed odstavce). */
+function looksLikeTruncatedLearningsHtml(html: string): boolean {
+  const s = html.trim();
+  if (s.length < 80) return true;
+
+  const openP = (s.match(/<p\b/gi) || []).length;
+  const closeP = (s.match(/<\/p>/gi) || []).length;
+  if (openP > closeP) return true;
+
+  const h2Count = (s.match(/<h2\b/gi) || []).length;
+  const plainLen = plainTextLenFromLearningsHtml(s);
+  if (h2Count <= 1 && plainLen < 1800) return true;
+  if (h2Count <= 2 && plainLen < 950) return true;
+
+  if (/<(?:p|li|strong|em|h[23])\b[^>]*>[^<]{0,4000}$/i.test(s) && !/<\/(?:p|li|strong|em|h[23])>\s*$/i.test(s)) {
+    return true;
+  }
+
+  const tail = s.replace(/<[^>]+>/g, '').trim().slice(-48);
+  if (plainLen < 2600 && tail.length > 8 && /[\p{L}]{1,5}$/u.test(tail) && !/[.!?…»"']$/.test(tail)) {
+    return true;
+  }
+
+  return false;
+}
+
 async function geminiCallJson(
   geminiKey: string,
   systemAndUser: string,
@@ -2271,7 +2303,7 @@ async function geminiCallText(
   maxTokens: number,
   temperature: number,
   models: string[] = [GENERATE_CONTENT_FLASH_MODEL, GENERATE_CONTENT_FLASH_FALLBACK],
-): Promise<string> {
+): Promise<{ text: string; finishReason: string | null }> {
   const gRes = await fetchGeminiGenerateContent(geminiKey, {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: {
@@ -2282,15 +2314,17 @@ async function geminiCallText(
   if (!gRes.ok) {
     const errT = await gRes.text();
     console.log(`[geminiCallText] HTTP ${gRes.status}: ${errT.slice(0, 400)}`);
-    return '';
+    return { text: '', finishReason: null };
   }
   const gData = await gRes.json();
   const cand0 = gData?.candidates?.[0];
-  if (cand0?.finishReason && cand0.finishReason !== 'STOP') {
-    console.log(`[geminiCallText] finishReason=${cand0.finishReason}`);
+  const finishReason = typeof cand0?.finishReason === 'string' ? cand0.finishReason : null;
+  if (finishReason && finishReason !== 'STOP') {
+    console.log(`[geminiCallText] finishReason=${finishReason}`);
   }
   const parts = cand0?.content?.parts ?? [];
-  return parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+  const text = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+  return { text, finishReason };
 }
 
 /** Z odpovědi modelu vytáhne HTML: plot ```html, JSON s learningsHtml, nebo první výskyt značky. */
@@ -2355,7 +2389,7 @@ async function geminiGenerateWebinarLearningsArticle(
   const text = await geminiCallJson(
     geminiKey,
     `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
-    8192,
+    WEBINAR_LEARNINGS_MAX_OUTPUT_TOKENS,
     0.45,
     [...WEBINAR_DVPP_GEMINI_MODELS],
   );
@@ -2384,7 +2418,7 @@ async function geminiGenerateWebinarLearningsFallback(
   const text = await geminiCallJson(
     geminiKey,
     `${WEBINAR_LEARNINGS_ARTICLE_SYSTEM}\n\n${userMsg}`,
-    8192,
+    WEBINAR_LEARNINGS_MAX_OUTPUT_TOKENS,
     0.4,
     [...WEBINAR_DVPP_GEMINI_MODELS],
   );
@@ -2401,39 +2435,105 @@ async function geminiGenerateWebinarLearningsFallback(
   return out;
 }
 
-/** Poslední pokus: model vrátí jen HTML — spolehlivější než obří JSON řetězec u limitu výstupu. */
+/** Primární cesta: čistý HTML výstup (bez JSON obalu). */
 async function geminiGenerateWebinarLearningsPlainHtml(
   geminiKey: string,
   title: string,
   lecturer: string,
   truncatedPrepis: string,
-): Promise<string> {
+): Promise<{ html: string; finishReason: string | null }> {
   const userMsg = `Název webináře: ${title}\nLektor: ${lecturer}\n\nPřepis:\n${truncatedPrepis}`;
-  const text = await geminiCallText(
+  const { text, finishReason } = await geminiCallText(
     geminiKey,
     `${WEBINAR_LEARNINGS_PLAIN_HTML_SYSTEM}\n\n${userMsg}`,
-    8192,
+    WEBINAR_LEARNINGS_MAX_OUTPUT_TOKENS,
     0.35,
     [...WEBINAR_DVPP_GEMINI_MODELS],
   );
   const loose = extractLearningsHtmlFromLooseModelText(text);
-  return sanitizeWebinarLearningsHtml(loose);
+  return { html: sanitizeWebinarLearningsHtml(loose), finishReason };
 }
 
-/** Gemini: JSON/HTML pokus → druhý JSON → čistý HTML (bez JSON obalu kvůli useknutí). */
+/** Doplnění useknutého článku — naváže na konec existujícího HTML. */
+async function geminiContinueWebinarLearningsPlainHtml(
+  geminiKey: string,
+  title: string,
+  lecturer: string,
+  truncatedPrepis: string,
+  existingHtml: string,
+): Promise<string> {
+  const tail = existingHtml.trim().slice(-1400);
+  const prompt = `${WEBINAR_LEARNINGS_PLAIN_HTML_SYSTEM}
+
+Už existuje začátek článku v HTML. Pokračuj PŘESNĚ od místa, kde text končí — neduplikuj už napsané pasáže. První výstup může dokončit nedopsanou větu. Vrať VÝLUČNĚ navazující HTML (bez \`\`\`, bez JSON).
+
+Konec dosavadního textu:
+${tail}
+
+---
+
+Název webináře: ${title}
+Lektor: ${lecturer}
+
+Přepis (kontext):
+${truncatedPrepis}`;
+
+  const { text } = await geminiCallText(
+    geminiKey,
+    prompt,
+    WEBINAR_LEARNINGS_MAX_OUTPUT_TOKENS,
+    0.35,
+    [...WEBINAR_DVPP_GEMINI_MODELS],
+  );
+  return sanitizeWebinarLearningsHtml(extractLearningsHtmlFromLooseModelText(text));
+}
+
+/** Gemini: plain HTML (primární) → pokračování při useknutí → JSON fallback. */
 async function resolveWebinarLearningsHtmlGemini(
   geminiKey: string,
   titleStr: string,
   lecturerStr: string,
   truncated: string,
 ): Promise<string> {
-  let learningsHtml = await geminiGenerateWebinarLearningsArticle(
+  let { html: learningsHtml, finishReason } = await geminiGenerateWebinarLearningsPlainHtml(
     geminiKey,
     titleStr,
     lecturerStr,
     truncated,
   );
-  if (learningsHtml.length < 80) {
+
+  let continuationAttempts = 0;
+  while (
+    continuationAttempts < 2 &&
+    learningsHtml.length >= 80 &&
+    (finishReason === 'MAX_TOKENS' || looksLikeTruncatedLearningsHtml(learningsHtml))
+  ) {
+    continuationAttempts++;
+    console.log(
+      `[dvpp-learnings] pokračování článku (${continuationAttempts}/2), len=${learningsHtml.length}, finish=${finishReason}`,
+    );
+    const cont = await geminiContinueWebinarLearningsPlainHtml(
+      geminiKey,
+      titleStr,
+      lecturerStr,
+      truncated,
+      learningsHtml,
+    );
+    if (!cont || cont.length < 40) break;
+    learningsHtml = sanitizeWebinarLearningsHtml(`${learningsHtml.trim()}\n${cont.trim()}`);
+    finishReason = null;
+  }
+
+  if (learningsHtml.length < 80 || looksLikeTruncatedLearningsHtml(learningsHtml)) {
+    console.log('[dvpp-learnings] plain HTML nedostačující — zkouším JSON MIME');
+    learningsHtml = await geminiGenerateWebinarLearningsArticle(
+      geminiKey,
+      titleStr,
+      lecturerStr,
+      truncated,
+    );
+  }
+  if (learningsHtml.length < 80 || looksLikeTruncatedLearningsHtml(learningsHtml)) {
     learningsHtml = await geminiGenerateWebinarLearningsFallback(
       geminiKey,
       titleStr,
@@ -2441,15 +2541,7 @@ async function resolveWebinarLearningsHtmlGemini(
       truncated,
     );
   }
-  if (learningsHtml.length < 80) {
-    console.log('[dvpp-learnings] HTML stále krátké — zkouším plain HTML (bez JSON MIME)');
-    learningsHtml = await geminiGenerateWebinarLearningsPlainHtml(
-      geminiKey,
-      titleStr,
-      lecturerStr,
-      truncated,
-    );
-  }
+
   return learningsHtml;
 }
 
@@ -2533,6 +2625,9 @@ async function adminWebinarGenerateDvppQuizHandler(c: Context) {
           },
           422,
         );
+      }
+      if (looksLikeTruncatedLearningsHtml(learningsHtml)) {
+        console.log(`[dvpp-learnings] varování: článek může být stále useknutý (len=${learningsHtml.length})`);
       }
       return c.json({ learningsHtml, webinarId, part: 'learnings' as const });
     }
@@ -22691,6 +22786,9 @@ Deno.serve((incoming) => {
   }
   if (p === '/webinar-survey-partial' || p.startsWith('/webinar-survey-partial?')) {
     p = `${fnRoot}/webinar-survey-partial${p.slice('/webinar-survey-partial'.length)}`;
+  }
+  if (p === '/school-search' || p.startsWith('/school-search?')) {
+    p = `${fnRoot}/school-search${p.slice('/school-search'.length)}`;
   }
   url.pathname = p;
   return app.fetch(new Request(url.toString(), incoming));
