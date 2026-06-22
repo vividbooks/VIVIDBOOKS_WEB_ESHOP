@@ -4042,36 +4042,36 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
 
         const emailHtml = `<!DOCTYPE html>
 <html lang="cs">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pristup k zaznamu</title></head>
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Přístup k záznamu</title></head>
 <body style="margin:0;padding:0;background:#f5f6fa;font-family:Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#f5f6fa;padding:32px 16px;">
 <tr><td align="center">
 <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
 <tr><td style="background:#001161;padding:32px 40px 28px;">
 <p style="margin:0;color:#ffffff;font-size:24px;font-weight:800;letter-spacing:-0.5px;">Vividbooks</p>
-<p style="margin:6px 0 0;color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Zaznam webinare DVPP</p>
+<p style="margin:6px 0 0;color:rgba(255,255,255,0.5);font-size:11px;letter-spacing:2px;text-transform:uppercase;">Záznam webináře DVPP</p>
 </td></tr>
 <tr><td style="padding:40px 40px 32px;">
-<p style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Mas pristup k zaznamu!</p>
+<p style="margin:0 0 8px;font-size:26px;font-weight:800;color:#001161;line-height:1.25;">Máš přístup k záznamu!</p>
 <p style="margin:0 0 6px;font-size:16px;color:#4a5568;">Ahoj <strong style="color:#001161;">${firstName}</strong>,</p>
 <p style="margin:0 0 28px;font-size:16px;color:#4a5568;line-height:1.6;">
-Dekujeme za registraci ke sledovani zaznamu <strong style="color:#001161;">${videoTitle || videoId}</strong>. Zaznam je pro tebe kdykoli dostupny na odkazu nize.
+Děkujeme za registraci ke sledování záznamu <strong style="color:#001161;">${videoTitle || videoId}</strong>. Záznam je pro tebe kdykoli dostupný na odkazu níže.
 </p>
 <table cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
 <tr><td style="background:#001161;border-radius:16px;padding:24px 28px;">
-<p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.65);">Zaznam webinare</p>
-<p style="margin:0 0 16px;font-size:17px;font-weight:800;color:#ffffff;">${videoTitle || 'DVPP Webinar'}</p>
-<a href="${videoUrl}" style="display:inline-block;background:#E8942A;color:#ffffff;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;">&#9654; Prehrat zaznam</a>
+<p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,0.65);">Záznam webináře</p>
+<p style="margin:0 0 16px;font-size:17px;font-weight:800;color:#ffffff;">${videoTitle || 'DVPP webinář'}</p>
+<a href="${videoUrl}" style="display:inline-block;background:#E8942A;color:#ffffff;font-weight:800;font-size:15px;padding:12px 28px;border-radius:100px;text-decoration:none;">&#9654; Přehrát záznam</a>
 <p style="margin:14px 0 0;font-size:12px;color:rgba(255,255,255,0.55);word-break:break-all;">${videoUrl}</p>
 </td></tr>
 </table>
 <p style="margin:0;font-size:14px;color:#718096;line-height:1.6;">
-Zaznamy vsech webinaru najdes take na <a href="${marketingSitePath('/webinare')}" style="color:#001161;font-weight:700;">${new URL(marketingSitePath('/webinare')).host}/webinare</a>.
+Záznamy všech webinářů najdeš také na <a href="${marketingSitePath('/webinare')}" style="color:#001161;font-weight:700;">${new URL(marketingSitePath('/webinare')).host}/webinare</a>.
 </p>
 </td></tr>
 <tr><td style="background:#f8f9fc;padding:20px 40px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">
-Tento email byl odeslan automaticky po registraci ke sledovani zaznamu DVPP.<br>
+Tento e-mail byl odeslán automaticky po registraci ke sledování záznamu DVPP.<br>
 &copy; ${new Date().getFullYear()} Vividbooks
 </p>
 </td></tr>
@@ -4088,7 +4088,7 @@ Tento email byl odeslan automaticky po registraci ke sledovani zaznamu DVPP.<br>
             key: mandrillKey,
             message: {
               html: emailHtml,
-              subject: `Pristup k zaznamu: ${videoTitle || videoId}`,
+              subject: `Přístup k záznamu: ${videoTitle || videoId}`,
               from_email: 'hello@vividbooks.com',
               from_name: 'Vividbooks',
               to: [{ email: cleanEmail, name: name.trim(), type: 'to' }],
