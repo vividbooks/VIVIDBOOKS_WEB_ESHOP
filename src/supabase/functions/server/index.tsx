@@ -12631,6 +12631,42 @@ function buildPipedrivePersonEnumPayload(
   return { [meta.key]: optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',') };
 }
 
+/** Z hodnoty custom pole osoby (string „413,311" / číslo / pole) vytáhne option ID. */
+function parsePipedrivePersonOptionIds(value: unknown): number[] {
+  if (value == null || value === '') return [];
+  const arr = Array.isArray(value) ? value : String(value).split(',');
+  const out: number[] = [];
+  for (const item of arr) {
+    const n = parsePipedriveNumericId(
+      typeof item === 'object' && item ? ((item as any).id ?? (item as any).value) : item,
+    );
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Payload pro doplnění custom pole osoby vůči **existující** hodnotě:
+ *   - `set` (multi, např. 9095/9099) → **sjednocení** stávajících a nových option ID
+ *     (přidá chybějící, nikdy nemaže; když není co přidat, vrátí `null`),
+ *   - `enum` / ostatní → doplní pouze když je pole prázdné.
+ */
+function buildPipedrivePersonMergedFieldPayload(
+  meta: { key: string; fieldType: string } | null,
+  newOptionIds: number[],
+  existingRaw: unknown,
+): Record<string, unknown> | null {
+  if (!meta?.key || !newOptionIds.length) return null;
+  const existing = parsePipedrivePersonOptionIds(existingRaw);
+  if (meta.fieldType.toLowerCase() === 'set') {
+    const missing = newOptionIds.filter((id) => !existing.includes(id));
+    if (!missing.length) return null;
+    return { [meta.key]: [...existing, ...missing] };
+  }
+  if (existing.length === 0) return { [meta.key]: newOptionIds[0] };
+  return null;
+}
+
 function orgRecordHasCustomerLabel(
   org: Record<string, unknown> | null | undefined,
   metaById: Map<number, { key: string; fieldType: string }>,
@@ -13177,18 +13213,21 @@ async function findOrCreatePipedrivePerson(
     return false;
   };
 
-  /** Sestaví payload pro doplnění **pouze prázdných** custom polí osoby (neničí ruční úpravy obchodníka). */
+  /**
+   * Payload pro custom pole osoby vůči existující hodnotě:
+   *   - pozice (enum 9093) — doplnit jen když prázdné (nepřepisovat ruční úpravu obchodníka),
+   *   - předmět (set 9095) a stupeň (set 9099) — **sjednotit** se stávajícími hodnotami
+   *     (legacy API u úspěšného trialu předvyplní jeden předmět; tady doplníme zbytek výběru).
+   */
   const buildCustomFieldFillPayload = (record: Record<string, any> | null | undefined): Record<string, any> => {
     const fill: Record<string, any> = {};
     if (positionFieldKey && positionOptionId != null && isEmptyFieldValue(record?.[positionFieldKey])) {
       fill[positionFieldKey] = positionOptionId;
     }
-    if (subjectMeta?.key && subjectOptionIds.length && isEmptyFieldValue(record?.[subjectMeta.key])) {
-      Object.assign(fill, buildPipedrivePersonEnumPayload(subjectMeta, subjectOptionIds) || {});
-    }
-    if (stageMeta?.key && stageOptionIds.length && isEmptyFieldValue(record?.[stageMeta.key])) {
-      Object.assign(fill, buildPipedrivePersonEnumPayload(stageMeta, stageOptionIds) || {});
-    }
+    const subjPatch = buildPipedrivePersonMergedFieldPayload(subjectMeta, subjectOptionIds, record?.[subjectMeta?.key ?? '']);
+    if (subjPatch) Object.assign(fill, subjPatch);
+    const stagePatch = buildPipedrivePersonMergedFieldPayload(stageMeta, stageOptionIds, record?.[stageMeta?.key ?? '']);
+    if (stagePatch) Object.assign(fill, stagePatch);
     return fill;
   };
 
