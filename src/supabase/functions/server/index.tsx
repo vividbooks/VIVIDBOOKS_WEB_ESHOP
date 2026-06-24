@@ -12876,6 +12876,32 @@ async function searchPipedrivePersonByEmailGlobal(apiToken: string, email: strin
   return null;
 }
 
+/**
+ * Dohledá osobu podle e‑mailu ve **výpisu nedávno přidaných osob** (`GET /persons`
+ * řazeno `add_time DESC`). Tento list čte z primární DB, takže obsahuje i osoby
+ * právě založené (na rozdíl od `/persons/search` indexu a org‑relací, které u
+ * čerstvě vzniklých organizací/osob dlouho lagují). Slouží k nalezení osoby, kterou
+ * právě (asynchronně) vytvořilo legacy `api.vividbooks`, bez rizika duplikátu.
+ */
+async function findPipedrivePersonByEmailInRecentList(
+  apiToken: string,
+  email: string,
+  limit = 100,
+): Promise<any | null> {
+  const term = String(email || '').trim().toLowerCase();
+  if (!term || !term.includes('@')) return null;
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/persons', {}, { sort: 'add_time DESC', limit, start: 0 });
+    const items: any[] = Array.isArray(data?.data) ? data.data : [];
+    for (const person of items) {
+      if (person?.id && readPipedrivePersonEmails(person).includes(term)) return person;
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] persons recent list: ${e.message}`);
+  }
+  return null;
+}
+
 async function searchPipedriveOrganizations(
   apiToken: string,
   term: string,
@@ -13180,6 +13206,12 @@ async function findOrCreatePipedrivePerson(
     subjects?: string[];
     /** Trial: kódy stupňů (SchoolStage-1/2) z formuláře → pole osoby 9099 (School stage). */
     schoolStages?: string[];
+    /**
+     * Když `false`, osoba se **nezakládá** — jen se dohledá a obohatí existující
+     * (vrátí `null`, pokud nenalezena). Použito pro happy‑path trial enrichment,
+     * kde osobu zakládá legacy `api.vividbooks` a my bychom jinak vytvořili duplikát.
+     */
+    createIfMissing?: boolean;
   },
 ) {
   const orgId = params.orgId;
@@ -13189,6 +13221,7 @@ async function findOrCreatePipedrivePerson(
   const position = String(params.position || '').trim();
   const subjects = Array.isArray(params.subjects) ? params.subjects : [];
   const schoolStages = Array.isArray(params.schoolStages) ? params.schoolStages : [];
+  const createIfMissing = params.createIfMissing !== false;
 
   /** Option ID pro custom pole osoby (9093 pozice, 9095 předmět, 9099 stupeň). */
   const positionOptionId = position ? mapTrialPositionToPipedriveOptionId(position) : null;
@@ -13267,19 +13300,32 @@ async function findOrCreatePipedrivePerson(
     return record;
   };
 
+  /** Sestaví patch pro napojení nalezené osoby (org/jméno/telefon). */
+  const computeLinkPatch = (found: any): Record<string, any> => {
+    const extraPatch: Record<string, any> = {};
+    const existingOrgId = parsePipedriveNumericId(found?.org_id?.id ?? found?.org_id?.value ?? found?.org_id);
+    if (orgId && existingOrgId !== orgId) extraPatch.org_id = orgId;
+    if (name && String(found?.name || '').trim() !== name) extraPatch.name = name;
+    if (phone) extraPatch.phone = phone;
+    return extraPatch;
+  };
+
   if (email) {
+    /** 1) Globální fulltext search (rychlé, ale index lagne u čerstvě založených osob). */
     const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
     if (globalHit?.id) {
       const personId = parsePipedriveNumericId(globalHit.id);
-      const existingOrgId = parsePipedriveNumericId(globalHit.org_id?.id ?? globalHit.org_id?.value ?? globalHit.org_id);
-      const extraPatch: Record<string, any> = {};
-      if (existingOrgId !== orgId) extraPatch.org_id = orgId;
-      if (name && String(globalHit.name || '').trim() !== name) extraPatch.name = name;
-      if (phone) extraPatch.phone = phone;
-      /** Pozici/předmět/stupeň existující osoby zapisujeme jen když je pole prázdné
-       *  (obchodník mohl hodnotu ručně doupřesnit). */
-      if (personId) return await updateExistingPerson(personId, globalHit, extraPatch);
+      if (personId) return await updateExistingPerson(personId, globalHit, computeLinkPatch(globalHit));
       return globalHit;
+    }
+
+    /** 2) Výpis nedávno přidaných osob (primary store) — zachytí osoby, které search/relace
+     *     ještě neindexovaly (typicky osoba právě založená legacy `api.vividbooks`). */
+    const recentHit = await findPipedrivePersonByEmailInRecentList(apiToken, email);
+    if (recentHit?.id) {
+      const personId = parsePipedriveNumericId(recentHit.id);
+      if (personId) return await updateExistingPerson(personId, recentHit, computeLinkPatch(recentHit));
+      return recentHit;
     }
   }
 
@@ -13293,6 +13339,12 @@ async function findOrCreatePipedrivePerson(
     const personId = parsePipedriveNumericId(existing.id);
     if (personId) return await updateExistingPerson(personId, existing, {});
     return existing;
+  }
+
+  /** Enrich‑only režim (happy‑path trial): nezakládat, ať nevznikne duplikát k legacy osobě. */
+  if (!createIfMissing) {
+    console.log(`[Pipedrive] Person not found (enrich-only, no create): email="${email}" org_id=${orgId}`);
+    return null;
   }
 
   /** Nová osoba — z údajů objednávky / formuláře:
@@ -14257,12 +14309,15 @@ async function handleTrialPipedriveEndpoint(
 
 /**
  * Tělo pro `/trial-person-fields-pipedrive` — jen **obohatí osobu** v Pipedrive
- * o custom pole 9093 (pozice), 9095 (předmět), 9099 (stupeň). **Nezakládá deal
- * ani aktivitu** — happy‑path trial deal vytváří legacy API (`api.vividbooks.com`),
- * tady jen doplníme pole, která legacy nenastaví.
+ * o custom pole 9093 (pozice), 9095 (předmět), 9099 (stupeň). **Nezakládá deal,
+ * aktivitu ANI osobu** — happy‑path trial deal i osobu vytváří legacy API
+ * (`api.vividbooks.com`); my jen doplníme pole, která legacy nenastaví.
  *
- * Organizace se dohledá/založí podle IČO, osoba podle e‑mailu (globální search);
- * existující pole se doplní jen když jsou prázdná (viz `findOrCreatePipedrivePerson`).
+ * Legacy zakládá osobu **asynchronně** (~2 s po své odpovědi) a u čerstvě vzniklé
+ * organizace ji `/persons/search` ani org‑relace dlouho neindexují. Proto osobu
+ * hledáme přes výpis nedávno přidaných osob (`findPipedrivePersonByEmailInRecentList`)
+ * s několika pokusy a teprve pak obohatíme. Když ji ani po pokusech nenajdeme,
+ * **nic nezakládáme** (žádný duplikát) — pole se nedoplní.
  */
 async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof app.post>[1]>[0]) {
   try {
@@ -14302,23 +14357,45 @@ async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof a
     });
     if (!orgLookup.orgId) return c.json({ skipped: true, reason: 'missing_org' });
 
-    const person = await findOrCreatePipedrivePerson(apiToken, {
-      orgId: orgLookup.orgId,
-      name: contactName,
-      email,
-      phone,
-      position,
-      subjects,
-      schoolStages,
-    }).catch((error: any) => {
-      console.log(`[Pipedrive trial person-fields] Person sync error: ${error?.message ?? error}`);
-      return null;
-    });
+    /**
+     * Enrich‑only s čekáním na asynchronně založenou legacy osobu. Delaye jsou
+     * kumulativní (~2 + 3 + 4 + 5 + 6 = 20 s). Jakmile osobu najdeme (a obohatíme),
+     * smyčku ukončíme. Nikdy nezakládáme novou osobu (createIfMissing:false).
+     */
+    let person: any = null;
+    let attempts = 0;
+    const delaysMs = [2000, 3000, 4000, 5000, 6000];
+    for (const delay of delaysMs) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      attempts += 1;
+      person = await findOrCreatePipedrivePerson(apiToken, {
+        orgId: orgLookup.orgId,
+        name: contactName,
+        email,
+        phone,
+        position,
+        subjects,
+        schoolStages,
+        createIfMissing: false,
+      }).catch((error: any) => {
+        console.log(`[Pipedrive trial person-fields] Person sync error: ${error?.message ?? error}`);
+        return null;
+      });
+      if (person?.id) break;
+    }
+
+    const personId = parsePipedriveNumericId(person?.id);
+    if (!personId) {
+      console.log(`[Pipedrive trial person-fields] osoba nenalezena po ${attempts} pokusech (email="${email}") — nic nezakládám.`);
+      return c.json({ success: true, orgId: orgLookup.orgId, personId: null, enriched: false, attempts });
+    }
 
     return c.json({
       success: true,
       orgId: orgLookup.orgId,
-      personId: parsePipedriveNumericId(person?.id),
+      personId,
+      enriched: true,
+      attempts,
       dealCreated: false,
     });
   } catch (error: any) {
