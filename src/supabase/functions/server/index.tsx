@@ -11619,6 +11619,8 @@ let pipedrivePersonPositionFieldKeyCache: string | null | undefined;
 let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 /** Cache: deal field id → { key, field_type } (order form label) */
 let pipedriveDealFieldMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
+/** Cache: person field id → { key, field_type } (např. předmět 9095, stupeň 9099). */
+let pipedrivePersonFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 const PIPEDRIVE_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function pipedriveEnvInt(name: string, defaultVal: number): number {
@@ -12222,6 +12224,98 @@ function mapWebinarRegistrationPositionToPipedriveOptionId(rawPosition: string):
   return typeof id === 'number' ? id : null;
 }
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * Trial formulář (`/vyzkousejte`) → Pipedrive person custom fields.
+ *
+ * Hodnoty `<select>` / checkboxů odpovídají konstantám `POSITIONS`,
+ * `TEACHER_SUBJECTS_1ST/2ND` a `DEPUTY_SCHOOL_STAGES` v `src/components/TrialPage.tsx`.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+/** Přesná mapa hodnot `<select>` pozice trial formuláře → enum option ID pole osoby 9093 (Position). */
+const TRIAL_FORM_POSITION_TO_PD_ENUM: Record<string, number> = {
+  'Učitel/ka': 164,            // Teacher
+  'Ředitel/ka': 159,           // Headmaster
+  'Zástupce/kyně ředitele': 160, // Deputy director
+  'Metodik/čka': 274,          // Coordinator of studies
+  'Rodič': 166,                // Parent
+  'Jiné': 172,                 // Other
+};
+
+/** Pozice z trial formuláře: přesná mapa má přednost, jinak heuristika `mapPipedrivePersonPositionToOptionId`. */
+function mapTrialPositionToPipedriveOptionId(rawPosition: string): number | null {
+  const key = String(rawPosition || '').trim();
+  if (!key) return null;
+  const exact = TRIAL_FORM_POSITION_TO_PD_ENUM[key];
+  if (typeof exact === 'number') return exact;
+  return mapPipedrivePersonPositionToOptionId(key);
+}
+
+/** Kód předmětu z trial formuláře (Webflow data-value) → enum/set option ID pole osoby 9095 (Subject). */
+const TRIAL_FORM_SUBJECT_TO_PD_ENUM: Record<string, number> = {
+  Physics: 309,        // Fyzika
+  Chemistry: 310,      // Chemie
+  'Mathematics-1': 311, // Matematika (1. stupeň)
+  'Mathematics-2': 311, // Matematika (2. stupeň)
+  NaturalHistory: 312, // Přírodopis / Biology
+  PrimaryScience: 413, // Prvouka
+  'CzechLang-1': 414,  // Český jazyk (1. stupeň)
+  'CzechLang-2': 414,  // Český jazyk (2. stupeň)
+  'Other-1': 319,      // Jiné (1. stupeň)
+  'Other-2': 319,      // Jiné (2. stupeň)
+};
+
+/** Předměty z trial formuláře → seřazené unikátní option ID pole 9095 (Subject). */
+function mapTrialSubjectsToPipedriveOptionIds(subjects: string[]): number[] {
+  const out: number[] = [];
+  for (const raw of Array.isArray(subjects) ? subjects : []) {
+    const id = TRIAL_FORM_SUBJECT_TO_PD_ENUM[String(raw || '').trim()];
+    if (typeof id === 'number' && !out.includes(id)) out.push(id);
+  }
+  return out;
+}
+
+/** Předměty 1. stupně z trial formuláře (zbytek je 2. stupeň). */
+const TRIAL_FORM_SUBJECTS_FIRST_STAGE = new Set([
+  'Mathematics-1',
+  'PrimaryScience',
+  'CzechLang-1',
+  'Other-1',
+]);
+
+const PIPEDRIVE_PERSON_STAGE_OPTION_FIRST = 421; // 1. stupeň
+const PIPEDRIVE_PERSON_STAGE_OPTION_SECOND = 422; // 2. stupeň
+
+/**
+ * Odvodí option ID pole osoby 9099 (School stage) z vybraných předmětů (učitel)
+ * a/nebo přímého výběru stupně (zástupce – `DEPUTY_SCHOOL_STAGES`).
+ *   - předmět 1. stupně nebo `SchoolStage-1` → 421
+ *   - předmět 2. stupně nebo `SchoolStage-2` → 422
+ * Vrací seřazené unikátní pole (může obsahovat 421 i 422).
+ */
+function mapTrialStageToPipedriveOptionIds(subjects: string[], schoolStages: string[]): number[] {
+  let hasFirst = false;
+  let hasSecond = false;
+
+  for (const raw of Array.isArray(subjects) ? subjects : []) {
+    const code = String(raw || '').trim();
+    if (!code) continue;
+    if (TRIAL_FORM_SUBJECTS_FIRST_STAGE.has(code)) hasFirst = true;
+    else hasSecond = true;
+  }
+
+  for (const raw of Array.isArray(schoolStages) ? schoolStages : []) {
+    const code = String(raw || '').trim().toLowerCase();
+    if (!code) continue;
+    if (code === 'schoolstage-1' || /\b1\b/.test(code)) hasFirst = true;
+    if (code === 'schoolstage-2' || /\b2\b/.test(code)) hasSecond = true;
+  }
+
+  const out: number[] = [];
+  if (hasFirst) out.push(PIPEDRIVE_PERSON_STAGE_OPTION_FIRST);
+  if (hasSecond) out.push(PIPEDRIVE_PERSON_STAGE_OPTION_SECOND);
+  return out;
+}
+
 function parsePipedriveWebinarLeadLabelIdsFromEnv(): string[] {
   const raw = (Deno.env.get('PIPEDRIVE_WEBINAR_LEAD_LABEL_IDS') || '').trim();
   if (raw.length > 0) {
@@ -12422,6 +12516,69 @@ async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promis
   }
   pipedriveOrgFieldsMetaByIdCache = map;
   return map;
+}
+
+/** Načte `/personFields` a sestaví mapu `field id → { key, field_type }` (cache). */
+async function loadPipedrivePersonFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
+  if (pipedrivePersonFieldsMetaByIdCache) return pipedrivePersonFieldsMetaByIdCache;
+  const map = new Map<number, { key: string; fieldType: string }>();
+  try {
+    const data = await pipedriveRequest<any>(apiToken, '/personFields', {}, { limit: 500 });
+    const fields: any[] = Array.isArray(data?.data) ? data.data : [];
+    for (const f of fields) {
+      const id = parsePipedriveNumericId(f?.id);
+      const key = String(f?.key || '').trim();
+      if (!id || !key) continue;
+      const rawFt = f?.field_type ?? f?.type;
+      const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
+      map.set(id, { key, fieldType });
+    }
+  } catch (e: any) {
+    console.log(`[Pipedrive] personFields meta: ${e.message}`);
+  }
+  pipedrivePersonFieldsMetaByIdCache = map;
+  return map;
+}
+
+/**
+ * Resolve klíče a typu (`enum`/`set`) custom pole osoby podle ID pole.
+ * ENV override `envKey` (40znakový hash) má přednost; pak `/personFields` lookup
+ * podle `fieldId`. Bez nálezu vrací `null` (volající pole nezapíše).
+ */
+async function getPipedrivePersonFieldMeta(
+  apiToken: string,
+  fieldId: number,
+  envVarName: string,
+): Promise<{ key: string; fieldType: string } | null> {
+  const meta = await loadPipedrivePersonFieldsMetaById(apiToken);
+  const envKey = (Deno.env.get(envVarName) || '').trim();
+  if (envKey) {
+    const fromMeta = [...meta.values()].find((m) => m.key === envKey);
+    return { key: envKey, fieldType: fromMeta?.fieldType || '' };
+  }
+  const byId = meta.get(fieldId);
+  return byId?.key ? byId : null;
+}
+
+const PIPEDRIVE_PERSON_SUBJECT_FIELD_ID = 9095; // Subject / předmět
+const PIPEDRIVE_PERSON_STAGE_FIELD_ID = 9099; // School stage / stupeň
+
+/**
+ * Sestaví dvojici `[key]: value` pro custom pole osoby z option ID podle typu pole:
+ *   - `set` (multi) → pole čísel,
+ *   - `enum` (single) → první ID,
+ *   - jinak fallback (1 ID = číslo, víc = CSV string).
+ * Vrací `null`, když pole/option chybí.
+ */
+function buildPipedrivePersonEnumPayload(
+  meta: { key: string; fieldType: string } | null,
+  optionIds: number[],
+): Record<string, unknown> | null {
+  if (!meta?.key || !optionIds.length) return null;
+  const ft = meta.fieldType.toLowerCase();
+  if (ft === 'set') return { [meta.key]: optionIds };
+  if (ft === 'enum') return { [meta.key]: optionIds[0] };
+  return { [meta.key]: optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',') };
 }
 
 function orgRecordHasCustomerLabel(
@@ -12927,40 +13084,110 @@ function readPipedrivePersonEmails(person: any) {
 
 async function findOrCreatePipedrivePerson(
   apiToken: string,
-  params: { orgId: number; name: string; email?: string; phone?: string; position?: string },
+  params: {
+    orgId: number;
+    name: string;
+    email?: string;
+    phone?: string;
+    position?: string;
+    /** Trial: kódy předmětů z formuláře (Webflow data-value) → pole osoby 9095 (Subject). */
+    subjects?: string[];
+    /** Trial: kódy stupňů (SchoolStage-1/2) z formuláře → pole osoby 9099 (School stage). */
+    schoolStages?: string[];
+  },
 ) {
   const orgId = params.orgId;
   const name = String(params.name || '').trim();
   const email = String(params.email || '').trim().toLowerCase();
   const phone = String(params.phone || '').trim();
   const position = String(params.position || '').trim();
+  const subjects = Array.isArray(params.subjects) ? params.subjects : [];
+  const schoolStages = Array.isArray(params.schoolStages) ? params.schoolStages : [];
 
-  /** Custom field key pro „pozici" se resolvuje jen když máme co zapsat — šetří `/personFields` request. */
-  const positionFieldKey = position ? await getPipedrivePersonPositionFieldKey(apiToken) : null;
+  /** Option ID pro custom pole osoby (9093 pozice, 9095 předmět, 9099 stupeň). */
+  const positionOptionId = position ? mapTrialPositionToPipedriveOptionId(position) : null;
+  const subjectOptionIds = mapTrialSubjectsToPipedriveOptionIds(subjects);
+  const stageOptionIds = mapTrialStageToPipedriveOptionIds(subjects, schoolStages);
+
+  /** Klíče/typy polí resolvujeme jen když je co zapsat — šetří `/personFields` request. */
+  const positionFieldKey = positionOptionId != null ? await getPipedrivePersonPositionFieldKey(apiToken) : null;
+  const subjectMeta = subjectOptionIds.length
+    ? await getPipedrivePersonFieldMeta(apiToken, PIPEDRIVE_PERSON_SUBJECT_FIELD_ID, 'PIPEDRIVE_PERSON_SUBJECT_FIELD_KEY')
+    : null;
+  const stageMeta = stageOptionIds.length
+    ? await getPipedrivePersonFieldMeta(apiToken, PIPEDRIVE_PERSON_STAGE_FIELD_ID, 'PIPEDRIVE_PERSON_STAGE_FIELD_KEY')
+    : null;
+
+  const hasCustomToWrite = !!(
+    (positionFieldKey && positionOptionId != null) ||
+    (subjectMeta?.key && subjectOptionIds.length) ||
+    (stageMeta?.key && stageOptionIds.length)
+  );
+
+  const isEmptyFieldValue = (v: unknown): boolean => {
+    if (v == null) return true;
+    if (typeof v === 'string') return v.trim() === '';
+    if (Array.isArray(v)) return v.length === 0;
+    return false;
+  };
+
+  /** Sestaví payload pro doplnění **pouze prázdných** custom polí osoby (neničí ruční úpravy obchodníka). */
+  const buildCustomFieldFillPayload = (record: Record<string, any> | null | undefined): Record<string, any> => {
+    const fill: Record<string, any> = {};
+    if (positionFieldKey && positionOptionId != null && isEmptyFieldValue(record?.[positionFieldKey])) {
+      fill[positionFieldKey] = positionOptionId;
+    }
+    if (subjectMeta?.key && subjectOptionIds.length && isEmptyFieldValue(record?.[subjectMeta.key])) {
+      Object.assign(fill, buildPipedrivePersonEnumPayload(subjectMeta, subjectOptionIds) || {});
+    }
+    if (stageMeta?.key && stageOptionIds.length && isEmptyFieldValue(record?.[stageMeta.key])) {
+      Object.assign(fill, buildPipedrivePersonEnumPayload(stageMeta, stageOptionIds) || {});
+    }
+    return fill;
+  };
+
+  /**
+   * Pro existující osobu: dohraje org/jméno/telefon (extraPatch) + prázdná trial custom pole.
+   * Custom pole čte z plného `GET /persons/{id}` (search/list odpověď je nemá spolehlivě).
+   */
+  const updateExistingPerson = async (
+    personId: number,
+    baseRecord: Record<string, any>,
+    extraPatch: Record<string, any>,
+  ): Promise<Record<string, any>> => {
+    let record = baseRecord;
+    if (hasCustomToWrite && personId) {
+      const full = (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data;
+      if (full) record = full;
+    }
+    const patch: Record<string, any> = { ...extraPatch, ...buildCustomFieldFillPayload(record) };
+    if (personId && Object.keys(patch).length > 0) {
+      try {
+        await pipedriveRequest(apiToken, `/persons/${personId}`, {
+          method: 'PUT',
+          body: JSON.stringify(patch),
+        });
+        const refreshed = (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data;
+        return refreshed || record;
+      } catch (e: any) {
+        console.log(`[Pipedrive] Person PUT (enrich): ${e.message}`);
+      }
+    }
+    return record;
+  };
 
   if (email) {
     const globalHit = await searchPipedrivePersonByEmailGlobal(apiToken, email);
     if (globalHit?.id) {
+      const personId = parsePipedriveNumericId(globalHit.id);
       const existingOrgId = parsePipedriveNumericId(globalHit.org_id?.id ?? globalHit.org_id?.value ?? globalHit.org_id);
-      const patch: Record<string, any> = {};
-      if (existingOrgId !== orgId) patch.org_id = orgId;
-      if (name && String(globalHit.name || '').trim() !== name) patch.name = name;
-      if (phone) patch.phone = phone;
-      /** Pozici existující osoby zásadně nepřepisujeme — search response nevrací custom pole spolehlivě
-       *  a obchodník mohl pozici ručně doupřesnit (např. „ředitel" vs „učitel matematiky").
-       *  Pozice se zapisuje jen u nově zakládané osoby (níže `payload[positionFieldKey] = position`). */
-      if (Object.keys(patch).length > 0) {
-        try {
-          await pipedriveRequest(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`, {
-            method: 'PUT',
-            body: JSON.stringify(patch),
-          });
-          const refreshed = await pipedriveRequest<any>(apiToken, `/persons/${parsePipedriveNumericId(globalHit.id)}`);
-          return refreshed?.data || globalHit;
-        } catch (e: any) {
-          console.log(`[Pipedrive] Person PUT (link org): ${e.message}`);
-        }
-      }
+      const extraPatch: Record<string, any> = {};
+      if (existingOrgId !== orgId) extraPatch.org_id = orgId;
+      if (name && String(globalHit.name || '').trim() !== name) extraPatch.name = name;
+      if (phone) extraPatch.phone = phone;
+      /** Pozici/předmět/stupeň existující osoby zapisujeme jen když je pole prázdné
+       *  (obchodník mohl hodnotu ručně doupřesnit). */
+      if (personId) return await updateExistingPerson(personId, globalHit, extraPatch);
       return globalHit;
     }
   }
@@ -12971,27 +13198,36 @@ async function findOrCreatePipedrivePerson(
     persons.find((person: any) => email && readPipedrivePersonEmails(person).includes(email)) ||
     persons.find((person: any) => normalizePipedriveSearchText(person?.name || '') === normalizePipedriveSearchText(name));
 
-  if (existing?.id) return existing;
+  if (existing?.id) {
+    const personId = parsePipedriveNumericId(existing.id);
+    if (personId) return await updateExistingPerson(personId, existing, {});
+    return existing;
+  }
 
   /** Nová osoba — z údajů objednávky / formuláře:
    *   - name (jméno + příjmení v jednom poli, Pipedrive si first/last odvodí sám),
    *   - email (primary), phone (primary),
    *   - org_id = napojení na organizaci školy,
-   *   - position (custom field 9093, **enum** — namapuje string na option ID 159–274). */
+   *   - position (9093 enum), subject (9095), school stage (9099) — option ID, ne volný text. */
   const payload: Record<string, any> = { name, org_id: orgId };
   if (email) payload.email = email;
   if (phone) payload.phone = phone;
-  let positionOptionId: number | null = null;
-  if (positionFieldKey && position) {
-    positionOptionId = mapPipedrivePersonPositionToOptionId(position);
-    if (positionOptionId) {
-      /** Pipedrive enum field očekává number (option_id), nikoli volný text — předchozí verze posílala
-       *  string a Pipedrive to tiše ignoroval. */
-      payload[positionFieldKey] = positionOptionId;
-    }
+  if (positionFieldKey && positionOptionId != null) {
+    /** Pipedrive enum field očekává number (option_id), nikoli volný text — předchozí verze posílala
+     *  string a Pipedrive to tiše ignoroval. */
+    payload[positionFieldKey] = positionOptionId;
+  }
+  if (subjectMeta?.key && subjectOptionIds.length) {
+    Object.assign(payload, buildPipedrivePersonEnumPayload(subjectMeta, subjectOptionIds) || {});
+  }
+  if (stageMeta?.key && stageOptionIds.length) {
+    Object.assign(payload, buildPipedrivePersonEnumPayload(stageMeta, stageOptionIds) || {});
   }
   console.log(
-    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" position="${position || '(none)'}" → option_id=${positionOptionId ?? '(none)'} org_id=${orgId}`,
+    `[Pipedrive] Person create: name="${name}" email="${email}" phone="${phone || '(none)'}" ` +
+      `position="${position || '(none)'}" → option_id=${positionOptionId ?? '(none)'} ` +
+      `subject=${subjectOptionIds.length ? subjectOptionIds.join(',') : '(none)'} ` +
+      `stage=${stageOptionIds.length ? stageOptionIds.join(',') : '(none)'} org_id=${orgId}`,
   );
   const created = await pipedriveRequest<any>(apiToken, '/persons', {
     method: 'POST',
@@ -13236,6 +13472,10 @@ async function syncTrialPipedriveDeal(
     email: string;
     phone: string;
     position: string;
+    /** Trial: kódy předmětů (učitel) → pole osoby 9095; odvozuje i stupeň 9099. */
+    subjects?: string[];
+    /** Trial: kódy stupňů (zástupce) → pole osoby 9099. */
+    schoolStages?: string[];
   },
 ): Promise<{
   skipped: boolean;
@@ -13261,6 +13501,8 @@ async function syncTrialPipedriveDeal(
   const email = String(params.email || '').trim();
   const phone = String(params.phone || '').trim();
   const position = String(params.position || '').trim();
+  const subjects = Array.isArray(params.subjects) ? params.subjects : [];
+  const schoolStages = Array.isArray(params.schoolStages) ? params.schoolStages : [];
 
   if (!contactName) return { skipped: true, reason: 'missing_contact_name', scenario };
 
@@ -13297,6 +13539,8 @@ async function syncTrialPipedriveDeal(
     email,
     phone,
     position,
+    subjects,
+    schoolStages,
   }).catch((error: any) => {
     console.log(`[${cfg.logPrefix}] Person sync error: ${error.message}`);
     return null;
@@ -13863,6 +14107,20 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
  * v rozsahu „co zákazník právě vyplnil ve formuláři" — Pipedrive owner, label,
  * pipeline a stage se určují server‑side, aby je nešlo přepsat zvenčí.
  */
+/** Z těla požadavku přečte pole se seznamem kódů (přijme array i CSV string). */
+function readTrialStringArrayField(body: Record<string, unknown>, ...keys: string[]): string[] {
+  for (const key of keys) {
+    const v = (body as Record<string, unknown>)[key];
+    if (Array.isArray(v)) {
+      return v.map((x) => String(x ?? '').trim()).filter(Boolean);
+    }
+    if (typeof v === 'string' && v.trim()) {
+      return v.split(',').map((x) => x.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
 async function handleTrialPipedriveEndpoint(
   c: Parameters<Parameters<typeof app.post>[1]>[0],
   scenario: TrialPipedriveScenario,
@@ -13879,6 +14137,8 @@ async function handleTrialPipedriveEndpoint(
     const email = String(body.email ?? '').trim();
     const phone = String(body.phone ?? '').trim();
     const position = String(body.position ?? '').trim();
+    const subjects = readTrialStringArrayField(body, 'teacherSubjects', 'subjects');
+    const schoolStages = readTrialStringArrayField(body, 'schoolStages');
     if (!contactName) {
       return c.json({ skipped: true, reason: 'missing_contact_name' }, 400);
     }
@@ -13893,11 +14153,80 @@ async function handleTrialPipedriveEndpoint(
       email,
       phone,
       position,
+      subjects,
+      schoolStages,
     });
 
     return c.json({ success: true, ...result });
   } catch (error: any) {
     console.log(`[Pipedrive trial ${scenario}] endpoint error: ${error?.message ?? error}`);
+    return c.json({ success: false, error: String(error?.message ?? error) }, 500);
+  }
+}
+
+/**
+ * Tělo pro `/trial-person-fields-pipedrive` — jen **obohatí osobu** v Pipedrive
+ * o custom pole 9093 (pozice), 9095 (předmět), 9099 (stupeň). **Nezakládá deal
+ * ani aktivitu** — happy‑path trial deal vytváří legacy API (`api.vividbooks.com`),
+ * tady jen doplníme pole, která legacy nenastaví.
+ *
+ * Organizace se dohledá/založí podle IČO, osoba podle e‑mailu (globální search);
+ * existující pole se doplní jen když jsou prázdná (viz `findOrCreatePipedrivePerson`).
+ */
+async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof app.post>[1]>[0]) {
+  try {
+    const apiToken = getPipedriveApiToken();
+    if (!apiToken) return c.json({ skipped: true, reason: 'missing_api_token' });
+
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const schoolName = String(body.schoolName ?? body.school ?? '').trim();
+    const icoRaw = String(body.ico ?? body.vat ?? '').replace(/\D/g, '').slice(0, 10);
+    if (!schoolName && !icoRaw) {
+      return c.json({ skipped: true, reason: 'missing_school' }, 400);
+    }
+
+    const contactName = String(body.name ?? body.contactName ?? '').trim();
+    const email = String(body.email ?? '').trim();
+    const phone = String(body.phone ?? '').trim();
+    const position = String(body.position ?? '').trim();
+    const subjects = readTrialStringArrayField(body, 'teacherSubjects', 'subjects');
+    const schoolStages = readTrialStringArrayField(body, 'schoolStages');
+    if (!contactName) {
+      return c.json({ skipped: true, reason: 'missing_contact_name' }, 400);
+    }
+    if (!email || !isValidEmailFormat(email)) {
+      return c.json({ skipped: true, reason: 'invalid_email' }, 400);
+    }
+
+    const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
+      schoolName,
+      ico: icoRaw,
+      address: '',
+      strictIcoMatch: icoRaw.length > 0,
+    });
+    if (!orgLookup.orgId) return c.json({ skipped: true, reason: 'missing_org' });
+
+    const person = await findOrCreatePipedrivePerson(apiToken, {
+      orgId: orgLookup.orgId,
+      name: contactName,
+      email,
+      phone,
+      position,
+      subjects,
+      schoolStages,
+    }).catch((error: any) => {
+      console.log(`[Pipedrive trial person-fields] Person sync error: ${error?.message ?? error}`);
+      return null;
+    });
+
+    return c.json({
+      success: true,
+      orgId: orgLookup.orgId,
+      personId: parsePipedriveNumericId(person?.id),
+      dealCreated: false,
+    });
+  } catch (error: any) {
+    console.log(`[Pipedrive trial person-fields] endpoint error: ${error?.message ?? error}`);
     return c.json({ success: false, error: String(error?.message ?? error) }, 500);
   }
 }
@@ -13983,6 +14312,20 @@ app.post('/make-server-93a20b6f/trial-existing-active-pipedrive', (c) =>
  */
 app.post('/make-server-93a20b6f/trial-open-deal-pipedrive', (c) =>
   handleTrialPipedriveEndpoint(c, 'open_deal_in_progress'));
+
+/**
+ * POST /trial-person-fields-pipedrive
+ *
+ * Volá se z `/vyzkousejte` po **úspěšném** založení trialu (legacy API vrátí
+ * přístupové kódy, frontend `kind: 'created'`). Legacy API už založilo deal i
+ * osobu v Pipedrive, ale nenastaví custom pole osoby. Tento endpoint je dohraje:
+ *   - 9093 Position (z `<select>` pozice),
+ *   - 9095 Subject (z vybraných předmětů — jen učitel),
+ *   - 9099 School stage (421 = 1. stupeň, 422 = 2. stupeň).
+ * **Nezakládá** žádný deal ani aktivitu (aby nevznikl duplikát k legacy dealu).
+ */
+app.post('/make-server-93a20b6f/trial-person-fields-pipedrive', (c) =>
+  handleTrialPersonFieldsEndpoint(c));
 
 app.post('/make-server-93a20b6f/admin/pipedrive/ensure-school', async (c) => {
   const apiToken = getPipedriveApiToken();

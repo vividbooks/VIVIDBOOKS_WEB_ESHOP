@@ -16,6 +16,9 @@ const TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL =
 const TRIAL_PIPEDRIVE_OPEN_DEAL_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-open-deal-pipedrive`;
 
+const TRIAL_PIPEDRIVE_PERSON_FIELDS_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-person-fields-pipedrive`;
+
 export type FreeTrialFields = {
   name: string;
   email: string;
@@ -154,6 +157,9 @@ async function postTrialPipedriveSync(url: string, label: string, fields: FreeTr
       email: fields.email,
       phone: fields.phone,
       position: fields.position,
+      /** Předměty (učitel) a stupně (zástupce) — server z nich nastaví pole osoby 9095 / 9099. */
+      teacherSubjects: fields.teacherSubjects,
+      schoolStages: fields.schoolStages,
     };
     const res = await fetch(url, {
       method: 'POST',
@@ -210,6 +216,20 @@ export function notifyTrialOpenDealToPipedrive(fields: FreeTrialFields): Promise
   );
 }
 
+/**
+ * Po **úspěšném** založení trialu (legacy API vrátilo přístupové kódy, `kind:
+ * 'created'`). Legacy API už v Pipedrive založilo deal i osobu, ale nenastaví
+ * custom pole osoby — server přes tento endpoint dohraje pozici (9093), předmět
+ * (9095) a stupeň (9099). Nezakládá žádný deal (aby nevznikl duplikát).
+ */
+export function notifyTrialCreatedPersonFieldsToPipedrive(fields: FreeTrialFields): Promise<void> {
+  return postTrialPipedriveSync(
+    TRIAL_PIPEDRIVE_PERSON_FIELDS_URL,
+    'trial-pipedrive-person-fields',
+    fields,
+  );
+}
+
 export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
   const body = buildFreeTrialFormBody(fields);
   const res = await fetch(FREE_TRIAL_AJAX_URL, {
@@ -256,6 +276,9 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   const success = data?.success === true;
 
   if (success && codes) {
+    /** Trial úspěšně založen — fire-and-forget dohrání custom polí osoby v Pipedrive
+     *  (pozice 9093, předmět 9095, stupeň 9099). Deal/osobu už vytvořilo legacy API. */
+    void notifyTrialCreatedPersonFieldsToPipedrive(fields);
     return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'created' };
   }
   if (success && !codes) {
