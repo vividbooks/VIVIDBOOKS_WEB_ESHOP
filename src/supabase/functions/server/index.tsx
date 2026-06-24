@@ -11619,8 +11619,8 @@ let pipedrivePersonPositionFieldKeyCache: string | null | undefined;
 let pipedriveOrgFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
 /** Cache: deal field id → { key, field_type } (order form label) */
 let pipedriveDealFieldMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
-/** Cache: person field id → { key, field_type } (např. předmět 9095, stupeň 9099). */
-let pipedrivePersonFieldsMetaByIdCache: Map<number, { key: string; fieldType: string }> | null = null;
+/** Cache: person field id → { key, field_type, optionIds } (např. předmět 9095, stupeň 9099). */
+let pipedrivePersonFieldsMetaByIdCache: Map<number, { key: string; fieldType: string; optionIds: number[] }> | null = null;
 const PIPEDRIVE_LOOKUP_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function pipedriveEnvInt(name: string, defaultVal: number): number {
@@ -12518,10 +12518,10 @@ async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promis
   return map;
 }
 
-/** Načte `/personFields` a sestaví mapu `field id → { key, field_type }` (cache). */
-async function loadPipedrivePersonFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
+/** Načte `/personFields` a sestaví mapu `field id → { key, field_type, optionIds }` (cache). */
+async function loadPipedrivePersonFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string; optionIds: number[] }>> {
   if (pipedrivePersonFieldsMetaByIdCache) return pipedrivePersonFieldsMetaByIdCache;
-  const map = new Map<number, { key: string; fieldType: string }>();
+  const map = new Map<number, { key: string; fieldType: string; optionIds: number[] }>();
   try {
     const data = await pipedriveRequest<any>(apiToken, '/personFields', {}, { limit: 500 });
     const fields: any[] = Array.isArray(data?.data) ? data.data : [];
@@ -12531,7 +12531,10 @@ async function loadPipedrivePersonFieldsMetaById(apiToken: string): Promise<Map<
       if (!id || !key) continue;
       const rawFt = f?.field_type ?? f?.type;
       const fieldType = typeof rawFt === 'string' || typeof rawFt === 'number' ? String(rawFt) : '';
-      map.set(id, { key, fieldType });
+      const optionIds: number[] = Array.isArray(f?.options)
+        ? f.options.map((o: any) => parsePipedriveNumericId(o?.id)).filter((n: number | null): n is number => !!n)
+        : [];
+      map.set(id, { key, fieldType, optionIds });
     }
   } catch (e: any) {
     console.log(`[Pipedrive] personFields meta: ${e.message}`);
@@ -12541,27 +12544,74 @@ async function loadPipedrivePersonFieldsMetaById(apiToken: string): Promise<Map<
 }
 
 /**
- * Resolve klíče a typu (`enum`/`set`) custom pole osoby podle ID pole.
- * ENV override `envKey` (40znakový hash) má přednost; pak `/personFields` lookup
- * podle `fieldId`. Bez nálezu vrací `null` (volající pole nezapíše).
+ * Resolve klíče a typu (`enum`/`set`) custom pole osoby. Pořadí (robustní vůči
+ * neshodě API `id` s UI ID pole):
+ *   1) ENV override `envVarName` (40znakový hash) — nejvyšší priorita,
+ *   2) shoda podle `fieldId` ve `/personFields`,
+ *   3) detekce podle známých **option ID** (pole, jehož volby tyto ID obsahují) —
+ *      bezpečné i když se API `id` pole liší od dashboardového (9095 / 9099).
+ * Bez nálezu vrací `null` (volající pole nezapíše).
  */
-async function getPipedrivePersonFieldMeta(
+async function resolvePipedrivePersonEnumFieldMeta(
   apiToken: string,
   fieldId: number,
   envVarName: string,
+  knownOptionIds: number[],
 ): Promise<{ key: string; fieldType: string } | null> {
   const meta = await loadPipedrivePersonFieldsMetaById(apiToken);
+
   const envKey = (Deno.env.get(envVarName) || '').trim();
   if (envKey) {
     const fromMeta = [...meta.values()].find((m) => m.key === envKey);
     return { key: envKey, fieldType: fromMeta?.fieldType || '' };
   }
+
   const byId = meta.get(fieldId);
-  return byId?.key ? byId : null;
+  if (byId?.key) return { key: byId.key, fieldType: byId.fieldType };
+
+  /** Fallback: najdi pole, jehož volby obsahují nejvíc ze známých option ID (≥1). */
+  let best: { key: string; fieldType: string; hits: number } | null = null;
+  for (const m of meta.values()) {
+    if (!m.optionIds.length) continue;
+    const hits = knownOptionIds.reduce((acc, id) => acc + (m.optionIds.includes(id) ? 1 : 0), 0);
+    if (hits > 0 && (!best || hits > best.hits)) {
+      best = { key: m.key, fieldType: m.fieldType, hits };
+    }
+  }
+  if (best) {
+    console.log(`[Pipedrive] person enum field detekováno podle option ID: key=${best.key} (hits=${best.hits}, fieldId hledáno=${fieldId})`);
+    return { key: best.key, fieldType: best.fieldType };
+  }
+
+  console.log(`[Pipedrive] person enum field nenalezeno (fieldId=${fieldId}, envVar=${envVarName}, optionIds=${knownOptionIds.join(',')})`);
+  return null;
 }
 
 const PIPEDRIVE_PERSON_SUBJECT_FIELD_ID = 9095; // Subject / předmět
 const PIPEDRIVE_PERSON_STAGE_FIELD_ID = 9099; // School stage / stupeň
+
+/** Všechna známá option ID pole 9095 (Subject) — pro detekci pole podle voleb. */
+const PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS = [309, 310, 311, 312, 413, 414, 319];
+/** Známá option ID pole 9099 (School stage). */
+const PIPEDRIVE_PERSON_STAGE_OPTION_IDS = [PIPEDRIVE_PERSON_STAGE_OPTION_FIRST, PIPEDRIVE_PERSON_STAGE_OPTION_SECOND];
+
+function getPipedrivePersonSubjectFieldMeta(apiToken: string): Promise<{ key: string; fieldType: string } | null> {
+  return resolvePipedrivePersonEnumFieldMeta(
+    apiToken,
+    PIPEDRIVE_PERSON_SUBJECT_FIELD_ID,
+    'PIPEDRIVE_PERSON_SUBJECT_FIELD_KEY',
+    PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS,
+  );
+}
+
+function getPipedrivePersonStageFieldMeta(apiToken: string): Promise<{ key: string; fieldType: string } | null> {
+  return resolvePipedrivePersonEnumFieldMeta(
+    apiToken,
+    PIPEDRIVE_PERSON_STAGE_FIELD_ID,
+    'PIPEDRIVE_PERSON_STAGE_FIELD_KEY',
+    PIPEDRIVE_PERSON_STAGE_OPTION_IDS,
+  );
+}
 
 /**
  * Sestaví dvojici `[key]: value` pro custom pole osoby z option ID podle typu pole:
@@ -13111,12 +13161,8 @@ async function findOrCreatePipedrivePerson(
 
   /** Klíče/typy polí resolvujeme jen když je co zapsat — šetří `/personFields` request. */
   const positionFieldKey = positionOptionId != null ? await getPipedrivePersonPositionFieldKey(apiToken) : null;
-  const subjectMeta = subjectOptionIds.length
-    ? await getPipedrivePersonFieldMeta(apiToken, PIPEDRIVE_PERSON_SUBJECT_FIELD_ID, 'PIPEDRIVE_PERSON_SUBJECT_FIELD_KEY')
-    : null;
-  const stageMeta = stageOptionIds.length
-    ? await getPipedrivePersonFieldMeta(apiToken, PIPEDRIVE_PERSON_STAGE_FIELD_ID, 'PIPEDRIVE_PERSON_STAGE_FIELD_KEY')
-    : null;
+  const subjectMeta = subjectOptionIds.length ? await getPipedrivePersonSubjectFieldMeta(apiToken) : null;
+  const stageMeta = stageOptionIds.length ? await getPipedrivePersonStageFieldMeta(apiToken) : null;
 
   const hasCustomToWrite = !!(
     (positionFieldKey && positionOptionId != null) ||
@@ -13161,6 +13207,12 @@ async function findOrCreatePipedrivePerson(
       if (full) record = full;
     }
     const patch: Record<string, any> = { ...extraPatch, ...buildCustomFieldFillPayload(record) };
+    console.log(
+      `[Pipedrive] Person enrich existing id=${personId}: ` +
+        `posKey=${positionFieldKey ? 'ano' : 'ne'} subjKey=${subjectMeta?.key ? 'ano' : 'ne'} stageKey=${stageMeta?.key ? 'ano' : 'ne'} ` +
+        `option subject=${subjectOptionIds.join(',') || '-'} stage=${stageOptionIds.join(',') || '-'} ` +
+        `patchKeys=[${Object.keys(patch).join(', ') || '(žádné)'}]`,
+    );
     if (personId && Object.keys(patch).length > 0) {
       try {
         await pipedriveRequest(apiToken, `/persons/${personId}`, {
@@ -14197,6 +14249,11 @@ async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof a
     if (!email || !isValidEmailFormat(email)) {
       return c.json({ skipped: true, reason: 'invalid_email' }, 400);
     }
+
+    console.log(
+      `[Pipedrive trial person-fields] vstup: email="${email}" position="${position || '(none)'}" ` +
+        `subjects=[${subjects.join(', ') || '-'}] stages=[${schoolStages.join(', ') || '-'}] ico=${icoRaw || '-'}`,
+    );
 
     const orgLookup = await upsertPipedriveSchoolOrganization(apiToken, {
       schoolName,
