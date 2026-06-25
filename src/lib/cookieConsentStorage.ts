@@ -1,4 +1,4 @@
-import { applyGoogleConsentFromRecord } from '@/lib/googleConsentMode';
+import { pushGoogleConsentUpdate } from '@/lib/googleConsentSignals';
 
 /**
  * Ukládání souhlasu s cookies podle zákona č. 110/2019 Sb. (GDPR) a ePrivacy (implementační praxe ÚOOÚ):
@@ -151,7 +151,7 @@ export function saveCookieConsent(partial: Pick<CookieConsentRecord, 'analytics'
   }
   setConsentCookie(record);
   if (typeof window !== 'undefined') {
-    applyGoogleConsentFromRecord(record);
+    pushGoogleConsentUpdate(record.analytics, record.marketing);
     window.dispatchEvent(new CustomEvent(COOKIE_CONSENT_CHANGED, { detail: record }));
   }
   return record;

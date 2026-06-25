@@ -1,17 +1,56 @@
 <!DOCTYPE html>
 <html lang="cs">
   <head>
-    <!-- Google Consent Mode v2 — výchozí denied, aktualizace z cookie lišty -->
+    <!-- Google Consent Mode v2 — default denied, pak okamžitě obnovit uložený souhlas (před GTM) -->
     <script>
       window.dataLayer = window.dataLayer || [];
       function gtag(){dataLayer.push(arguments);}
+
       gtag('consent', 'default', {
         ad_storage: 'denied',
         ad_user_data: 'denied',
         ad_personalization: 'denied',
         analytics_storage: 'denied',
-        wait_for_update: 500
+        functionality_storage: 'granted',
+        security_storage: 'granted',
+        wait_for_update: 2000
       });
+
+      (function () {
+        function parseStored(raw) {
+          try {
+            var o = JSON.parse(raw);
+            if (typeof o.analytics === 'boolean' && typeof o.marketing === 'boolean') return o;
+          } catch (e) {}
+          return null;
+        }
+        function readStoredConsent() {
+          try {
+            var ls = localStorage.getItem('vividbooks_cookie_consent_v2');
+            if (ls) {
+              var fromLs = parseStored(ls);
+              if (fromLs) return fromLs;
+            }
+          } catch (e) {}
+          try {
+            var m = document.cookie.match(/(?:^|;\s*)vb_cc_v2=([^;]*)/);
+            if (m && m[1]) return parseStored(decodeURIComponent(m[1]));
+          } catch (e) {}
+          return null;
+        }
+        function pushUpdate(analytics, marketing) {
+          var state = {
+            analytics_storage: analytics ? 'granted' : 'denied',
+            ad_storage: marketing ? 'granted' : 'denied',
+            ad_user_data: marketing ? 'granted' : 'denied',
+            ad_personalization: marketing ? 'granted' : 'denied'
+          };
+          gtag('consent', 'update', state);
+          dataLayer.push(Object.assign({ event: 'vividbooks_consent_update' }, state));
+        }
+        var stored = readStoredConsent();
+        if (stored) pushUpdate(stored.analytics === true, stored.marketing === true);
+      })();
     </script>
     <!-- Google Tag Manager -->
     <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
