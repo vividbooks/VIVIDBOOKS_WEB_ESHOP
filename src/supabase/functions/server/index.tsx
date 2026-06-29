@@ -4932,6 +4932,64 @@ function enrichDvppVideosWithWebinarCertificateFields(videos: any[], webinars: a
   });
 }
 
+/** Záznam z adminu (minulé webináře) → položka katalogu pro dvppzdarma.cz / GET `/dvpp-videos`. */
+function buildDvppVideoFromPastWebinar(w: any): any | null {
+  const youtubeUrl = String(w?.recordingUrl || w?.youtubeUrl || '').trim();
+  if (!youtubeUrl) return null;
+  const id = String(w?.id ?? '').trim();
+  if (!id) return null;
+  return {
+    id,
+    name: String(w.title || w.name || 'Webinář').trim() || 'Webinář',
+    slug: String(w.slug || id).trim() || id,
+    thumbnail: String(w.coverImage || w.thumbnail || ''),
+    youtubeUrl,
+    certificateUrl: String(w.certificateUrl || ''),
+    certificateLinkMode: w.certificateLinkMode === 'survey' ? 'survey' : 'external',
+    orangeButtonText: String(w.orangeButtonText || ''),
+    orangeButtonLink: String(w.orangeButtonLink || ''),
+    greyButtonText: String(w.greyButtonText || 'Certifikát DVPP'),
+    topicIds: Array.isArray(w.topicIds) ? w.topicIds.filter(Boolean) : [],
+    description: String(w.description || ''),
+    webinarSlugForSurvey: String(w.slug || id),
+    surveyRequireFullRegistration: w.surveyRequireFullRegistration === true,
+    _fromPastWebinar: true,
+  };
+}
+
+/**
+ * Minulé webináře z adminu (KV `webinare`) doplní do katalogu záznamů, pokud v `dvpp-videos`
+ * chybí — typicky nové záznamy jako „Nové RVP a chemie“, které nejsou ve Webflow CMS.
+ */
+function mergePastWebinarsIntoDvppVideos(dvppVideos: any[], webinars: any[]): any[] {
+  const result = Array.isArray(dvppVideos) ? [...dvppVideos] : [];
+  const webinarsArr = Array.isArray(webinars) ? webinars : [];
+  const existingIds = new Set(result.map((v) => String(v?.id ?? '')).filter(Boolean));
+
+  for (const w of webinarsArr) {
+    if (!w?.isPast) continue;
+    const built = buildDvppVideoFromPastWebinar(w);
+    if (!built) continue;
+    if (existingIds.has(built.id)) continue;
+    if (matchDvppVideoForWebinar(w, result)) continue;
+    result.push(built);
+    existingIds.add(built.id);
+  }
+  return result;
+}
+
+function dedupeDvppVideosById(videos: any[]): any[] {
+  const out: any[] = [];
+  const seen = new Set<string>();
+  for (const v of videos) {
+    const id = String(v?.id ?? '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(v);
+  }
+  return out;
+}
+
 /**
  * Veřejná stránka záznamu (přehrávač + info): `/webinare/zaznam/:id` — `DvppVideoDetailPage`.
  * ID bere z párovaného záznamu v `dvpp-videos`, jinak z `webinar.id` (admin často ukládá stejné id).
@@ -11098,7 +11156,22 @@ async function syncDvppVideos(): Promise<{ topics: any[]; videos: any[] }> {
   }
 
   console.log(`[dvpp-videos] Matched videos: ${videos.length}`);
-  const result = { topics, videos, updatedAt: new Date().toISOString() };
+  const existing: any = await kv.get(DVPP_VIDEOS_KEY);
+  const existingVideos: any[] = Array.isArray(existing?.videos) ? existing.videos : [];
+  const webflowIds = new Set(videos.map((v: any) => String(v.id)));
+  const preserved = existingVideos.filter((v: any) => {
+    const id = String(v?.id ?? '');
+    if (!id) return false;
+    if (v._manual === true) return !webflowIds.has(id);
+    return false;
+  });
+  const webinars = await getCollection(WEBINARS_KEY);
+  const merged = dedupeDvppVideosById([
+    ...videos,
+    ...preserved,
+    ...mergePastWebinarsIntoDvppVideos([], webinars),
+  ]);
+  const result = { topics, videos: merged, updatedAt: new Date().toISOString() };
   await kv.set(DVPP_VIDEOS_KEY, result);
   return result;
 }
@@ -11117,7 +11190,7 @@ app.get('/make-server-93a20b6f/dvpp-videos', async (c) => {
       }
     }
     const webinars = (await getCollection(WEBINARS_KEY)) as any[];
-    const rawVideos = data.videos ?? [];
+    const rawVideos = mergePastWebinarsIntoDvppVideos(data.videos ?? [], webinars);
     const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
     return c.json({ topics: data.topics ?? [], videos, updatedAt: data.updatedAt });
   } catch (e: any) {
