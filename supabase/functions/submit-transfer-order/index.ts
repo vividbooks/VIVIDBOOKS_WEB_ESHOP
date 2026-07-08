@@ -243,6 +243,7 @@ Deno.serve(async (req) => {
     shipping?: unknown;
     customer?: unknown;
     schoolInquiry?: unknown;
+    orderNote?: unknown;
     checkoutDraftId?: unknown;
   };
   try {
@@ -255,6 +256,10 @@ Deno.serve(async (req) => {
 
   const draftId = typeof payload.checkoutDraftId === 'string'
     ? payload.checkoutDraftId.trim().slice(0, 64)
+    : '';
+
+  const orderNote = typeof payload.orderNote === 'string'
+    ? payload.orderNote.trim().slice(0, 2000)
     : '';
 
   if (!validateItems(items)) {
@@ -331,9 +336,11 @@ Deno.serve(async (req) => {
   }
 
   const noteText =
-    schoolInquiry != null && typeof schoolInquiry === 'object'
-      ? JSON.stringify({ schoolInquiry }, null, 2).slice(0, 12000)
-      : null;
+    orderNote
+      ? orderNote
+      : schoolInquiry != null && typeof schoolInquiry === 'object'
+        ? JSON.stringify({ schoolInquiry }, null, 2).slice(0, 12000)
+        : null;
 
   const schoolInquiryJson =
     schoolInquiry != null && typeof schoolInquiry === 'object' && !Array.isArray(schoolInquiry)

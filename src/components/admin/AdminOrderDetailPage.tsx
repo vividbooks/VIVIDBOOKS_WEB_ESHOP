@@ -518,6 +518,15 @@ export function AdminOrderDetailPage() {
         />
       )}
 
+      {order.note ? (
+        <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-[13px] text-sky-950">
+          <p className="font-bold text-[12px] uppercase tracking-[0.08em] text-sky-800 mb-1">
+            {'Poznámka zákazníka'}
+          </p>
+          <p className="whitespace-pre-wrap">{order.note}</p>
+        </div>
+      ) : null}
+
       {order.admin_note ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950">
           <p className="font-bold text-[12px] uppercase tracking-[0.08em] text-amber-800 mb-1">

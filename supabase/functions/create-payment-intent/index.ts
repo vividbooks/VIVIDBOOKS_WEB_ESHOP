@@ -287,6 +287,7 @@ Deno.serve(async (req) => {
     shipping?: unknown;
     customer?: unknown;
     schoolInquiry?: unknown;
+    orderNote?: unknown;
     checkoutPaymentMethod?: unknown;
     checkoutDraftId?: unknown;
   };
@@ -309,6 +310,10 @@ Deno.serve(async (req) => {
   const draftId = typeof payload.checkoutDraftId === 'string'
     ? payload.checkoutDraftId.trim().slice(0, 64)
     : '';
+
+  const orderNote = typeof payload.orderNote === 'string'
+    ? payload.orderNote.trim().slice(0, 2000) || null
+    : null;
 
   const schoolInquiryJson =
     schoolInquiry != null && typeof schoolInquiry === 'object' && !Array.isArray(schoolInquiry)
@@ -563,6 +568,7 @@ Deno.serve(async (req) => {
                 street = ${customer.street.trim()},
                 city = ${customer.city.trim()},
                 zip = ${customer.zip.trim()},
+                note = ${orderNote},
                 shipping_method = ${shipping.method},
                 shipping_price = ${shipping.price ?? 0},
                 pickup_point_id = ${shipping.pickupPointId ?? null},
@@ -802,6 +808,7 @@ Deno.serve(async (req) => {
               city,
               zip,
               country,
+              note,
               shipping_method,
               shipping_price,
               pickup_point_id,
@@ -826,6 +833,7 @@ Deno.serve(async (req) => {
               ${customer.city.trim()},
               ${customer.zip.trim()},
               'CZ',
+              ${orderNote},
               ${shipping.method},
               ${shipping.price ?? 0},
               ${shipping.pickupPointId ?? null},
