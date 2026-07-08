@@ -79,7 +79,13 @@ export function BundlePage() {
 
   const bundle = useMemo(() => {
     if (!bundleId) return undefined;
-    return bundles.find((b) => b.id === bundleId || b.slug === bundleId);
+    const found = bundles.find((b) => b.id === bundleId || b.slug === bundleId);
+    /**
+     * Akce typu N+M (10+1) se přes web neobjednává — přímé otevření stránky balíčku
+     * proto ukáže „není k dispozici" (label u produktů zůstává jen informativní).
+     */
+    if (found && bundleIsNxPlusOneSubject(found)) return undefined;
+    return found;
   }, [bundles, bundleId]);
 
   const isSubjectBundle = bundle ? bundleIsNxPlusOneSubject(bundle) : false;

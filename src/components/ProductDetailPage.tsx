@@ -25,6 +25,7 @@ import {
   productMatchesBundleSubjectLabels,
   productBundleDetailPath,
   promotionCardBundlesForProduct,
+  NX_PLUS_ONE_REDEEM_NOTE,
   type ProductBundleRecord,
 } from '../utils/bundlePricing';
 import { ProductBundlePromoTile } from './ProductBundlePromoTile';
@@ -978,6 +979,18 @@ export function ProductDetailPage({
     });
   }, [publicProductBundles, product]);
 
+  /** Standardní balíčky se dál nabízí boxem „Přidat do objednávky"; akce N+M už jen informativně. */
+  const standardBundlesForProduct = useMemo(
+    () => bundlesContainingThisProduct.filter((b) => !bundleIsNxPlusOneSubject(b)),
+    [bundlesContainingThisProduct],
+  );
+
+  /** Akce N+M (10+1) se neobjednává přes web — u produktu ukážeme jen poznámku, jak ji uplatnit. */
+  const hasNxPlusOneBundleForProduct = useMemo(
+    () => bundlesContainingThisProduct.some((b) => bundleIsNxPlusOneSubject(b)),
+    [bundlesContainingThisProduct],
+  );
+
   const promotionCardBundlesForPdp = useMemo(
     () => promotionCardBundlesForProduct(product, publicProductBundles),
     [product, publicProductBundles],
@@ -1518,6 +1531,22 @@ export function ProductDetailPage({
               {promotionCardBundlesForPdp.map((bundle) => {
                 const label = String(bundle.productCardBadgeText || '').trim();
                 if (!label) return null;
+                /**
+                 * Akce N+M (např. 10+1) se už na e-shopu neobjednává (bez stránky balíčku),
+                 * proto label není proklik — jen informační štítek. Standardní balíčky mají
+                 * dál vlastní stránku, takže zůstávají odkazem.
+                 */
+                if (bundleIsNxPlusOneSubject(bundle)) {
+                  return (
+                    <span
+                      key={bundle.id}
+                      className="inline-flex max-w-[min(100%,280px)] items-center truncate rounded-full bg-[#ff2e43] px-2.5 py-1 font-['Fenomen_Sans',sans-serif] text-[10px] font-bold uppercase tracking-wide text-white shadow-md ring-1 ring-white/50"
+                      title={bundle.title ? `Akce:\u00a0${bundle.title}` : 'Akce'}
+                    >
+                      {label}
+                    </span>
+                  );
+                }
                 return (
                   <Link
                     key={bundle.id}
@@ -2177,9 +2206,9 @@ export function ProductDetailPage({
             )}
 
             {/* Balíček (KV) — jen tiskoviny v e-shopu */}
-            {isPrintProduct(product) && !isDistributorMode && bundlesContainingThisProduct.length > 0 && (
+            {isPrintProduct(product) && !isDistributorMode && (standardBundlesForProduct.length > 0 || hasNxPlusOneBundleForProduct) && (
               <div className="space-y-4 mt-4">
-                {bundlesContainingThisProduct.map((bundle) => (
+                {standardBundlesForProduct.map((bundle) => (
                   <ProductBundlePromoTile
                     key={bundle.id}
                     bundle={bundle}
@@ -2189,6 +2218,16 @@ export function ProductDetailPage({
                     addingBundleId={kvBundleAddingId}
                   />
                 ))}
+                {hasNxPlusOneBundleForProduct && (
+                  <div
+                    className="rounded-[20px] bg-[#fff8e8] border border-[#f5d08c] px-3 py-2.5 sm:px-4 sm:py-3 shadow-[0_1px_0_rgba(180,130,40,0.06)]"
+                    role="note"
+                  >
+                    <p className="font-['Fenomen_Sans',sans-serif] text-[13px] sm:text-[14px] text-[#001161] leading-snug m-0">
+                      {NX_PLUS_ONE_REDEEM_NOTE}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
 
