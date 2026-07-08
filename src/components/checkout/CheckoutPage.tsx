@@ -1782,30 +1782,30 @@ export function CheckoutPage() {
                   ))}
                 </div>
 
-                <div className="mt-6 rounded-[20px] border border-[#001161]/10 bg-white p-5">
+                <div className="mt-6 rounded-[20px] border-2 border-[#5B4FD8]/30 bg-[#5B4FD8]/[0.05] p-5 shadow-sm">
                   <button
                     type="button"
                     onClick={handleSeparateDeliveryToggle}
-                    className="w-full flex items-center justify-between gap-4 text-left cursor-pointer rounded-[16px] border border-[#001161]/10 bg-[#f8f9fc] px-4 py-4"
+                    className="w-full flex items-center justify-between gap-4 text-left cursor-pointer rounded-[16px] border border-[#5B4FD8]/20 bg-white px-4 py-4"
                   >
                     <div className="flex items-start gap-3">
                       <span className={`inline-flex items-center justify-center w-11 h-11 rounded-[14px] ${
-                        hasSeparateDeliveryAddress ? 'bg-[#001161] text-white' : 'bg-white text-[#001161]'
+                        hasSeparateDeliveryAddress ? 'bg-[#5B4FD8] text-white' : 'bg-[#5B4FD8]/12 text-[#5B4FD8]'
                       }`}>
                         <Truck className="w-5 h-5" />
                       </span>
                       <div>
-                        <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-bold text-[#001161]">
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-bold text-[#5B4FD8]">
                           {'Doručovací adresa je jiná než fakturační'}
                         </p>
-                        <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/55 mt-1">
+                        <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/70 mt-1">
                           {'Použijte, pokud objednávku fakturujete na školu, ale chcete ji doručit jinam.'}
                         </p>
                       </div>
                     </div>
 
                     <span className={`relative inline-flex h-7 w-12 rounded-full transition-colors ${
-                      hasSeparateDeliveryAddress ? 'bg-[#001161]' : 'bg-[#001161]/15'
+                      hasSeparateDeliveryAddress ? 'bg-[#5B4FD8]' : 'bg-[#5B4FD8]/20'
                     }`}>
                       <span className={`absolute top-1 left-1 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
                         hasSeparateDeliveryAddress ? 'translate-x-5' : 'translate-x-0'
