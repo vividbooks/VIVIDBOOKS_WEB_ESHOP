@@ -111,7 +111,11 @@ function getFunctionBaseUrl(fallbackRequestUrl?: string) {
  * v DB zůstával `null` (sync se ani nezaregistroval). Pro spolehlivost teď fetch awaitujeme; chyby
  * jen logujeme, aby selhání Pipedrivu nezablokovalo úspěšnou odpověď klientovi.
  */
-async function invokeEshopPipedriveTransferSync(orderId: string, fallbackRequestUrl?: string): Promise<void> {
+async function invokeEshopPipedriveTransferSync(
+  orderId: string,
+  fallbackRequestUrl?: string,
+  delivery?: { differentAddress?: boolean; deliveryAddress?: CheckoutShipping['deliveryAddress'] },
+): Promise<void> {
   const baseUrl = getFunctionBaseUrl(fallbackRequestUrl);
   const url = baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
   if (!url) {
@@ -131,7 +135,15 @@ async function invokeEshopPipedriveTransferSync(orderId: string, fallbackRequest
         Authorization: `Bearer ${key}`,
         apikey: key,
       },
-      body: JSON.stringify({ orderId, mode: 'b2b_transfer_open' }),
+      body: JSON.stringify({
+        orderId,
+        mode: 'b2b_transfer_open',
+        /** submit-transfer-order nevytváří `checkout_sessions` řádek, takže na rozdíl od
+         *  create-payment-intent nemůže `syncEshopOrderToPipedriveFromDb` doručovací adresu
+         *  dohledat sama — musí se poslat explicitně. */
+        differentAddress: delivery?.differentAddress,
+        deliveryAddress: delivery?.deliveryAddress,
+      }),
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
@@ -455,7 +467,10 @@ Deno.serve(async (req) => {
 
           /** Pipedrive sync je idempotentní (kontroluje `pipedrive_deal_id`), takže
            *  při UPDATE buď doplní deal, který se předtím nepovedl, nebo skip. */
-          invokeEshopPipedriveTransferSync(draftOrderId, req.url);
+          invokeEshopPipedriveTransferSync(draftOrderId, req.url, {
+            differentAddress: shipping.differentAddress,
+            deliveryAddress: shipping.deliveryAddress,
+          });
 
           return jsonResponse(req, {
             success: true,
@@ -642,7 +657,10 @@ Deno.serve(async (req) => {
         console.error('[submit-transfer-order] Email:', e);
       }
 
-      await invokeEshopPipedriveTransferSync(orderRow.id, req.url);
+      await invokeEshopPipedriveTransferSync(orderRow.id, req.url, {
+        differentAddress: shipping.differentAddress,
+        deliveryAddress: shipping.deliveryAddress,
+      });
 
       return jsonResponse(req, {
         success: true,

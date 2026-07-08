@@ -11985,6 +11985,29 @@ function escapePipedriveHtml(value: unknown) {
     .replace(/"/g, '&quot;');
 }
 
+/** Zvýrazněný HTML blok pro Pipedrive Note, když je doručovací adresa jiná než fakturační.
+ *  Vrací prázdný string, pokud adresa nemá žádné vyplněné pole (nic se pak nepřidává do poznámky). */
+function buildDeliveryAddressNoteHtml(
+  delivery: { recipientName?: string; street?: string; city?: string; zip?: string } | null | undefined,
+): string {
+  const street = String(delivery?.street || '').trim();
+  const city = String(delivery?.city || '').trim();
+  const zip = String(delivery?.zip || '').trim();
+  const recipient = String(delivery?.recipientName || '').trim();
+  if (!street && !city && !zip) return '';
+  return [
+    '<div style="background:#fff3cd;border:1px solid #ffe08a;border-radius:6px;padding:10px 12px;margin-bottom:10px;">',
+    '<p style="margin:0 0 6px;"><strong>⚠️ POZOR: adresa doručení je jiná než fakturační</strong></p>',
+    recipient ? `<p style="margin:0;">Příjemce: ${escapePipedriveHtml(recipient)}</p>` : '',
+    `<p style="margin:0;">Ulice: ${escapePipedriveHtml(street || 'neuvedeno')}</p>`,
+    `<p style="margin:0;">Město: ${escapePipedriveHtml(city || 'neuvedeno')}</p>`,
+    `<p style="margin:0;">PSČ: ${escapePipedriveHtml(zip || 'neuvedeno')}</p>`,
+    '</div>',
+  ]
+    .filter(Boolean)
+    .join('');
+}
+
 async function pipedriveRequest<T = any>(
   apiToken: string,
   path: string,
@@ -17459,9 +17482,16 @@ async function upgradeEshopPipedriveOpenDealToWon(
   };
 }
 
+type EshopDeliveryAddress = { recipientName?: string; street?: string; city?: string; zip?: string };
+type EshopOrderDeliveryInfo = {
+  differentAddress?: boolean;
+  deliveryAddress?: EshopDeliveryAddress | null;
+} | null;
+
 async function syncEshopOrderToPipedriveFromDb(
   orderId: string,
   mode: EshopPipedriveMode,
+  explicitDelivery?: EshopOrderDeliveryInfo,
 ): Promise<Record<string, unknown>> {
   const apiToken = getPipedriveApiToken();
   const sb = getServiceSupabaseClient();
@@ -17484,7 +17514,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, checkout_session_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -17710,6 +17740,45 @@ async function syncEshopOrderToPipedriveFromDb(
     }
   }
 
+  /** Doručovací adresa jiná než fakturační → zvýrazněná note k dealu. Explicitní parametr
+   *  (např. z submit-transfer-order, který nemá `checkout_sessions` řádek) má přednost;
+   *  jinak fallback na `checkout_sessions.shipping_data` přes `orders.checkout_session_id`
+   *  (pokrývá create-payment-intent i stripe-webhook, kde checkout_session_id vždy existuje). */
+  let deliveryInfo: EshopOrderDeliveryInfo = explicitDelivery ?? null;
+  if (!deliveryInfo?.differentAddress) {
+    const checkoutSessionId = String((order as any).checkout_session_id || '').trim();
+    if (checkoutSessionId) {
+      const { data: session } = await sb
+        .from('checkout_sessions')
+        .select('shipping_data')
+        .eq('id', checkoutSessionId)
+        .maybeSingle();
+      const shippingData = (session as any)?.shipping_data as
+        | { differentAddress?: boolean; deliveryAddress?: EshopDeliveryAddress | null }
+        | null
+        | undefined;
+      if (shippingData?.differentAddress) {
+        deliveryInfo = { differentAddress: true, deliveryAddress: shippingData.deliveryAddress };
+      }
+    }
+  }
+  if (deliveryInfo?.differentAddress) {
+    const deliveryHtml = buildDeliveryAddressNoteHtml(deliveryInfo.deliveryAddress);
+    if (deliveryHtml) {
+      try {
+        await createPipedriveNote(apiToken, {
+          content: deliveryHtml,
+          dealId,
+          orgId: isB2b ? orgId : null,
+          personId,
+        });
+        console.log(`[Pipedrive eshop] note s doručovací adresou k dealu ${dealId} vytvořena`);
+      } catch (deliveryNoteErr: any) {
+        console.log(`[Pipedrive eshop] note s doručovací adresou k dealu ${dealId} selhala: ${deliveryNoteErr?.message || deliveryNoteErr}`);
+      }
+    }
+  }
+
   const dealIdStr = String(dealId);
   const nowIso = new Date().toISOString();
   await persistPipedriveEshopOrderState(sb, orderId, {
@@ -17913,7 +17982,23 @@ function buildSchoolOrderNoteContent(
       ? `<h4>Metadata (raw)</h4><pre style="font-size:12px;white-space:pre-wrap;">${escapePipedriveHtml(String(order.note).slice(0, 12000))}</pre>`
       : '';
 
+  /** `deliveryAddress` ze school formuláře používá klíče `deliveryStreet`/`deliveryCity`/`deliveryZip`
+   *  (na rozdíl od e-shopové pokladny, kde je to `street`/`city`/`zip`). */
+  const schoolDeliveryAddress = inquiryBody?.deliveryAddress as
+    | { recipientName?: string; deliveryStreet?: string; deliveryCity?: string; deliveryZip?: string }
+    | null
+    | undefined;
+  const deliveryNote = inquiryBody?.hasSeparateDeliveryAddress
+    ? buildDeliveryAddressNoteHtml({
+        recipientName: schoolDeliveryAddress?.recipientName,
+        street: schoolDeliveryAddress?.deliveryStreet,
+        city: schoolDeliveryAddress?.deliveryCity,
+        zip: schoolDeliveryAddress?.deliveryZip,
+      })
+    : '';
+
   return [
+    deliveryNote,
     `<h3>Školní objednávka z webu</h3>`,
     `<p><strong>ID objednávky:</strong> ${escapePipedriveHtml(order.id)}</p>`,
     `<p><strong>Škola:</strong> ${escapePipedriveHtml(order.schoolName)}</p>`,
@@ -18102,16 +18187,28 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
     if (!matches) {
       return c.json({ error: 'Unauthorized.' }, 401);
     }
-    const body = (await c.req.json()) as { orderId?: string; mode?: string; refreshOnly?: boolean };
+    const body = (await c.req.json()) as {
+      orderId?: string;
+      mode?: string;
+      refreshOnly?: boolean;
+      differentAddress?: boolean;
+      deliveryAddress?: { recipientName?: string; street?: string; city?: string; zip?: string } | null;
+    };
     const orderId = String(body.orderId || '').trim();
     const mode = String(body.mode || '').trim();
     if (!orderId || !ESHOP_PIPEDRIVE_MODES.includes(mode as EshopPipedriveMode)) {
       return c.json({ error: 'Invalid orderId or mode.' }, 400);
     }
     const m = mode as EshopPipedriveMode;
+    /** Explicitně poslaná doručovací adresa (např. submit-transfer-order, který nemá
+     *  `checkout_sessions` řádek) — jinak si `syncEshopOrderToPipedriveFromDb` dohledá
+     *  adresu sama z `checkout_sessions.shipping_data`. */
+    const explicitDelivery = body.differentAddress != null || body.deliveryAddress != null
+      ? { differentAddress: body.differentAddress, deliveryAddress: body.deliveryAddress }
+      : null;
     const result = body.refreshOnly === true
       ? await refreshEshopPipedriveDealFromDb(orderId, m)
-      : await syncEshopOrderToPipedriveFromDb(orderId, m);
+      : await syncEshopOrderToPipedriveFromDb(orderId, m, explicitDelivery);
     return c.json(result);
   } catch (err: any) {
     console.log(`[eshop/pipedrive-sync] ${err.message}`);
