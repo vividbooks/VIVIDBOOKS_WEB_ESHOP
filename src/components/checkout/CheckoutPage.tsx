@@ -12,6 +12,7 @@ import {
   Package,
   Plus,
   Search,
+  StickyNote,
   Trash2,
   Truck,
   User,
@@ -1787,19 +1788,25 @@ export function CheckoutPage() {
                   ))}
                 </div>
 
-                <label id="checkout-field-orderNote" className="block mt-6">
-                  <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
-                    {'Poznámka k objednávce'}
-                  </span>
-                  <textarea
-                    value={orderNote}
-                    onChange={(event) => setOrderNote(event.target.value)}
-                    rows={3}
-                    maxLength={2000}
-                    placeholder="Volitelná poznámka k objednávce (např. pro expedici nebo fakturaci)"
-                    className={`${checkoutTextInputClass(false)} resize-y min-h-[88px]`}
-                  />
-                </label>
+                <div
+                  id="checkout-field-orderNote"
+                  className="mt-6 rounded-[20px] border-2 border-amber-300/70 bg-amber-50/60 p-5"
+                >
+                  <label className="block">
+                    <span className="flex items-center gap-2 font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                      <StickyNote className="w-4 h-4 text-amber-500 shrink-0" />
+                      {'Poznámka k objednávce'}
+                    </span>
+                    <textarea
+                      value={orderNote}
+                      onChange={(event) => setOrderNote(event.target.value)}
+                      rows={3}
+                      maxLength={2000}
+                      placeholder="Volitelná poznámka k objednávce (např. pro expedici nebo fakturaci)"
+                      className={`${checkoutTextInputClass(false)} resize-y min-h-[88px] border-amber-300/80 focus:border-amber-500 focus:ring-amber-500/20`}
+                    />
+                  </label>
+                </div>
 
                 <div className="mt-6 rounded-[20px] border-2 border-[#5B4FD8]/30 bg-[#5B4FD8]/[0.05] p-5 shadow-sm">
                   <button
