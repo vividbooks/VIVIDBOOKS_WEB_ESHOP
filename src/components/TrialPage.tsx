@@ -8,7 +8,6 @@ import { ImageWithFallback } from './figma/ImageWithFallback';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import {
   submitFreeTrialAjax,
-  notifyTrialExistingActiveToPipedrive,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
@@ -699,26 +698,14 @@ export function TrialRegistrationForm({
   const isDeputy = form.position === 'Z\u00e1stupce/kyn\u011b \u0159editele';
 
   /**
-   * Informace o tom, že škola právě testuje / nedávno testovala / má aktivní
-   * licenci, se zobrazuje na **samostatné výsledkové stránce** (nahrazuje
-   * formulář, stejně jako success view) až po kliknutí na „Získat přístup
-   * zdarma". Před kliknutím uživatel kompletně vyplní formulář bez jakéhokoli
-   * zásahu blokačních karet — díky tomu vždy získáme jeho kontakt (a po
-   * kliknutí pak v Pipedrive založíme příslušný deal).
+   * O existenci aktivního trialu / licence rozhoduje VÝHRADNĚ legacy Vividbooks
+   * API (`POST api.vividbooks.com/web/free-trial-ajax`) podle CIN/IČO — nikdy
+   * Pipedrive. Formulář se proto odešle vždy: když API vrátí kódy, zákazník je
+   * dostane a trial normálně běží; když je nevrátí, zobrazí se hláška
+   * s kontaktem na obchodníka (na to už máme proces). Stav `active_trial`
+   * z Pipedrive je jen informativní (otevřený deal v CRM nemusí odpovídat
+   * skutečné platnosti licence) a nesmí nic blokovat.
    */
-  const [submitAttempted, setSubmitAttempted] = useState(false);
-
-  /**
-   * Trial zakládáme VŽDY. Jediná výjimka: škola **právě testuje** (má aktivní
-   * zkušební přístup, `pdStatus === 'active_trial'`). Žádný 6měsíční cooldown,
-   * žádné „e‑mail už použit", žádné blokování kvůli aktivnímu předplatnému ani
-   * rozjednanému dealu — to vše projde dál a trial se založí.
-   */
-  const schoolHasActiveTrialRaw =
-    pdStatus === 'active_trial' && !!pdMessage && !pdLoading;
-
-  /** Po kliknutí na submit s aktivním trialem → místo formuláře výsledková stránka. */
-  const showBlockingResultPage = submitAttempted && schoolHasActiveTrialRaw;
 
   // Pipedrive check on IČO
   const pdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -866,36 +853,6 @@ export function TrialRegistrationForm({
       return;
     }
 
-    /**
-     * Validace polí prošla. Trial zakládáme vždy — jediná výjimka je, když škola
-     * **právě testuje** (`pdStatus === 'active_trial'`). V tom případě nevoláme
-     * legacy `/web/free-trial-ajax`, jen přepneme na výsledkovou stránku a do
-     * Pipedrive pošleme fire‑and‑forget deal „škola aktuálně má trial a žádá si
-     * o další" (pipeline 6; když už org otevřený trial deal má, server jen přidá
-     * aktivitu — deduplikace).
-     */
-    if (schoolHasActiveTrialRaw) {
-      setSubmitAttempted(true);
-      setFormError('');
-      if (typeof window !== 'undefined') {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
-      const blockingPayload: FreeTrialFields = {
-        name: form.name.trim(),
-        email: form.email.trim(),
-        phone: form.phone.trim(),
-        position: form.position,
-        schoolName: schoolName.trim(),
-        vat: ico.trim(),
-        gdpr: gdprConsent,
-        newsletter: newsletterConsent,
-        teacherSubjects: isTeacher ? [...subjects1st, ...subjects2nd] : [],
-        schoolStages: isDeputy ? schoolStages : [],
-      };
-      void notifyTrialExistingActiveToPipedrive(blockingPayload);
-      return;
-    }
-
     setSubmitting(true);
     setFormError('');
     try {
@@ -1002,38 +959,6 @@ export function TrialRegistrationForm({
             </a>
             <TrialTrainingVideosList />
           </motion.div>
-        ) : showBlockingResultPage ? (
-          /* ══ Výsledková stránka po kliknutí na „Získat přístup zdarma" —
-                škola právě testuje / nedávno testovala / má aktivní licenci.
-                Nahrazuje formulář (stejně jako success view). ══ */
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4"
-          >
-            <p style={FF} className="text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest pl-1">
-              {'Informace o va\u0161\u00ed \u0161kole'}
-            </p>
-
-            <SchoolSearch
-              readOnly
-              schoolName={schoolName} ico={ico}
-              onSelect={() => {}}
-              onIcoChange={() => {}}
-              pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
-              colleagues={colleagues} owner={owner} products={products}
-              hidePipedriveStatusCard={false}
-            />
-
-            <button
-              type="button"
-              onClick={() => setSubmitAttempted(false)}
-              className="w-full flex items-center justify-center gap-2 bg-white hover:bg-[#F0F2F8] border border-[#001161]/15 text-[#001161] font-bold text-[14px] px-6 py-3.5 rounded-xl transition-all cursor-pointer"
-              style={FF}
-            >
-              {'Zp\u011bt na formul\u00e1\u0159'}
-            </button>
-          </motion.div>
         ) : (
           <form onSubmit={handleSubmit} className="bg-[#DDDAEC]/50 rounded-[24px] p-7 md:p-10 space-y-4">
 
@@ -1048,12 +973,13 @@ export function TrialRegistrationForm({
                 pdStatus={pdStatus} pdMessage={pdMessage} pdLoading={pdLoading}
                 colleagues={colleagues} owner={owner} products={products}
                 hidePipedriveStatusCard={
-                  // Stav „škola právě testuje" (active_trial) se ve formuláři
-                  // neukazuje — zobrazí se na samostatné výsledkové stránce po
-                  // kliknutí na „Získat přístup zdarma". Ostatní informační karty
-                  // (new/known/past_request/aktivní předplatné/rozjetý deal) jdou
-                  // hned a žádost o trial neblokují.
-                  schoolHasActiveTrialRaw
+                  // Karta „škola právě testuje" (active_trial) se neukazuje —
+                  // stav z Pipedrive (otevřený deal) nemusí odpovídat skutečné
+                  // platnosti licence a nesmí zákazníka mást ani nic blokovat.
+                  // O trialu rozhodne až odpověď api.vividbooks.com po odeslání.
+                  // Ostatní informační karty (new/known/past_request/aktivní
+                  // předplatné/rozjetý deal) se zobrazují a nic neblokují.
+                  pdStatus === 'active_trial'
                 }
                 pipedriveDebug={showPipedriveIcoDebugControls()
                   ? { raw: pdCheckRaw, open: pdCheckDebugOpen, onToggle: () => setPdCheckDebugOpen((v) => !v) }
