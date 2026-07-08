@@ -225,6 +225,7 @@ export function CheckoutPage() {
   const [currentStep, setCurrentStep] = useState<CheckoutStep>(() => checkoutStepFromUrl());
   const [customerType, setCustomerType] = useState<CustomerType>('school');
   const [customer, setCustomer] = useState<CustomerFormState>(INITIAL_CUSTOMER);
+  const [orderNote, setOrderNote] = useState('');
   const [hasSeparateDeliveryAddress, setHasSeparateDeliveryAddress] = useState(false);
   const [deliveryAddress, setDeliveryAddress] = useState<DeliveryAddressState>(INITIAL_DELIVERY_ADDRESS);
   const [shipping, setShipping] = useState<ShippingState>(INITIAL_SHIPPING);
@@ -815,6 +816,7 @@ export function CheckoutPage() {
         zip: customer.zip.trim(),
       },
       checkoutPaymentMethod: paymentMethod,
+      orderNote: orderNote.trim() || undefined,
       checkoutDraftId: checkoutDraftIdRef.current,
     };
 
@@ -885,6 +887,7 @@ export function CheckoutPage() {
     items,
     shipping,
     customer,
+    orderNote,
     hasSeparateDeliveryAddress,
     deliveryAddress,
     isCustomerStepValid,
@@ -985,6 +988,7 @@ export function CheckoutPage() {
           city: customer.city.trim(),
           zip: customer.zip.trim(),
         },
+        orderNote: orderNote.trim() || undefined,
         checkoutDraftId: checkoutDraftIdRef.current,
       };
 
@@ -1022,6 +1026,7 @@ export function CheckoutPage() {
     hasSeparateDeliveryAddress,
     deliveryAddress,
     customer,
+    orderNote,
   ]);
 
   const validateCustomerStep = () => {
@@ -1781,6 +1786,20 @@ export function CheckoutPage() {
                     </label>
                   ))}
                 </div>
+
+                <label id="checkout-field-orderNote" className="block mt-6">
+                  <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
+                    {'Poznámka k objednávce'}
+                  </span>
+                  <textarea
+                    value={orderNote}
+                    onChange={(event) => setOrderNote(event.target.value)}
+                    rows={3}
+                    maxLength={2000}
+                    placeholder="Volitelná poznámka k objednávce (např. pro expedici nebo fakturaci)"
+                    className={`${checkoutTextInputClass(false)} resize-y min-h-[88px]`}
+                  />
+                </label>
 
                 <div className="mt-6 rounded-[20px] border border-[#001161]/10 bg-white p-5">
                   <button

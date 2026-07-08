@@ -17484,7 +17484,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -17692,6 +17692,23 @@ async function syncEshopOrderToPipedriveFromDb(
     nextLineOrder + 1,
     codeToPdIdShared,
   );
+
+  /** Poznámka zákazníka z objednávky (`orders.note`) → note k dealu v Pipedrivu.
+   *  Selhání zápisu poznámky nesmí shodit celý sync dealu. */
+  const customerNote = String((order as any).note || '').trim();
+  if (customerNote) {
+    try {
+      await createPipedriveNote(apiToken, {
+        content: `Poznámka k objednávce ${orderNumber || ''}:\n${customerNote}`.trim(),
+        dealId,
+        orgId: isB2b ? orgId : null,
+        personId,
+      });
+      console.log(`[Pipedrive eshop] note k dealu ${dealId} vytvořena z orders.note`);
+    } catch (noteErr: any) {
+      console.log(`[Pipedrive eshop] note k dealu ${dealId} selhala: ${noteErr?.message || noteErr}`);
+    }
+  }
 
   const dealIdStr = String(dealId);
   const nowIso = new Date().toISOString();
