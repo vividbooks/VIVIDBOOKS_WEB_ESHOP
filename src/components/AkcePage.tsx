@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { Loader2, Package, Sparkles } from 'lucide-react';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -39,6 +39,12 @@ export function AkcePage() {
   useEffect(() => {
     void loadBundles();
   }, [loadBundles]);
+
+  /** Akce typu N+M (10+1) se přes web neobjednává — ve výpisu Akcí ji nezobrazujeme. */
+  const visibleBundles = useMemo(
+    () => bundles.filter((b) => !bundleIsNxPlusOneSubject(b)),
+    [bundles],
+  );
 
   const handleAddKvBundleToSchoolOrder = (bundle: ProductBundleRecord) => {
     if (kvBundleAddingId || productsLoading || !products.length) return;
@@ -98,7 +104,7 @@ export function AkcePage() {
         </div>
       ) : fetchError ? (
         <p className="text-center text-red-600 text-[14px] py-12">{fetchError}</p>
-      ) : bundles.length === 0 ? (
+      ) : visibleBundles.length === 0 ? (
         <div className="text-center py-20 rounded-[28px] border border-dashed border-[#001161]/15 bg-[#f8f9fc]">
           <Package className="w-14 h-14 mx-auto text-[#001161]/15 mb-4" />
           <p className="font-['Fenomen_Sans'] text-[16px] text-[#001161]/70">
@@ -110,7 +116,7 @@ export function AkcePage() {
         </div>
       ) : (
         <ul className="grid grid-cols-1 sm:grid-cols-2 gap-6 md:gap-8 list-none p-0 m-0 w-full items-stretch">
-          {bundles.map((bundle) => (
+          {visibleBundles.map((bundle) => (
             <li key={bundle.id} className="min-h-0 flex h-full">
               <div className="w-full min-h-0 flex flex-col">
                 <ProductBundlePromoTile

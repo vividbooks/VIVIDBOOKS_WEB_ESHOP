@@ -18,6 +18,15 @@ import {
  */
 export type ProductBundleKind = 'standard' | 'nx_plus_one_subject';
 
+/**
+ * Poznámka u produktů zapojených do akce „N+M zdarma" (např. 10+1). Balíček se už na e-shopu
+ * neobjednává (bez promo boxu i stránky balíčku), zůstává jen label — proto zákazníkovi
+ * vysvětlíme, jak akci uplatnit.
+ */
+export const NX_PLUS_ONE_REDEEM_NOTE =
+  'Pokud chcete uplatnit akci 10+1 zdarma, odešlete objednávku na požadovaný počet. '
+  + 'Obchodní zástupce se s vámi spojí a aktualizuje objednávku o kusy zdarma.';
+
 const OTHER_SUBJECT_LABEL = 'Ostatní';
 
 export const BUNDLE_SUBJECT_MATH_1 = 'Matematika 1. stupeň';
