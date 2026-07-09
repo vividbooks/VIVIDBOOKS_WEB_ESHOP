@@ -2096,29 +2096,6 @@ export function CheckoutPage() {
                       {`PaymentIntent: ${paymentIntentId}`}
                     </p>
                   )}
-
-                  {paymentMethod === 'transfer' && (
-                    <div className="mt-4 space-y-4">
-                      <p className="font-['Fenomen_Sans',sans-serif] text-[14px] text-[#001161]/75 leading-relaxed">
-                        {'Odešlete objednávku — vystavíme fakturu se splatností a pošleme ji na zadaný e-mail. Uhradíte ji bankovním převodem podle pokynů. Na tomto kroku neplatíte kartou.'}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => void submitTransferOrder()}
-                        disabled={transferSubmitting || !hasTransferIco}
-                        className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        {transferSubmitting ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            {'Odesílám…'}
-                          </>
-                        ) : (
-                          'Odeslat objednávku (na fakturu)'
-                        )}
-                      </button>
-                    </div>
-                  )}
                 </>
               </PaymentMethodSection>
             )}
@@ -2163,17 +2140,17 @@ export function CheckoutPage() {
                       </>
                     )}
                   </button>
-                ) : (
+                ) : currentStep < 4 ? (
                   <button
                     type="button"
                     onClick={() => void goForward()}
-                    disabled={!canGoForward || currentStep >= 4 || continueEmailMx}
+                    disabled={!canGoForward || continueEmailMx}
                     className="inline-flex items-center gap-2 px-5 py-3 rounded-[14px] bg-[#001161] text-white font-['Fenomen_Sans',sans-serif] text-[14px] font-bold disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                   >
                     {'Pokračovat'}
                     <ChevronRight className="w-4 h-4" />
                   </button>
-                )}
+                ) : null}
               </div>
             )}
         </div>
