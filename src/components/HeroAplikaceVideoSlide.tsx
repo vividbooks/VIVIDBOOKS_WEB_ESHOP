@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 
 export const HERO_APLIKACE_VIDEO = '/aplikace/hero.webm';
 export const HERO_APLIKACE_POSTER = '/aplikace/hero-cards.png';
-export const HERO_APLIKACE_PLAYBACK_RATE = 0.6;
+export const HERO_APLIKACE_PLAYBACK_RATE = 0.3;
 /** Mírné přiblížení — ve videu/posteri jsou bílé okraje, v širokém slideru by jinak vidět. */
 export const HERO_APLIKACE_CATALOG_COVER_SCALE = 1;
 

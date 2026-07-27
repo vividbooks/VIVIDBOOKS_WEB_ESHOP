@@ -920,7 +920,7 @@ export const HERO_SLIDE_NOVA_APLIKACE: HeroSlide = {
   layout: 'aplikace-video',
   heroVideo: '/aplikace/hero.webm',
   heroVideoPoster: '/aplikace/hero-cards.png',
-  heroVideoPlaybackRate: 0.6,
+  heroVideoPlaybackRate: 0.3,
   link: '/aplikace',
   ctaLabel: 'Dozvědět se co je nového',
   ctaLink: '/aplikace',

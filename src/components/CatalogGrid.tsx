@@ -19,6 +19,7 @@ import {
   HeroAplikaceVideoBackground,
   HeroAplikaceVideoTitle,
   HERO_APLIKACE_CATALOG_COVER_SCALE,
+  HERO_APLIKACE_PLAYBACK_RATE,
   HERO_APLIKACE_POSTER,
 } from './HeroAplikaceVideoSlide';
 import { useWebinars } from '../contexts/WebinarsContext';
@@ -900,10 +901,7 @@ export default function CatalogGrid() {
             typeof s.heroVideoPoster === 'string' && s.heroVideoPoster.trim()
               ? s.heroVideoPoster.trim()
               : '/aplikace/hero-cards.png',
-          heroVideoPlaybackRate:
-            typeof s.heroVideoPlaybackRate === 'number' && s.heroVideoPlaybackRate > 0
-              ? s.heroVideoPlaybackRate
-              : 0.6,
+          heroVideoPlaybackRate: HERO_APLIKACE_PLAYBACK_RATE,
           textLight: true,
           image: '',
         });
