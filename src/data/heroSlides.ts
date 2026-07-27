@@ -828,7 +828,7 @@ export interface HeroSlide {
   isActive: boolean;
   /** Font hlavního nadpisu (CMS). */
   titleFont?: HeroSlideTitleFontId;
-  layout?: 'center' | 'left-image' | 'hero-full-image' | 'books-fan' | 'books-fan-below' | 'books-fan-above';
+  layout?: 'center' | 'left-image' | 'hero-full-image' | 'books-fan' | 'books-fan-below' | 'books-fan-above' | 'aplikace-video';
   /** Jen layout `books-fan`: ID produktů (pole nebo JSON v textarea z CMS). */
   bookProductIds?: string | string[];
   /** Rozložení obálek: mřížka / řada / vějíř. */
@@ -903,7 +903,31 @@ export interface HeroSlide {
   heroFullImageCardOpacityPct?: number;
   /** Rozmazání pozadí za kartami v px, 0 = vypnuto (výchozí 12). */
   heroFullImageCardBlurPx?: number;
+  /** Video pozadí jako na /aplikace (WebM + poster). */
+  heroVideo?: string;
+  heroVideoPoster?: string;
+  heroVideoPlaybackRate?: number;
 }
+
+/** Slide „Nová aplikace“ — video hero pro homepage slider. */
+export const HERO_SLIDE_NOVA_APLIKACE: HeroSlide = {
+  id: 'slide-nova-aplikace-home',
+  bg: '#ffdd00',
+  title: 'Nová aplikace',
+  subtitle: 'Vividbooks',
+  badges: [],
+  bottom: '',
+  layout: 'aplikace-video',
+  heroVideo: '/aplikace/hero.webm',
+  heroVideoPoster: '/aplikace/hero-cards.png',
+  heroVideoPlaybackRate: 0.6,
+  link: '/aplikace',
+  ctaLabel: 'Dozvědět se co je nového',
+  ctaLink: '/aplikace',
+  order: 2,
+  isActive: true,
+  titleFont: 'fenomenSemiBold',
+};
 
 export const HERO_SLIDES: HeroSlide[] = [
   {

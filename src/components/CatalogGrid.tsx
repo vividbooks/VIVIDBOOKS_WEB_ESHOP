@@ -15,6 +15,12 @@ import { useMatchMedia } from '../hooks/useMatchMedia';
 import { WebinarsSection } from './WebinarsSection';
 import { BlogSection } from './BlogSection';
 import { SEOHead } from './SEOHead';
+import {
+  HeroAplikaceVideoBackground,
+  HeroAplikaceVideoTitle,
+  HERO_APLIKACE_CATALOG_COVER_SCALE,
+  HERO_APLIKACE_POSTER,
+} from './HeroAplikaceVideoSlide';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { NewsletterBanner } from './NewsletterBanner';
 import { NovinkySection } from './NovinkySection';
@@ -87,6 +93,8 @@ function collectHeroSlideImageUrls(slide: unknown, maxBookCovers: number): strin
   const s = slide as Record<string, unknown>;
   const im = s.image;
   if (typeof im === 'string' && /^https?:\/\//i.test(im)) urls.push(im);
+  const poster = s.heroVideoPoster;
+  if (typeof poster === 'string' && (poster.startsWith('/') || /^https?:\/\//i.test(poster))) urls.push(poster);
   const books = s.books;
   if (Array.isArray(books)) {
     books.slice(0, maxBookCovers).forEach((b) => {
@@ -162,6 +170,8 @@ function HeroSlideCtaButton({
   align,
   isLight,
   accentHex,
+  wrapClassName,
+  large = false,
 }: {
   slide: { ctaLabel?: string; ctaLink?: string; link?: string };
   navigate: ReturnType<typeof useNavigate>;
@@ -169,6 +179,8 @@ function HeroSlideCtaButton({
   isLight?: boolean;
   /** Barva ohraniÄenÃ­ a textu CTA u tmavÃ©ho textu (napÅ™. vlastnÃ­ `heroTextColor`). */
   accentHex?: string;
+  wrapClassName?: string;
+  large?: boolean;
 }) {
   if (!heroSlideShouldShowCta(slide)) return null;
   const href = resolveHeroSlideCtaHref(slide);
@@ -186,10 +198,15 @@ function HeroSlideCtaButton({
     }
     navigate(href);
   };
-  const wrap = align === 'center' ? 'mt-3 flex w-full max-w-4xl justify-center' : 'mt-3';
+  const wrap =
+    wrapClassName ??
+    (align === 'center' ? 'mt-3 flex w-full max-w-4xl justify-center' : 'mt-3');
+  const btnSize = large
+    ? 'px-[22px] py-[11px] text-[15px] md:text-[16px]'
+    : 'px-[18px] py-[9px] text-[12.5px] md:text-[13.5px]';
   const btn = isLight
-    ? "inline-flex items-center justify-center rounded-lg border-2 border-white px-[18px] py-[9px] text-[12.5px] font-bold text-white bg-transparent transition hover:bg-white/15 active:scale-[0.98] md:text-[13.5px] font-['Fenomen_Sans',sans-serif]"
-    : "inline-flex items-center justify-center rounded-lg border-2 border-[#001161] px-[18px] py-[9px] text-[12.5px] font-bold text-[#001161] bg-transparent transition hover:bg-[#001161]/[0.07] active:scale-[0.98] md:text-[13.5px] font-['Fenomen_Sans',sans-serif]";
+    ? `inline-flex items-center justify-center rounded-lg border-2 border-white ${btnSize} font-bold text-white bg-transparent transition hover:bg-white/15 active:scale-[0.98] font-['Fenomen_Sans',sans-serif]`
+    : `inline-flex items-center justify-center rounded-lg border-2 border-[#001161] ${btnSize} font-bold text-[#001161] bg-transparent transition hover:bg-[#001161]/[0.07] active:scale-[0.98] font-['Fenomen_Sans',sans-serif]`;
   const accentStyle =
     !isLight && accentHex
       ? ({ borderColor: accentHex, color: accentHex } as React.CSSProperties)
@@ -867,6 +884,30 @@ export default function CatalogGrid() {
         ctaLink: typeof s.ctaLink === 'string' ? s.ctaLink : '',
         ...cmsVisual,
       };
+      if (s.layout === 'aplikace-video') {
+        const apklikaceBg =
+          typeof s.bg === 'string' && s.bg.startsWith('#') && s.bg !== '#ffffff' && s.bg !== 'transparent'
+            ? s.bg
+            : '#ffdd00';
+        return withDistributorVariant(s, {
+          ...base,
+          bg: `bg-[${apklikaceBg}]`,
+          bgStyle: apklikaceBg,
+          layout: 'aplikace-video' as const,
+          heroVideo:
+            typeof s.heroVideo === 'string' && s.heroVideo.trim() ? s.heroVideo.trim() : '/aplikace/hero.webm',
+          heroVideoPoster:
+            typeof s.heroVideoPoster === 'string' && s.heroVideoPoster.trim()
+              ? s.heroVideoPoster.trim()
+              : '/aplikace/hero-cards.png',
+          heroVideoPlaybackRate:
+            typeof s.heroVideoPlaybackRate === 'number' && s.heroVideoPlaybackRate > 0
+              ? s.heroVideoPlaybackRate
+              : 0.6,
+          textLight: true,
+          image: '',
+        });
+      }
       if (s.layout === 'books-fan' || s.layout === 'books-fan-below' || s.layout === 'books-fan-above') {
         const ids = parseHeroBookProductIds(s.bookProductIds);
         const books = resolveHeroFanBooks(products, ids);
@@ -1334,6 +1375,7 @@ export default function CatalogGrid() {
               const isLight = !!(slideView as any).textLight;
               const heroFullImageLayout =
                 slideView.layout === 'hero-full-image' && Boolean((slideView as any).image);
+              const apklikaceVideoLayout = slideView.layout === 'aplikace-video';
               const leftImageBleed =
                 slideView.layout === 'left-image' &&
                 !!(slideView as any).image &&
@@ -1390,7 +1432,7 @@ export default function CatalogGrid() {
                 className={`@container ${slideView.bg} relative flex h-full min-h-0 max-h-full flex-shrink-0 flex-col ${
                   slideIsBooksFan || slideIsBooksFanStacked ? 'overflow-visible' : 'overflow-hidden'
                 } ${heroPeekSideCard ? 'cursor-default' : 'cursor-pointer'} ${isLight ? 'text-white' : 'text-[#001161]'} ${
-                  heroFullImageLayout
+                  heroFullImageLayout || apklikaceVideoLayout
                     ? 'p-0'
                     : leftImageBleed
                       ? /* Bleed desktop: pl-8; na ÃºzkÃ©m viewportu Å¾Ã¡dnÃ½ horizontÃ¡lnÃ­ padding â€” jinak â€žÄervenÃ½ pruhâ€œ vlevo u fotky. */
@@ -1780,6 +1822,41 @@ export default function CatalogGrid() {
                               bez obÃ¡lky se zobrazÃ­ placeholder).
                             </>
                           }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : apklikaceVideoLayout ? (
+                  <div className="absolute inset-0 z-10 overflow-hidden">
+                    <HeroAplikaceVideoBackground
+                      video={(slideView as any).heroVideo}
+                      poster={(slideView as any).heroVideoPoster}
+                      playbackRate={(slideView as any).heroVideoPlaybackRate}
+                      priority={heroSlideImagePriority}
+                      coverScale={HERO_APLIKACE_CATALOG_COVER_SCALE}
+                    />
+                    <div className="absolute inset-0 z-10 flex items-center justify-center px-4">
+                      <div className="flex flex-col items-center">
+                        <HeroAplikaceVideoTitle
+                          compact
+                          line1={slideView.title || 'Nová aplikace'}
+                          line2={(slideView as any).subtitle || 'Vividbooks'}
+                        />
+                        <HeroSlideCtaButton
+                          slide={{
+                            ctaLabel:
+                              typeof (slideView as any).ctaLabel === 'string' &&
+                              (slideView as any).ctaLabel.trim()
+                                ? (slideView as any).ctaLabel.trim()
+                                : 'Dozvědět se co je nového',
+                            ctaLink: (slideView as any).ctaLink,
+                            link: (slideView as any).link || '/aplikace',
+                          }}
+                          navigate={navigate}
+                          align="center"
+                          isLight
+                          large
+                          wrapClassName="mt-[42px] flex w-full max-w-4xl justify-center"
                         />
                       </div>
                     </div>

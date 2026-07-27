@@ -64,6 +64,8 @@ interface SidebarAccordionSection {
   items: SidebarAccordionItem[];
   /** Červená blikající tečka před názvem (např. novinka / upozornění) */
   attentionDot?: boolean;
+  /** Trvalé šedé podbarvení položky v menu */
+  menuBgClass?: string;
 }
 
 function MenuAttentionDot() {
@@ -77,9 +79,10 @@ function MenuAttentionDot() {
 
 const SIDEBAR_SECTIONS: SidebarAccordionSection[] = [
   {
-    title: 'Vividboard',
+    title: 'Nová aplikace',
+    menuBgClass: 'bg-gray-100',
     items: [
-      { label: 'Vividboard', internal: '/vividboard' },
+      { label: 'Nová aplikace', internal: '/aplikace' },
     ],
   },
   {
@@ -132,9 +135,11 @@ function SidebarAccordion() {
               key={section.title}
               onClick={() => handleItem(item)}
               className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer flex items-center gap-2 border ${
-                isActive
-                  ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
-                  : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
+                section.menuBgClass
+                  ? `${section.menuBgClass} text-[#001161] border-transparent hover:bg-gray-200`
+                  : isActive
+                    ? 'bg-[#c8d7f7] text-[#001161] border-[#001161]/10'
+                    : 'text-[#001161] hover:bg-white border-transparent hover:border-gray-200'
               }`}
             >
               {section.attentionDot ? <MenuAttentionDot /> : null}
@@ -502,10 +507,10 @@ export default function CatalogLayout() {
                 <div className="px-[calc(1rem*0.85)] pt-[calc(0.35rem*0.85)] pb-[calc(1rem*0.85)] border-t border-gray-200 mt-[calc(0.65rem*0.85)] flex flex-col gap-[calc(0.125rem*0.85)]">
                   <button
                     type="button"
-                    onClick={() => { navigate('/vividboard'); setMobileSidebarOpen(false); }}
-                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all"
+                    onClick={() => { navigate('/aplikace'); setMobileSidebarOpen(false); }}
+                    className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] bg-gray-100 hover:bg-gray-200 border border-transparent transition-all"
                   >
-                    {'Vividboard'}
+                    {'Nová aplikace'}
                   </button>
                   <button
                     type="button"
