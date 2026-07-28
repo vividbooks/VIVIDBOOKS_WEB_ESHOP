@@ -76,6 +76,99 @@ function tabImageObjectFit(tab: { contentImageFit?: 'cover' | 'contain' }): 'cov
   return tab.contentImageFit === 'contain' ? 'contain' : 'cover';
 }
 
+function TabContentImage({
+  tab,
+  layout,
+}: {
+  tab: {
+    contentImage: string;
+    contentHeadline?: string;
+    tabText?: string;
+    contentImageFit?: 'cover' | 'contain';
+  };
+  layout: 'mobile' | 'desktop';
+}) {
+  const fit = tabImageObjectFit(tab);
+  const alt = tab.contentHeadline || tab.tabText || '';
+
+  if (fit === 'contain') {
+    const insetPx = 12;
+    const radiusPx = 11;
+
+    if (layout === 'mobile') {
+      return (
+        <div className="box-border flex w-full items-center justify-center" style={{ padding: insetPx }}>
+          <img
+            src={tab.contentImage}
+            alt={alt}
+            className="block h-auto max-h-[280px] w-auto max-w-full object-contain"
+            style={{ borderRadius: radiusPx }}
+            loading="lazy"
+            decoding="async"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <motion.div className="relative w-full min-h-0 min-w-0 shrink-0 self-stretch overflow-hidden md:w-1/2">
+        <div
+          className="absolute flex items-center justify-center"
+          style={{
+            top: insetPx,
+            bottom: insetPx,
+            /* +6px zprava / −6px zleva = posun obrázku doleva */
+            left: insetPx - 6,
+            right: insetPx + 6,
+          }}
+        >
+          <img
+            src={tab.contentImage}
+            alt={alt}
+            className="block h-auto max-h-full w-auto max-w-full object-contain"
+            style={{ borderRadius: radiusPx }}
+            loading="lazy"
+            decoding="async"
+          />
+        </div>
+      </motion.div>
+    );
+  }
+
+  if (layout === 'mobile') {
+    return (
+      <div className="w-full overflow-hidden" style={{ maxHeight: tabImageMaxHeight(tab) }}>
+        <img
+          src={tab.contentImage}
+          alt={alt}
+          className="w-full object-cover object-top"
+          style={{ maxHeight: tabImageMaxHeight(tab) }}
+          loading="lazy"
+          decoding="async"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <motion.div className="w-full shrink-0 self-stretch overflow-hidden md:w-1/2">
+      <img
+        src={tab.contentImage}
+        alt={alt}
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          objectPosition: 'top left',
+          display: 'block',
+        }}
+        loading="lazy"
+        decoding="async"
+      />
+    </motion.div>
+  );
+}
+
 const ECOSYSTEM_HEADING_TITLE_DEFAULT = 'U\u010debnice jako ekosyst\u00e9m: ';
 const ECOSYSTEM_HEADING_BODY_DEFAULT =
   'Nab\u00edz\u00edme komplexn\u00ed digit\u00e1ln\u00ed p\u0159\u00edstup pro celou \u0161kolu, v\u0161e co u\u010ditel\u00e9 a \u017e\u00e1ci pot\u0159ebuj\u00ed v jedn\u00e9 aplikaci.';
@@ -154,6 +247,10 @@ interface SubjectTabsSectionProps {
   extraTabs?: SubjectExtraTab[];
   /** Vynechá vybrané záložky podle tabText (např. kampaň bez Pracovní sešity). */
   excludeTabTexts?: string[];
+  /** Statické záložky — bez načítání z CMS. */
+  staticTabs?: SubjectExtraTab[];
+  /** Vlastní nadpis v levém sloupci (místo „Co vše obsahuje naše …?“). */
+  sectionHeading?: string;
   ecosystemHeadingTitle?: string;
   ecosystemHeadingBody?: string;
   /** Nadpis a popis ekosystému na dvou řádcích (kampaňová LP). */
@@ -170,27 +267,35 @@ export function SubjectTabsSection({
   tabOverrides,
   extraTabs,
   excludeTabTexts,
+  staticTabs,
+  sectionHeading,
   ecosystemHeadingTitle = ECOSYSTEM_HEADING_TITLE_DEFAULT,
   ecosystemHeadingBody = ECOSYSTEM_HEADING_BODY_DEFAULT,
   ecosystemHeadingStacked = false,
 }: SubjectTabsSectionProps) {
   const [rawTabs, setRawTabs] = useState<any[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!staticTabs?.length);
   const swipeStartX = useRef<number | null>(null);
   const windowWidth = useWindowWidth();
   const mobile = windowWidth < 768;
 
-  const tabs = useMemo(
-    () =>
-      filterExcludedTabs(
-        mergeExtraTabs(applyTabOverrides(rawTabs, tabOverrides), extraTabs),
-        excludeTabTexts,
-      ),
-    [rawTabs, tabOverrides, extraTabs, excludeTabTexts],
-  );
+  const tabs = useMemo(() => {
+    if (staticTabs?.length) {
+      return [...staticTabs].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    }
+    return filterExcludedTabs(
+      mergeExtraTabs(applyTabOverrides(rawTabs, tabOverrides), extraTabs),
+      excludeTabTexts,
+    );
+  }, [staticTabs, rawTabs, tabOverrides, extraTabs, excludeTabTexts]);
 
   useEffect(() => {
+    if (staticTabs?.length) {
+      setRawTabs([]);
+      setLoading(false);
+      return;
+    }
     // Normalize subject name to match DB keys
     const normalizeSubject = (s: string): string => {
       const lower = s.toLowerCase();
@@ -217,7 +322,7 @@ export function SubjectTabsSection({
     return () => {
       cancelled = true;
     };
-  }, [subject]);
+  }, [subject, staticTabs]);
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -298,7 +403,7 @@ export function SubjectTabsSection({
               color: light ? '#001161' : '#fff',
             }}
           >
-            Co vše obsahuje naše {displayName}?
+            {sectionHeading ?? `Co vše obsahuje naše ${displayName}?`}
           </h2>
         ) : null}
 
@@ -353,19 +458,7 @@ export function SubjectTabsSection({
             onTouchStart={(event) => handleSwipeStart(event.touches[0]?.clientX ?? 0)}
             onTouchEnd={(event) => handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0)}
           >
-            {activeTab.contentImage && (
-              <div
-                className={`w-full overflow-hidden ${tabImageObjectFit(activeTab) === 'contain' ? 'bg-white' : ''}`}
-                style={{ maxHeight: tabImageMaxHeight(activeTab) }}
-              >
-                <img
-                  src={activeTab.contentImage}
-                  alt={activeTab.contentHeadline || activeTab.tabText}
-                  className={`w-full ${tabImageObjectFit(activeTab) === 'contain' ? 'object-contain object-center' : 'object-cover object-top'}`}
-                  style={{ maxHeight: tabImageMaxHeight(activeTab) }}
-                />
-              </div>
-            )}
+            {activeTab.contentImage && <TabContentImage tab={activeTab} layout="mobile" />}
 
             <div className="p-5">
               {activeTab.contentHeadline && (
@@ -410,9 +503,9 @@ export function SubjectTabsSection({
           />
         </div>
       )}
-      <div className="mx-auto flex max-w-[1200px] flex-col items-start gap-7 lg:flex-row lg:gap-14">
+      <div className="mx-auto flex max-w-[1200px] flex-col items-stretch gap-7 lg:flex-row lg:gap-14">
         {/* Left menu — od lg vedle obsahu jako na webu */}
-        <div className="w-full shrink-0 lg:w-[240px]">
+        <div className="flex w-full shrink-0 flex-col lg:w-[240px]">
           {!hideSectionHeading ? (
             <h2
               className="mb-6 leading-tight lg:mb-8"
@@ -424,7 +517,7 @@ export function SubjectTabsSection({
                 color: light ? '#001161' : '#fff',
               }}
             >
-              Co vše obsahuje naše {displayName}?
+              {sectionHeading ?? `Co vše obsahuje naše ${displayName}?`}
             </h2>
           ) : null}
           <nav className="flex flex-row flex-wrap gap-1.5 lg:flex-col lg:flex-nowrap lg:gap-0.5">
@@ -451,14 +544,18 @@ export function SubjectTabsSection({
         {activeTab && (
           <motion.div
             key={activeTab.id}
-            className="w-full min-w-0 flex-1 rounded-[32px] flex flex-col overflow-hidden md:flex-row"
-            style={{ background: cardBg, minHeight: '450px' }}
+            className="flex w-full min-w-0 flex-1 flex-col self-stretch overflow-hidden rounded-[32px] md:flex-row"
+            style={{ background: cardBg, minHeight: activeTab.contentImage ? '450px' : undefined }}
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.3 }}
           >
-            {/* Text — levá polovina */}
-            <div className="w-full shrink-0 overflow-y-auto p-8 md:w-1/2 md:min-w-0 md:p-10">
+            {/* Text — levá polovina, nebo celá šířka bez obrázku */}
+            <div
+              className={`flex w-full shrink-0 flex-col overflow-y-auto p-8 md:min-w-0 md:p-10 ${
+                activeTab.contentImage ? 'md:w-1/2' : 'flex-1'
+              }`}
+            >
               {activeTab.contentHeadline && (
                 <h3
                   className="text-[#001161] text-[26px] md:text-[32px] leading-tight mb-5"
@@ -479,23 +576,7 @@ export function SubjectTabsSection({
             </div>
 
             {/* Obrázek — pravá polovina */}
-            {activeTab.contentImage && (
-              <motion.div
-                className={`w-full shrink-0 self-stretch overflow-hidden md:w-1/2 ${tabImageObjectFit(activeTab) === 'contain' ? 'bg-white' : ''}`}
-              >
-                <img
-                  src={activeTab.contentImage}
-                  alt={activeTab.contentHeadline || activeTab.tabText}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: tabImageObjectFit(activeTab),
-                    objectPosition: tabImageObjectFit(activeTab) === 'contain' ? 'center' : 'top left',
-                    display: 'block',
-                  }}
-                />
-              </motion.div>
-            )}
+            {activeTab.contentImage && <TabContentImage tab={activeTab} layout="desktop" />}
           </motion.div>
         )}
       </div>

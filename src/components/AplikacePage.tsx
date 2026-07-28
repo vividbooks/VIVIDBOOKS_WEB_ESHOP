@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router';
-import { ArrowRight, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { ArrowRight, ChevronRight, ExternalLink } from 'lucide-react';
 import { SEOHead } from './SEOHead';
-import { HeroAplikaceVideoBackground, HeroAplikaceVideoTitle, HERO_APLIKACE_POSTER } from './HeroAplikaceVideoSlide';
+import { HeroAplikaceVideoBackground, HeroAplikaceVideoTitle } from './HeroAplikaceVideoSlide';
+import { SubjectTabsSection, type SubjectExtraTab } from './SubjectTabsSection';
 import { appUrl } from '../config/publicUrls';
 
 const ff = "'Fenomen Sans', sans-serif";
@@ -48,94 +49,87 @@ function useNovaAplikaceUnlocked(): boolean {
   return unlocked;
 }
 
-type Panel = { bg: string; fg: string };
+const APP_SECTIONS = ['Knihovna', 'Můj obsah', 'AI asistent', 'Moje třída'] as const;
 
-const NEWS: { tag: string; num: string; kicker: string; title: string; text: string; chip: string; panel: Panel }[] = [
+const NEWS: { kicker: string; title: string; text: string }[] = [
   {
-    tag: 'Novinka 01',
-    num: '1',
     kicker: 'Účet a přihlášení',
     title: 'Jeden účet, jedno přihlášení',
     text:
       'Konec přepínání a dvojího přihlašování. Knihovna, vaše materiály i vividboardy jsou nově pod jedním účtem Vividbooks. Přihlásíte se kódem školy, e-mailem, přes Google nebo Microsoft — a kód školy si pak už nemusíte pamatovat.',
-    chip: 'Jedno přihlášení ke všemu',
-    panel: { bg: WB.crimson, fg: '#ffffff' },
   },
   {
-    tag: 'Novinka 02',
-    num: '2',
     kicker: 'Vividbooks AI',
     title: 'Umělá inteligence napříč celou aplikací',
     text:
       'Asistent vám pomůže s přípravou přímo u lekce. Vytvoří test nebo otázky, zjednoduší náročný text pro slabší žáky, navrhne aktivitu — a pamatuje si, na čem jste pracovali.',
-    chip: 'Méně přípravy',
-    panel: { bg: WB.blue, fg: '#ffffff' },
   },
   {
-    tag: 'Novinka 03',
-    num: '3',
     kicker: 'Dokumenty',
     title: 'Nové jednotné zobrazení materiálů',
     text:
       'Lekce, učební texty i metodiky jsou teď přehlednější. Čtenářský mód zvětší text pro celou třídu, materiál si zkopírujete a upravíte, sdílíte odkazem nebo vytisknete.',
-    chip: 'Přehlednější u tabule',
-    panel: { bg: WB.mint, fg: '#15185a' },
   },
   {
-    tag: 'Novinka 04',
-    num: '4',
     kicker: 'Pracovní listy',
     title: 'Nový editor pracovních listů',
     text:
       'Sestavte pracovní list z hotových bloků — texty, obrázky, tabulky i otázky. Nemusíte začínat od nuly: vezměte připravený list, upravte si ho a vytiskněte, klidně i se správným řešením.',
-    chip: 'Tvorba i tisk na míru',
-    panel: { bg: WB.yellow, fg: '#15185a' },
   },
   {
-    tag: 'Novinka 05',
-    num: '5',
     kicker: 'Nekonečná nástěnka',
     title: 'Nekonečná nástěnka — plátno bez hranic',
     text:
       'Zcela nový nástroj: volná plocha bez hranic. Rozmístíte text, kresby, obrázky i názorné matematické pomůcky — počítadla, číselné osy, domina, desítkové rámečky. Jako stvořené pro společný výklad na prvním stupni.',
-    chip: 'Nový nástroj',
-    panel: { bg: WB.violet, fg: '#ffffff' },
   },
   {
-    tag: 'Novinka 06',
-    num: '6',
     kicker: 'Vividboard',
     title: 'Promítání bez studentů a soutěžní módy',
     text:
-      'Nové promítání bez studentů zvládne výklad i vyvolávání žáků i tam, kde jsou telefony zakázané — žáci nepotřebují vůbec nic. A soutěžní režimy (soutěž, týmy, duely) výuku oživí.',
-    chip: 'Funguje i bez zařízení',
-    panel: { bg: WB.rose, fg: '#ffffff' },
+      'Nové promítání bez studentů zvládne výklad i vyvolávání žáků i tam, kde jsou telefony zakázané — žáci nepotřebují vůbec nic. Soutěžní režimy (soutěž, týmy, duely) výuku oživí. A editor vividboardu je teď výrazně intuitivnější — snadněji přidáte obsah, upravíte rozvržení i připravíte board na hodinu.',
   },
   {
-    tag: 'Novinka 07',
-    num: '7',
     kicker: 'Početník',
     title: 'Početník — chytré procvičování matematiky',
     text:
       'Procvičování matematiky, které se přizpůsobí každému žákovi: slabší podrží, rychlejší popožene — a herní styl děti baví. Zadáte ho ve třídě, na doma i jako součást pracovního listu.',
-    chip: 'Na míru žákovi',
-    panel: { bg: WB.orange, fg: '#ffffff' },
   },
   {
-    tag: 'Chystá se',
-    num: 'Brzy',
     kicker: 'Moje třídy',
     title: 'Chystá se: Moje třídy',
     text:
       'Už brzy přibude správa tříd na jednom místě — třídy, žáci, úkoly i přehled výsledků. Přehled výsledků z testů a procvičování funguje už teď, zbytek dorazí na podzim.',
-    chip: 'Připravujeme na podzim',
-    panel: { bg: WB.slate, fg: '#ffffff' },
   },
 ];
 
-const APP_SECTIONS = ['Knihovna', 'Můj obsah', 'AI asistent', 'Moje třída'] as const;
+const APLIKACE_NEWS_TAB_COLORS = ['#fee0ad', '#89f2ce', '#dee4f1', '#ffbe7a', '#ffc5b6'] as const;
 
-const HERO_POSTER = HERO_APLIKACE_POSTER;
+/** Náhledy novinek — doplňovat postupně do public/aplikace/news-XX-….png */
+const APLIKACE_NEWS_IMAGES: Partial<Record<number, { src: string; fit?: 'cover' | 'contain' }>> = {
+  0: { src: '/aplikace/news-01-knihovna.png', fit: 'contain' },
+  1: { src: '/aplikace/news-02-ai.png', fit: 'contain' },
+  2: { src: '/aplikace/news-03-dokumenty.png', fit: 'contain' },
+  3: { src: '/aplikace/news-04-pracovni-listy.png', fit: 'contain' },
+  4: { src: '/aplikace/news-05-nastenka.png', fit: 'contain' },
+  5: { src: '/aplikace/news-06-vividboard.png', fit: 'contain' },
+  6: { src: '/aplikace/news-07-pocetnik.png', fit: 'contain' },
+  7: { src: '/aplikace/news-08-moje-tridy.png', fit: 'contain' },
+};
+
+const APLIKACE_NEWS_TABS: SubjectExtraTab[] = NEWS.map((item, idx) => {
+  const preview = APLIKACE_NEWS_IMAGES[idx];
+  return {
+    id: `aplikace-news-${idx + 1}`,
+    tabText: item.kicker,
+    contentHeadline: item.title,
+    contentRichText: item.text,
+    bgColor: APLIKACE_NEWS_TAB_COLORS[idx % APLIKACE_NEWS_TAB_COLORS.length],
+    ...(preview?.src
+      ? { contentImage: preview.src, contentImageFit: preview.fit ?? 'contain' }
+      : {}),
+    order: idx + 1,
+  };
+});
 
 type Door = {
   color: string;
@@ -288,137 +282,6 @@ function SectionHead({ kicker, title, text }: { kicker: string; title: string; t
       <p className="text-[#4e5871] text-[15px] max-w-[52ch] mx-auto mt-3 leading-relaxed" style={{ fontFamily: ff }}>
         {text}
       </p>
-    </div>
-  );
-}
-
-/* ── Slider novinek ───────────────────────────────────────────── */
-
-const AUTOPLAY_MS = 6500;
-
-/** Výřez mozaiky pro levý panel slideru. */
-const PANEL_PREVIEWS = [
-  { crop: '8% 28%' },
-  { crop: '20% 62%' },
-  { crop: '36% 22%' },
-  { crop: '50% 52%' },
-  { crop: '64% 20%' },
-  { crop: '78% 58%' },
-  { crop: '88% 32%' },
-  { crop: '44% 78%' },
-] as const;
-const PANEL_ZOOM = 1.52;
-
-function NewsPanelSide({ slide, idx }: { slide: (typeof NEWS)[number]; idx: number }) {
-  const preview = PANEL_PREVIEWS[idx % PANEL_PREVIEWS.length];
-
-  return (
-    <div className="relative overflow-hidden p-8 md:p-9 flex items-center justify-center md:min-h-[320px]">
-      <img
-        src={HERO_POSTER}
-        alt=""
-        aria-hidden
-        className="absolute inset-0 size-full object-cover [image-rendering:-webkit-optimize-contrast]"
-        style={{
-          objectPosition: preview.crop,
-          transform: `scale(${PANEL_ZOOM})`,
-          transformOrigin: preview.crop,
-        }}
-        loading="lazy"
-        decoding="async"
-      />
-
-      <span
-        className={`relative z-10 text-white font-bold leading-none ${
-          slide.num.length > 2 ? 'text-[88px]' : 'text-[128px]'
-        }`}
-        style={{ fontFamily: ff }}
-      >
-        {slide.num}
-      </span>
-    </div>
-  );
-}
-
-function NewsSlider() {
-  const [i, setI] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  const go = useCallback((next: number) => {
-    setI((next + NEWS.length) % NEWS.length);
-  }, []);
-
-  useEffect(() => {
-    if (paused) return;
-    const t = window.setTimeout(() => go(i + 1), AUTOPLAY_MS);
-    return () => window.clearTimeout(t);
-  }, [go, i, paused]);
-
-  return (
-    <div>
-      <div
-        className="relative rounded-[24px] border border-[#001161]/8 overflow-hidden bg-white shadow-[0_4px_24px_rgba(0,17,97,0.06)]"
-        onMouseEnter={() => setPaused(true)}
-        onMouseLeave={() => setPaused(false)}
-      >
-        <div
-          className="flex transition-transform duration-700"
-          style={{ transform: `translateX(-${i * 100}%)`, transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)' }}
-        >
-          {NEWS.map((slide, idx) => (
-            <div key={slide.title} className="min-w-full grid grid-cols-1 md:grid-cols-[300px_1fr]">
-              <NewsPanelSide slide={slide} idx={idx} />
-
-              <div className="p-8 md:p-11 flex flex-col justify-center">
-                <h3 className="text-[#001161] text-[22px] md:text-[30px] font-bold leading-[1.12]" style={{ fontFamily: ff }}>{slide.title}</h3>
-                <p className="text-[#4e5871] text-[15px] md:text-[16px] mt-3 max-w-[52ch] leading-relaxed" style={{ fontFamily: ff }}>
-                  {slide.text}
-                </p>
-                <span
-                  className="self-start mt-5 rounded-full border border-[#001161]/12 px-3.5 py-1.5 text-[12.5px] font-bold text-[#4e5871]"
-                  style={{ fontFamily: ff }}
-                >
-                  {slide.chip}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between mt-4">
-        <div className="flex gap-2">
-          {NEWS.map((slide, idx) => (
-            <button
-              key={slide.title}
-              type="button"
-              aria-label={`Novinka ${idx + 1}`}
-              onClick={() => go(idx)}
-              className={`size-[9px] rounded-full transition-transform ${
-                idx === i ? 'bg-[#ff184a] scale-125' : 'bg-[#001161]/20 hover:bg-[#001161]/35'
-              }`}
-            />
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            aria-label="Předchozí novinka"
-            onClick={() => go(i - 1)}
-            className="size-[42px] rounded-[9px] border border-[#001161]/12 bg-white hover:bg-[#f5f7fb] flex items-center justify-center text-[#001161]"
-          >
-            <ChevronLeft className="w-[18px] h-[18px]" strokeWidth={2.4} />
-          </button>
-          <button
-            type="button"
-            aria-label="Další novinka"
-            onClick={() => go(i + 1)}
-            className="size-[42px] rounded-[9px] border border-[#001161]/12 bg-white hover:bg-[#f5f7fb] flex items-center justify-center text-[#001161]"
-          >
-            <ChevronRight className="w-[18px] h-[18px]" strokeWidth={2.4} />
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -765,14 +628,24 @@ export function AplikacePage() {
       </SectionShell>
 
       {/* Co je nové */}
-      <SectionShell id="novinky">
-        <SectionHead
-          kicker="Co je nové"
-          title="Největší novinky nové aplikace"
-          text="Podívejte se, co se mění a v čem vám aplikace nově usnadní práci. Listujte šipkami nebo tečkami."
+      <section id="novinky">
+        <div className="px-5 sm:px-8 md:px-12 pt-14 md:pt-[4.5rem] pb-8 md:pb-10">
+          <div className="max-w-[1180px] mx-auto">
+            <SectionHead
+              kicker="Co je nové"
+              title="Největší novinky nové aplikace"
+              text="Vyberte novinku v menu vlevo — u každé uvidíte, co se mění a v čem vám aplikace usnadní práci."
+            />
+          </div>
+        </div>
+        <SubjectTabsSection
+          subject="Fyzika"
+          displayName="Fyzika"
+          light
+          staticTabs={APLIKACE_NEWS_TABS}
+          sectionHeading="Co je nové v aplikaci?"
         />
-        <NewsSlider />
-      </SectionShell>
+      </section>
 
       {/* CTA */}
       <SectionShell>
