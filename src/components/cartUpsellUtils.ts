@@ -59,8 +59,31 @@ export function isPrintProduct(product: any): boolean {
   return !isDigitalProduct(product);
 }
 
+export function getProductNote(product: any): string {
+  return String(
+    product?.note ||
+    product?.poznamka ||
+    product?.metadata?.poznamka ||
+    product?.metadata?.poznámka ||
+    product?.metadata?.note ||
+    '',
+  ).trim();
+}
+
+export function isAvailabilityNote(note: string): boolean {
+  /**
+   * Stejná dostupnostní poznámka schovává nákupní CTA na detailu produktu.
+   * Přesné názvy měsíců brání falešným shodám typu "listy" nebo "sledovat".
+   */
+  return /\b(leden|únor|b[rř]ezen|duben|kv[eě]ten|[cč]ervenec|[cč]erven|srpen|z[aá][rř][ií]|[rř][íi]jen|listopad|prosinec|dostupn)/i.test(note);
+}
+
+export function isUnavailableForCart(product: any): boolean {
+  return isAvailabilityNote(getProductNote(product));
+}
+
 export function isAddable(product: any): boolean {
-  return !!getProductVariantId(product);
+  return !!getProductVariantId(product) && !isUnavailableForCart(product);
 }
 
 /**
@@ -99,7 +122,13 @@ export function getProductVariantId(product: any): string | undefined {
 }
 
 export function getProductImage(product: any): string | undefined {
-  return product.image || product.imageUrl || product.coverImage || undefined;
+  const raw = product.image || product.imageUrl || product.coverImage || undefined;
+  if (typeof raw !== 'string' || !raw.trim()) return undefined;
+  // Shoptet CDN: /orig/ → 404, /big/ funguje (viz rewriteShoptetOrigImageUrl).
+  if (raw.includes('cdn.myshoptet.com') && raw.includes('/user/shop/orig/')) {
+    return raw.replace('/user/shop/orig/', '/user/shop/big/');
+  }
+  return raw;
 }
 
 export function getCartUpsellRecommendations(cartLines: CartUpsellLine[], products: any[]) {
@@ -153,7 +182,8 @@ export function getCartUpsellRecommendations(cartLines: CartUpsellLine[], produc
 
   const allProducts = products.filter((product) => (
     !!(product.name || product.title) &&
-    !!getProductImage(product)
+    !!getProductImage(product) &&
+    !isUnavailableForCart(product)
   ));
 
   let crossCard: { grade: number; items: any[] } | null = null;

@@ -8,9 +8,20 @@ import { projectId } from './supabase/info';
 const OBJECT_PUBLIC = '/storage/v1/object/public/';
 const RENDER_PUBLIC = '/storage/v1/render/image/public/';
 
+/**
+ * Shoptet CDN už neslouží `/user/shop/orig/` (404) — `/big/` a `/detail/` fungují.
+ * Opraví URL merch náhledů importovaných ze Shoptetu.
+ */
+export function rewriteShoptetOrigImageUrl(src: string): string {
+  const s = src.trim();
+  if (!s.includes('cdn.myshoptet.com')) return s;
+  if (!s.includes('/user/shop/orig/')) return s;
+  return s.replace('/user/shop/orig/', '/user/shop/big/');
+}
+
 /** Opraví URL na absolutní kvůli transformaci (relativní `/storage/...` → projekt Supabase). */
 export function normalizeSupabaseImageSrc(src: string): string {
-  let s = src.trim();
+  let s = rewriteShoptetOrigImageUrl(src.trim());
   if (s.startsWith('//')) {
     s = `https:${s}`;
   }

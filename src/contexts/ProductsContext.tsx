@@ -3,6 +3,7 @@ import { publicAnonKey } from '../utils/supabase/info';
 import { edgeFunctionBase } from '../utils/edgeFunctionBase';
 import { promotionCardBadgeTextsForProduct, type ProductBundleRecord } from '../utils/bundlePricing';
 import { applyAllDigitalBundleStripe } from '../utils/digitalSubscription';
+import { rewriteShoptetOrigImageUrl } from '../utils/supabaseImageThumbnail';
 
 interface ProductsContextType {
   products: any[];
@@ -43,7 +44,15 @@ export function ProductsProvider({ children }: { children: ReactNode }) {
       if (!pRes.ok) throw new Error(`Server error: ${pRes.status}`);
       const data = await pRes.json();
       if (data.products) {
-        setProducts(data.products.map((p: any) => applyAllDigitalBundleStripe(p)));
+        setProducts(
+          data.products.map((p: any) => {
+            const next = applyAllDigitalBundleStripe(p);
+            if (typeof next?.image === 'string' && next.image) {
+              next.image = rewriteShoptetOrigImageUrl(next.image);
+            }
+            return next;
+          }),
+        );
       }
       if (bRes.ok) {
         const bJson = await bRes.json();
