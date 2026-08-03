@@ -5,7 +5,8 @@ import { ArrowRight, ChevronRight, ExternalLink } from 'lucide-react';
 import { SEOHead } from './SEOHead';
 import { HeroAplikaceVideoBackground, HeroAplikaceVideoTitle } from './HeroAplikaceVideoSlide';
 import { SubjectTabsSection, type SubjectExtraTab } from './SubjectTabsSection';
-import { appUrl } from '../config/publicUrls';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { APP_ENTRY_RESET_PARAM } from '@/lib/appEntryChoice';
 
 const ff = "'Fenomen Sans', sans-serif";
 
@@ -24,7 +25,11 @@ const WB = {
   slate: '#4e5871',
 } as const;
 
-const APP_URL = appUrl();
+/**
+ * Tahle stránka je celá o nové aplikaci, takže se rozcestník musí zeptat i toho, kdo si
+ * dřív vybral původní aplikaci — jinak by tlačítko slibovalo novou a otevřelo starou.
+ */
+const APP_ENTRY_CHOOSE_URL = `${APP_ENTRY_PATH}?${APP_ENTRY_RESET_PARAM}=1`;
 
 /** Nová aplikace Vividbooks — odemyká se 3. 8. 2026 (lokální půlnoc). */
 const NOVA_APLIKACE_LAUNCH_LABEL = '3. srpna';
@@ -224,8 +229,8 @@ function AppLaunchButton({ icon }: { icon?: React.ReactNode }) {
 
   if (unlocked) {
     return (
-      <a
-        href={APP_URL}
+      <Link
+        to={APP_ENTRY_CHOOSE_URL}
         target="_blank"
         rel="noopener noreferrer"
         className={`${BTN_BASE} text-white shadow-[0_10px_26px_rgba(255,24,74,0.28)]`}
@@ -233,7 +238,7 @@ function AppLaunchButton({ icon }: { icon?: React.ReactNode }) {
       >
         {label}
         {icon}
-      </a>
+      </Link>
     );
   }
 
