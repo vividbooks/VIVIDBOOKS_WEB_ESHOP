@@ -13,7 +13,7 @@ import {
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
-import { appUrl } from '../utils/publicSiteUrl';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
@@ -948,15 +948,15 @@ export function TrialRegistrationForm({
                 {'Ozveme se v\u00e1m co nejd\u0159\u00edve s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}
               </p>
             )}
-            <a
-              href={appUrl()}
+            <Link
+              to={APP_ENTRY_PATH}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 font-bold text-[16px] text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9]"
               style={FF}>
               <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
               {'Otev\u0159\u00edt aplikaci'}
-            </a>
+            </Link>
             <TrialTrainingVideosList />
           </motion.div>
         ) : (

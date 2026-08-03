@@ -7,7 +7,7 @@ import { submitFreeTrialAjax, type FreeTrialFields, type FreeTrialSubmitResult }
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
-import { appUrl } from '../utils/publicSiteUrl';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -233,8 +233,8 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
               </p>
             </div>
           </div>
-          <a
-            href={appUrl()}
+          <Link
+            to={APP_ENTRY_PATH}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-3.5 text-[15px] font-bold text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9] no-underline"
@@ -242,7 +242,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           >
             <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
             {'Otev\u0159\u00edt aplikaci'}
-          </a>
+          </Link>
           <TrialTrainingVideosList compact sectionClassName="mt-5 border-t border-green-200/70 pt-5" />
         </div>
       </motion.div>

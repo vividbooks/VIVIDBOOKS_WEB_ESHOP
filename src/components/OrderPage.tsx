@@ -73,6 +73,7 @@ import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '.
 import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
 import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
 import { isValidCzechPhone, PHONE_CZ_HINT } from '../utils/phoneCZ';
+import { useVividbooksPresence } from '@/lib/vividbooksPresence';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -528,6 +529,26 @@ export function OrderPage() {
     name: '', email: '', phone: '', position: '', gdpr: false, newsletter: false,
     schoolName: '', ico: '', street: '', city: '', zip: '',
   });
+
+  /**
+   * Kdo je přihlášený v aplikaci učebnic (cookie na `.vividbooks.com`). Slouží jen k
+   * předvyplnění prázdných polí — objednávka se pořád identifikuje tím, co je ve formuláři.
+   */
+  const appPresence = useVividbooksPresence();
+  useEffect(() => {
+    if (!appPresence) return;
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        name: prev.name || appPresence.name,
+        email: prev.email || appPresence.email || '',
+        schoolName: prev.schoolName || appPresence.school || '',
+      };
+      const unchanged =
+        next.name === prev.name && next.email === prev.email && next.schoolName === prev.schoolName;
+      return unchanged ? prev : next;
+    });
+  }, [appPresence]);
 
   const schoolPaymentOptionsVisible = useMemo(
     () => SCHOOL_PAYMENT_OPTIONS.filter(

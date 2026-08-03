@@ -170,7 +170,7 @@ export function CookieConsentBar() {
             <ToggleRow
               id={`${titleId}-nec`}
               label="Nezbytné"
-              description="Nutné pro fungování webu, košíku, platby a zabezpečení. Nelze vypnout."
+              description="Nutné pro fungování webu, košíku, platby a zabezpečení. Patří sem i údaj o tom, že jste přihlášeni v aplikaci učebnic, abychom vás nemuseli ptát znovu na stejné údaje. Nelze vypnout."
               checked
               disabled
             />

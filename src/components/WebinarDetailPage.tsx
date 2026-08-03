@@ -15,6 +15,7 @@ import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import { getMergedWebinarSurveyQuestions, getPreWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
+import { useVividbooksPresence } from '@/lib/vividbooksPresence';
 import {
   loadSavedDvppContacts,
   rememberDvppContact,
@@ -165,6 +166,34 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     usesVividbooks: '',
     birthDateIso: '',
   });
+
+  /**
+   * Kdo je přihlášený v aplikaci učebnic (cookie na `.vividbooks.com`). Předvyplňujeme jen
+   * prázdná pole, ať uživateli nepřepíšeme, co si už napsal.
+   */
+  const presence = useVividbooksPresence();
+  const [appPrefillName, setAppPrefillName] = useState('');
+  useEffect(() => {
+    if (!presence) return;
+    setForm((prev) => {
+      const next = {
+        ...prev,
+        name: prev.name || presence.name,
+        email: prev.email || presence.email || '',
+        schoolName: prev.schoolName || presence.school || '',
+      };
+      if (next.name === prev.name && next.email === prev.email && next.schoolName === prev.schoolName) {
+        return prev;
+      }
+      setAppPrefillName(presence.name);
+      return next;
+    });
+  }, [presence]);
+
+  const clearAppPrefill = useCallback(() => {
+    setForm((prev) => ({ ...prev, name: '', email: '', schoolName: '', ico: '', schoolAddress: '' }));
+    setAppPrefillName('');
+  }, []);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -820,6 +849,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   submitting={submitting}
                   positions={POSITIONS}
                   submitButtonText={'Pokra\u010dovat k dotazn\u00edku'}
+                  prefilledFromAppName={appPrefillName}
+                  onClearAppPrefill={clearAppPrefill}
                 />
               ) : (
                 <form onSubmit={handleLightLeadSubmit} noValidate className="flex flex-col gap-3">
@@ -1191,6 +1222,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   error={error}
                   submitting={submitting}
                   positions={POSITIONS}
+                  prefilledFromAppName={appPrefillName}
+                  onClearAppPrefill={clearAppPrefill}
                 />
               )}
             </div>

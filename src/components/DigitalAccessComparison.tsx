@@ -1,6 +1,7 @@
 import React from 'react';
 import { CheckCircle2 } from 'lucide-react';
-import { appUrl } from '../utils/publicSiteUrl';
+import { Link } from 'react-router';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
 
 /* ─── Per-subject configuration ─────────────────────────────── */
 const SUBJECT_DATA: Record<string, {
@@ -165,15 +166,15 @@ export function DigitalAccessComparison({ subject, workbooks, onOrder, compact =
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-          <a
-            href={appUrl()}
+          <Link
+            to={APP_ENTRY_PATH}
             target="_blank"
             rel="noopener noreferrer"
             className="text-[#001161] text-[13px] underline underline-offset-2 hover:text-[#FF6B1A] transition-colors"
             style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
           >
             {'Více'}
-          </a>
+          </Link>
           {onOrder && (
             <button
               onClick={onOrder}
@@ -250,15 +251,15 @@ export function DigitalAccessComparison({ subject, workbooks, onOrder, compact =
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-white/20">
-          <a
-            href={appUrl()}
+          <Link
+            to={APP_ENTRY_PATH}
             target="_blank"
             rel="noopener noreferrer"
             className="text-white/80 text-[13px] underline underline-offset-2 hover:text-white transition-colors"
             style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
           >
             {'Více'}
-          </a>
+          </Link>
           <span
             className="text-white text-[13px] font-bold"
             style={{ fontFamily: "'Fenomen Sans', sans-serif" }}

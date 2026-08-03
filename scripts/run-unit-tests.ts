@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { strict as assert } from 'node:assert';
+import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
+import {
+  appEntryTargetUrl,
+  forgetAppEntryChoice,
+  parseAppEntryChoice,
+  readAppEntryChoice,
+  rememberAppEntryChoice,
+} from '../src/lib/appEntryChoice.ts';
 
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import {
@@ -250,6 +258,103 @@ registerTest('deploy-edge-functions.yml has protected deploy requirements', () =
   assert.ok(/SUPABASE_ACCESS_TOKEN/.test(raw), 'SUPABASE_ACCESS_TOKEN secret is required');
   assert.ok(/supabase functions deploy/.test(raw), 'edge functions deploy command is present');
   assert.ok(/permissions:/.test(raw), 'permissions block is configured');
+});
+
+registerTest('vividbooks presence cookie decodes what the app writes', () => {
+  /** Stejné kódování jako `frontend/src/app/services/cross-site-presence.ts` ve vividbooks-ultra. */
+  const encode = (payload: unknown) =>
+    Buffer.from(JSON.stringify(payload), 'utf8')
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+
+  const presence = parsePresenceValue(
+    encode({
+      v: 1,
+      name: 'Jana Nováková',
+      email: 'jana@example.cz',
+      school: 'ZŠ Komenského',
+      at: Date.now(),
+    }),
+  );
+
+  assert.ok(presence, 'platná cookie se má rozparsovat');
+  assert.equal(presence!.name, 'Jana Nováková');
+  assert.equal(presence!.email, 'jana@example.cz');
+  assert.equal(presence!.school, 'ZŠ Komenského');
+  assert.equal(presence!.avatar, undefined);
+  assert.equal(presenceFirstName(presence), 'Jana');
+
+  const staleMs = 31 * 24 * 60 * 60 * 1000;
+  assert.equal(
+    parsePresenceValue(encode({ v: 1, name: 'Jana', at: Date.now() - staleMs })),
+    null,
+    'starší než měsíc už uživatele nepředstíráme',
+  );
+  assert.equal(
+    parsePresenceValue(encode({ v: 2, name: 'Jana', at: Date.now() })),
+    null,
+    'neznámá verze se ignoruje',
+  );
+  assert.equal(
+    parsePresenceValue(encode({ v: 1, name: '   ', at: Date.now() })),
+    null,
+    'bez jména nemáme co zobrazit',
+  );
+  assert.equal(parsePresenceValue('nonsense!!'), null, 'poškozená hodnota nesmí shodit web');
+  assert.equal(presenceFirstName(null), '');
+});
+
+registerTest('rozcestník aplikací přijme jen známé volby', () => {
+  assert.equal(parseAppEntryChoice('nova'), 'nova');
+  assert.equal(parseAppEntryChoice('puvodni'), 'puvodni');
+  assert.equal(parseAppEntryChoice('neco jineho'), null);
+  assert.equal(parseAppEntryChoice(null), null);
+
+  assert.ok(
+    appEntryTargetUrl('nova').startsWith('https://nove.vividbooks.com'),
+    'nová volba vede do nové aplikace',
+  );
+  assert.ok(
+    appEntryTargetUrl('puvodni').startsWith('https://app.vividbooks.com'),
+    'původní volba vede do staré aplikace',
+  );
+});
+
+registerTest('zapamatovaná volba aplikace přežije i zablokované úložiště', () => {
+  const original = Reflect.get(globalThis, 'window');
+  const store = new Map<string, string>();
+
+  try {
+    Reflect.set(globalThis, 'window', {
+      localStorage: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, value),
+        removeItem: (key: string) => void store.delete(key),
+      },
+    });
+
+    assert.equal(readAppEntryChoice(), null, 'bez volby se ptáme');
+    rememberAppEntryChoice('puvodni');
+    assert.equal(readAppEntryChoice(), 'puvodni');
+    forgetAppEntryChoice();
+    assert.equal(readAppEntryChoice(), null, 'po zapomenutí se ptáme znovu');
+
+    Reflect.set(globalThis, 'window', {
+      get localStorage(): never {
+        throw new Error('storage blocked');
+      },
+    });
+    assert.equal(readAppEntryChoice(), null, 'zablokované úložiště nesmí shodit rozcestník');
+    rememberAppEntryChoice('nova');
+  } finally {
+    if (original === undefined) {
+      Reflect.deleteProperty(globalThis, 'window');
+    } else {
+      Reflect.set(globalThis, 'window', original);
+    }
+  }
 });
 
 await run();

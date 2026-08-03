@@ -3,8 +3,13 @@ import { MARKETING_ORIGIN_PRIMARY_DEFAULT } from './marketingSiteConstants';
 const DEFAULT_PUBLIC_SITE_ORIGIN = MARKETING_ORIGIN_PRIMARY_DEFAULT;
 
 export const LEGACY_CZ_SITE_ORIGIN = 'https://www.vividbooks.cz';
-export const APP_SITE_ORIGIN = 'https://app.vividbooks.com';
+export const APP_SITE_ORIGIN = 'https://nove.vividbooks.com';
+/** Původní Angular aplikace. Běží dál souběžně s novou, dokud na ni školy nepřejdou. */
+export const LEGACY_APP_SITE_ORIGIN = 'https://app.vividbooks.com';
 export const API_SITE_ORIGIN = 'https://api.vividbooks.com';
+
+/** Rozcestník „nová, nebo původní aplikace“. Sem míří odkazy do aplikace napříč webem. */
+export const APP_ENTRY_PATH = '/otevrit';
 /** @deprecated Starý Shoptet — nový katalog je na www.vividbooks.com */
 export const ESHOP_SITE_ORIGIN = MARKETING_ORIGIN_PRIMARY_DEFAULT;
 
@@ -44,6 +49,10 @@ export function legacyCzUrl(path = ''): string {
 
 export function appUrl(path = ''): string {
   return joinUrl(APP_SITE_ORIGIN, path);
+}
+
+export function legacyAppUrl(path = ''): string {
+  return joinUrl(LEGACY_APP_SITE_ORIGIN, path);
 }
 
 export function apiUrl(path = ''): string {

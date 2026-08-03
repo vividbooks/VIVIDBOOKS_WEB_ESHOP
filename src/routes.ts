@@ -176,6 +176,10 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/OtherProductsPage'), 'OtherProductsPage'),
             },
             { path: 'aplikace', lazy: lazyNamed(() => import('./components/AplikacePage'), 'AplikacePage') },
+            {
+              path: 'otevrit',
+              lazy: lazyNamed(() => import('./components/OtevritAplikaciPage'), 'OtevritAplikaciPage'),
+            },
             { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },

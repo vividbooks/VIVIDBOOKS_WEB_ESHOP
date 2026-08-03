@@ -2,7 +2,8 @@ import { Phone } from 'lucide-react';
 import { Link, useNavigate } from 'react-router';
 import { useCart } from '../contexts/CartContext';
 import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
-import { appUrl } from '../utils/publicSiteUrl';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { presenceFirstName, useVividbooksPresence } from '@/lib/vividbooksPresence';
 
 interface TopNavProps {
   onOrder?: () => void;
@@ -18,6 +19,8 @@ export function TopNav({ onOrder }: TopNavProps) {
   const { itemCount, toggleCart } = useCart();
   const { extraCount } = useSchoolOrderDraftMeta();
   const schoolOrderCount = itemCount + extraCount;
+  const presence = useVividbooksPresence();
+  const presenceName = presenceFirstName(presence);
 
   return (
     <nav className="hidden md:flex fixed top-0 left-[245px] right-0 z-[55] bg-white border-b border-gray-100 h-14 items-center px-8 select-none">
@@ -79,13 +82,14 @@ export function TopNav({ onOrder }: TopNavProps) {
           </button>
         )}
 
-        <a
-          href={appUrl()}
+        <Link
+          to={APP_ENTRY_PATH}
           target="_blank"
           rel="noopener noreferrer"
+          title={presence?.school || undefined}
           className={`${BTN_BASE} border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white group`}
         >
-          {'Otev\u0159\u00edt u\u010debnice'}
+          {presenceName ? `Pokra\u010dovat jako ${presenceName}` : 'Otev\u0159\u00edt u\u010debnice'}
           <svg
             className="w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5"
             fill="none"
@@ -94,7 +98,7 @@ export function TopNav({ onOrder }: TopNavProps) {
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
           </svg>
-        </a>
+        </Link>
       </div>
     </nav>
   );

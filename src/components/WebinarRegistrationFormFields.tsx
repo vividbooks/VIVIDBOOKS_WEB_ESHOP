@@ -39,6 +39,9 @@ type Props = {
   submitting: boolean;
   positions: string[];
   submitButtonText?: string;
+  /** Jméno z aplikace učebnic, kterým jsme formulář předvyplnili. */
+  prefilledFromAppName?: string;
+  onClearAppPrefill?: () => void;
 };
 
 /**
@@ -62,9 +65,26 @@ export function WebinarRegistrationFormFields({
   submitting,
   positions,
   submitButtonText = 'P\u0159ihl\u00e1sit',
+  prefilledFromAppName,
+  onClearAppPrefill,
 }: Props) {
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
+      {prefilledFromAppName && onClearAppPrefill ? (
+        <div className="flex items-center justify-between gap-3 bg-[#5B4FD8]/8 rounded-[12px] px-4 py-3 border border-[#5B4FD8]/20">
+          <p className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161] leading-tight">
+            {`Vypln\u011bno podle p\u0159ihl\u00e1\u0161en\u00ed v aplikaci: ${prefilledFromAppName}`}
+          </p>
+          <button
+            type="button"
+            onClick={onClearAppPrefill}
+            className="shrink-0 font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#5B4FD8] underline underline-offset-2 hover:text-[#001161] transition-colors"
+          >
+            {'Nejste to vy?'}
+          </button>
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between bg-white rounded-[12px] px-4 py-3 border border-[#001161]/10">
         <div>
           <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161] leading-tight">
