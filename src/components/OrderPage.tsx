@@ -837,7 +837,10 @@ export function OrderPage() {
   };
 
   /* ── computed products ── */
-  const workbooks = useMemo(() => products.filter(p => p.type === 'workbook'), [products]);
+  const workbooks = useMemo(
+    () => products.filter(p => p.type === 'workbook' && !p.hideFromCatalog && p.handedness !== 'left'),
+    [products],
+  );
   const workbookProductIds = useMemo(() => new Set(workbooks.map((p) => String(p.id))), [workbooks]);
   const productBundlesById = useMemo(() => {
     const m: Record<string, ProductBundleRecord> = {};

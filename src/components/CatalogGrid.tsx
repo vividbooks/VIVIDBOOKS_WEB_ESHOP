@@ -1132,7 +1132,10 @@ export default function CatalogGrid() {
   }, [groupingMode, products]);
 
   /* â”€â”€ grouping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-  const workbooks = useMemo(() => products.filter(p => p.type === 'workbook'), [products]);
+  const workbooks = useMemo(
+    () => products.filter(p => p.type === 'workbook' && !p.hideFromCatalog && p.handedness !== 'left'),
+    [products],
+  );
 
   const getDigitalLicenseForGroup = (mainGroup: string) => {
     const isSpecial = ['Matematika', 'Prvouka', '\u010cesk\u00fd jazyk']

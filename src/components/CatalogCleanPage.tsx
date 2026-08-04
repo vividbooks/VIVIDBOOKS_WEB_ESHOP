@@ -236,6 +236,7 @@ function productMeta(product: any): Array<{ label: string; value: string }> {
 }
 
 function isCatalogProduct(product: any): boolean {
+  if (product?.hideFromCatalog || product?.handedness === 'left') return false;
   if (product?.type === 'workbook') return true;
   const category = normalizeText(product?.category);
   return product?.type === 'merch' && category.includes('zakovske knizky');

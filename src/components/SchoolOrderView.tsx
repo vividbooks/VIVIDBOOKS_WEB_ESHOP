@@ -154,7 +154,7 @@ export function SchoolOrderView({
   };
 
   /* ── product map – built dynamically from actual data ── */
-  const workbookProducts = products.filter(p => p.type === 'workbook');
+  const workbookProducts = products.filter(p => p.type === 'workbook' && !p.hideFromCatalog && p.handedness !== 'left');
 
   // Group dynamically by actual category values from the database
   const productsByCategory = workbookProducts.reduce<Record<string, Product[]>>((acc, p) => {

@@ -20,6 +20,10 @@ export interface Product {
   images?: string[];
   description?: string;
   isbn?: string;
+  /** Skryje produkt v přehledech katalogu (homepage, předmět, /katalog). Detail zůstane dostupný. */
+  hideFromCatalog?: boolean;
+  /** U písanek: verze pro praváky / leváky. */
+  handedness?: 'right' | 'left';
   poradi?: number;
   format?: string;
   pocetStranek?: number;

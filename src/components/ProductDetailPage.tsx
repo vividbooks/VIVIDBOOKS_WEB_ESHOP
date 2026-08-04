@@ -40,6 +40,10 @@ import {
   findAllDigitalBundleProduct,
   getDigitalSubjectShortLabel,
 } from '../utils/digitalSubscription';
+import {
+  findPisankaHandednessPair,
+  getPisankaHandedness,
+} from '../utils/pisankaHandedness';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
@@ -1047,6 +1051,10 @@ export function ProductDetailPage({
         })
     : [];
 
+  const pisankaHandedness = getPisankaHandedness(product);
+  const pisankaPair = findPisankaHandednessPair(product, products);
+  const showPisankaHandednessSwitch = Boolean(pisankaHandedness && pisankaPair);
+
   const handleAddToNewCart = () => {
     const vid = effectiveCartVariantId;
     if (!vid) return;
@@ -1123,6 +1131,7 @@ export function ProductDetailPage({
       isMath
         ? products.filter((p) => {
             if (p.id === product.id) return false;
+            if (p.hideFromCatalog || p.handedness === 'left') return false;
             const cat = (p.category || '').toLowerCase();
             const name = (p.name || '').toLowerCase();
             return cat.includes('matematik') || name.includes('matematik') || name.includes('krok za krokem');
@@ -1130,6 +1139,7 @@ export function ProductDetailPage({
         : products
             .filter((p) => {
               if (p.id === product.id) return false;
+              if (p.hideFromCatalog || p.handedness === 'left') return false;
               const pCat = (p.category || '').toLowerCase();
               const thisCat = (product.category || '').toLowerCase();
               const pBase = pCat.split(/[\s\-]/)[0];
@@ -1564,6 +1574,40 @@ export function ProductDetailPage({
                 </span>
               )}
             </div>
+
+            {showPisankaHandednessSwitch && pisankaPair && (
+              <div
+                className="mb-4 inline-flex w-fit max-w-full rounded-xl border border-[#001161]/12 bg-[#f1f3f8] p-1"
+                role="group"
+                aria-label="Verze písanky pro praváky nebo leváky"
+              >
+                {(
+                  [
+                    { key: 'right' as const, label: 'Pro praváky', target: pisankaHandedness === 'right' ? product : pisankaPair },
+                    { key: 'left' as const, label: 'Pro leváky', target: pisankaHandedness === 'left' ? product : pisankaPair },
+                  ]
+                ).map((opt) => {
+                  const active = pisankaHandedness === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => {
+                        if (!active) navigate(productDetailPath(opt.target, products));
+                      }}
+                      aria-pressed={active}
+                      className={`rounded-[10px] px-3.5 py-2 font-['Fenomen_Sans',sans-serif] text-[12px] font-bold uppercase tracking-[0.08em] transition-colors cursor-pointer ${
+                        active
+                          ? 'bg-white text-[#001161] shadow-[0_1px_3px_rgba(0,17,97,0.12)]'
+                          : 'text-[#001161]/45 hover:text-[#001161]/75'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Title */}
             <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[24px] md:text-[29px] leading-[1.08] mb-5">
@@ -2538,7 +2582,7 @@ export function ProductDetailPage({
       {COMPARISON_SUBJECTS.includes((product.category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim()) && (() => {
         const baseSubject = (product.category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim();
         const subjectWorkbooks = products
-          .filter(p => (p.category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim() === baseSubject && p.type === 'workbook' && p.image)
+          .filter(p => (p.category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim() === baseSubject && p.type === 'workbook' && p.image && !p.hideFromCatalog && p.handedness !== 'left')
           .slice(0, 4);
         return (
           <div className="pt-10 pb-0 px-6 md:px-12 bg-[#fafbfe]">

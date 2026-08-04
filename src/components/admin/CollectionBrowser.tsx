@@ -139,6 +139,22 @@ const PRODUCT_FIELDS: FieldDef[] = [
   { key: 'dolozka', label: 'Doložka MŠMT', type: 'text', fullWidth: true },
   { key: 'obsah', label: 'Obsah sešitu (RAG)', type: 'textarea', fullWidth: true, placeholder: 'Kapitola 1: Přirozená čísla\nKapitola 2: Zlomky\n...', hint: 'Zobrazuje se pouze v RAG databázi. Pomáhá AI lépe odpovídat na dotazy.' },
   { key: 'isbn', label: 'ISBN', type: 'text' },
+  {
+    key: 'handedness',
+    label: 'Praváci / leváci (písanky)',
+    type: 'select',
+    options: [
+      { value: '', label: '—' },
+      { value: 'right', label: 'Pro praváky' },
+      { value: 'left', label: 'Pro leváky' },
+    ],
+  },
+  {
+    key: 'hideFromCatalog',
+    label: 'Skrýt z přehledu katalogu',
+    type: 'boolean',
+    hint: 'Produkt zůstane na detailu (např. přepínač praváci/leváci), ale nezobrazí se na homepage ani v katalogu.',
+  },
   { key: 'item_id', label: 'Item ID (XML feed)', type: 'text', hint: 'Externí ID pro Google/Meta feed. Nechte prázdné, pokud má feed použít interní ID položky.' },
   { key: 'basecomProductId', label: 'Base.com Product ID', type: 'text' },
   { key: 'basecomSku', label: 'Base.com SKU', type: 'text', hint: 'Standardně bereme Shoptet ID. Toto pole slouží jen jako výjimka / override.' },

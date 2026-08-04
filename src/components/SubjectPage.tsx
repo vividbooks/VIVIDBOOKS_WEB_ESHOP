@@ -462,6 +462,7 @@ export function SubjectPage({
   const showAuthorIntro = hasRealHeroBody;
 
   const subjectProducts = products.filter(p => {
+    if (p.hideFromCatalog || p.handedness === 'left') return false;
     const cat = (p.category || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     const baseKey = baseSubject.toLowerCase().split(' ')[0];
