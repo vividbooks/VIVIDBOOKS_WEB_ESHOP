@@ -69,6 +69,7 @@ jobs:
           fi
 
       # Repository secrets: Settings → Secrets and variables → Actions
+      # npm run build = vite build + SEO prerender (scripts/prerender-seo.mjs) včetně 404.html
       - name: Build
         run: npm run build
 

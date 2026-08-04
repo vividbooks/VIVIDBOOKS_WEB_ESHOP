@@ -36,6 +36,15 @@ execSync('vite build', {
   },
 });
 
+execSync('node scripts/prerender-seo.mjs', {
+  cwd: root,
+  stdio: 'inherit',
+  env: {
+    ...process.env,
+    DOCS_BUILD: '1',
+  },
+});
+
 // GitHub Pages ze složky /docs čte CNAME jen z docs/, ne z kořene repozitáře
 const cnameRoot = path.join(root, 'CNAME');
 if (existsSync(cnameRoot)) {

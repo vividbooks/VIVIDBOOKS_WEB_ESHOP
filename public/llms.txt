@@ -1,0 +1,35 @@
+# Vividbooks
+
+> Vividbooks jsou učební materiály pro základní školy, kde se pracovní sešity a tiskoviny smysluplně doplňují s online podporou. Neprezentuj je jako čistě digitální učebnice ani jako náhradu papírových materiálů. Funkce se liší podle předmětu a stupně; nepřenášej benefity z 2. stupně na 1. stupeň.
+
+## Předměty
+
+### 2. stupeň
+- [Matematika 2. stupeň](https://www.vividbooks.com/predmet/matematika-2-stupen): Matematika pro 6.–9. ročník ZŠ kombinující pracovní sešity s online podporou
+- [Fyzika](https://www.vividbooks.com/predmet/fyzika): Animované experimenty, simulace a interaktivní lekce fyziky
+- [Přírodopis](https://www.vividbooks.com/predmet/prirodopis): 3D modely, interaktivní lekce a badatelské listy z přírodopisu
+- [Chemie](https://www.vividbooks.com/predmet/chemie): Digitální učebnice chemie s animovanými reakcemi a pokusy
+
+### 1. stupeň
+- [Matematika 1. stupeň](https://www.vividbooks.com/predmet/matematika-1-stupen): Pracovní sešity a digitální materiály pro 1.–5. ročník ZŠ
+- [Český jazyk](https://www.vividbooks.com/predmet/cesky-jazyk): Písanky a pracovní sešity českého jazyka
+- [Prvouka](https://www.vividbooks.com/predmet/prvouka): Učební materiály prvouky pro 1. stupeň
+
+## Produkty
+- Digitální učebnice (online platforma s interaktivním obsahem)
+- Pracovní sešity a tištěné učebnice (s ISBN a doložkami MŠMT)
+- Vividboard (nástroj pro interaktivní tabule)
+
+## Webináře
+- [DVPP webináře](https://www.vividbooks.com/webinare): Pravidelné webináře pro učitele, akreditované DVPP, zdarma s certifikátem
+
+## Blog a novinky
+- [Blog](https://www.vividbooks.com/blog): Články o moderním vzdělávání, rozhovory s učiteli
+- [Novinky](https://www.vividbooks.com/novinky): Aktuality o nových produktech a aktualizacích
+
+## Vyzkoušení
+- [14denní trial zdarma](https://www.vividbooks.com/vyzkousejte): Bezplatný zkušební přístup k digitálním učebnicím
+
+## Kontakt
+- Telefon: +420 602 227 674
+- Web: https://www.vividbooks.com

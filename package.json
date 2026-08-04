@@ -77,13 +77,15 @@
     "@types/leaflet": "^1.9.21",
     "@types/node": "^20.10.0",
     "@vitejs/plugin-react": "^4.7.0",
+    "linkedom": "^0.18.13",
     "tailwindcss": "4.1.12",
     "tsx": "^4.19.4",
     "vite": "6.3.5"
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/prerender-seo.mjs",
+    "prerender:seo": "node scripts/prerender-seo.mjs",
     "test": "tsx scripts/run-unit-tests.ts",
     "build:github-pages": "node scripts/gh-pages-build.mjs",
     "og-assets": "python3 scripts/generate_og_assets.py",
