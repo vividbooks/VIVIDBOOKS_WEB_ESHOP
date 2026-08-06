@@ -37,6 +37,13 @@ function envTwitterSite(): string | undefined {
   }
 }
 
+function decodeEscapedText(value: string | undefined): string | undefined {
+  if (typeof value !== 'string' || !/\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2})/.test(value)) return value;
+  return value
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
+}
+
 export function SEOHead({
   title,
   description = DEFAULT_DESCRIPTION,
@@ -51,10 +58,13 @@ export function SEOHead({
   jsonLd,
   noIndex = false,
 }: SEOHeadProps) {
-  const fullTitle = title ? `${title} | ${SITE_NAME}` : `${SITE_NAME} \u2013 Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice`;
+  const safeTitle = decodeEscapedText(title);
+  const safeDescription = decodeEscapedText(description) || DEFAULT_DESCRIPTION;
+  const fullTitle = safeTitle ? `${safeTitle} | ${SITE_NAME}` : `${SITE_NAME} \u2013 Interaktivn\u00ed digit\u00e1ln\u00ed u\u010debnice`;
   const canonicalUrl = joinUrl(SITE_URL, path);
+  const safeImageAlt = decodeEscapedText(imageAlt);
   const resolvedImageAlt =
-    (imageAlt?.trim() || (title ? `Náhled: ${title} — ${SITE_NAME}` : `${SITE_NAME} — digitální učebnice pro ZŠ`)).slice(0, 420);
+    (safeImageAlt?.trim() || (safeTitle ? `Náhled: ${safeTitle} — ${SITE_NAME}` : `${SITE_NAME} — digitální učebnice pro ZŠ`)).slice(0, 420);
   const twitterSite = (twitterSiteProp?.replace(/^@/, '').trim() || envTwitterSite()) ?? '';
 
   // Organization JSON-LD (always present)
@@ -88,13 +98,13 @@ export function SEOHead({
     <Helmet>
       {/* Basic */}
       <title>{fullTitle}</title>
-      <meta name="description" content={description} />
+      <meta name="description" content={safeDescription} />
       <link rel="canonical" href={canonicalUrl} />
       {noIndex && <meta name="robots" content="noindex, nofollow" />}
 
       {/* Open Graph */}
       <meta property="og:title" content={fullTitle} />
-      <meta property="og:description" content={description} />
+      <meta property="og:description" content={safeDescription} />
       <meta property="og:url" content={canonicalUrl} />
       <meta property="og:image" content={image} />
       <meta property="og:image:alt" content={resolvedImageAlt} />
@@ -117,7 +127,7 @@ export function SEOHead({
       {/* Twitter */}
       <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={fullTitle} />
-      <meta name="twitter:description" content={description} />
+      <meta name="twitter:description" content={safeDescription} />
       <meta name="twitter:image" content={image} />
       <meta name="twitter:image:alt" content={resolvedImageAlt} />
       {twitterSite ? <meta name="twitter:site" content={`@${twitterSite}`} /> : null}
@@ -138,24 +148,49 @@ export function productJsonLd(product: {
   name: string;
   description?: string;
   image?: string;
-  price?: number;
+  /** Cena v Kč (číslo). Google Product snippets vyžadují offers.price. */
+  price?: number | null;
   category?: string;
+  url?: string;
 }) {
+  const priceNumber =
+    typeof product.price === 'number' && Number.isFinite(product.price)
+      ? Math.max(0, product.price)
+      : null;
+  // Holé desetinné číslo jako string — bez měny a oddělovačů (požadavek Google).
+  const price =
+    priceNumber === null
+      ? null
+      : Number.isInteger(priceNumber)
+        ? String(priceNumber)
+        : priceNumber.toFixed(2);
+
+  const priceValidUntil = new Date();
+  priceValidUntil.setFullYear(priceValidUntil.getFullYear() + 1);
+
+  const offers =
+    price === null
+      ? undefined
+      : {
+          '@type': 'Offer',
+          ...(product.url ? { url: product.url } : {}),
+          price,
+          priceCurrency: 'CZK',
+          priceValidUntil: priceValidUntil.toISOString().slice(0, 10),
+          availability: 'https://schema.org/InStock',
+          itemCondition: 'https://schema.org/NewCondition',
+          seller: { '@type': 'Organization', name: 'Vividbooks' },
+        };
+
   return {
     '@context': 'https://schema.org',
     '@type': 'Product',
     name: product.name,
     description: product.description || '',
-    image: product.image || '',
+    ...(product.image ? { image: product.image } : {}),
     category: product.category || 'Digit\u00e1ln\u00ed u\u010debnice',
-    brand: { '@type': 'Organization', name: 'Vividbooks' },
-    offers: {
-      '@type': 'Offer',
-      price: product.price || 0,
-      priceCurrency: 'CZK',
-      availability: 'https://schema.org/InStock',
-      seller: { '@type': 'Organization', name: 'Vividbooks' },
-    },
+    brand: { '@type': 'Brand', name: 'Vividbooks' },
+    ...(offers ? { offers } : {}),
   };
 }
 

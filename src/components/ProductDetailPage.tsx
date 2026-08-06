@@ -18,7 +18,7 @@ import { FyzikaAccessJourney } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
-import { getMerchVariantUnitPriceInHaler } from '../utils/productPrice';
+import { getMerchVariantUnitPriceInHaler, parsePriceTextToKc } from '../utils/productPrice';
 import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
 import {
   bundleIsNxPlusOneSubject,
@@ -1230,8 +1230,20 @@ export function ProductDetailPage({
             name: product.name,
             description: desc,
             image: product.image,
-            price: product.priceAmount || 0,
+            price: (() => {
+              const fromText = parsePriceTextToKc(product.price);
+              if (fromText !== null) return fromText; // včetně 0 u „Zdarma“
+              if (
+                typeof product.priceAmount === 'number'
+                && Number.isFinite(product.priceAmount)
+                && product.priceAmount > 0
+              ) {
+                return product.priceAmount;
+              }
+              return null;
+            })(),
             category: product.category,
+            url: marketingUrl(productDetailPath(product, products)),
           }),
           breadcrumbJsonLd([
             { name: 'Katalog', url: marketingUrl('/') },
