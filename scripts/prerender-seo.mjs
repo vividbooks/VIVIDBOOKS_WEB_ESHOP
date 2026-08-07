@@ -1,9 +1,15 @@
 /**
- * Post-build SEO prerender pro AI / retrieval crawlers.
+ * Post-build SEO prerender pro AI / retrieval crawlers i link preview (Slack, iMessage, …).
  * Vezme Vite shell (build/index.html nebo docs/) a pro každou stránku
- * z seo-pages.mjs + public/sitemap.xml zapíše HTML s title, canonical, OG, JSON-LD a sémantickým tělem.
+ * zapíše HTML s title, canonical, OG, JSON-LD a sémantickým tělem.
+ *
+ * Zdroje:
+ * - curated SEO_PAGES
+ * - blog / novinky / webinář ze sitemap (lokální + živá Edge sitemap)
+ * - **všechny produkty z katalogu API** (ne jen zastaralý public/sitemap.xml)
+ * - homepage OG z prvního aktivního hero slideru (`/public/hero-slidy`)
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -28,7 +34,14 @@ const ANON_KEY =
   process.env.SUPABASE_ANON_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJla2t1bmRnaXp6ZGJta3phdGRsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM5MjYwMDIsImV4cCI6MjA4OTUwMjAwMn0.PsD7gEnhCushlJwnCkFIwfrGLws0KFa0QsCb54_6WHk';
-const PRODUCTS_URL = `https://${PROJECT_ID}.supabase.co/functions/v1/make-server-93a20b6f/products`;
+const EDGE_BASE = `https://${PROJECT_ID}.supabase.co/functions/v1/make-server-93a20b6f`;
+const PRODUCTS_URL = `${EDGE_BASE}/products`;
+const HERO_SLIDES_URL = `${EDGE_BASE}/public/hero-slidy`;
+const LIVE_SITEMAP_URL = `${EDGE_BASE}/sitemap.xml`;
+
+function authHeaders() {
+  return { Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY };
+}
 
 function escapeHtml(value) {
   return String(value)
@@ -54,12 +67,19 @@ function canonicalUrl(pagePath) {
   return `${SITE_URL}${pagePath}`;
 }
 
+function ogTypeFor(page) {
+  if (page.ogType) return page.ogType;
+  if (String(page.path || '').startsWith('/produkt/')) return 'product';
+  return 'website';
+}
+
 function buildHeadInjection(page) {
   const title = fullTitle(page);
   const description = page.description;
   const canonical = canonicalUrl(page.path);
   const image = page.image || DEFAULT_OG_IMAGE;
   const imageAlt = page.imageAlt || `${page.h1} — ${SITE_NAME}`;
+  const ogType = ogTypeFor(page);
 
   const allJsonLd = [ORGANIZATION_JSON_LD, ...(page.jsonLd || [])];
 
@@ -78,7 +98,7 @@ function buildHeadInjection(page) {
     <meta property="og:url" content="${escapeAttr(canonical)}" />
     <meta property="og:image" content="${escapeAttr(image)}" />
     <meta property="og:image:alt" content="${escapeAttr(imageAlt)}" />
-    <meta property="og:type" content="website" />
+    <meta property="og:type" content="${escapeAttr(ogType)}" />
     <meta property="og:site_name" content="${escapeAttr(SITE_NAME)}" />
     <meta property="og:locale" content="cs_CZ" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -89,6 +109,23 @@ function buildHeadInjection(page) {
     ${jsonLdScripts}
     <!-- /SEO prerender -->
 `;
+}
+
+/** Odstraní staré canonical / OG / Twitter tagy ze shellu, ať crawler nebere první (obecné) meta. */
+function stripShareMeta(html) {
+  return html
+    .replace(/<link\b[^>]*\brel=["']canonical["'][^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bproperty=["']og:[^"']+["'][^>]*>\s*/gi, '')
+    .replace(/<meta\b[^>]*\bname=["']twitter:[^"']+["'][^>]*>\s*/gi, '');
+}
+
+function plainText(value, maxLen = 300) {
+  const t = String(value || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
 function buildBodyHtml(page) {
@@ -128,6 +165,11 @@ function applyPageToTemplate(template, page) {
 
   let html = template;
 
+  // Remove previous prerender head block if re-running
+  html = html.replace(/\n?\s*<!-- SEO prerender \(build-time\) -->[\s\S]*?<!-- \/SEO prerender -->\n?/g, '\n');
+  // Shell / starší build může mít obecné OG — pryč, ať zůstane jen per-URL sada.
+  html = stripShareMeta(html);
+
   // Title
   if (/<title>[\s\S]*?<\/title>/i.test(html)) {
     html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtml(title)}</title>`);
@@ -147,9 +189,6 @@ function applyPageToTemplate(template, page) {
       `    <meta name="description" content="${escapeAttr(description)}" />\n  </head>`,
     );
   }
-
-  // Remove previous prerender head block if re-running
-  html = html.replace(/\n?\s*<!-- SEO prerender \(build-time\) -->[\s\S]*?<!-- \/SEO prerender -->\n?/g, '\n');
 
   // Inject SEO head before </head>
   html = html.replace(/<\/head>/i, `${headInjection}  </head>`);
@@ -257,7 +296,7 @@ function formatOfferPrice(priceKc) {
 async function fetchProductsCatalog() {
   try {
     const res = await fetch(PRODUCTS_URL, {
-      headers: { Authorization: `Bearer ${ANON_KEY}` },
+      headers: authHeaders(),
     });
     if (!res.ok) {
       console.warn(`[prerender-seo] products fetch failed: HTTP ${res.status}`);
@@ -275,6 +314,81 @@ async function fetchProductsCatalog() {
   } catch (err) {
     console.warn(`[prerender-seo] products fetch error: ${err?.message || err}`);
     return { bySlug: new Map(), count: 0 };
+  }
+}
+
+/** První aktivní hero slide (CMS) — OG náhled homepage. */
+async function fetchHomepageHeroOg() {
+  try {
+    const res = await fetch(HERO_SLIDES_URL, { headers: authHeaders() });
+    if (!res.ok) {
+      console.warn(`[prerender-seo] hero-slidy fetch failed: HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const active = items
+      .filter((s) => s && s.isActive !== false && s.hidden !== true)
+      .sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0));
+    const slide = active[0];
+    if (!slide) return null;
+
+    const title = plainText(slide.title || '', 110).replace(/\s*·\s*/g, ' — ') || SITE_NAME;
+    const subtitle = plainText(slide.subtitle || slide.bottom || '', 200);
+    const image = String(slide.image || slide.coverImage || slide.bgImage || '').trim();
+    const absoluteImage =
+      !image
+        ? null
+        : /^https?:\/\//i.test(image)
+          ? image
+          : image.startsWith('/')
+            ? `${SITE_URL}${image}`
+            : null;
+
+    return {
+      title: title.includes(SITE_NAME) ? title : `${title} | ${SITE_NAME}`,
+      description:
+        subtitle ||
+        'Digitální učebnice a pracovní sešity Vividbooks pro české základní školy.',
+      h1: title.replace(/\s*\|\s*Vividbooks\s*$/i, '').trim() || title,
+      answer: subtitle
+        ? `${title}. ${subtitle}`
+        : `${title}. Aktuální novinka na homepage Vividbooks.`,
+      ...(absoluteImage
+        ? { image: absoluteImage, imageAlt: `${title} — ${SITE_NAME}` }
+        : {}),
+    };
+  } catch (err) {
+    console.warn(`[prerender-seo] hero-slidy error: ${err?.message || err}`);
+    return null;
+  }
+}
+
+/** Stáhne živou Edge sitemap (obsahuje aktuální produkty) do outDir. */
+async function syncLiveSitemap() {
+  try {
+    const res = await fetch(LIVE_SITEMAP_URL, { headers: authHeaders() });
+    if (!res.ok) {
+      console.warn(`[prerender-seo] live sitemap fetch failed: HTTP ${res.status}`);
+      return false;
+    }
+    const xml = await res.text();
+    if (!xml.includes('<urlset')) {
+      console.warn('[prerender-seo] live sitemap: unexpected body');
+      return false;
+    }
+    writeFileSync(path.join(outDir, 'sitemap.xml'), xml, 'utf8');
+    // Drž public/sitemap.xml v syncu pro další lokální běhy (best-effort).
+    try {
+      writeFileSync(path.join(root, 'public', 'sitemap.xml'), xml, 'utf8');
+    } catch {
+      /* ignore */
+    }
+    console.log('[prerender-seo] Synced sitemap.xml from Edge API');
+    return true;
+  } catch (err) {
+    console.warn(`[prerender-seo] live sitemap error: ${err?.message || err}`);
+    return false;
   }
 }
 
@@ -470,10 +584,25 @@ function loadSitemapPaths() {
   return [...new Set(paths)];
 }
 
-async function collectPages(productsBySlug) {
+async function collectPages(productsBySlug, homepageHeroOg = null) {
   const byPath = new Map();
   for (const page of SEO_PAGES) {
-    byPath.set(page.path, page);
+    byPath.set(page.path, { ...page });
+  }
+
+  // Homepage: OG z prvního hero slideru (aktuální kampaň), ne obecný og-image.png.
+  if (homepageHeroOg && byPath.has('/')) {
+    const home = byPath.get('/');
+    byPath.set('/', {
+      ...home,
+      title: homepageHeroOg.title || home.title,
+      description: homepageHeroOg.description || home.description,
+      h1: homepageHeroOg.h1 || home.h1,
+      answer: homepageHeroOg.answer || home.answer,
+      ...(homepageHeroOg.image
+        ? { image: homepageHeroOg.image, imageAlt: homepageHeroOg.imageAlt }
+        : {}),
+    });
   }
 
   let fromSitemap = 0;
@@ -485,7 +614,17 @@ async function collectPages(productsBySlug) {
     fromSitemap += 1;
   }
 
-  return { pages: [...byPath.values()], fromSitemap };
+  // Produkty vždy z živého katalogu — static sitemap často zaostává za novými SKU.
+  let fromCatalog = 0;
+  for (const [slug, product] of productsBySlug) {
+    const pathname = `/produkt/${slug}`;
+    const page = pageFromSitemapPath(pathname, productsBySlug);
+    if (!page) continue;
+    if (!byPath.has(pathname)) fromCatalog += 1;
+    byPath.set(pathname, page);
+  }
+
+  return { pages: [...byPath.values()], fromSitemap, fromCatalog };
 }
 
 async function main() {
@@ -500,11 +639,21 @@ async function main() {
   let template = readFileSync(templatePath, 'utf8');
   template = template.replace(/\n?\s*<!-- SEO prerender \(build-time\) -->[\s\S]*?<!-- \/SEO prerender -->\n?/g, '\n');
   template = template.replace(/<div id="root">[\s\S]*?<\/div>/i, '<div id="root"></div>');
+  template = stripShareMeta(template);
+
+  await syncLiveSitemap();
 
   const { bySlug: productsBySlug, count: productCount } = await fetchProductsCatalog();
-  console.log(`[prerender-seo] Loaded ${productCount} products for Product JSON-LD prices`);
+  console.log(`[prerender-seo] Loaded ${productCount} products for Product OG + JSON-LD`);
 
-  const { pages, fromSitemap } = await collectPages(productsBySlug);
+  const homepageHeroOg = await fetchHomepageHeroOg();
+  if (homepageHeroOg?.image) {
+    console.log(`[prerender-seo] Homepage OG from hero: ${homepageHeroOg.h1}`);
+  } else {
+    console.warn('[prerender-seo] Homepage hero OG unavailable — using curated defaults');
+  }
+
+  const { pages, fromSitemap, fromCatalog } = await collectPages(productsBySlug, homepageHeroOg);
   let written = 0;
   let productsWithPrice = 0;
 
@@ -521,13 +670,23 @@ async function main() {
     written += 1;
   }
 
-  // SPA fallback for unknown routes on GitHub Pages
-  const homePath = path.join(outDir, 'index.html');
-  const fallbackPath = path.join(outDir, '404.html');
-  copyFileSync(homePath, fallbackPath);
+  // SPA fallback: obecný brand OG (ne aktuální homepage kampaň).
+  const fallbackHtml = applyPageToTemplate(template, {
+    path: '/',
+    title: `${SITE_NAME} – Učení, které inspiruje a baví.`,
+    description:
+      'Kompletní katalog interaktivních digitálních učebnic a pracovních sešitů Vividbooks pro české základní školy.',
+    h1: SITE_NAME,
+    h2: 'Digitální učebnice a pracovní sešity pro ZŠ',
+    answer:
+      'Vividbooks jsou učební materiály pro české základní školy: pracovní sešity a tiskoviny se smysluplně doplňují s online podporou.',
+    image: DEFAULT_OG_IMAGE,
+    imageAlt: `${SITE_NAME} — učení, které inspiruje a baví`,
+  });
+  writeFileSync(path.join(outDir, '404.html'), fallbackHtml, 'utf8');
 
   console.log(
-    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} from sitemap; ${productsWithPrice} products with price) + 404.html → ${outDir}`,
+    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} sitemap + ${fromCatalog} new from catalog; ${productsWithPrice} products with price) + 404.html → ${outDir}`,
   );
 }
 

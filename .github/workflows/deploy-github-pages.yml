@@ -69,12 +69,22 @@ jobs:
           fi
 
       # Repository secrets: Settings → Secrets and variables → Actions
-      # npm run build = vite build + SEO prerender (scripts/prerender-seo.mjs) včetně 404.html
+      # npm run build = vite build + SEO prerender (scripts/prerender-seo.mjs)
+      # Prerender už zapisuje per-URL HTML (produkty, blog, …) + 404.html se SPA fallbackem.
+      # Nepřepisuj 404.html z index.html — jinak chybějící route sdílí homepage OG (špatný Slack/iMessage náhled).
       - name: Build
         run: npm run build
 
-      - name: SPA fallback (refresh na /predmet/… atd.)
-        run: cp build/index.html build/404.html
+      - name: Verify SEO prerender artifact
+        run: |
+          test -f build/404.html
+          test -d build/produkt
+          product_pages="$(find build/produkt -name index.html | wc -l | tr -d ' ')"
+          echo "Prerendered product pages: ${product_pages}"
+          if [ "${product_pages}" -lt 1 ]; then
+            echo "::error::Žádné prerenderované /produkt/*/index.html — link preview produktů spadne na 404/homepage OG."
+            exit 1
+          fi
 
       - uses: actions/upload-pages-artifact@v3
         with:
