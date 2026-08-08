@@ -485,7 +485,9 @@ function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
     ];
 
     // Product snippet vyžaduje validní offers.price — bez ceny schema nevypisujeme.
+    // Merchant listings doporučují i offers.validFrom (spolu s priceValidUntil).
     if (price !== null) {
+      const validFrom = new Date().toISOString().slice(0, 10);
       const priceValidUntil = new Date();
       priceValidUntil.setFullYear(priceValidUntil.getFullYear() + 1);
       jsonLd.push({
@@ -501,6 +503,7 @@ function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
           url: `${SITE_URL}${pathname}`,
           price,
           priceCurrency: 'CZK',
+          validFrom,
           priceValidUntil: priceValidUntil.toISOString().slice(0, 10),
           availability: 'https://schema.org/InStock',
           itemCondition: 'https://schema.org/NewCondition',

@@ -165,6 +165,8 @@ export function productJsonLd(product: {
         ? String(priceNumber)
         : priceNumber.toFixed(2);
 
+  // Merchant listings: Google očekává validFrom + priceValidUntil (ISO 8601 date).
+  const validFrom = new Date().toISOString().slice(0, 10);
   const priceValidUntil = new Date();
   priceValidUntil.setFullYear(priceValidUntil.getFullYear() + 1);
 
@@ -176,6 +178,7 @@ export function productJsonLd(product: {
           ...(product.url ? { url: product.url } : {}),
           price,
           priceCurrency: 'CZK',
+          validFrom,
           priceValidUntil: priceValidUntil.toISOString().slice(0, 10),
           availability: 'https://schema.org/InStock',
           itemCondition: 'https://schema.org/NewCondition',
