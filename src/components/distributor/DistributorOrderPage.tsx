@@ -402,6 +402,7 @@ export function DistributorOrderPage() {
 function StatusScreen({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-[#f5f6fb] px-4">
+      <SEOHead title="Objednávka pro distributory" path="/distributor" noIndex />
       {children}
     </div>
   );
