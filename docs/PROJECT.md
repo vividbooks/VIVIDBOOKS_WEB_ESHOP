@@ -91,6 +91,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `DISTRIBUTOR_ORDER_TOKEN` | **Povinné** pro neveřejnou distributorskou objednávku — klíč v odkazu `/distributor/objednavka?k=…`. Bez něj stránka i endpoint vrací 503. |
 | `DISTRIBUTOR_ORDER_EMAIL_DOMAIN` | Doména placeholder e‑mailu (`distributor+<ico>@…`, default `vividbooks.com`) — formulář e‑mail nesbírá a žádné e‑maily se neposílají. |
 | `PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID`, `PIPEDRIVE_DISTRIBUTOR_STAGE_ID`, `PIPEDRIVE_DISTRIBUTOR_OWNER_ID` | Distributorské dealy — default pipeline **8** (Channel Partners Performance CP2) / fáze **43**; owner primárně z tohoto ID, jinak org pole „current deal owner“. |
+| `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT`, `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL`, `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_SPECIAL_ICOS` | Sleva na řádcích distributorského dealu — default **25 %**, pro IČO `06745342`, `49709895`, `73565211` **35 %**. |
 | `SLACK_SIGNING_SECRET`, `SLACK_BOT_TOKEN` | Slack integrace. |
 | `PUBLIC_SITE_URL` | Odkazy v e‑mailech webináře (`getPublicSiteOrigin()`). |
 | `GOOGLE_MAPS_API_KEY` nebo `GOOGLE_PLACES_API_KEY` | **Našeptávání adres** v objednávce / pokladně (Google Places API přes Edge: `GET …/address-autocomplete`, `GET …/place-details`). Bez klíče pole fungují ručně. V Google Cloud zapnout Places API (legacy) a fakturaci; klíč jen v Edge Secrets. |
@@ -175,6 +176,7 @@ Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`
 - **Formulář:** jen IČO, počty kusů (ceny se nezobrazují) a poznámka. Žádná adresa, doprava ani platba; e‑maily se neposílají.
 - **Endpoint:** `POST …/make-server-93a20b6f/distributor/orders` (hlavička `X-Distributor-Token`) — založí řádek v `public.orders` (`source='distributor'`, `status='pending_payment'`, `payment_method='invoice'`, `shipping_method='none'`) + `order_items` s cenami z katalogu. Název a sídlo firmy dohledá podle IČO (CSV škol → ARES). Idempotence přes `idempotency_key = distributor:<submissionId>`.
 - **Pipedrive:** `syncEshopOrderToPipedriveFromDb(orderId, 'distributor_open')` → pipeline **8**, fáze **43**, organizace **jen podle IČO** (pole CIN, `strictIcoMatch`; když IČO v CRM není, organizace se založí), bez kontaktní osoby, produkty z katalogu, poznámka jako note k dealu, vyplněné pole „Eshop ID“. Bez štítků B2C/B2B a bez „Source = PRINT“.
+- **Sleva na řádcích dealu:** každý produkt dostane `discount` + `discount_type='percentage'` — **25 %**, u IČO `06745342`, `49709895`, `73565211` **35 %** (porovnává se bez úvodních nul; přepis přes `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_*`). Ceny v `orders` zůstávají ceníkové, sleva žije jen na dealu. E‑shopové dealy slevu nedostávají.
 - **Base.com / iDoklad:** nic. `pipedrive-inbound-deal` u `source='distributor'` přepíše položky, ale **přeskočí `export_queue`** (mód `updated`, reason `distributor_no_export`). `cancel-stale-orders` i `payment-reminders` distributorské objednávky ignorují.
 - **Admin:** `/admin/objednavky` má filtr **Distributor** a oranžový badge; ruční „Vytvořit deal v Pipedrive“ použije stejný mód (nespadne do e‑shopové pipeline 20).
 
