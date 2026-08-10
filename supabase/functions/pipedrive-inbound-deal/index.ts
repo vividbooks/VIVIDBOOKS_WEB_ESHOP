@@ -48,7 +48,8 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *
  * Adresa zákazníka se skládá ve třech fázích, stejně jako u manuálního zadání v eshop checkoutu:
  *   1) strukturovaná pole PD Person (`postal_address.route`, `street_number`, `subpremise`,
- *      `locality`, `postal_code`, …),
+ *      `locality`, `postal_code`, …) — pokud složené ulici chybí číslo popisné, doplní se
+ *      z `formatted_address` (PD u českých adres bez čísla orientačního `street_number` neplní),
  *   2) strukturovaná / textová pole PD Org (`address_*` v v1, nested `address` v v2,
  *      případně plain‑text `org.address`) doplní chybějící komponenty,
  *   3) pokud něco stále chybí, **Google Geocoding API** (`GOOGLE_MAPS_API_KEY`; log
@@ -88,11 +89,11 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  */
 import postgres from 'npm:postgres';
 import {
-  type AddressParts,
   enrichCzechAddressParts,
   normalizeCzechZip,
-  parseFreeFormAddress,
+  streetHasHouseNumber,
 } from '../_shared/czech-address-enrichment.ts';
+import { orgAddressLine, personPostalLine } from '../_shared/pipedrive-address.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -132,7 +133,7 @@ const ADMIN_NOTE_ZERO_VALUE_TOTAL =
   'Pipedrive import: deal má nulovou celkovou částku (všechny položky 0 Kč) — zkontrolujte ceny v PD, pokud to není záměr.';
 
 const ADMIN_NOTE_ADDRESS_INCOMPLETE =
-  'Pipedrive import: adresa není kompletní (chybí ulice / město / PSČ). Doplňte v PD u Person nebo Organization a aktualizujte objednávku.';
+  'Pipedrive import: adresa není kompletní (chybí ulice / číslo popisné / město / PSČ). Doplňte v PD u Person nebo Organization a aktualizujte objednávku.';
 
 /** Číslo stavu objednávky v BaseLinkeru pro inbound z Pipedrive (např. „Do expedice — manuálně“).
  *  Preferuje dedikovaný `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`; pokud chybí, fallback na výchozí
@@ -356,66 +357,6 @@ function readPersonPhone(person: Record<string, unknown>): string {
     if (v) return v;
   }
   return '';
-}
-
-function structuredFieldsFromObject(obj: Record<string, unknown> | null | undefined, prefix = ''): AddressParts {
-  if (!obj || typeof obj !== 'object') return { street: '', city: '', zip: '' };
-  const o = obj as Record<string, unknown>;
-  const pick = (key: string) => String(o[prefix ? `${prefix}${key}` : key] ?? '').trim();
-  const route = pick('route');
-  const streetNumber = pick('street_number');
-  const subpremise = pick('subpremise');
-  const locality = pick('locality');
-  const sublocality = pick('sublocality');
-  const postalCode = pick('postal_code');
-  const composedStreet = [route, streetNumber, subpremise].filter(Boolean).join(' ').trim();
-  return {
-    street: composedStreet,
-    city: locality || sublocality,
-    zip: normalizeCzechZip(postalCode),
-  };
-}
-
-/**
- * Adresa Person z PD. Priorita:
- *   1) strukturovaná podpole z `postal_address` (route, street_number, locality, postal_code, …)
- *   2) parse `postal_address.formatted_address` (resp. `value`) pro chybějící části
- */
-function personPostalLine(person: Record<string, unknown>): AddressParts {
-  const a = person?.postal_address;
-  if (!a || typeof a !== 'object') return { street: '', city: '', zip: '' };
-  const o = a as Record<string, unknown>;
-  const structured = structuredFieldsFromObject(o);
-  if (structured.street && structured.city && structured.zip) return structured;
-  const raw = String(o.formatted_address || o.value || '').trim();
-  const parsed = parseFreeFormAddress(raw);
-  return {
-    street: structured.street || parsed.street,
-    city: structured.city || parsed.city,
-    zip: structured.zip || parsed.zip,
-  };
-}
-
-/**
- * Adresa Org z PD. PD v1 zploští adresu do polí `address_route`, `address_street_number`,
- * `address_locality`, `address_postal_code` … (každé sub‑pole s prefixem `address_`).
- * Hodnota `org.address` je `formatted_address`. PD v2 / starší vrátí `address` jako objekt.
- */
-function orgAddressLine(org: Record<string, unknown>): AddressParts {
-  /** v1 — flat `address_*` pole. */
-  const flat = structuredFieldsFromObject(org, 'address_');
-  /** v2 / jiný layout — `address` jako objekt. */
-  const nested = org.address && typeof org.address === 'object' && !Array.isArray(org.address)
-    ? structuredFieldsFromObject(org.address as Record<string, unknown>)
-    : { street: '', city: '', zip: '' };
-  /** Plain string `org.address`. */
-  const stringAddr = typeof org.address === 'string' ? org.address.trim() : '';
-  const parsedString = stringAddr ? parseFreeFormAddress(stringAddr) : { street: '', city: '', zip: '' };
-  return {
-    street: flat.street || nested.street || parsedString.street,
-    city: flat.city || nested.city || parsedString.city,
-    zip: flat.zip || nested.zip || parsedString.zip,
-  };
 }
 
 function moneyToHaler(value: unknown): number {
@@ -1003,15 +944,20 @@ Deno.serve(async (req) => {
   city = enriched.city;
   zip = enriched.zip;
 
-  const addressIncomplete = !street.trim() || !city.trim() || !zip.trim();
+  /** Ulice bez čísla popisného je pro Base i dopravce stejně nedoručitelná jako chybějící ulice. */
+  const addressIncomplete = !street.trim() || !city.trim() || !zip.trim() || !streetHasHouseNumber(street);
   if (addressIncomplete) {
     logInbound('address_incomplete', {
       dealId,
       personId: personIdFromDeal,
       orgId,
       hasStreet: Boolean(street.trim()),
+      hasHouseNumber: streetHasHouseNumber(street),
       hasCity: Boolean(city.trim()),
       hasZip: Boolean(zip.trim()),
+      street: street.trim(),
+      city: city.trim(),
+      zip: zip.trim(),
     });
   }
 

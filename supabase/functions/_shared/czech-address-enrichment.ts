@@ -10,6 +10,54 @@ export function normalizeCzechZip(value: string | undefined | null): string {
   return digitsOnly.length === 5 ? digitsOnly : '';
 }
 
+/**
+ * Ulice s číslem popisným / orientačním („Hradská 506", „Tlumačovská 1237/32", „Sokolská 1a").
+ * Bez čísla nelze zásilku doručit — Base / PPL to odmítne nebo doručí na špatnou adresu.
+ */
+export function streetHasHouseNumber(street: string | undefined | null): boolean {
+  return /\d/.test(String(street ?? ''));
+}
+
+/** Diakritika + velikost písmen stranou — pro porovnání názvů ulic z různých zdrojů. */
+function normalizeForCompare(value: string | undefined | null): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * PD (a Google) plní `street_number` jen u adres s číslem orientačním. České adresy, které mají
+ * pouze číslo popisné, mají číslo v komponentě `premise`, kterou Pipedrive ve strukturovaných
+ * podpolích nevede — `route` + `street_number` pak dá „Pod Šternberkem" místo „Pod Šternberkem 306“,
+ * přestože `formatted_address` číslo obsahuje. Když je strukturovaná ulice jen prefixem té volně
+ * parsované a chybí jí číslo, vezmeme variantu s číslem.
+ */
+export function preferStreetWithHouseNumber(
+  structuredStreet: string | undefined | null,
+  parsedStreet: string | undefined | null,
+): string {
+  const structured = String(structuredStreet ?? '').replace(/\s+/g, ' ').trim();
+  const parsed = String(parsedStreet ?? '').replace(/\s+/g, ' ').trim();
+  if (!structured) return parsed;
+  if (!parsed || streetHasHouseNumber(structured) || !streetHasHouseNumber(parsed)) return structured;
+
+  const structuredNorm = normalizeForCompare(structured);
+  const parsedNorm = normalizeForCompare(parsed);
+  /** Jen doplnění čísla ke stejné ulici — jiná ulice ve `formatted_address` znamená jiný zdroj dat. */
+  return parsedNorm.startsWith(`${structuredNorm} `) ? parsed : structured;
+}
+
+/**
+ * „Jihomoravský kraj", „Středočeský kraj" — Google to vrací jako `administrative_area_level_1`
+ * a jako první segment `formatted_address` u adres bez ulice. Jako ulice je to nepoužitelné.
+ */
+export function looksLikeRegionName(value: string | undefined | null): boolean {
+  return /\bkraj\b/i.test(String(value ?? ''));
+}
+
 /** Sloučí `source` do `target` — doplňuje jen prázdná pole v `target`. */
 export function mergeAddressPartsFillMissing(
   target: AddressParts,
@@ -33,7 +81,10 @@ export function parseFreeFormAddress(rawInput: string | undefined | null): Addre
   if (!raw) return { street: '', city: '', zip: '' };
 
   const noCountry = raw
-    .replace(/,?\s*(czech\s*republic|czechia|česká\s*republika|slovakia|slovensk[áo]\s*republika|cz|sk)\s*\.?\s*$/i, '')
+    .replace(
+      /,?\s*(czech\s*republic|czechia|česk[áo]\s*republika|česko|čr|slovakia|slovensk[áo]\s*republika|slovensko|cz|sk)\s*\.?\s*$/i,
+      '',
+    )
     .trim();
   const zipMatch = noCountry.match(/\b(\d{3})\s?(\d{2})\b/);
   const zip = zipMatch ? `${zipMatch[1]}${zipMatch[2]}` : '';
@@ -185,12 +236,15 @@ export async function geocodeFreeFormAddressViaGoogle(
 
     const components = data.results[0].address_components || [];
     let streetNumber = '';
+    let premise = '';
     let route = '';
     let city = '';
     let zip = '';
     for (const c of components) {
       const t = c.types || [];
       if (t.includes('street_number')) streetNumber = c.long_name;
+      /** České adresy jen s číslem popisným vrací Google jako `premise`, ne `street_number`. */
+      if (t.includes('premise')) premise = c.long_name;
       if (t.includes('route')) route = c.long_name;
       if (t.includes('locality')) city = c.long_name;
       if (!city && t.includes('postal_town')) city = c.long_name;
@@ -204,10 +258,14 @@ export async function geocodeFreeFormAddressViaGoogle(
         }
       }
     }
-    let street = [route, streetNumber].filter(Boolean).join(' ').trim();
-    if (!street && data.results[0].formatted_address) {
-      const first = String(data.results[0].formatted_address).split(',')[0]?.trim() || '';
-      if (first) street = first;
+    let street = [route, streetNumber || premise].filter(Boolean).join(' ').trim();
+    const formattedFirstSegment = String(data.results[0].formatted_address || '').split(',')[0]?.trim() || '';
+    /** `formatted_address` u adres bez ulice začíná názvem kraje / obce — jako ulice nepoužitelné. */
+    const usableFormattedStreet = looksLikeRegionName(formattedFirstSegment) ? '' : formattedFirstSegment;
+    if (!street) {
+      street = usableFormattedStreet;
+    } else if (!streetHasHouseNumber(street)) {
+      street = preferStreetWithHouseNumber(street, usableFormattedStreet);
     }
     return { street, city, zip: normalizeCzechZip(zip) };
   } catch (e) {
@@ -225,10 +283,33 @@ export type EnrichCzechAddressOptions = {
 };
 
 /**
+ * Vyčistí zjevně nepoužitelné hodnoty, aby je následné doplňování mohlo nahradit:
+ *   - ulice = název kraje (Google `administrative_area_level_1` u adres bez ulice),
+ *   - město obsahující celý řádek ulice včetně čísla („Osvobození 535" u ulice „Osvobození") —
+ *     v takovém případě je číslo popisné jediná použitelná informace, přesune se do ulice.
+ */
+function dropDegenerateAddressParts(parts: AddressParts): AddressParts {
+  const street = looksLikeRegionName(parts.street) ? '' : parts.street;
+  const cityIsStreetLine =
+    Boolean(street) &&
+    !streetHasHouseNumber(street) &&
+    streetHasHouseNumber(parts.city) &&
+    normalizeForCompare(parts.city).startsWith(`${normalizeForCompare(street)} `);
+  return {
+    street: cityIsStreetLine ? parts.city.replace(/\s+/g, ' ').trim() : street,
+    city: cityIsStreetLine ? '' : parts.city,
+    zip: parts.zip,
+  };
+}
+
+/**
  * Mezikrok: po načtení adresy z PD Person/Org doplní chybějící PSČ (a případně ulici/město):
  *   1) adresa v názvu organizace (za pomlčkou),
  *   2) Google Geocoding (ulice + město),
  *   3) ARES podle IČO (oficiální sídlo včetně PSČ).
+ *
+ * Doplňování se spouští i tehdy, když je ulice sice vyplněná, ale **chybí jí číslo popisné** —
+ * bez něj Base ani dopravce zásilku nedoručí.
  */
 export async function enrichCzechAddressParts(
   initial: AddressParts,
@@ -238,14 +319,21 @@ export async function enrichCzechAddressParts(
 
   const fromOrgName = parseAddressFromOrgName(options.orgName);
   parts = mergeAddressPartsFillMissing(parts, fromOrgName);
+  parts.street = preferStreetWithHouseNumber(parts.street, fromOrgName.street);
 
-  parts = {
+  const normalized = {
     street: parts.street.trim(),
     city: parts.city.trim(),
     zip: normalizeCzechZip(parts.zip),
   };
+  parts = dropDegenerateAddressParts(normalized);
+  if (parts.street !== normalized.street || parts.city !== normalized.city) {
+    options?.log?.('address_degenerate_parts_dropped', { before: normalized, after: parts });
+  }
 
-  if (!options.geocodeDisabled && (!parts.street || !parts.city || !parts.zip)) {
+  const needsMoreDetail = () => !parts.street || !parts.city || !parts.zip || !streetHasHouseNumber(parts.street);
+
+  if (!options.geocodeDisabled && needsMoreDetail()) {
     const geocodeQueryParts = [
       parts.street,
       [parts.zip, parts.city].filter(Boolean).join(' ').trim(),
@@ -256,6 +344,7 @@ export async function enrichCzechAddressParts(
       if (geocoded) {
         const before = { ...parts };
         parts = mergeAddressPartsFillMissing(parts, geocoded);
+        parts.street = preferStreetWithHouseNumber(parts.street, geocoded.street);
         parts.zip = normalizeCzechZip(parts.zip);
         if (
           parts.street !== before.street ||
@@ -272,28 +361,52 @@ export async function enrichCzechAddressParts(
     }
   }
 
-  if (!parts.zip && options.ico) {
+  if (needsMoreDetail() && options.ico) {
     const fromAres = await fetchAresAddressPartsByIco(options.ico);
     if (fromAres) {
       const before = { ...parts };
-      parts = mergeAddressPartsFillMissing(parts, fromAres);
-      parts.zip = normalizeCzechZip(parts.zip);
-      if (
-        parts.street !== before.street ||
-        parts.city !== before.city ||
-        parts.zip !== before.zip
-      ) {
-        options?.log?.('address_from_ares', {
+      /**
+       * Sídlo z ARES je adresa **objednatele**, ne nutně doručovací adresa z dealu (u dealů přes
+       * distributora se liší). Použijeme ho jen tam, kde si s už známou lokalitou neodporuje —
+       * jinak bychom zásilku pro školu poslali na adresu zprostředkovatele.
+       */
+      const sameLocation = parts.zip && fromAres.zip
+        ? parts.zip === fromAres.zip
+        : parts.city && fromAres.city
+        ? normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city)
+        : true;
+
+      if (!sameLocation) {
+        options?.log?.('address_ares_location_mismatch', {
           ico: String(options.ico).replace(/\D/g, ''),
-          before,
-          after: parts,
+          order: before,
+          ares: fromAres,
         });
+      } else {
+        parts = mergeAddressPartsFillMissing(parts, fromAres);
+        parts.street = preferStreetWithHouseNumber(parts.street, fromAres.street);
+        parts.zip = normalizeCzechZip(parts.zip);
+        if (
+          parts.street !== before.street ||
+          parts.city !== before.city ||
+          parts.zip !== before.zip
+        ) {
+          options?.log?.('address_from_ares', {
+            ico: String(options.ico).replace(/\D/g, ''),
+            before,
+            after: parts,
+          });
+        }
       }
     }
   }
 
+  if (!streetHasHouseNumber(parts.street)) {
+    options?.log?.('address_street_without_house_number', { street: parts.street, city: parts.city, zip: parts.zip });
+  }
+
   return {
-    street: parts.street.trim(),
+    street: looksLikeRegionName(parts.street) ? '' : parts.street.trim(),
     city: parts.city.trim(),
     zip: normalizeCzechZip(parts.zip),
   };

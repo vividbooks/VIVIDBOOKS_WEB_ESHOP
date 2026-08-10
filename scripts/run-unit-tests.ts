@@ -12,6 +12,15 @@ import {
 
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import {
+  enrichCzechAddressParts,
+  geocodeFreeFormAddressViaGoogle,
+  looksLikeRegionName,
+  parseFreeFormAddress,
+  preferStreetWithHouseNumber,
+  streetHasHouseNumber,
+} from '../supabase/functions/_shared/czech-address-enrichment.ts';
+import { orgAddressLine, personPostalLine } from '../supabase/functions/_shared/pipedrive-address.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -355,6 +364,218 @@ registerTest('zapamatovaná volba aplikace přežije i zablokované úložiště
       Reflect.set(globalThis, 'window', original);
     }
   }
+});
+
+/**
+ * Adresy z Pipedrive → Base. Regrese: u českých adres jen s číslem popisným Pipedrive neplní
+ * `street_number` (Google to vrací jako `premise`), takže se ulice skládala bez čísla —
+ * „Pod Šternberkem 306" končilo v Base jako „Pod Šternberkem".
+ */
+registerTest('parseFreeFormAddress rozloží české adresy včetně názvu země', () => {
+  assert.deepEqual(parseFreeFormAddress('Hradská 506, 747 64 Velká Polom, Česko'), {
+    street: 'Hradská 506',
+    city: 'Velká Polom',
+    zip: '74764',
+  });
+  assert.deepEqual(parseFreeFormAddress('Pod Šternberkem 306, 763 02 Zlín 4-Louky, Czechia'), {
+    street: 'Pod Šternberkem 306',
+    city: 'Zlín 4-Louky',
+    zip: '76302',
+  });
+
+  for (const country of ['Česko', 'ČR', 'Česká republika', 'Czechia', 'Czech Republic', 'Slovensko']) {
+    const parsed = parseFreeFormAddress(`Hradská 506, 747 64 Velká Polom, ${country}`);
+    assert.equal(parsed.city, 'Velká Polom', `název země „${country}" nesmí zůstat v městě`);
+    assert.equal(parsed.street, 'Hradská 506', `název země „${country}"`);
+  }
+});
+
+registerTest('streetHasHouseNumber a looksLikeRegionName rozpoznají nedoručitelnou ulici', () => {
+  assert.equal(streetHasHouseNumber('Hradská 506'), true);
+  assert.equal(streetHasHouseNumber('Tlumačovská 1237/32'), true);
+  assert.equal(streetHasHouseNumber('Pod Šternberkem'), false);
+  assert.equal(looksLikeRegionName('Jihomoravský kraj'), true);
+  assert.equal(looksLikeRegionName('Kraslická'), false);
+});
+
+registerTest('preferStreetWithHouseNumber doplní číslo popisné jen u téže ulice', () => {
+  assert.equal(preferStreetWithHouseNumber('Pod Šternberkem', 'Pod Šternberkem 306'), 'Pod Šternberkem 306');
+  assert.equal(preferStreetWithHouseNumber('Hradská 506', 'Hradská 12'), 'Hradská 506');
+  assert.equal(preferStreetWithHouseNumber('Hradská', 'Opavská 417'), 'Hradská');
+  assert.equal(preferStreetWithHouseNumber('', 'Hradská 506'), 'Hradská 506');
+  assert.equal(preferStreetWithHouseNumber('Hradská', ''), 'Hradská');
+});
+
+registerTest('adresa z Pipedrive Person si zachová číslo popisné z formatted_address', () => {
+  assert.deepEqual(
+    personPostalLine({
+      postal_address: {
+        route: 'Pod Šternberkem',
+        locality: 'Zlín',
+        sublocality: 'Louky',
+        postal_code: '763 02',
+        formatted_address: 'Pod Šternberkem 306, 763 02 Zlín 4-Louky, Czechia',
+      },
+    }),
+    { street: 'Pod Šternberkem 306', city: 'Zlín', zip: '76302' },
+  );
+
+  /** Kompletní strukturovaná podpole (s číslem orientačním) se nesmí přepsat parsovaným textem. */
+  assert.deepEqual(
+    personPostalLine({
+      postal_address: {
+        route: 'Tlumačovská',
+        street_number: '1237/32',
+        locality: 'Praha 5 - Stodůlky',
+        postal_code: '15500',
+        formatted_address: 'Tlumačovská 1237/32, 155 00 Praha 5-Stodůlky, Czechia',
+      },
+    }),
+    { street: 'Tlumačovská 1237/32', city: 'Praha 5 - Stodůlky', zip: '15500' },
+  );
+});
+
+registerTest('adresa z Pipedrive Organization si zachová číslo popisné z org.address', () => {
+  assert.deepEqual(
+    orgAddressLine({
+      address: 'Hradská 506, 747 64 Velká Polom, Česko',
+      address_route: 'Hradská',
+      address_locality: 'Velká Polom',
+      address_postal_code: '747 64',
+    }),
+    { street: 'Hradská 506', city: 'Velká Polom', zip: '74764' },
+  );
+});
+
+registerTest('enrichCzechAddressParts zahodí kraj místo ulice a přesune ulici z pole město', async () => {
+  assert.deepEqual(
+    await enrichCzechAddressParts(
+      { street: 'Jihomoravský kraj', city: 'Rajhrad', zip: '66461' },
+      { geocodeDisabled: true },
+    ),
+    { street: '', city: 'Rajhrad', zip: '66461' },
+  );
+
+  assert.deepEqual(
+    await enrichCzechAddressParts(
+      { street: 'Osvobození', city: 'Osvobození 535', zip: '27303' },
+      { geocodeDisabled: true },
+    ),
+    { street: 'Osvobození 535', city: '', zip: '27303' },
+  );
+
+  /** Města s číslem („Zlín 4-Louky", „Praha 5") nejsou ulice — nesmí se přesouvat. */
+  assert.deepEqual(
+    await enrichCzechAddressParts(
+      { street: 'Pod Šternberkem 306', city: 'Zlín 4-Louky', zip: '76302' },
+      { geocodeDisabled: true },
+    ),
+    { street: 'Pod Šternberkem 306', city: 'Zlín 4-Louky', zip: '76302' },
+  );
+});
+
+/** Edge funkce běží v Deno; pro test stačí `Deno.env` a stub `fetch` bez sítě. */
+async function withStubbedRuntime(
+  env: Record<string, string>,
+  respondWith: (url: string) => unknown,
+  run: () => Promise<void>,
+) {
+  const originalFetch = globalThis.fetch;
+  const originalDeno = Reflect.get(globalThis, 'Deno');
+  Reflect.set(globalThis, 'Deno', { env: { get: (key: string) => env[key] } });
+  globalThis.fetch = ((input: string | URL | Request) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    return Promise.resolve(
+      new Response(JSON.stringify(respondWith(url)), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDeno === undefined) {
+      Reflect.deleteProperty(globalThis, 'Deno');
+    } else {
+      Reflect.set(globalThis, 'Deno', originalDeno);
+    }
+  }
+}
+
+registerTest('geocoding přebírá číslo popisné z komponenty premise a ignoruje kraj', async () => {
+  await withStubbedRuntime(
+    { GOOGLE_MAPS_API_KEY: 'test-key' },
+    () => ({
+      status: 'OK',
+      results: [{
+        address_components: [
+          { long_name: '306', types: ['premise'] },
+          { long_name: 'Pod Šternberkem', types: ['route'] },
+          { long_name: 'Zlín', types: ['locality'] },
+          { long_name: '763 02', types: ['postal_code'] },
+        ],
+        formatted_address: 'Pod Šternberkem 306, 763 02 Zlín 4-Louky, Czechia',
+      }],
+    }),
+    async () => {
+      assert.deepEqual(await geocodeFreeFormAddressViaGoogle('Pod Šternberkem, 76302 Zlín'), {
+        street: 'Pod Šternberkem 306',
+        city: 'Zlín',
+        zip: '76302',
+      });
+    },
+  );
+
+  await withStubbedRuntime(
+    { GOOGLE_MAPS_API_KEY: 'test-key' },
+    () => ({
+      status: 'OK',
+      results: [{
+        address_components: [
+          { long_name: 'Rajhrad', types: ['locality'] },
+          { long_name: 'Jihomoravský kraj', types: ['administrative_area_level_1'] },
+          { long_name: '664 61', types: ['postal_code'] },
+        ],
+        formatted_address: 'Jihomoravský kraj, 664 61 Rajhrad, Czechia',
+      }],
+    }),
+    async () => {
+      assert.deepEqual(await geocodeFreeFormAddressViaGoogle('664 61 Rajhrad'), {
+        street: '',
+        city: 'Rajhrad',
+        zip: '66461',
+      });
+    },
+  );
+});
+
+registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adrese z dealu', async () => {
+  /** Skutečné sídlo IČO 27670899 (ANSA Knihy) — zdroj čísla popisného u dealů z Pipedrive. */
+  const ares = {
+    sidlo: { nazevUlice: 'Pod Šternberkem', cisloDomovni: 306, nazevObce: 'Zlín', psc: 76302 },
+  };
+
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Pod Šternberkem', city: 'Zlín 4-Louky', zip: '76302' },
+        { geocodeDisabled: true, ico: '27670899' },
+      ),
+      { street: 'Pod Šternberkem 306', city: 'Zlín 4-Louky', zip: '76302' },
+    );
+
+    /** Jiné PSČ = jiné místo (deal na adresu školy, sídlo distributora jinde) — ARES se nepoužije. */
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
+        { geocodeDisabled: true, ico: '27670899' },
+      ),
+      { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
+    );
+  });
 });
 
 await run();
