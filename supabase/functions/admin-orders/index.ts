@@ -884,13 +884,19 @@ Deno.serve(async (req) => {
     const pipedriveSourceMatch = hasSourceColumn
       ? sql`(pdi.order_id is not null or o.source = 'pipedrive')`
       : sql`(pdi.order_id is not null)`;
+    /** Objednávka z neveřejné distributorské stránky — jen explicitní sloupec `source`. */
+    const distributorSourceMatch = hasSourceColumn
+      ? sql`(pdi.order_id is null and o.source = 'distributor')`
+      : sql`(false)`;
     const sourceProjection = hasSourceColumn
       ? sql`case when pdi.order_id is not null then 'pipedrive' else o.source end`
       : sql`case when pdi.order_id is not null then 'pipedrive' else 'eshop' end`;
-    /** `source=eshop|pipedrive|all` — filtr zdroje objednávky pro admin seznam. */
+    /** `source=eshop|pipedrive|distributor|all` — filtr zdroje objednávky pro admin seznam. */
     const sourceParam = (url.searchParams.get('source') || '').trim().toLowerCase();
-    const sourceFilter: 'eshop' | 'pipedrive' | null =
-      sourceParam === 'eshop' || sourceParam === 'pipedrive' ? sourceParam : null;
+    const sourceFilter: 'eshop' | 'pipedrive' | 'distributor' | null =
+      sourceParam === 'eshop' || sourceParam === 'pipedrive' || sourceParam === 'distributor'
+        ? sourceParam
+        : null;
     const searchPattern = `%${search}%`;
 
     const searchClause = search
@@ -903,9 +909,12 @@ Deno.serve(async (req) => {
 
     const sourceClause = sourceFilter === 'pipedrive'
       ? sql`and ${pipedriveSourceMatch}`
-      : sourceFilter === 'eshop'
-        ? sql`and not (${pipedriveSourceMatch})`
-        : sql``;
+      : sourceFilter === 'distributor'
+        ? sql`and ${distributorSourceMatch}`
+        /** „E-shop“ = ani Pipedrive, ani distributor. */
+        : sourceFilter === 'eshop'
+          ? sql`and not (${pipedriveSourceMatch}) and not (${distributorSourceMatch})`
+          : sql``;
 
     const filterClause = filter === 'new'
       ? sql`and o.status in ('paid', 'processing', 'exported')`

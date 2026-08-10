@@ -11,6 +11,8 @@ export const VIVIDBOOKS_LS_PRESERVE = new Set([
   'vividbooks_cookie_consent_v2',
   /** Admin Agent — snapshot konverzace */
   'vividbooks_web_operator_hub_messages_v1',
+  /** Klíč k neveřejné distributorské objednávce — bez něj by přestalo fungovat holé /distributor */
+  'vividbooks_distributor_key',
 ]);
 
 /** True = bezpečně smazat jako starou cache katalogu (megabajty). */

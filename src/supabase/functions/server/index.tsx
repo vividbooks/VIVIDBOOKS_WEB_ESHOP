@@ -20,7 +20,9 @@ import {
 } from '../../../utils/emailValidation.ts';
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
+import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
+import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
 import {
   applyAllDigitalBundleStripe,
 } from '../../../utils/digitalSubscription.ts';
@@ -13211,7 +13213,15 @@ async function lookupSchoolInPipedrive(
 
 async function upsertPipedriveSchoolOrganization(
   apiToken: string,
-  params: { schoolName: string; ico?: string; address?: string; strictIcoMatch?: boolean },
+  params: {
+    schoolName: string;
+    ico?: string;
+    address?: string;
+    strictIcoMatch?: boolean;
+    /** Distributorské objednávky: adresa z ARES slouží jen k založení nové organizace,
+     *  do už existující (spárované podle IČO) se nezapisuje, ať nepřepíše data z CRM. */
+    keepExistingAddress?: boolean;
+  },
 ) {
   const ico = String(params.ico || '').trim();
   const schoolName = String(params.schoolName || '').trim();
@@ -13224,7 +13234,7 @@ async function upsertPipedriveSchoolOrganization(
   if (lookup.orgId) {
     const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
     const updatePayload: Record<string, any> = {};
-    if (address) updatePayload.address = address;
+    if (address && !params.keepExistingAddress) updatePayload.address = address;
     /** IČO na existující organizaci doplníme jen pokud byla spárovaná podle jména
      *  a strictIcoMatch je vypnutý (admin tooly). U strictIcoMatch by se sem ani
      *  nemělo dostat — když IČO nematchne, lookup vrátí orgId=null a založí se nová. */
@@ -16702,6 +16712,11 @@ async function findOrCreatePipedrivePersonForEshopB2c(
 const PIPEDRIVE_ESHOP_PIPELINE_ID = 20;
 const PIPEDRIVE_ESHOP_STAGE_ID = 106;
 
+/** Distributorské objednávky (neveřejná stránka `/distributor/objednavka`): pipeline 8
+ *  „Channel Partners Performance CP2“ a její jediná fáze 43. Přepis přes env. */
+const PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID_DEFAULT = 8;
+const PIPEDRIVE_DISTRIBUTOR_STAGE_ID_DEFAULT = 43;
+
 /** Výchozí ID štítků dealu (pole Label) — přepíše PIPEDRIVE_ESHOP_LABEL_IDS_* / auto z API. */
 const PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT = 419;
 const PIPEDRIVE_ESHOP_LABEL_ID_B2B_DEFAULT = 488;
@@ -16752,18 +16767,23 @@ function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Rec
  *   - `b2b_card_open`       — **NOVÝ**: B2B (s IČO/školou) zvolil platbu kartou, ale platbu ještě nedokončil. Pushneme open deal jako lead, ať obchod
  *                             vidí poptávku stejně jako u převodu. Pokud platba později projde, sync (`b2b_card_won`) deal upgradne na won.
  *   - `b2b_transfer_open`   — B2B platba převodem; deal vždy vzniká jako open (zaplacení obchod řeší ručně / přes pipedrive-inbound-deal webhook).
+ *   - `distributor_open`    — objednávka z neveřejné distributorské stránky. Deal vzniká jako open v pipeline 8
+ *                             (Channel Partners Performance CP2), organizace se páruje **jen** podle IČO (pole CIN),
+ *                             bez osoby, bez dopravy a bez exportu do Base.com.
  */
 type EshopPipedriveMode =
   | 'b2c_card_won'
   | 'b2b_card_won'
   | 'b2b_card_open'
-  | 'b2b_transfer_open';
+  | 'b2b_transfer_open'
+  | 'distributor_open';
 
 const ESHOP_PIPEDRIVE_MODES: readonly EshopPipedriveMode[] = [
   'b2c_card_won',
   'b2b_card_won',
   'b2b_card_open',
   'b2b_transfer_open',
+  'distributor_open',
 ] as const;
 
 function isEshopPipedriveWonMode(mode: EshopPipedriveMode): boolean {
@@ -17021,7 +17041,8 @@ async function createPipedriveEshopDealAdvanced(
   apiToken: string,
   params: {
     title: string;
-    personId: number;
+    /** `null` u distributorských dealů — v Pipedrive je jen organizace, kontaktní osoba se nezakládá. */
+    personId: number | null;
     orgId?: number | null;
     /** Pipedrive `user_id` — vlastník dealu. Bez něj zdědí vlastníka API tokenu (typicky Daniel Ondrášek). */
     ownerUserId?: number | null;
@@ -17036,7 +17057,7 @@ async function createPipedriveEshopDealAdvanced(
 ) {
   const payload: Record<string, any> = {
     title: params.title,
-    person_id: params.personId,
+    ...(params.personId ? { person_id: params.personId } : {}),
     pipeline_id: params.pipelineId,
     stage_id: params.stageId,
     ...params.statusPayload,
@@ -17370,8 +17391,10 @@ async function refreshEshopPipedriveDealFromDb(
   const orderNumber = String((row as any).order_number || '').trim();
 
   const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
-  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
-  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  /** Distributorský deal nemá e‑shopové štítky ani „Source = PRINT" — refresh je nepřidává. */
+  const isDistributorRefresh = mode === 'distributor_open';
+  const labelIds = isDistributorRefresh ? [] : await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = isDistributorRefresh ? {} : await resolveEshopPrintFieldPayload(apiToken);
 
   const patchBody: Record<string, unknown> = {};
   if (labelIds.length) {
@@ -17554,9 +17577,16 @@ async function syncEshopOrderToPipedriveFromDb(
     pipedrive_sync_error: null,
   });
 
-  const pipelineId = PIPEDRIVE_ESHOP_PIPELINE_ID;
-  const stageId = PIPEDRIVE_ESHOP_STAGE_ID;
-  console.log(`[Pipedrive eshop] pipeline_id=${pipelineId} stage_id=${stageId} (Eshop)`);
+  const isDistributor = mode === 'distributor_open';
+  const pipelineId = isDistributor
+    ? (pipedriveEnvInt('PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID', 0) || PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID_DEFAULT)
+    : PIPEDRIVE_ESHOP_PIPELINE_ID;
+  const stageId = isDistributor
+    ? (pipedriveEnvInt('PIPEDRIVE_DISTRIBUTOR_STAGE_ID', 0) || PIPEDRIVE_DISTRIBUTOR_STAGE_ID_DEFAULT)
+    : PIPEDRIVE_ESHOP_STAGE_ID;
+  console.log(
+    `[Pipedrive eshop] pipeline_id=${pipelineId} stage_id=${stageId} (${isDistributor ? 'Distributor' : 'Eshop'})`,
+  );
 
   const labelFieldKey = (Deno.env.get('PIPEDRIVE_ESHOP_LABEL_FIELD_KEY') || '').trim() || 'label';
 
@@ -17564,11 +17594,13 @@ async function syncEshopOrderToPipedriveFromDb(
   const schoolNameRaw = String((order as any).school_name || '').trim();
   /** B2B i bez IČO — pokud uživatel uvedl jméno školy, založíme/spárujeme organizaci.
    *  Bez IČO i bez `school_name` je to čisté B2C → person v Pipedrivu, deal bez org. */
-  const isB2b = ico.length > 0 || schoolNameRaw.length > 0;
+  const isB2b = isDistributor || ico.length > 0 || schoolNameRaw.length > 0;
   const personName = String((order as any).customer_name || '').trim() || 'Zákazník';
   const email = String((order as any).customer_email || '').trim();
   const phone = String((order as any).customer_phone || '').trim();
-  if (!email) return await fail('missing_email');
+  /** Distributorský formulář sbírá jen IČO — kontaktní e‑mail neexistuje, deal jede na organizaci. */
+  if (!email && !isDistributor) return await fail('missing_email');
+  if (isDistributor && !ico) return await fail('missing_ico');
 
   let orgId: number | null = null;
   let orgLookupForTitle: { orgName: string | null } | null = null;
@@ -17583,6 +17615,8 @@ async function syncEshopOrderToPipedriveFromDb(
       ico,
       address: [(order as any).street, (order as any).city, (order as any).zip].filter(Boolean).join(', '),
       strictIcoMatch: ico.length > 0,
+      /** U distributora je adresa jen z ARES — do existující organizace v CRM ji nepřepisujeme. */
+      keepExistingAddress: isDistributor,
     });
     orgId = orgLookup.orgId;
     orgLookupForTitle = orgLookup;
@@ -17590,7 +17624,9 @@ async function syncEshopOrderToPipedriveFromDb(
   }
 
   let person: any = null;
-  if (mode === 'b2c_card_won' || !isB2b) {
+  if (isDistributor) {
+    /* Distributor: deal patří organizaci nalezené podle IČO, kontaktní osobu formulář nesbírá. */
+  } else if (mode === 'b2c_card_won' || !isB2b) {
     person = await findOrCreatePipedrivePersonForEshopB2c(apiToken, { name: personName, email, phone }).catch((e: any) => {
       console.log(`[Pipedrive eshop] person B2C: ${e.message}`);
       return null;
@@ -17608,24 +17644,26 @@ async function syncEshopOrderToPipedriveFromDb(
   }
 
   const personId = parsePipedriveNumericId(person?.id);
-  if (!personId) return await fail('missing_person');
+  if (!personId && !isDistributor) return await fail('missing_person');
 
   const status: 'open' | 'won' = isEshopPipedriveWonMode(mode) ? 'won' : 'open';
 
   const orderNumber = String((order as any).order_number || '');
   const schoolNameOnly = String((order as any).school_name || '').trim();
-  const title =
-    mode === 'b2c_card_won'
-      ? `${personName} + e-shop B2C`
-      : (() => {
-          const fromOrg = String(orgLookupForTitle?.orgName || '').trim();
-          const base = fromOrg || schoolNameOnly;
-          return base ? `${base} + e-shop B2B` : `E-shop B2B — ${orderNumber}`;
-        })();
+  const title = (() => {
+    if (mode === 'b2c_card_won') return `${personName} + e-shop B2C`;
+    const fromOrg = String(orgLookupForTitle?.orgName || '').trim();
+    const base = fromOrg || schoolNameOnly;
+    if (isDistributor) {
+      return base ? `${base} + distributor` : `Distributor — ${orderNumber}`;
+    }
+    return base ? `${base} + e-shop B2B` : `E-shop B2B — ${orderNumber}`;
+  })();
 
   const statusPayload = await resolveDealStatusPayloadFromFields(apiToken, status);
-  const labelIds = await resolveEshopDealLabelIds(apiToken, mode);
-  const printPayload = await resolveEshopPrintFieldPayload(apiToken);
+  /** Distributorská pipeline má vlastní proces — štítky B2C/B2B ani „Source = PRINT" se nepoužívají. */
+  const labelIds = isDistributor ? [] : await resolveEshopDealLabelIds(apiToken, mode);
+  const printPayload = isDistributor ? {} : await resolveEshopPrintFieldPayload(apiToken);
   const productCategoryPayload = getEshopProductCategoryPayload();
   const orderNumberPayload = getEshopOrderNumberPayload(orderNumber);
   const extraPayload: Record<string, unknown> = {
@@ -17669,19 +17707,25 @@ async function syncEshopOrderToPipedriveFromDb(
   /** Univerzální B2B fallback (kartová i převodová) — Daniel Ondrášek. Akceptuje historické
    *  jméno `PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID` (Daniel je v něm nakonfigurovaný),
    *  aby se nemusel měnit secret při deployi. */
-  const b2bFallbackOwnerId = isB2b
+  const b2bFallbackOwnerId = isB2b && !isDistributor
     ? (pipedriveEnvInt('PIPEDRIVE_ESHOP_B2B_FALLBACK_OWNER_ID', 0)
         || pipedriveEnvInt('PIPEDRIVE_ESHOP_CARD_PAID_FALLBACK_OWNER_ID', 0))
     : 0;
-  const eshopFallbackOwnerId = pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
+  /** Distributorská pipeline má vlastní obchodníky — e‑shopové fallbacky (Daniel) sem nepatří. */
+  const distributorOwnerId = isDistributor ? pipedriveEnvInt('PIPEDRIVE_DISTRIBUTOR_OWNER_ID', 0) : 0;
+  const eshopFallbackOwnerId = isDistributor ? 0 : pipedriveEnvInt('PIPEDRIVE_ESHOP_FALLBACK_OWNER_ID', 0);
   const dealOwnerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
     orgId: isB2b ? orgId : null,
-    /** B2C jde explicit overridem (= 1. priorita, nezávisle na cokoliv). */
-    explicitOwnerUserId: b2cOwnerId > 0 ? b2cOwnerId : null,
+    /** B2C i distributor jdou explicit overridem (= 1. priorita, nezávisle na cokoliv). */
+    explicitOwnerUserId: distributorOwnerId > 0
+      ? distributorOwnerId
+      : b2cOwnerId > 0 ? b2cOwnerId : null,
     fallbackOwnerUserId: b2bFallbackOwnerId > 0 ? b2bFallbackOwnerId : eshopFallbackOwnerId,
-    contextLabel: isB2cOrder
-      ? `Pipedrive eshop ${mode} (B2C jednotlivec → Daniel)`
-      : `Pipedrive eshop ${mode} (B2B → org pole / Daniel)`,
+    contextLabel: isDistributor
+      ? `Pipedrive distributor ${mode} (org pole / PIPEDRIVE_DISTRIBUTOR_OWNER_ID)`
+      : isB2cOrder
+        ? `Pipedrive eshop ${mode} (B2C jednotlivec → Daniel)`
+        : `Pipedrive eshop ${mode} (B2B → org pole / Daniel)`,
   });
 
   const deal = await createPipedriveEshopDealAdvanced(apiToken, {
@@ -17712,24 +17756,29 @@ async function syncEshopOrderToPipedriveFromDb(
     nextLineOrder = result.lastOrder;
   }
   /** Doprava jako samostatný produktový řádek na dealu (PPL / DPD / GLS / ZZ). Caller už zná
-   *  sdílenou cache code→pd_product_id, takže se nehledá podruhé. */
-  await addPipedriveDealShippingLineItem(
-    apiToken,
-    dealId,
-    String((order as any).shipping_method || ''),
-    Number((order as any).shipping_price) || 0,
-    String((order as any).pickup_point_name || '') || null,
-    nextLineOrder + 1,
-    codeToPdIdShared,
-  );
+   *  sdílenou cache code→pd_product_id, takže se nehledá podruhé. Distributor dopravu neřeší. */
+  if (!isDistributor) {
+    await addPipedriveDealShippingLineItem(
+      apiToken,
+      dealId,
+      String((order as any).shipping_method || ''),
+      Number((order as any).shipping_price) || 0,
+      String((order as any).pickup_point_name || '') || null,
+      nextLineOrder + 1,
+      codeToPdIdShared,
+    );
+  }
 
   /** Poznámka zákazníka z objednávky (`orders.note`) → note k dealu v Pipedrivu.
    *  Selhání zápisu poznámky nesmí shodit celý sync dealu. */
   const customerNote = String((order as any).note || '').trim();
   if (customerNote) {
     try {
+      const noteHeader = isDistributor
+        ? `Poznámka distributora k objednávce ${orderNumber || ''}`
+        : `Poznámka k objednávce ${orderNumber || ''}`;
       await createPipedriveNote(apiToken, {
-        content: `Poznámka k objednávce ${orderNumber || ''}:\n${customerNote}`.trim(),
+        content: `${noteHeader.trim()}:\n${customerNote}`,
         dealId,
         orgId: isB2b ? orgId : null,
         personId,
@@ -18213,6 +18262,259 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
   } catch (err: any) {
     console.log(`[eshop/pipedrive-sync] ${err.message}`);
     return c.json({ error: err.message || 'sync failed' }, 500);
+  }
+});
+
+/* ── Distributorské objednávky (neveřejná stránka /distributor/objednavka) ───────── */
+
+/** Placeholder e‑mail objednávky — distributorský formulář sbírá jen IČO a e‑maily se neposílají. */
+function buildDistributorPlaceholderEmail(ico: string): string {
+  const domain = (Deno.env.get('DISTRIBUTOR_ORDER_EMAIL_DOMAIN') || '').trim() || 'vividbooks.com';
+  return `distributor+${ico}@${domain}`;
+}
+
+/** Klíč z neveřejného odkazu — hlavička `X-Distributor-Token` nebo `?k=` v URL. */
+function readDistributorRequestToken(c: Context): string {
+  const fromHeader = (c.req.header('X-Distributor-Token') || c.req.header('x-distributor-token') || '').trim();
+  return fromHeader || (c.req.query('k') || '').trim();
+}
+
+/**
+ * `null` = přístup povolen. Jinak hotová chybová odpověď:
+ *   - 503, pokud secret `DISTRIBUTOR_ORDER_TOKEN` není nastavený (stránka by jinak byla veřejná),
+ *   - 403 při neplatném klíči.
+ */
+function guardDistributorAccess(c: Context): Response | null {
+  const expected = (Deno.env.get('DISTRIBUTOR_ORDER_TOKEN') || '').trim();
+  if (!expected) {
+    return c.json(
+      { error: 'Distributorská objednávka není nakonfigurovaná (chybí DISTRIBUTOR_ORDER_TOKEN).' },
+      503,
+    );
+  }
+  if (readDistributorRequestToken(c) !== expected) {
+    return c.json({ error: 'Neplatný odkaz.' }, 403);
+  }
+  return null;
+}
+
+/** Název a sídlo firmy podle IČO — CSV škol (pokud tam je) doplněné o ARES. */
+async function lookupCompanyByIco(ico: string): Promise<{ name: string; address: string }> {
+  const icoTrim = ico.trim();
+  const icoClean = icoTrim.replace(/^0+/, '');
+  let name = '';
+  let address = '';
+
+  try {
+    const schools = await loadSchoolsCache();
+    const hit = schools.find((s) => s.ico.replace(/^0+/, '') === icoClean);
+    if (hit) {
+      name = String(hit.name || '').trim();
+      address = sanitizeSchoolAddressForApi(hit.address, hit.ico);
+    }
+  } catch (e: any) {
+    console.log(`[distributor] CSV lookup ${icoTrim}: ${e?.message || e}`);
+  }
+
+  if (name && address) return { name, address };
+
+  try {
+    const res = await fetch(
+      `https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/${icoTrim}`,
+      { headers: { Accept: 'application/json' } },
+    );
+    if (res.ok) {
+      const data = await res.json();
+      name = name || String(data?.obchodniJmeno || data?.nazev || '').trim();
+      address = address || sanitizeSchoolAddressForApi(buildAresAddress(data?.sidlo), icoTrim);
+    }
+  } catch (e: any) {
+    console.log(`[distributor] ARES lookup ${icoTrim}: ${e?.message || e}`);
+  }
+
+  return { name, address };
+}
+
+/** GET …/distributor/access?k=<token> — ověření odkazu před zobrazením formuláře. */
+app.get('/make-server-93a20b6f/distributor/access', (c) => {
+  const denied = guardDistributorAccess(c);
+  if (denied) return denied;
+  return c.json({ ok: true });
+});
+
+/**
+ * POST …/distributor/orders — objednávka distributora (jen IČO, počty kusů a poznámka).
+ *
+ * Zakládá řádek v `public.orders` se `source='distributor'` (v adminu vlastní badge) a deal
+ * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
+ * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, poznámka se uloží
+ * jako note k dealu. Do Base.com ani iDokladu nic nejde a e‑maily se neposílají.
+ */
+app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
+  const denied = guardDistributorAccess(c);
+  if (denied) return denied;
+
+  try {
+    const body = (await c.req.json()) as {
+      ico?: unknown;
+      note?: unknown;
+      submissionId?: unknown;
+      items?: unknown;
+    };
+
+    const ico = String(body.ico ?? '').replace(/\s/g, '').trim();
+    if (!/^\d{6,10}$/.test(ico)) {
+      return c.json({ error: 'Zadejte platné IČO (6–10 číslic).' }, 400);
+    }
+
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    const requested: Array<{ productId: string; quantity: number }> = [];
+    for (const raw of rawItems) {
+      const productId = String((raw as any)?.productId ?? '').trim();
+      const quantity = Math.floor(Number((raw as any)?.quantity));
+      if (!productId) continue;
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 10000) {
+        return c.json({ error: 'Neplatné množství u některé položky.' }, 400);
+      }
+      requested.push({ productId, quantity });
+    }
+    if (requested.length === 0) {
+      return c.json({ error: 'Vyberte alespoň jeden produkt.' }, 400);
+    }
+    if (requested.length > 200) {
+      return c.json({ error: 'Objednávka má příliš mnoho položek.' }, 400);
+    }
+
+    const note = String(body.note ?? '').trim().slice(0, 2000);
+    const submissionId = String(body.submissionId ?? '').trim().slice(0, 64);
+
+    const sb = getServiceSupabaseClient();
+    if (!sb) return c.json({ error: 'Databáze není dostupná.' }, 503);
+
+    const catalog = await getAllProducts();
+    const catalogById = new Map<string, any>(catalog.map((p: any) => [String(p.id), p] as [string, any]));
+
+    const lines: Array<{ productId: string; productName: string; quantity: number; unitPrice: number }> = [];
+    for (const item of requested) {
+      const product = catalogById.get(item.productId);
+      if (!product || !isDistributorOrderableProduct(product)) {
+        return c.json({ error: 'Objednávka obsahuje produkt, který není v nabídce.' }, 400);
+      }
+      const priceKc = parsePriceTextToKc(product.price);
+      const unitPrice = priceKc !== null
+        ? Math.round(priceKc * 100)
+        : Math.max(0, Math.round(Number(product.priceAmount || 0) * 100));
+      lines.push({
+        productId: item.productId,
+        productName: String(product.name || product.title || item.productId).slice(0, 300),
+        quantity: item.quantity,
+        unitPrice,
+      });
+    }
+
+    const subtotal = lines.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0);
+    const company = await lookupCompanyByIco(ico);
+    const companyName = company.name || `Distributor ${ico}`;
+    const addressParts = parseFreeFormAddress(company.address);
+    const idempotencyKey = submissionId ? `distributor:${submissionId}` : null;
+
+    const insertPayload = {
+      status: 'pending_payment',
+      source: 'distributor',
+      customer_email: buildDistributorPlaceholderEmail(ico),
+      customer_name: companyName.slice(0, 200),
+      school_name: companyName.slice(0, 200),
+      ico,
+      street: addressParts.street || null,
+      city: addressParts.city || null,
+      zip: addressParts.zip || null,
+      country: 'CZ',
+      /** Dopravu distributor neřeší — objednávku i expedici dojednává obchod v Pipedrive. */
+      shipping_method: 'none',
+      shipping_price: 0,
+      payment_method: 'invoice',
+      payment_status: 'pending',
+      subtotal,
+      total: subtotal,
+      note: note || null,
+      idempotency_key: idempotencyKey,
+    };
+
+    let orderRow: { id: string; order_number: string } | null = null;
+    const { data: inserted, error: insertError } = await sb
+      .from('orders')
+      .insert(insertPayload)
+      .select('id, order_number')
+      .single();
+
+    if (insertError) {
+      /** Dvojklik / opakovaný POST se stejným `submissionId` — vrátíme původní objednávku. */
+      if (insertError.code === '23505' && idempotencyKey) {
+        const { data: existing } = await sb
+          .from('orders')
+          .select('id, order_number')
+          .eq('idempotency_key', idempotencyKey)
+          .maybeSingle();
+        if (existing) {
+          return c.json({
+            success: true,
+            orderId: (existing as any).id,
+            orderNumber: (existing as any).order_number,
+            deduplicated: true,
+          });
+        }
+      }
+      console.log(`[distributor] insert order: ${insertError.message}`);
+      return c.json({ error: 'Objednávku se nepodařilo uložit.' }, 500);
+    }
+    orderRow = inserted as any;
+    if (!orderRow) return c.json({ error: 'Objednávku se nepodařilo uložit.' }, 500);
+
+    const { error: itemsError } = await sb.from('order_items').insert(
+      lines.map((l) => ({
+        order_id: orderRow!.id,
+        product_id: l.productId,
+        product_name: l.productName,
+        quantity: l.quantity,
+        unit_price: l.unitPrice,
+        total_price: l.unitPrice * l.quantity,
+      })),
+    );
+    if (itemsError) {
+      console.log(`[distributor] insert order_items: ${itemsError.message}`);
+      return c.json({ error: 'Položky objednávky se nepodařilo uložit.' }, 500);
+    }
+
+    await sb.from('order_events').insert({
+      order_id: orderRow.id,
+      event_type: 'order_created',
+      to_status: 'pending_payment',
+      details: { source: 'distributor', ico, items: lines.length },
+      actor: 'distributor',
+    });
+
+    let pipedrive: Record<string, unknown> | null = null;
+    try {
+      pipedrive = await syncEshopOrderToPipedriveFromDb(orderRow.id, 'distributor_open');
+    } catch (syncErr: any) {
+      /** Selhání CRM nesmí shodit odeslanou objednávku — stav je v `orders.pipedrive_sync_status`. */
+      console.log(`[distributor] pipedrive sync: ${syncErr?.message || syncErr}`);
+    }
+
+    console.log(
+      `[distributor] objednávka ${orderRow.order_number} ico=${ico} položek=${lines.length} deal=${pipedrive?.dealId ?? '—'}`,
+    );
+
+    return c.json({
+      success: true,
+      orderId: orderRow.id,
+      orderNumber: orderRow.order_number,
+      companyName,
+      pipedrive,
+    });
+  } catch (err: any) {
+    console.log(`[distributor] orders: ${err?.message || err}`);
+    return c.json({ error: 'Objednávku se nepodařilo odeslat.' }, 500);
   }
 });
 
