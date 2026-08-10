@@ -7,7 +7,8 @@ export type OrderEmailType =
   | 'order_cancelled'
   | 'payment_reminder'
   | 'order_transfer_received'
-  | 'order_auto_cancelled_unpaid';
+  | 'order_auto_cancelled_unpaid'
+  | 'distributor_order_received';
 
 type OrderRow = {
   id: string;
@@ -21,6 +22,7 @@ type OrderRow = {
   street: string | null;
   city: string | null;
   zip: string | null;
+  note: string | null;
   shipping_method: string;
   shipping_price: number;
   pickup_point_name: string | null;
@@ -196,6 +198,64 @@ function buildOrderItemsTable(items: OrderItemRow[]) {
       ${rows}
     </table>
   `;
+}
+
+/** Distributorské shrnutí — bez cen (ceny a dopravu řeší obchodní zástupce). */
+function buildDistributorItemsTable(items: OrderItemRow[]) {
+  const rows = items.map((item) => `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;">${escapeHtml(item.product_name)}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:14px;color:#111827;text-align:right;">${item.quantity}&nbsp;ks</td>
+    </tr>
+  `).join('');
+
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:20px 0;">
+      <tr>
+        <td style="padding:10px 12px;background:#eff6ff;font-size:12px;font-weight:700;color:#1d4ed8;text-transform:uppercase;">Produkt</td>
+        <td style="padding:10px 12px;background:#eff6ff;font-size:12px;font-weight:700;color:#1d4ed8;text-transform:uppercase;text-align:right;">Počet</td>
+      </tr>
+      ${rows}
+    </table>
+  `;
+}
+
+function buildDistributorOrderReceivedHtml(order: OrderRow, items: OrderItemRow[]) {
+  const company = String(order.school_name || order.customer_name || '').trim();
+  const ico = String(order.ico || '').trim();
+  const phone = String(order.customer_phone || '').trim();
+  const note = String(order.note || '').trim();
+  const totalPieces = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const noteHtml = note
+    ? escapeHtml(note).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>')
+    : '';
+
+  return buildShell(
+    `Shrnutí objednávky ${order.order_number} — VividBooks`,
+    `
+      <h1 style="margin:0 0 12px;font-size:28px;line-height:1.2;color:#111827;">Děkujeme za objednávku</h1>
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#374151;">
+        Evidujeme vaši distributorskou objednávku
+        <strong>${escapeHtml(order.order_number)}</strong>.
+        Ozve se vám obchodní zástupce Vividbooks a dořeší ceny, dopravu i další detaily.
+      </p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
+        ${company ? `<tr><td style="padding:6px 0;font-size:15px;color:#374151;width:140px;">Společnost:</td><td style="padding:6px 0;font-size:15px;color:#111827;"><strong>${escapeHtml(company)}</strong></td></tr>` : ''}
+        ${ico ? `<tr><td style="padding:6px 0;font-size:15px;color:#374151;">IČO:</td><td style="padding:6px 0;font-size:15px;color:#111827;">${escapeHtml(ico)}</td></tr>` : ''}
+        <tr><td style="padding:6px 0;font-size:15px;color:#374151;">E-mail:</td><td style="padding:6px 0;font-size:15px;color:#111827;">${escapeHtml(order.customer_email)}</td></tr>
+        ${phone ? `<tr><td style="padding:6px 0;font-size:15px;color:#374151;">Telefon:</td><td style="padding:6px 0;font-size:15px;color:#111827;">${escapeHtml(phone)}</td></tr>` : ''}
+      </table>
+      ${buildDistributorItemsTable(items)}
+      <p style="margin:0 0 16px;font-size:15px;line-height:1.7;color:#111827;">
+        <strong>Celkem ${items.length} ${items.length === 1 ? 'titul' : items.length >= 2 && items.length <= 4 ? 'tituly' : 'titulů'}</strong>
+        · ${totalPieces}&nbsp;ks
+      </p>
+      ${noteHtml ? `
+        <p style="margin:0 0 6px;font-size:15px;line-height:1.7;color:#374151;"><strong>Poznámka k objednávce:</strong></p>
+        <p style="margin:0;font-size:15px;line-height:1.7;color:#111827;">${noteHtml}</p>
+      ` : ''}
+    `,
+  );
 }
 
 function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackingUrl: string | null) {
@@ -374,6 +434,7 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
       street,
       city,
       zip,
+      note,
       shipping_method,
       shipping_price,
       pickup_point_name,
@@ -449,6 +510,9 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
   } else if (params.emailType === 'order_auto_cancelled_unpaid') {
     subject = `Objednávka ${order.order_number} zrušena — VividBooks`;
     html = buildOrderAutoCancelledUnpaidHtml(order);
+  } else if (params.emailType === 'distributor_order_received') {
+    subject = `Shrnutí objednávky ${order.order_number} — VividBooks`;
+    html = buildDistributorOrderReceivedHtml(order, items);
   } else {
     throw new Error(`Unsupported emailType: ${params.emailType}`);
   }
