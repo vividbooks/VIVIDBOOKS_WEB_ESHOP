@@ -1262,7 +1262,14 @@ const corsOptions = {
     if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return origin;
     return 'https://www.vividbooks.com';
   },
-  allowHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-client-info', 'x-user-access-token'],
+  allowHeaders: [
+    'Content-Type',
+    'Authorization',
+    'apikey',
+    'x-client-info',
+    'x-user-access-token',
+    'x-distributor-token',
+  ],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 };
 
@@ -1280,7 +1287,8 @@ app.onError((err, c) => {
     {
       headers: {
         'Access-Control-Allow-Origin': resolveAllowedOrigin(origin),
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-user-access-token',
+        'Access-Control-Allow-Headers':
+          'Content-Type, Authorization, apikey, x-client-info, x-user-access-token, x-distributor-token',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Vary': 'Origin',
       },
@@ -18345,8 +18353,11 @@ function readDistributorRequestToken(c: Context): string {
  * `null` = přístup povolen. Jinak hotová chybová odpověď:
  *   - 503, pokud secret `DISTRIBUTOR_ORDER_TOKEN` není nastavený (stránka by jinak byla veřejná),
  *   - 403 při neplatném klíči.
+ *
+ * `tokenFromBody` posílá POST objednávky — klíč v těle nevyžaduje vlastní hlavičku, takže
+ * odeslání nezávisí na CORS preflightu (prohlížeč jinak POST z webu zablokuje).
  */
-function guardDistributorAccess(c: Context): Response | null {
+function guardDistributorAccess(c: Context, tokenFromBody?: string): Response | null {
   const expected = (Deno.env.get('DISTRIBUTOR_ORDER_TOKEN') || '').trim();
   if (!expected) {
     return c.json(
@@ -18354,7 +18365,8 @@ function guardDistributorAccess(c: Context): Response | null {
       503,
     );
   }
-  if (readDistributorRequestToken(c) !== expected) {
+  const provided = readDistributorRequestToken(c) || String(tokenFromBody || '').trim();
+  if (provided !== expected) {
     return c.json({ error: 'Neplatný odkaz.' }, 403);
   }
   return null;
@@ -18413,17 +18425,23 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
  * jako note k dealu. Do Base.com ani iDokladu nic nejde a e‑maily se neposílají.
  */
 app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
-  const denied = guardDistributorAccess(c);
+  let body: {
+    token?: unknown;
+    ico?: unknown;
+    note?: unknown;
+    submissionId?: unknown;
+    items?: unknown;
+  };
+  try {
+    body = (await c.req.json()) as typeof body;
+  } catch {
+    return c.json({ error: 'Neplatný požadavek.' }, 400);
+  }
+
+  const denied = guardDistributorAccess(c, String(body.token ?? ''));
   if (denied) return denied;
 
   try {
-    const body = (await c.req.json()) as {
-      ico?: unknown;
-      note?: unknown;
-      submissionId?: unknown;
-      items?: unknown;
-    };
-
     const ico = String(body.ico ?? '').replace(/\s/g, '').trim();
     if (!/^\d{6,10}$/.test(ico)) {
       return c.json({ error: 'Zadejte platné IČO (6–10 číslic).' }, 400);
