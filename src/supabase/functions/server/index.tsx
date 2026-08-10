@@ -18391,6 +18391,29 @@ function readDistributorRequestToken(c: Context): string {
   return fromHeader || (c.req.query('k') || '').trim();
 }
 
+/** Shrnutí objednávky na kontaktní e‑mail z formuláře — přes Edge `send-order-email` (Mandrill). */
+async function invokeDistributorOrderSummaryEmail(orderId: string): Promise<void> {
+  const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
+  if (!base) throw new Error('Missing SUPABASE_URL for send-order-email.');
+  const key = (
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    || Deno.env.get('SUPABASE_ANON_KEY')
+    || ''
+  ).trim();
+  const res = await fetch(`${base}/functions/v1/send-order-email`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(key ? { Authorization: `Bearer ${key}`, apikey: key } : {}),
+    },
+    body: JSON.stringify({ orderId, emailType: 'distributor_order_received' }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as any)?.error || `send-order-email HTTP ${res.status}`);
+  }
+}
+
 /**
  * `null` = přístup povolen. Jinak hotová chybová odpověď:
  *   - 503, pokud secret `DISTRIBUTOR_ORDER_TOKEN` není nastavený (stránka by jinak byla veřejná),
@@ -18464,8 +18487,8 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
  * Zakládá řádek v `public.orders` se `source='distributor'` (v adminu vlastní badge) a deal
  * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
  * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, e‑mail + telefon +
- * poznámka jdou jako HTML note k dealu. Do Base.com ani iDokladu nic nejde a transakční e‑maily
- * se neposílají.
+ * poznámka jdou jako HTML note k dealu. Na zadaný e‑mail jde shrnutí objednávky (Mandrill,
+ * typ `distributor_order_received`). Do Base.com ani iDokladu nic nejde.
  */
 app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
   let body: {
@@ -18641,8 +18664,31 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       console.log(`[distributor] pipedrive sync: ${syncErr?.message || syncErr}`);
     }
 
+    let emailSent = false;
+    try {
+      await invokeDistributorOrderSummaryEmail(orderRow.id);
+      emailSent = true;
+      console.log(`[distributor] shrnutí odesláno na ${email} (objednávka ${orderRow.order_number})`);
+    } catch (mailErr: any) {
+      /** Stejně jako u e‑shopu — chybějící mail nesmí shodit založenou objednávku. */
+      console.log(`[distributor] shrnutí e-mail: ${mailErr?.message || mailErr}`);
+      try {
+        await sb.from('order_events').insert({
+          order_id: orderRow.id,
+          event_type: 'email',
+          details: {
+            emailType: 'distributor_order_received',
+            error: String(mailErr?.message || mailErr || 'send failed'),
+          },
+          actor: 'system',
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+
     console.log(
-      `[distributor] objednávka ${orderRow.order_number} ico=${ico} položek=${lines.length} deal=${pipedrive?.dealId ?? '—'}`,
+      `[distributor] objednávka ${orderRow.order_number} ico=${ico} položek=${lines.length} deal=${pipedrive?.dealId ?? '—'} email=${emailSent ? 'ok' : 'fail'}`,
     );
 
     return c.json({
@@ -18651,6 +18697,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       orderNumber: orderRow.order_number,
       companyName,
       pipedrive,
+      emailSent,
     });
   } catch (err: any) {
     console.log(`[distributor] orders: ${err?.message || err}`);
