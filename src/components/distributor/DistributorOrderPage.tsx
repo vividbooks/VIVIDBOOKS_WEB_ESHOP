@@ -247,9 +247,11 @@ export function DistributorOrderPage() {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${publicAnonKey}`,
-          'X-Distributor-Token': token,
         },
         body: JSON.stringify({
+          /** Klíč jde v těle, ne ve vlastní hlavičce — ta by u cross-origin POSTu vyžadovala
+           *  povolení v CORS preflightu a prohlížeč by odeslání zablokoval. */
+          token,
           ico: icoValue,
           note,
           submissionId: submissionIdRef.current,
