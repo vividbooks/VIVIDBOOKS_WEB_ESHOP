@@ -18,7 +18,9 @@ import { publicAnonKey } from '../../utils/supabase/info';
 import { edgeFunctionBase } from '../../utils/edgeFunctionBase';
 import { fetchSchoolSearchResults } from '../../utils/schoolSearchApi';
 import { isDistributorOrderableProduct } from '../../utils/distributorCatalog';
+import { EMAIL_FORMAT_HINT_CS, isValidEmailFormat, normalizeEmail } from '../../utils/emailValidation';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
+import { isValidCzechPhone, PHONE_CZ_HINT } from '../../utils/phoneCZ';
 import { RouteHydrateFallback } from '../RouteHydrateFallback';
 import { SEOHead } from '../SEOHead';
 
@@ -82,9 +84,9 @@ function confirmationSentence({ orderNumber, companyName }: { orderNumber: strin
  * Neveřejná objednávka pro distributory (`/distributor?k=<klíč>`).
  *
  * Klíč z odkazu se po ověření uloží do prohlížeče, takže distributor si může uložit
- * jen `/distributor`. Formulář sbírá jen IČO, počty kusů a poznámku — ceny se nezobrazují
- * a e‑maily se neposílají. Odeslání zakládá objednávku se `source='distributor'`
- * a deal v Pipedrive pipeline 8.
+ * jen `/distributor`. Formulář sbírá IČO, e‑mail, telefon, počty kusů a poznámku —
+ * ceny se nezobrazují a transakční e‑maily se neposílají. Odeslání zakládá objednávku
+ * se `source='distributor'` a deal v Pipedrive pipeline 8.
  */
 export function DistributorOrderPage() {
   const [searchParams] = useSearchParams();
@@ -94,6 +96,8 @@ export function DistributorOrderPage() {
 
   const [access, setAccess] = useState<AccessState>('checking');
   const [ico, setIco] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [companyLoading, setCompanyLoading] = useState(false);
   const [note, setNote] = useState('');
@@ -231,8 +235,17 @@ export function DistributorOrderPage() {
 
   const handleSubmit = useCallback(async () => {
     const icoValue = ico.replace(/\s/g, '');
+    const emailValue = normalizeEmail(email);
     if (!ICO_PATTERN.test(icoValue)) {
       setError('Zadejte platné IČO (6–10 číslic).');
+      return;
+    }
+    if (!isValidEmailFormat(emailValue)) {
+      setError(EMAIL_FORMAT_HINT_CS);
+      return;
+    }
+    if (!isValidCzechPhone(phone)) {
+      setError(PHONE_CZ_HINT);
       return;
     }
     if (selectedLines.length === 0) {
@@ -254,6 +267,8 @@ export function DistributorOrderPage() {
            *  povolení v CORS preflightu a prohlížeč by odeslání zablokoval. */
           token,
           ico: icoValue,
+          email: emailValue,
+          phone,
           note,
           submissionId: submissionIdRef.current,
           items: selectedLines.map(([productId, quantity]) => ({ productId, quantity })),
@@ -278,7 +293,7 @@ export function DistributorOrderPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [companyName, ico, note, selectedLines, token]);
+  }, [companyName, email, ico, note, phone, selectedLines, token]);
 
   const startNewOrder = useCallback(() => {
     setSubmitted(null);
@@ -340,21 +355,26 @@ export function DistributorOrderPage() {
           <p className="text-[12px] font-bold uppercase tracking-wide text-[#5b4fd8]">Vividbooks</p>
           <h1 className="mt-1 text-[28px] font-bold text-[#001161]">Objednávka pro distributory</h1>
           <p className="mt-2 text-[14px] text-[#001161]/70">
-            Vyplňte IČO své společnosti, zvolte počty kusů a objednávku odešlete. Ceny a dopravu s vámi
-            dořeší obchodní zástupce.
+            Vyplňte IČO, kontaktní e‑mail a telefon, zvolte počty kusů a objednávku odešlete. Ceny a
+            dopravu s vámi dořeší obchodní zástupce.
           </p>
         </header>
 
         <section className="mb-4 rounded-[20px] bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2 text-[14px] font-bold text-[#001161]">
             <Building2 className="size-4" />
-            IČO společnosti
+            Společnost a kontakt
           </div>
+          <label className="mb-1 block text-[13px] font-medium text-[#001161]/70" htmlFor="distributor-ico">
+            IČO společnosti
+          </label>
           <input
+            id="distributor-ico"
             value={ico}
             onChange={(e) => setIco(e.target.value.replace(/[^\d\s]/g, ''))}
             inputMode="numeric"
             placeholder="12345678"
+            autoComplete="organization"
             className={checkoutTextInputClass(false)}
           />
           <div className="mt-2 min-h-[20px] text-[13px] text-[#001161]/70">
@@ -362,6 +382,36 @@ export function DistributorOrderPage() {
             {!companyLoading && companyName && `Nalezeno: ${companyName}`}
             {!companyLoading && !companyName && ICO_PATTERN.test(ico.replace(/\s/g, '')) &&
               'Společnost jsme v rejstříku nenašli — objednávku můžete přesto odeslat.'}
+          </div>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-[#001161]/70" htmlFor="distributor-email">
+                E-mail
+              </label>
+              <input
+                id="distributor-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="jmeno@firma.cz"
+                autoComplete="email"
+                className={checkoutTextInputClass(false)}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-[13px] font-medium text-[#001161]/70" htmlFor="distributor-phone">
+                Telefon
+              </label>
+              <input
+                id="distributor-phone"
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+420 739 056 178"
+                autoComplete="tel"
+                className={checkoutTextInputClass(false)}
+              />
+            </div>
           </div>
         </section>
 
