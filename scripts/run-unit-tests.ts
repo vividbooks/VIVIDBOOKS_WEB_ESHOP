@@ -11,6 +11,7 @@ import {
 } from '../src/lib/appEntryChoice.ts';
 
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
+import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
   enrichCzechAddressParts,
   geocodeFreeFormAddressViaGoogle,
@@ -88,6 +89,35 @@ registerTest('verifyOrderTrackingToken accepts valid token and rejects invalid t
   const badToken = `${token.slice(1)}a`;
   const malformed = await verifyOrderTrackingToken(orderId, secret, badToken);
   assert.equal(malformed, false);
+});
+
+registerTest('trimCompanyNameForBase keeps short names, normalizes whitespace, trims to Base limit', () => {
+  assert.equal(BASE_COMPANY_MAX_LENGTH, 156);
+
+  /** Krátký název projde beze změny. */
+  assert.equal(
+    trimCompanyNameForBase('Základní škola a Mateřská škola Praha 4'),
+    'Základní škola a Mateřská škola Praha 4',
+  );
+
+  /** Vícenásobné mezery / odřádkování se znormalizují na jednu mezeru. */
+  assert.equal(
+    trimCompanyNameForBase('  Základní  škola\n Kolín,   Bezručova 980  '),
+    'Základní škola Kolín, Bezručova 980',
+  );
+
+  /** Delší název než 156 znaků se ořízne přesně na limit. */
+  const longName = 'Základní škola a Mateřská škola s rozšířenou výukou jazyků '.repeat(4).trim();
+  assert.ok(longName.length > BASE_COMPANY_MAX_LENGTH);
+  const trimmed = trimCompanyNameForBase(longName);
+  assert.equal(trimmed?.length, BASE_COMPANY_MAX_LENGTH);
+  assert.equal(trimmed, longName.slice(0, BASE_COMPANY_MAX_LENGTH));
+
+  /** Prázdný / whitespace-only / null vstup vrací null. */
+  assert.equal(trimCompanyNameForBase(''), null);
+  assert.equal(trimCompanyNameForBase('   '), null);
+  assert.equal(trimCompanyNameForBase(null), null);
+  assert.equal(trimCompanyNameForBase(undefined), null);
 });
 
 registerTest('workflow promote-main-to-production.yml contains manual promote safeguards', () => {

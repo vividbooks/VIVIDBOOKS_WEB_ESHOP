@@ -1,4 +1,5 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
+import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
 /**
  * Inbound: Pipedrive deal → objednávka v Postgres + fronta exportu **jen Base.com**.
  *
@@ -15,8 +16,9 @@ import { resolveAllowedOrigin } from '../_shared/cors.ts';
  *      i v BL/Base objednávka založí se způsobem platby „Bankovní převod“ a dopravou „PPL"
  *      (viz `paymentMethodLabel` a `deliveryMethodLabel` v `process-export-queue`).
  *      Název společnosti (`orders.school_name` → Base `delivery_company`/`invoice_company`,
- *      iDoklad `CompanyName`) se ukládá zkrácený jako **„ZŠ - <ulice + číslo>"**
- *      (viz `buildInboundShortCompanyName`); plný název PD organizace zůstává v `admin_note`.
+ *      iDoklad `CompanyName`) se ukládá jako **skutečný název PD organizace** oříznutý na
+ *      156 znaků (limit Base API `delivery_company`, viz `buildInboundCompanyName`);
+ *      při oříznutí zůstává plný název PD organizace v `admin_note`.
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
  *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
@@ -496,16 +498,14 @@ function normalizeInboundExplicitOrderNumber(raw: string): string | null {
 
 /**
  * Název společnosti pro objednávky zakládané z PD webhooku (scénář A). Z `orders.school_name`
- * se plní Base `delivery_company` / `invoice_company` i iDoklad `CompanyName` — obchod chce
- * místo dlouhého názvu PD organizace jen krátký štítek **„ZŠ - <název ulice + číslo>"**
- * (ulice po obohacení adresy, tedy včetně čísla popisného/orientačního). Plný název organizace
- * z Pipedrive se pro dohledání ukládá do `admin_note`. Pokud ulici neznáme, ponechá se
- * původní název organizace (lepší dlouhý název než prázdný / jen „ZŠ -").
+ * se plní Base `delivery_company` / `invoice_company` i iDoklad `CompanyName` — ukládá se
+ * **skutečný název organizace z Pipedrive**, jen s normalizovanými mezerami a oříznutý na
+ * `BASE_COMPANY_MAX_LENGTH` znaků (limit Base API, viz `_shared/base-company-name.ts`).
+ * Pokud se název ořízne, plný název organizace z Pipedrive se pro dohledání ukládá
+ * do `admin_note`.
  */
-function buildInboundShortCompanyName(street: string, fullOrgName: string | null): string | null {
-  const s = street.replace(/\s+/g, ' ').trim();
-  if (!s || s === '—') return fullOrgName;
-  return `ZŠ - ${s}`.slice(0, 200);
+function buildInboundCompanyName(fullOrgName: string | null): string | null {
+  return trimCompanyNameForBase(fullOrgName);
 }
 
 function verifyInboundToken(req: Request, url: URL): boolean {
@@ -962,13 +962,13 @@ Deno.serve(async (req) => {
   }
 
   /**
-   * Do `school_name` (a tím i do Base / iDokladu) jde u objednávek z PD jen krátký název
-   * „ZŠ - <ulice + číslo>" — viz `buildInboundShortCompanyName`. Musí se počítat až tady,
-   * po `enrichCzechAddressParts` (ulice může pocházet z geocodingu / ARES / názvu organizace).
-   * Plný název PD organizace si držíme zvlášť pro `admin_note`.
+   * Do `school_name` (a tím i do Base / iDokladu) jde u objednávek z PD skutečný název
+   * organizace, jen oříznutý na limit Base API — viz `buildInboundCompanyName`.
+   * Plný název PD organizace si držíme zvlášť pro `admin_note` (zapíše se tam jen
+   * pokud se lišil, tj. došlo k oříznutí / normalizaci mezer).
    */
   const pipedriveOrgFullName = schoolName;
-  schoolName = buildInboundShortCompanyName(street, schoolName);
+  schoolName = buildInboundCompanyName(schoolName);
 
   const products = await pipedriveApiGet<unknown[]>(apiToken, `/deals/${dealId}/products`, { limit: 100 });
 
