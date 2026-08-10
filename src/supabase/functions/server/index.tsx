@@ -13213,7 +13213,15 @@ async function lookupSchoolInPipedrive(
 
 async function upsertPipedriveSchoolOrganization(
   apiToken: string,
-  params: { schoolName: string; ico?: string; address?: string; strictIcoMatch?: boolean },
+  params: {
+    schoolName: string;
+    ico?: string;
+    address?: string;
+    strictIcoMatch?: boolean;
+    /** Distributorské objednávky: adresa z ARES slouží jen k založení nové organizace,
+     *  do už existující (spárované podle IČO) se nezapisuje, ať nepřepíše data z CRM. */
+    keepExistingAddress?: boolean;
+  },
 ) {
   const ico = String(params.ico || '').trim();
   const schoolName = String(params.schoolName || '').trim();
@@ -13226,7 +13234,7 @@ async function upsertPipedriveSchoolOrganization(
   if (lookup.orgId) {
     const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
     const updatePayload: Record<string, any> = {};
-    if (address) updatePayload.address = address;
+    if (address && !params.keepExistingAddress) updatePayload.address = address;
     /** IČO na existující organizaci doplníme jen pokud byla spárovaná podle jména
      *  a strictIcoMatch je vypnutý (admin tooly). U strictIcoMatch by se sem ani
      *  nemělo dostat — když IČO nematchne, lookup vrátí orgId=null a založí se nová. */
@@ -17607,6 +17615,8 @@ async function syncEshopOrderToPipedriveFromDb(
       ico,
       address: [(order as any).street, (order as any).city, (order as any).zip].filter(Boolean).join(', '),
       strictIcoMatch: ico.length > 0,
+      /** U distributora je adresa jen z ARES — do existující organizace v CRM ji nepřepisujeme. */
+      keepExistingAddress: isDistributor,
     });
     orgId = orgLookup.orgId;
     orgLookupForTitle = orgLookup;
@@ -18382,7 +18392,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
     if (!sb) return c.json({ error: 'Databáze není dostupná.' }, 503);
 
     const catalog = await getAllProducts();
-    const catalogById = new Map(catalog.map((p: any) => [String(p.id), p]));
+    const catalogById = new Map<string, any>(catalog.map((p: any) => [String(p.id), p] as [string, any]));
 
     const lines: Array<{ productId: string; productName: string; quantity: number; unitPrice: number }> = [];
     for (const item of requested) {
