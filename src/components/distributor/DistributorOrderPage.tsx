@@ -19,6 +19,7 @@ import { edgeFunctionBase } from '../../utils/edgeFunctionBase';
 import { fetchSchoolSearchResults } from '../../utils/schoolSearchApi';
 import { isDistributorOrderableProduct } from '../../utils/distributorCatalog';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
+import { RouteHydrateFallback } from '../RouteHydrateFallback';
 import { SEOHead } from '../SEOHead';
 
 type AccessState = 'checking' | 'granted' | 'denied' | 'unconfigured';
@@ -286,13 +287,13 @@ export function DistributorOrderPage() {
     setError('');
   }, []);
 
-  if (access === 'checking') {
-    return (
-      <StatusScreen>
-        <Loader2 className="size-6 animate-spin text-[#001161]" />
-        <p className="text-[14px] text-[#001161]/70">Ověřujeme odkaz…</p>
-      </StatusScreen>
-    );
+  /**
+   * Stejný fullscreen spinner jako lazy-route hydrateFallback / App Suspense —
+   * ať při otevření neproblikne text („Načítám…“ / „Ověřujeme…“) před animací
+   * a ať se formulář neukáže dřív, než je hotové ověření i katalog.
+   */
+  if (access === 'checking' || (access === 'granted' && productsLoading && catalog.length === 0)) {
+    return <RouteHydrateFallback />;
   }
 
   if (access !== 'granted') {
@@ -396,12 +397,7 @@ export function DistributorOrderPage() {
             )}
           </div>
 
-          {productsLoading && catalog.length === 0 ? (
-            <div className="flex items-center gap-2 py-6 text-[14px] text-[#001161]/60">
-              <Loader2 className="size-4 animate-spin" />
-              Načítáme katalog…
-            </div>
-          ) : catalog.length === 0 ? (
+          {catalog.length === 0 ? (
             <p className="py-6 text-[14px] text-[#001161]/60">Katalog je momentálně prázdný.</p>
           ) : visibleCatalog.length === 0 ? (
             <p className="py-6 text-[14px] text-[#001161]/60">{`Hledání „${search}" nic nenašlo.`}</p>
