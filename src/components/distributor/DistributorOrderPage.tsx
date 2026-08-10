@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Building2, Check, Loader2, Minus, Package, Plus, StickyNote } from 'lucide-react';
+import {
+  Building2,
+  Check,
+  ChevronDown,
+  ClipboardList,
+  Loader2,
+  Minus,
+  Package,
+  Plus,
+  Search,
+  StickyNote,
+  X,
+} from 'lucide-react';
 import { useProducts } from '../../contexts/ProductsContext';
 import { publicAnonKey } from '../../utils/supabase/info';
 import { edgeFunctionBase } from '../../utils/edgeFunctionBase';
@@ -43,6 +55,21 @@ function productSortKey(product: any): string {
   return `${String(product?.category || 'Ostatní')}|${String(product?.name || product?.title || '')}`;
 }
 
+function productLabel(product: any): string {
+  return String(product?.name || product?.title || product?.id || '');
+}
+
+/** Hledání bez ohledu na diakritiku a velikost písmen. */
+function normalizeForSearch(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function czechTitleWord(count: number): string {
+  if (count === 1) return 'titul';
+  if (count >= 2 && count <= 4) return 'tituly';
+  return 'titulů';
+}
+
 /** Názvy firem často končí tečkou („a.s.“) — druhou tečku na konci věty nepřidáváme. */
 function confirmationSentence({ orderNumber, companyName }: { orderNumber: string; companyName: string }): string {
   const base = orderNumber ? `Evidujeme ji pod číslem ${orderNumber}` : 'Objednávku jsme přijali';
@@ -69,7 +96,9 @@ export function DistributorOrderPage() {
   const [companyName, setCompanyName] = useState('');
   const [companyLoading, setCompanyLoading] = useState(false);
   const [note, setNote] = useState('');
+  const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState<{ orderNumber: string; companyName: string } | null>(null);
@@ -146,11 +175,48 @@ export function DistributorOrderPage() {
     return [...groups.entries()];
   }, [products]);
 
+  const searchTerm = normalizeForSearch(search);
+  /** Kategorie s produkty odpovídajícími hledání; bez hledání celý katalog. */
+  const visibleCatalog = useMemo(() => {
+    if (!searchTerm) return catalog;
+    return catalog
+      .map(([category, items]) => {
+        const categoryMatches = normalizeForSearch(category).includes(searchTerm);
+        const matched = categoryMatches
+          ? items
+          : items.filter((p: any) => normalizeForSearch(productLabel(p)).includes(searchTerm));
+        return [category, matched] as [string, any[]];
+      })
+      .filter(([, items]) => items.length > 0);
+  }, [catalog, searchTerm]);
+
+  const productById = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const [, items] of catalog) {
+      for (const product of items) map.set(String(product.id), product);
+    }
+    return map;
+  }, [catalog]);
+
   const selectedLines = useMemo(
     () => Object.entries(quantities).filter(([, qty]) => qty > 0),
     [quantities],
   );
   const totalPieces = selectedLines.reduce((sum, [, qty]) => sum + qty, 0);
+
+  /** Počet kusů v kategorii — vedle názvu ve sbalené hlavičce. */
+  const piecesByCategory = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [category, items] of catalog) {
+      const sum = items.reduce((total: number, p: any) => total + (quantities[String(p.id)] || 0), 0);
+      if (sum > 0) counts.set(category, sum);
+    }
+    return counts;
+  }, [catalog, quantities]);
+
+  const toggleCategory = useCallback((category: string) => {
+    setOpenCategories((prev) => ({ ...prev, [category]: !prev[category] }));
+  }, []);
 
   const setQuantity = useCallback((productId: string, quantity: number) => {
     setQuantities((prev) => {
@@ -307,6 +373,27 @@ export function DistributorOrderPage() {
             )}
           </div>
 
+          <div className="relative mb-4">
+            <Search className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[#001161]/40" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Hledat produkt…"
+              aria-label="Hledat produkt"
+              className="w-full rounded-[14px] border border-[#001161]/10 bg-white py-3 pl-11 pr-10 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
+            />
+            {search && (
+              <button
+                type="button"
+                aria-label="Zrušit hledání"
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-[#001161]/40 hover:bg-[#001161]/5 hover:text-[#001161]"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+
           {productsLoading && catalog.length === 0 ? (
             <div className="flex items-center gap-2 py-6 text-[14px] text-[#001161]/60">
               <Loader2 className="size-4 animate-spin" />
@@ -314,55 +401,76 @@ export function DistributorOrderPage() {
             </div>
           ) : catalog.length === 0 ? (
             <p className="py-6 text-[14px] text-[#001161]/60">Katalog je momentálně prázdný.</p>
+          ) : visibleCatalog.length === 0 ? (
+            <p className="py-6 text-[14px] text-[#001161]/60">{`Hledání „${search}" nic nenašlo.`}</p>
           ) : (
-            <div className="flex flex-col gap-5">
-              {catalog.map(([category, items]) => (
-                <div key={category}>
-                  <h2 className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#001161]/50">
-                    {category}
-                  </h2>
-                  <ul className="flex flex-col divide-y divide-[#001161]/5">
-                    {items.map((product: any) => {
-                      const id = String(product.id);
-                      const qty = quantities[id] || 0;
-                      return (
-                        <li key={id} className="flex items-center justify-between gap-3 py-2.5">
-                          <span className="text-[14px] text-[#001161]">
-                            {product.name || product.title || id}
-                          </span>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              aria-label={`Ubrat ${product.name || id}`}
-                              onClick={() => setQuantity(id, qty - 1)}
-                              disabled={qty === 0}
-                              className="flex size-8 items-center justify-center rounded-full border border-[#001161]/10 text-[#001161] disabled:opacity-30"
-                            >
-                              <Minus className="size-3.5" />
-                            </button>
-                            <input
-                              value={qty === 0 ? '' : qty}
-                              onChange={(e) => setQuantity(id, Number(e.target.value.replace(/\D/g, '')))}
-                              inputMode="numeric"
-                              placeholder="0"
-                              aria-label={`Počet kusů — ${product.name || id}`}
-                              className="w-14 rounded-[10px] border border-[#001161]/10 px-2 py-1.5 text-center text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8]"
-                            />
-                            <button
-                              type="button"
-                              aria-label={`Přidat ${product.name || id}`}
-                              onClick={() => setQuantity(id, qty + 1)}
-                              className="flex size-8 items-center justify-center rounded-full border border-[#001161]/10 text-[#001161]"
-                            >
-                              <Plus className="size-3.5" />
-                            </button>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              ))}
+            <div className="flex flex-col gap-2">
+              {visibleCatalog.map(([category, items]) => {
+                /** Při hledání jsou nalezené kategorie vždy rozbalené, jinak si je uživatel otevírá sám. */
+                const isOpen = searchTerm ? true : openCategories[category] === true;
+                const pieces = piecesByCategory.get(category) || 0;
+                return (
+                  <div key={category} className="rounded-[14px] border border-[#001161]/10">
+                    <button
+                      type="button"
+                      onClick={() => toggleCategory(category)}
+                      aria-expanded={isOpen}
+                      className="flex w-full items-center gap-2 px-4 py-3 text-left"
+                    >
+                      <ChevronDown
+                        className={`size-4 shrink-0 text-[#001161]/50 transition-transform ${isOpen ? '' : '-rotate-90'}`}
+                      />
+                      <span className="text-[14px] font-bold text-[#001161]">{category}</span>
+                      <span className="text-[12px] text-[#001161]/40">{`${items.length}`}</span>
+                      {pieces > 0 && (
+                        <span className="ml-auto rounded-full bg-[#001161]/10 px-2 py-0.5 text-[12px] font-bold text-[#001161]">
+                          {`${pieces} ks`}
+                        </span>
+                      )}
+                    </button>
+                    {isOpen && (
+                      <ul className="flex flex-col divide-y divide-[#001161]/5 border-t border-[#001161]/10 px-4">
+                        {items.map((product: any) => {
+                          const id = String(product.id);
+                          const qty = quantities[id] || 0;
+                          return (
+                            <li key={id} className="flex items-center justify-between gap-3 py-2.5">
+                              <span className="text-[14px] text-[#001161]">{productLabel(product)}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  aria-label={`Ubrat ${productLabel(product)}`}
+                                  onClick={() => setQuantity(id, qty - 1)}
+                                  disabled={qty === 0}
+                                  className="flex size-8 items-center justify-center rounded-full border border-[#001161]/10 text-[#001161] disabled:opacity-30"
+                                >
+                                  <Minus className="size-3.5" />
+                                </button>
+                                <input
+                                  value={qty === 0 ? '' : qty}
+                                  onChange={(e) => setQuantity(id, Number(e.target.value.replace(/\D/g, '')))}
+                                  inputMode="numeric"
+                                  placeholder="0"
+                                  aria-label={`Počet kusů — ${productLabel(product)}`}
+                                  className="w-14 rounded-[10px] border border-[#001161]/10 px-2 py-1.5 text-center text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8]"
+                                />
+                                <button
+                                  type="button"
+                                  aria-label={`Přidat ${productLabel(product)}`}
+                                  onClick={() => setQuantity(id, qty + 1)}
+                                  className="flex size-8 items-center justify-center rounded-full border border-[#001161]/10 text-[#001161]"
+                                >
+                                  <Plus className="size-3.5" />
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -379,6 +487,41 @@ export function DistributorOrderPage() {
             placeholder="Termín dodání, kontaktní osoba, číslo vaší objednávky…"
             className="w-full resize-y rounded-[14px] border border-[#001161]/10 bg-white px-4 py-3 text-[14px] text-[#001161] outline-none focus:border-[#5b4fd8] focus:ring-2 focus:ring-[#5b4fd8]/15"
           />
+        </section>
+
+        <section className="mb-4 rounded-[20px] bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2 text-[14px] font-bold text-[#001161]">
+            <ClipboardList className="size-4" />
+            Souhrn objednávky
+          </div>
+          {selectedLines.length === 0 ? (
+            <p className="text-[14px] text-[#001161]/60">Zatím jste nevybrali žádný produkt.</p>
+          ) : (
+            <>
+              <ul className="flex flex-col divide-y divide-[#001161]/5">
+                {selectedLines.map(([productId, qty]) => (
+                  <li key={productId} className="flex items-center gap-3 py-2.5">
+                    <span className="flex-1 text-[14px] text-[#001161]">
+                      {productLabel(productById.get(productId)) || productId}
+                    </span>
+                    <span className="text-[14px] font-bold text-[#001161]">{`${qty} ks`}</span>
+                    <button
+                      type="button"
+                      aria-label={`Odebrat ${productLabel(productById.get(productId)) || productId}`}
+                      onClick={() => setQuantity(productId, 0)}
+                      className="flex size-7 items-center justify-center rounded-full text-[#001161]/40 hover:bg-[#001161]/5 hover:text-[#001161]"
+                    >
+                      <X className="size-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-3 flex items-center justify-between border-t border-[#001161]/10 pt-3 text-[14px] font-bold text-[#001161]">
+                <span>{`Celkem ${selectedLines.length} ${czechTitleWord(selectedLines.length)}`}</span>
+                <span>{`${totalPieces} ks`}</span>
+              </div>
+            </>
+          )}
         </section>
 
         {error && (
