@@ -68,10 +68,13 @@ Deno.serve(async (req) => {
   let errors = 0;
 
   try {
+    /** Distributorské objednávky (`source='distributor'`) čekají na vyřízení dealu v Pipedrive
+     *  libovolně dlouho a nemají skutečný kontaktní e‑mail — cron je nesmí rušit ani obesílat. */
     const stale = await sql<{ id: string; order_number: string; basecom_order_id: string | null; customer_email: string; status: string }[]>`
       select id, order_number, basecom_order_id, customer_email, status
       from public.orders
       where status in ('incomplete', 'pending_payment')
+        and coalesce(source, 'eshop') <> 'distributor'
         and created_at < now() - interval '21 days'
       order by created_at asc
       limit 200

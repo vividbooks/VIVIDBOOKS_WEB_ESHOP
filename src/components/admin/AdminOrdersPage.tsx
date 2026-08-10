@@ -18,11 +18,15 @@ const SOURCE_FILTERS = [
   { id: 'all', label: 'Všechny zdroje' },
   { id: 'eshop', label: 'E-shop' },
   { id: 'pipedrive', label: 'Pipedrive' },
+  { id: 'distributor', label: 'Distributor' },
 ] as const;
 
 function sourceBadge(source: AdminOrderListItem['source']) {
   if (source === 'pipedrive') {
     return { label: 'Pipedrive', cls: 'bg-purple-100 text-purple-700' };
+  }
+  if (source === 'distributor') {
+    return { label: 'Distributor', cls: 'bg-orange-100 text-orange-700' };
   }
   return { label: 'E-shop', cls: 'bg-sky-100 text-sky-700' };
 }
@@ -120,7 +124,7 @@ export function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filter, setFilter] = useState<'all' | 'new' | 'shipped' | 'problem' | 'incomplete' | 'pending_payment'>('all');
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'eshop' | 'pipedrive' | 'distributor'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);

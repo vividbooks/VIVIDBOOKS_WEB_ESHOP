@@ -82,8 +82,11 @@ function getEshopPipedriveSyncUrl(fallbackRequestUrl?: string) {
   return baseUrl ? `${baseUrl}/functions/v1/make-server-93a20b6f/eshop/pipedrive-sync` : '';
 }
 
-function inferPipedriveEshopMode(row: { ico: string | null; payment_method: string; status?: string | null }):
-  'b2c_card_won' | 'b2b_card_won' | 'b2b_card_open' | 'b2b_transfer_open' {
+function inferPipedriveEshopMode(
+  row: { ico: string | null; payment_method: string; status?: string | null; source?: string | null },
+): 'b2c_card_won' | 'b2b_card_won' | 'b2b_card_open' | 'b2b_transfer_open' | 'distributor_open' {
+  /** Distributorská objednávka patří vždy do vlastní pipeline, ne mezi e‑shopové dealy. */
+  if (String(row.source || '') === 'distributor') return 'distributor_open';
   const ico = String(row.ico || '').trim().replace(/\s/g, '');
   if (row.payment_method === 'transfer') {
     return ico ? 'b2b_transfer_open' : 'b2c_card_won';
@@ -598,9 +601,15 @@ Deno.serve(async (req) => {
 
     if (action === 'sync_pipedrive') {
       const pdRows = await sql<
-        { pipedrive_deal_id: string | null; ico: string | null; payment_method: string; status: string }[]
+        {
+          pipedrive_deal_id: string | null;
+          ico: string | null;
+          payment_method: string;
+          status: string;
+          source: string | null;
+        }[]
       >`
-        select pipedrive_deal_id, ico, payment_method, status
+        select pipedrive_deal_id, ico, payment_method, status, source
         from public.orders
         where id = ${orderId}::uuid
         limit 1

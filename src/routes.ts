@@ -80,6 +80,11 @@ export const router = createBrowserRouter(
       lazy: lazyDefault(() => import('./components/VividAssistantShellPage')),
     },
     {
+      /** Neveřejná objednávka pro distributory — mimo Root (bez katalogové navigace a košíku). */
+      path: '/distributor/objednavka',
+      lazy: lazyNamed(() => import('./components/distributor/DistributorOrderPage'), 'DistributorOrderPage'),
+    },
+    {
       path: '/',
       Component: Root,
       children: [

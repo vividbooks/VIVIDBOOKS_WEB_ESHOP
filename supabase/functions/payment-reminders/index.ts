@@ -109,6 +109,8 @@ Deno.serve(async (req) => {
         and payment_status = 'pending'
         and abandon_reminder_count < 4
         and payment_resume_token is not null
+        /** Distributorské objednávky nemají zákaznický e‑mail ani online platbu. */
+        and coalesce(source, 'eshop') <> 'distributor'
         and (
           (
             abandon_reminder_count = 0

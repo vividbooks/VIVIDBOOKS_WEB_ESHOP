@@ -210,8 +210,9 @@ export interface AdminOrderListItem {
   items_summary?: string | null;
   /** Jen objednávky plakátů (admin záložka). */
   poster_fulfillment_status?: string | null;
-  /** Zdroj objednávky: `eshop` = web checkout, `pipedrive` = ručně založený deal v CRM. */
-  source?: 'eshop' | 'pipedrive' | string | null;
+  /** Zdroj objednávky: `eshop` = web checkout, `pipedrive` = ručně založený deal v CRM,
+   *  `distributor` = neveřejná distributorská stránka. */
+  source?: 'eshop' | 'pipedrive' | 'distributor' | string | null;
   /** Způsob platby: `card` / `apple_pay` / `google_pay` (kartou), `transfer` (převodem), `invoice` (faktura). */
   payment_method?: string | null;
 }
@@ -568,8 +569,8 @@ export async function fetchAdminOrders(params: {
   pageSize?: number;
   /** Jen řádky s `poster_fulfillment_status` (objednávky jen z plakátů v košíku). */
   posterOnly?: boolean;
-  /** Filtr zdroje objednávky: `all` (default) nebo `eshop` / `pipedrive`. */
-  source?: 'all' | 'eshop' | 'pipedrive';
+  /** Filtr zdroje objednávky: `all` (default) nebo `eshop` / `pipedrive` / `distributor`. */
+  source?: 'all' | 'eshop' | 'pipedrive' | 'distributor';
 }) {
   const url = new URL(ADMIN_ORDERS_BASE);
   url.searchParams.set('filter', params.filter || 'all');

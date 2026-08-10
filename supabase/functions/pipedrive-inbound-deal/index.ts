@@ -1227,18 +1227,24 @@ Deno.serve(async (req) => {
   const eshopOrderNumber = readEshopOrderNumberFromDeal(deal);
 
   try {
-    let existing: { id: string; order_number: string; status: string; payment_status: string | null }[] = [];
+    let existing: {
+      id: string;
+      order_number: string;
+      status: string;
+      payment_status: string | null;
+      source: string | null;
+    }[] = [];
     if (eshopOrderNumber) {
-      existing = await sql<{ id: string; order_number: string; status: string; payment_status: string | null }[]>`
-        select id, order_number, status, payment_status
+      existing = await sql`
+        select id, order_number, status, payment_status, source
           from public.orders
          where order_number = ${eshopOrderNumber}
          limit 1
       `;
     }
     if (existing.length === 0) {
-      existing = await sql<{ id: string; order_number: string; status: string; payment_status: string | null }[]>`
-        select id, order_number, status, payment_status
+      existing = await sql`
+        select id, order_number, status, payment_status, source
           from public.orders
          where pipedrive_deal_id = ${dealIdStr}
          limit 1
@@ -1323,6 +1329,36 @@ Deno.serve(async (req) => {
           )
         `;
       });
+
+      /**
+       * Distributorská objednávka (`source='distributor'`) se do Base.com ani iDokladu neexportuje —
+       * expedici i fakturaci řeší obchod mimo e‑shopovou frontu. Položky a částky z dealu už jsou
+       * přepsané výše, takže tady jen skončíme bez `export_queue`.
+       */
+      if (String(target.source || '') === 'distributor') {
+        logInbound('updated_distributor_no_export', {
+          dealId,
+          orderId: target.id,
+          orderNumber: target.order_number,
+          replacedItems: lines.length,
+        });
+        return jsonResponse(
+          req,
+          {
+            success: true,
+            mode: 'updated',
+            orderId: target.id,
+            orderNumber: target.order_number,
+            dealId,
+            eshopOrderNumber: eshopOrderNumber || null,
+            replacedItems: lines.length,
+            queuedServices: [],
+            skippedExport: 'distributor',
+          },
+          200,
+          inboundModeHeaders('updated', 'distributor_no_export'),
+        );
+      }
 
       const customerSnapshot = {
         email: email.trim(),
