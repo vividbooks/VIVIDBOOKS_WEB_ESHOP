@@ -18,6 +18,7 @@ import {
   EMAIL_FORMAT_HINT_CS,
   EMAIL_MX_REJECT_CS,
 } from '../../../utils/emailValidation.ts';
+import { normalizeCzechPhone, PHONE_CZ_HINT } from '../../../utils/phoneCZ.ts';
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
@@ -11995,6 +11996,42 @@ function escapePipedriveHtml(value: unknown) {
     .replace(/"/g, '&quot;');
 }
 
+/** HTML poznámka k distributorskému dealu — e‑mail, telefon a volná poznámka s správnými odřádkováními. */
+function buildDistributorOrderNoteHtml(params: {
+  orderNumber: string;
+  email: string;
+  phone: string;
+  note: string;
+}): string | null {
+  const email = String(params.email || '').trim();
+  const phone = String(params.phone || '').trim();
+  const note = String(params.note || '').trim();
+  if (!email && !phone && !note) return null;
+
+  const orderLabel = String(params.orderNumber || '').trim();
+  const parts: string[] = [
+    `<p style="margin:0 0 10px;"><strong>Kontakt distributora${
+      orderLabel ? ` k objednávce ${escapePipedriveHtml(orderLabel)}` : ''
+    }</strong></p>`,
+  ];
+  if (email) {
+    parts.push(
+      `<p style="margin:0 0 4px;"><strong>E-mail:</strong> ${escapePipedriveHtml(email)}</p>`,
+    );
+  }
+  if (phone) {
+    parts.push(
+      `<p style="margin:0 0 4px;"><strong>Telefon:</strong> ${escapePipedriveHtml(phone)}</p>`,
+    );
+  }
+  if (note) {
+    const noteHtml = escapePipedriveHtml(note).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>');
+    parts.push('<p style="margin:12px 0 4px;"><strong>Poznámka k objednávce:</strong></p>');
+    parts.push(`<p style="margin:0;">${noteHtml}</p>`);
+  }
+  return parts.join('');
+}
+
 /** Zvýrazněný HTML blok pro Pipedrive Note, když je doručovací adresa jiná než fakturační.
  *  Vrací prázdný string, pokud adresa nemá žádné vyplněné pole (nic se pak nepřidává do poznámky). */
 function buildDeliveryAddressNoteHtml(
@@ -17657,7 +17694,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const personName = String((order as any).customer_name || '').trim() || 'Zákazník';
   const email = String((order as any).customer_email || '').trim();
   const phone = String((order as any).customer_phone || '').trim();
-  /** Distributorský formulář sbírá jen IČO — kontaktní e‑mail neexistuje, deal jede na organizaci. */
+  /** Distributor: deal patří organizaci podle IČO; e‑mail/telefon jdou do poznámky k dealu, ne na osobu. */
   if (!email && !isDistributor) return await fail('missing_email');
   if (isDistributor && !ico) return await fail('missing_ico');
 
@@ -17839,21 +17876,32 @@ async function syncEshopOrderToPipedriveFromDb(
     );
   }
 
-  /** Poznámka zákazníka z objednávky (`orders.note`) → note k dealu v Pipedrivu.
+  /** Poznámka z objednávky → note k dealu v Pipedrivu.
+   *  U distributora skládáme e‑mail + telefon + volnou poznámku do HTML (odřádkování přes <br/>).
    *  Selhání zápisu poznámky nesmí shodit celý sync dealu. */
   const customerNote = String((order as any).note || '').trim();
-  if (customerNote) {
+  const distributorNoteHtml = isDistributor
+    ? buildDistributorOrderNoteHtml({
+        orderNumber,
+        email,
+        phone,
+        note: customerNote,
+      })
+    : null;
+  const noteContent = isDistributor
+    ? distributorNoteHtml
+    : customerNote
+      ? `Poznámka k objednávce ${orderNumber || ''}:\n${customerNote}`
+      : null;
+  if (noteContent) {
     try {
-      const noteHeader = isDistributor
-        ? `Poznámka distributora k objednávce ${orderNumber || ''}`
-        : `Poznámka k objednávce ${orderNumber || ''}`;
       await createPipedriveNote(apiToken, {
-        content: `${noteHeader.trim()}:\n${customerNote}`,
+        content: noteContent,
         dealId,
         orgId: isB2b ? orgId : null,
         personId,
       });
-      console.log(`[Pipedrive eshop] note k dealu ${dealId} vytvořena z orders.note`);
+      console.log(`[Pipedrive eshop] note k dealu ${dealId} vytvořena z kontaktů/orders.note`);
     } catch (noteErr: any) {
       console.log(`[Pipedrive eshop] note k dealu ${dealId} selhala: ${noteErr?.message || noteErr}`);
     }
@@ -18337,12 +18385,6 @@ app.post('/make-server-93a20b6f/eshop/pipedrive-sync', async (c) => {
 
 /* ── Distributorské objednávky (neveřejná stránka /distributor/objednavka) ───────── */
 
-/** Placeholder e‑mail objednávky — distributorský formulář sbírá jen IČO a e‑maily se neposílají. */
-function buildDistributorPlaceholderEmail(ico: string): string {
-  const domain = (Deno.env.get('DISTRIBUTOR_ORDER_EMAIL_DOMAIN') || '').trim() || 'vividbooks.com';
-  return `distributor+${ico}@${domain}`;
-}
-
 /** Klíč z neveřejného odkazu — hlavička `X-Distributor-Token` nebo `?k=` v URL. */
 function readDistributorRequestToken(c: Context): string {
   const fromHeader = (c.req.header('X-Distributor-Token') || c.req.header('x-distributor-token') || '').trim();
@@ -18417,17 +18459,20 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
 });
 
 /**
- * POST …/distributor/orders — objednávka distributora (jen IČO, počty kusů a poznámka).
+ * POST …/distributor/orders — objednávka distributora (IČO, e‑mail, telefon, počty kusů, poznámka).
  *
  * Zakládá řádek v `public.orders` se `source='distributor'` (v adminu vlastní badge) a deal
  * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
- * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, poznámka se uloží
- * jako note k dealu. Do Base.com ani iDokladu nic nejde a e‑maily se neposílají.
+ * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, e‑mail + telefon +
+ * poznámka jdou jako HTML note k dealu. Do Base.com ani iDokladu nic nejde a transakční e‑maily
+ * se neposílají.
  */
 app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
   let body: {
     token?: unknown;
     ico?: unknown;
+    email?: unknown;
+    phone?: unknown;
     note?: unknown;
     submissionId?: unknown;
     items?: unknown;
@@ -18445,6 +18490,20 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
     const ico = String(body.ico ?? '').replace(/\s/g, '').trim();
     if (!/^\d{6,10}$/.test(ico)) {
       return c.json({ error: 'Zadejte platné IČO (6–10 číslic).' }, 400);
+    }
+
+    const email = normalizeEmail(String(body.email ?? ''));
+    if (!isValidEmailFormat(email)) {
+      return c.json({ error: EMAIL_FORMAT_HINT_CS }, 400);
+    }
+    const emailOk = await assertEmailDeliverable(email);
+    if (!emailOk.ok) {
+      return c.json({ error: emailOk.message }, 400);
+    }
+
+    const phone = normalizeCzechPhone(body.phone);
+    if (!phone) {
+      return c.json({ error: PHONE_CZ_HINT }, 400);
     }
 
     const rawItems = Array.isArray(body.items) ? body.items : [];
@@ -18501,7 +18560,8 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
     const insertPayload = {
       status: 'pending_payment',
       source: 'distributor',
-      customer_email: buildDistributorPlaceholderEmail(ico),
+      customer_email: email,
+      customer_phone: phone,
       customer_name: companyName.slice(0, 200),
       school_name: companyName.slice(0, 200),
       ico,
