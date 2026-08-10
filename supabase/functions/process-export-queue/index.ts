@@ -5,6 +5,7 @@ import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
+import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -828,13 +829,15 @@ async function handleBasecomExport(
     delivery_method: deliveryMethodLabel(order.shipping_method),
     delivery_price: amountInCzk(order.shipping_price),
     delivery_fullname: order.customer_name,
-    delivery_company: order.school_name || '',
+    /** Base API: `delivery_company` je varchar(156) — delší název školy by export shodil. */
+    delivery_company: trimCompanyNameForBase(order.school_name) || '',
     delivery_address: order.street || '',
     delivery_city: order.city || '',
     delivery_postcode: order.zip || '',
     delivery_country_code: 'CZ',
     invoice_fullname: order.customer_name,
-    invoice_company: order.school_name || '',
+    /** `invoice_company` má limit varchar(500), ale posíláme stejnou oříznutou hodnotu. */
+    invoice_company: trimCompanyNameForBase(order.school_name) || '',
     invoice_nip: order.ico || '',
     invoice_address: order.street || '',
     invoice_city: order.city || '',
