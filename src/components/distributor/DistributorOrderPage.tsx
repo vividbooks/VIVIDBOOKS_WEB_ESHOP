@@ -13,6 +13,26 @@ type AccessState = 'checking' | 'granted' | 'denied' | 'unconfigured';
 
 const ICO_PATTERN = /^\d{6,10}$/;
 
+/** Klíč z prvního otevření odkazu — díky němu si distributor může uložit holé `/distributor`. */
+const STORED_KEY_NAME = 'vividbooks_distributor_key';
+
+function readStoredKey(): string {
+  try {
+    return (window.localStorage.getItem(STORED_KEY_NAME) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredKey(key: string) {
+  try {
+    if (key) window.localStorage.setItem(STORED_KEY_NAME, key);
+    else window.localStorage.removeItem(STORED_KEY_NAME);
+  } catch {
+    /* Soukromý režim / zablokované úložiště — odkaz s `?k=` funguje dál. */
+  }
+}
+
 function newSubmissionId(): string {
   const c = typeof crypto !== 'undefined' ? crypto : undefined;
   if (c && 'randomUUID' in c) return c.randomUUID();
@@ -23,15 +43,25 @@ function productSortKey(product: any): string {
   return `${String(product?.category || 'Ostatní')}|${String(product?.name || product?.title || '')}`;
 }
 
+/** Názvy firem často končí tečkou („a.s.“) — druhou tečku na konci věty nepřidáváme. */
+function confirmationSentence({ orderNumber, companyName }: { orderNumber: string; companyName: string }): string {
+  const base = orderNumber ? `Evidujeme ji pod číslem ${orderNumber}` : 'Objednávku jsme přijali';
+  const sentence = companyName ? `${base} pro ${companyName}` : base;
+  return sentence.endsWith('.') ? sentence : `${sentence}.`;
+}
+
 /**
- * Neveřejná objednávka pro distributory (`/distributor/objednavka?k=<klíč>`).
+ * Neveřejná objednávka pro distributory (`/distributor?k=<klíč>`).
  *
- * Formulář sbírá jen IČO, počty kusů a poznámku — ceny se nezobrazují a e‑maily se neposílají.
- * Odeslání zakládá objednávku se `source='distributor'` a deal v Pipedrive pipeline 8.
+ * Klíč z odkazu se po ověření uloží do prohlížeče, takže distributor si může uložit
+ * jen `/distributor`. Formulář sbírá jen IČO, počty kusů a poznámku — ceny se nezobrazují
+ * a e‑maily se neposílají. Odeslání zakládá objednávku se `source='distributor'`
+ * a deal v Pipedrive pipeline 8.
  */
 export function DistributorOrderPage() {
   const [searchParams] = useSearchParams();
-  const token = (searchParams.get('k') || '').trim();
+  const tokenFromUrl = (searchParams.get('k') || '').trim();
+  const token = tokenFromUrl || readStoredKey();
   const { products, isLoading: productsLoading } = useProducts();
 
   const [access, setAccess] = useState<AccessState>('checking');
@@ -57,9 +87,16 @@ export function DistributorOrderPage() {
           headers: { Authorization: `Bearer ${publicAnonKey}` },
         });
         if (cancelled) return;
-        if (res.ok) setAccess('granted');
-        else if (res.status === 503) setAccess('unconfigured');
-        else setAccess('denied');
+        if (res.ok) {
+          setAccess('granted');
+          writeStoredKey(token);
+        } else if (res.status === 503) {
+          setAccess('unconfigured');
+        } else {
+          setAccess('denied');
+          /** Klíč mezitím vypršel / byl změněn — ať uložená kopie neblokuje nový odkaz. */
+          writeStoredKey('');
+        }
       } catch {
         if (!cancelled) setAccess('denied');
       }
@@ -213,11 +250,7 @@ export function DistributorOrderPage() {
         </div>
         <h1 className="text-[22px] font-bold text-[#001161]">Objednávka odeslána</h1>
         <p className="max-w-md text-center text-[14px] text-[#001161]/70">
-          {submitted.orderNumber
-            ? `Evidujeme ji pod číslem ${submitted.orderNumber}`
-            : 'Objednávku jsme přijali'}
-          {submitted.companyName ? ` pro ${submitted.companyName}.` : '.'}
-          {' Ozve se vám váš obchodní zástupce.'}
+          {`${confirmationSentence(submitted)} Ozve se vám váš obchodní zástupce.`}
         </p>
         <button
           type="button"
@@ -232,7 +265,7 @@ export function DistributorOrderPage() {
 
   return (
     <div className="min-h-screen bg-[#f5f6fb] py-10 px-4">
-      <SEOHead title="Objednávka pro distributory" path="/distributor/objednavka" noIndex />
+      <SEOHead title="Objednávka pro distributory" path="/distributor" noIndex />
       <div className="mx-auto max-w-3xl">
         <header className="mb-6">
           <p className="text-[12px] font-bold uppercase tracking-wide text-[#5b4fd8]">Vividbooks</p>

@@ -171,7 +171,7 @@ Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`
 
 ### Distributorská objednávka (neveřejná stránka)
 
-- **Stránka:** `/distributor/objednavka?k=<DISTRIBUTOR_ORDER_TOKEN>` — mimo katalogový layout, `noindex`, `Disallow` v `robots.txt`. Bez platného klíče se formulář nezobrazí (`GET …/distributor/access`).
+- **Stránka:** `/distributor?k=<DISTRIBUTOR_ORDER_TOKEN>` (starší `/distributor/objednavka` funguje dál) — mimo katalogový layout, `noindex`, `Disallow` v `robots.txt`. Bez platného klíče se formulář nezobrazí (`GET …/distributor/access`). Ověřený klíč se ukládá do `localStorage` (`vividbooks_distributor_key`), takže distributor si může uložit holé `/distributor`; při neplatném klíči se uložená kopie smaže.
 - **Formulář:** jen IČO, počty kusů (ceny se nezobrazují) a poznámka. Žádná adresa, doprava ani platba; e‑maily se neposílají.
 - **Endpoint:** `POST …/make-server-93a20b6f/distributor/orders` (hlavička `X-Distributor-Token`) — založí řádek v `public.orders` (`source='distributor'`, `status='pending_payment'`, `payment_method='invoice'`, `shipping_method='none'`) + `order_items` s cenami z katalogu. Název a sídlo firmy dohledá podle IČO (CSV škol → ARES). Idempotence přes `idempotency_key = distributor:<submissionId>`.
 - **Pipedrive:** `syncEshopOrderToPipedriveFromDb(orderId, 'distributor_open')` → pipeline **8**, fáze **43**, organizace **jen podle IČO** (pole CIN, `strictIcoMatch`; když IČO v CRM není, organizace se založí), bez kontaktní osoby, produkty z katalogu, poznámka jako note k dealu, vyplněné pole „Eshop ID“. Bez štítků B2C/B2B a bez „Source = PRINT“.
