@@ -16712,10 +16712,57 @@ async function findOrCreatePipedrivePersonForEshopB2c(
 const PIPEDRIVE_ESHOP_PIPELINE_ID = 20;
 const PIPEDRIVE_ESHOP_STAGE_ID = 106;
 
-/** Distributorské objednávky (neveřejná stránka `/distributor/objednavka`): pipeline 8
+/** Distributorské objednávky (neveřejná stránka `/distributor`): pipeline 8
  *  „Channel Partners Performance CP2“ a její jediná fáze 43. Přepis přes env. */
 const PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID_DEFAULT = 8;
 const PIPEDRIVE_DISTRIBUTOR_STAGE_ID_DEFAULT = 43;
+
+/** Sleva na každém produktovém řádku distributorského dealu (procenta). */
+const PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_DEFAULT = 25;
+/** Vyjednaná vyšší sleva pro konkrétní partnery (podle IČO / pole CIN u organizace). */
+const PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL_DEFAULT = 35;
+const PIPEDRIVE_DISTRIBUTOR_SPECIAL_ICOS_DEFAULT = ['06745342', '49709895', '73565211'];
+
+/** IČO bez mezer a úvodních nul — `06745342` a `6745342` je stejný subjekt. */
+function normalizeIcoForCompare(value: string): string {
+  return String(value || '').replace(/\D/g, '').replace(/^0+/, '');
+}
+
+function parseDistributorPercentEnv(name: string, fallback: number): number {
+  const raw = (Deno.env.get(name) || '').trim().replace(',', '.');
+  if (!raw) return fallback;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) {
+    console.log(`[Pipedrive distributor] ${name}="${raw}" není procento 0–100 — použije se ${fallback}.`);
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * Sleva pro distributorský deal podle IČO objednávky. Seznam zvýhodněných IČO i obě procenta
+ * jdou přepsat přes `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_SPECIAL_ICOS`,
+ * `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL` a `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT`.
+ */
+function resolveDistributorDiscountPercent(ico: string): number {
+  const specialFromEnv = (Deno.env.get('PIPEDRIVE_DISTRIBUTOR_DISCOUNT_SPECIAL_ICOS') || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const specialList = specialFromEnv.length ? specialFromEnv : PIPEDRIVE_DISTRIBUTOR_SPECIAL_ICOS_DEFAULT;
+  const normalized = normalizeIcoForCompare(ico);
+  const isSpecial = normalized.length > 0
+    && specialList.some((candidate) => normalizeIcoForCompare(candidate) === normalized);
+  return isSpecial
+    ? parseDistributorPercentEnv(
+        'PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL',
+        PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL_DEFAULT,
+      )
+    : parseDistributorPercentEnv(
+        'PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT',
+        PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_DEFAULT,
+      );
+}
 
 /** Výchozí ID štítků dealu (pole Label) — přepíše PIPEDRIVE_ESHOP_LABEL_IDS_* / auto z API. */
 const PIPEDRIVE_ESHOP_LABEL_ID_B2C_DEFAULT = 419;
@@ -17270,6 +17317,8 @@ async function addPipedriveDealLineItemsFromOrder(
   dealId: number,
   orderItems: any[],
   catalogById: Map<string, any>,
+  /** Procentní sleva na každý řádek (distributorské dealy); 0 = bez slevy. */
+  discountPercent = 0,
 ): Promise<{ codeToPdId: Map<string, number | null>; lastOrder: number }> {
   /** Cache kódu → Pipedrive product id (nebo null po neúspěchu) v rámci jednoho dealu. */
   const codeToPdId = new Map<string, number | null>();
@@ -17313,6 +17362,8 @@ async function addPipedriveDealLineItemsFromOrder(
           quantity: qty,
           item_price: itemPrice,
           order: ord,
+          /** `discount_percentage` Pipedrive zrušil — procenta se posílají jako `discount` + `discount_type`. */
+          ...(discountPercent > 0 ? { discount: discountPercent, discount_type: 'percentage' } : {}),
         }),
       });
     } catch (error: any) {
@@ -17748,10 +17799,21 @@ async function syncEshopOrderToPipedriveFromDb(
   const catalogProducts = await getAllProducts();
   const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p]));
   const lineItems = Array.isArray((order as any).order_items) ? (order as any).order_items : [];
+  /** Distributoři nakupují se slevou z ceníku; e‑shopové dealy jdou v plných cenách. */
+  const discountPercent = isDistributor ? resolveDistributorDiscountPercent(ico) : 0;
+  if (isDistributor) {
+    console.log(`[Pipedrive distributor] sleva ${discountPercent} % na řádky dealu (IČO ${ico})`);
+  }
   let codeToPdIdShared: Map<string, number | null> = new Map();
   let nextLineOrder = 0;
   if (lineItems.length) {
-    const result = await addPipedriveDealLineItemsFromOrder(apiToken, dealId, lineItems, catalogMap);
+    const result = await addPipedriveDealLineItemsFromOrder(
+      apiToken,
+      dealId,
+      lineItems,
+      catalogMap,
+      discountPercent,
+    );
     codeToPdIdShared = result.codeToPdId;
     nextLineOrder = result.lastOrder;
   }
