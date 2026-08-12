@@ -15,6 +15,7 @@ import {
 import { AgentOrbAvatar } from '@/components/ui/AgentOrbAvatar';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getRequiredEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
 import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridgeContext';
 import { previewCtaUrl } from '../../utils/publicSiteUrl';
 import CollageModal from './CollageModal';
@@ -1612,7 +1613,7 @@ export function AdminAgentPage({
     const chatHistory = agentMessagesToImportedEmailChatHistory(messagesRef.current);
     const res = await fetch(`${SERVER}/admin/email-drafts`, {
       method: 'POST',
-      headers: AUTH,
+      headers: await getRequiredEdgeFunctionHeaders(true),
       body: JSON.stringify({
         id,
         subject: email.subject,
@@ -1640,7 +1641,7 @@ export function AdminAgentPage({
       const prompt = `Z následujícího textu nebo osnovy (odpověď Web operátora) vytvoř kompletní marketingový e-mail Vividbooks: více vizuálních sekcí, hero, CTA, produkty pokud sedí, inline HTML v body. Zachovej fakta, češtinu a tón.\n\n---\n${bubble.slice(0, 14_000)}\n---`;
       const { response: genRes, data } = await fetchGenerateEmailWithRetry(
         `${SERVER}/admin/mailchimp/generate-email`,
-        AUTH,
+        await getRequiredEdgeFunctionHeaders(true),
         {
           prompt,
           conversationContext: mailchimpConversationContext(),

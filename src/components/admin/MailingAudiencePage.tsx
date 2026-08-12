@@ -8,13 +8,18 @@ import {
   Filter,
   Loader2,
   RefreshCw,
+  Search,
   Tag,
+  Upload,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
+import { projectId } from '../../utils/supabase/info';
+import { MAILING_SOURCE_OPTIONS, type MailingAudienceFilter } from '../../lib/mailingAudienceFilter';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -109,6 +114,19 @@ type ActivityRow = {
   campaigns: { name: string | null; subject_line: string | null } | null;
 };
 
+const EVENT_LABELS: Record<string, string> = {
+  send: 'Odesláno',
+  delivered: 'Doručeno',
+  delivery_delayed: 'Doručení se zdrželo',
+  open: 'Otevřeno',
+  click: 'Kliknuto',
+  bounce: 'Nedoručeno',
+  complaint: 'Označeno jako spam',
+  failed: 'Selhalo',
+  unsubscribe: 'Odhlášeno',
+  resubscribe: 'Znovu přihlášeno',
+};
+
 function buildTagMetaBySubscriber(
   st: { subscriber_id: string; tag_id: string; source: string }[],
   tags: { id: string; name: string }[] | null,
@@ -164,6 +182,7 @@ export default function MailingAudiencePage() {
   const [eventsBySub, setEventsBySub] = useState<Record<string, ActivityRow[]>>({});
   const [eventsLoadingId, setEventsLoadingId] = useState<string | null>(null);
   const [subjectScoresBusy, setSubjectScoresBusy] = useState(false);
+  const [engagementBusy, setEngagementBusy] = useState(false);
 
   const [newGlobalTag, setNewGlobalTag] = useState('');
   const [tagMutationBusy, setTagMutationBusy] = useState(false);
@@ -180,6 +199,10 @@ export default function MailingAudiencePage() {
 
   /** Vybraná pozice (přesná hodnota sloupce position_label / Mailchimp SELECT). */
   const [filterPosition, setFilterPosition] = useState('');
+  /** Filtr podle subscriber.source (OR). */
+  const [filterSources, setFilterSources] = useState<string[]>([]);
+  const [saveAsTagName, setSaveAsTagName] = useState('');
+  const [saveAsTagBusy, setSaveAsTagBusy] = useState(false);
   const [positionOptions, setPositionOptions] = useState<string[]>([]);
   const [positionOptionsLoading, setPositionOptionsLoading] = useState(false);
   const [positionFilterOpen, setPositionFilterOpen] = useState(false);
@@ -191,8 +214,20 @@ export default function MailingAudiencePage() {
   const [subjectFilterSearch, setSubjectFilterSearch] = useState('');
   const subjectFilterRef = useRef<HTMLDivElement | null>(null);
 
+  /** Fulltext hledání e-mailu (ILIKE substring, debounce 350 ms). */
+  const [searchEmailInput, setSearchEmailInput] = useState('');
+  const [searchEmail, setSearchEmail] = useState('');
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      setSearchEmail(searchEmailInput.trim().toLowerCase());
+      setPage(0);
+    }, 350);
+    return () => clearTimeout(t);
+  }, [searchEmailInput]);
+
   const filterTagKey = useMemo(() => [...filterTagIds].sort().join(','), [filterTagIds]);
   const filterSubjectKey = useMemo(() => [...filterSubjectSlugs].sort().join(','), [filterSubjectSlugs]);
+  const filterSourceKey = useMemo(() => [...filterSources].sort().join(','), [filterSources]);
 
   const filteredDropdownTags = useMemo(() => {
     const q = tagFilterSearch.trim().toLowerCase();
@@ -216,7 +251,7 @@ export default function MailingAudiencePage() {
 
   useEffect(() => {
     setPage(0);
-  }, [filterTagKey, filterSubjectKey, filterPosition]);
+  }, [filterTagKey, filterSubjectKey, filterPosition, filterSourceKey]);
 
   useEffect(() => {
     setTagAddInput('');
@@ -339,6 +374,9 @@ export default function MailingAudiencePage() {
       const hasTag = filterTagIds.length > 0;
       const hasSubj = filterSubjectSlugs.length > 0;
       const hasPos = Boolean(filterPosition);
+      const hasSource = filterSources.length > 0;
+      const emailQ = searchEmail.replace(/[%_]/g, '');
+      const emailPattern = emailQ ? `%${emailQ}%` : '';
 
       const handleSelectError = (msg: string) => {
         if (/permission|policy|rls|42501/i.test(msg)) {
@@ -350,12 +388,12 @@ export default function MailingAudiencePage() {
         }
       };
 
-      if (!hasTag && !hasSubj && !hasPos) {
+      if (!hasTag && !hasSubj && !hasPos && !hasSource) {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
-        const { data, error, count } = await supabase
-          .from('subscribers')
-          .select(colStr, { count: 'exact' })
+        let q = supabase.from('subscribers').select(colStr, { count: 'exact' });
+        if (emailPattern) q = q.ilike('email', emailPattern);
+        const { data, error, count } = await q
           .order('updated_at', { ascending: false })
           .range(from, to);
 
@@ -370,13 +408,16 @@ export default function MailingAudiencePage() {
 
         list = (data || []) as SubscriberRow[];
         countTotal = typeof count === 'number' ? count : 0;
-      } else if (!hasTag && !hasSubj && hasPos) {
+      } else if (!hasTag && !hasSubj && (hasPos || hasSource)) {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
-        const { data, error, count } = await supabase
+        let q = supabase
           .from('subscribers')
-          .select(colStr, { count: 'exact' })
-          .eq('position_label', filterPosition)
+          .select(colStr, { count: 'exact' });
+        if (hasPos) q = q.eq('position_label', filterPosition);
+        if (hasSource) q = q.in('source', filterSources);
+        if (emailPattern) q = q.ilike('email', emailPattern);
+        const { data, error, count } = await q
           .order('updated_at', { ascending: false })
           .range(from, to);
 
@@ -442,16 +483,15 @@ export default function MailingAudiencePage() {
 
         let allIds = [...(idSet || [])];
 
-        if (hasPos) {
-          const posFiltered: string[] = [];
+        if (hasPos || hasSource) {
+          const colFiltered: string[] = [];
           const POS_CHUNK = 150;
           for (let i = 0; i < allIds.length; i += POS_CHUNK) {
             const chunk = allIds.slice(i, i + POS_CHUNK);
-            const { data: rows, error: pe } = await supabase
-              .from('subscribers')
-              .select('id')
-              .in('id', chunk)
-              .eq('position_label', filterPosition);
+            let q = supabase.from('subscribers').select('id').in('id', chunk);
+            if (hasPos) q = q.eq('position_label', filterPosition);
+            if (hasSource) q = q.in('source', filterSources);
+            const { data: rows, error: pe } = await q;
             if (pe) {
               toast.error(pe.message);
               setRows([]);
@@ -460,9 +500,9 @@ export default function MailingAudiencePage() {
               setListsBySub({});
               return;
             }
-            for (const r of rows || []) posFiltered.push(r.id as string);
+            for (const r of rows || []) colFiltered.push(r.id as string);
           }
-          allIds = posFiltered;
+          allIds = colFiltered;
         }
 
         countTotal = allIds.length;
@@ -474,10 +514,12 @@ export default function MailingAudiencePage() {
           const CHUNK = 150;
           for (let i = 0; i < allIds.length; i += CHUNK) {
             const chunk = allIds.slice(i, i + CHUNK);
-            const { data: rows, error: e2 } = await supabase
+            let q = supabase
               .from('subscribers')
               .select('id, updated_at')
               .in('id', chunk);
+            if (emailPattern) q = q.ilike('email', emailPattern);
+            const { data: rows, error: e2 } = await q;
             if (e2) {
               toast.error(e2.message);
               setRows([]);
@@ -488,6 +530,7 @@ export default function MailingAudiencePage() {
             }
             mini.push(...((rows || []) as { id: string; updated_at: string }[]));
           }
+          if (emailPattern) countTotal = mini.length;
           mini.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
           const from = page * PAGE_SIZE;
           const pageIds = mini.slice(from, from + PAGE_SIZE).map((m) => m.id);
@@ -561,7 +604,7 @@ export default function MailingAudiencePage() {
     } finally {
       setLoading(false);
     }
-  }, [page, refreshKey, filterTagKey, filterSubjectKey, filterPosition]);
+  }, [page, refreshKey, filterTagKey, filterSubjectKey, filterPosition, filterSourceKey, searchEmail]);
 
   useEffect(() => {
     void load();
@@ -610,6 +653,61 @@ export default function MailingAudiencePage() {
     setRefreshKey((k) => k + 1);
   };
 
+  const recomputeEngagementAudiences = async () => {
+    if (
+      !confirm(
+        'Rozřadit přihlášené kontakty podle aktivity (open/click)?\n\n' +
+          'Vzniknou tagy Eng · Aktivní / Teplý / Chladný / Bez aktivity / Nový.\n' +
+          'Každý kontakt dostane právě jeden. Bez AI — podle last_opened_at / last_clicked_at.\n' +
+          'Dávky po 1000, pokračuje automaticky.',
+      )
+    ) {
+      return;
+    }
+    setEngagementBusy(true);
+    let offset = 0;
+    let batch = 0;
+    let totalProcessed = 0;
+    let totalTagUpdates = 0;
+    const totals = { 'eng-hot': 0, 'eng-warm': 0, 'eng-cold': 0, 'eng-never': 0, 'eng-new': 0 };
+    try {
+      for (;;) {
+        batch += 1;
+        const res = await fetch(`${SERVER}/admin/mailing/recompute-engagement-audiences`, {
+          method: 'POST',
+          headers: await getEdgeFunctionHeaders(true),
+          body: JSON.stringify({ limit: 1000, offset }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          toast.error(String(data.error || res.statusText));
+          return;
+        }
+        const proc = Number(data.processed) || 0;
+        totalProcessed += proc;
+        totalTagUpdates += Number(data.updatedTags) || 0;
+        const c = data.counts || {};
+        for (const k of Object.keys(totals) as (keyof typeof totals)[]) {
+          totals[k] += Number(c[k]) || 0;
+        }
+        if (proc < 1000) break;
+        offset += 1000;
+        toast.message(`Dávka ${batch}: ${proc} kontaktů. Pokračuji…`);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      toast.success(
+        `Aktivita: ${totalProcessed} kontaktů · tagy změněny u ${totalTagUpdates}. ` +
+          `Aktivní ${totals['eng-hot']}, teplý ${totals['eng-warm']}, chladný ${totals['eng-cold']}, ` +
+          `bez aktivity ${totals['eng-never']}, nový ${totals['eng-new']}.`,
+      );
+      refreshAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Přepočet aktivity selhal');
+    } finally {
+      setEngagementBusy(false);
+    }
+  };
+
   const recomputeSubjectInterests = async () => {
     if (
       !confirm(
@@ -628,7 +726,7 @@ export default function MailingAudiencePage() {
         batch += 1;
         const res = await fetch(`${SERVER}/admin/mailing/recompute-subject-interests`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+          headers: await getEdgeFunctionHeaders(true),
           body: JSON.stringify({ limit: 1000, offset }),
         });
         const rawText = await res.text();
@@ -705,7 +803,53 @@ export default function MailingAudiencePage() {
     setSubjectFilterSearch('');
   };
 
-  const hasActiveFilters = filterTagIds.length > 0 || filterSubjectSlugs.length > 0 || Boolean(filterPosition);
+  const hasActiveFilters =
+    filterTagIds.length > 0
+    || filterSubjectSlugs.length > 0
+    || Boolean(filterPosition)
+    || filterSources.length > 0
+    || Boolean(searchEmail);
+
+  /** Filtr, který jde uložit jako tag (hledání e-mailu ne — to není segment). */
+  const saveableAudienceFilter = useMemo((): MailingAudienceFilter | null => {
+    const f: MailingAudienceFilter = {};
+    if (filterTagIds.length) f.includeTagIds = filterTagIds;
+    if (filterSubjectSlugs.length) f.subjectInterestSlugs = filterSubjectSlugs;
+    if (filterPosition) f.positionLabels = [filterPosition];
+    if (filterSources.length) f.sources = filterSources;
+    if (!f.includeTagIds && !f.subjectInterestSlugs && !f.positionLabels && !f.sources) return null;
+    return f;
+  }, [filterTagIds, filterSubjectSlugs, filterPosition, filterSources]);
+
+  const saveFilterAsTag = async () => {
+    const name = saveAsTagName.trim();
+    if (!name) {
+      toast.error('Zadej název tagu pro segment.');
+      return;
+    }
+    if (!saveableAudienceFilter) {
+      toast.error('Nejdřív nastav filtr (tagy, zdroj, předmět nebo pozici).');
+      return;
+    }
+    setSaveAsTagBusy(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/mailing/audience/save-as-tag`, {
+        method: 'POST',
+        headers: await getEdgeFunctionHeaders(true),
+        body: JSON.stringify({ tagName: name, audienceFilter: saveableAudienceFilter, subscribedOnly: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        toast.error(String(data.error || 'Uložení segmentu selhalo'));
+        return;
+      }
+      toast.success(String(data.message || `Tag „${name}“ uložen`));
+      setSaveAsTagName('');
+      setRefreshKey((k) => k + 1);
+    } finally {
+      setSaveAsTagBusy(false);
+    }
+  };
 
   const createGlobalTag = async () => {
     const name = newGlobalTag.trim();
@@ -714,7 +858,7 @@ export default function MailingAudiencePage() {
     try {
       const res = await fetch(`${SERVER}/admin/mailing/tags`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: await getEdgeFunctionHeaders(true),
         body: JSON.stringify({ name }),
       });
       const data = await res.json().catch(() => ({}));
@@ -738,7 +882,7 @@ export default function MailingAudiencePage() {
     try {
       const res = await fetch(`${SERVER}/admin/mailing/subscribers/${subscriberId}/tags`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: await getEdgeFunctionHeaders(true),
         body: JSON.stringify({ ...body, syncMailchimp }),
       });
       const data = await res.json().catch(() => ({}));
@@ -756,6 +900,114 @@ export default function MailingAudiencePage() {
       refreshAll();
     } finally {
       setTagMutationBusy(false);
+    }
+  };
+
+  /* ── Přidat kontakt + import CSV ── */
+  const [addOpen, setAddOpen] = useState(false);
+  const [addBusy, setAddBusy] = useState(false);
+  const [addForm, setAddForm] = useState({ email: '', firstName: '', lastName: '', contactType: 'teacher', tags: '' });
+  const [importBusy, setImportBusy] = useState(false);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
+
+  const submitAddContact = async () => {
+    const email = addForm.email.trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      toast.error('Zadej platný e-mail.');
+      return;
+    }
+    setAddBusy(true);
+    try {
+      const res = await fetch(`${SERVER}/admin/mailing/subscribers`, {
+        method: 'POST',
+        headers: await getEdgeFunctionHeaders(true),
+        body: JSON.stringify({
+          email,
+          firstName: addForm.firstName.trim() || undefined,
+          lastName: addForm.lastName.trim() || undefined,
+          contactType: addForm.contactType,
+          tags: addForm.tags.split(',').map((t) => t.trim()).filter(Boolean),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        toast.error(String(data.error || `Přidání selhalo (${res.status})`));
+        return;
+      }
+      toast.success(data.created ? `Kontakt ${email} přidán` : `Kontakt ${email} aktualizován`);
+      setAddOpen(false);
+      setAddForm({ email: '', firstName: '', lastName: '', contactType: 'teacher', tags: '' });
+      refreshAll();
+    } finally {
+      setAddBusy(false);
+    }
+  };
+
+  /** Jednoduchý CSV parser: hlavička (email, jmeno/first_name, prijmeni/last_name, tagy/tags — tagy oddělené |). */
+  const handleImportCsvFile = async (file: File) => {
+    setImportBusy(true);
+    try {
+      const text = await file.text();
+      const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length < 2) {
+        toast.error('CSV musí mít hlavičku a alespoň jeden řádek.');
+        return;
+      }
+      const delim = lines[0].includes(';') ? ';' : ',';
+      const header = lines[0].split(delim).map((h) => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+      const idx = (names: string[]) => header.findIndex((h) => names.includes(h));
+      const iEmail = idx(['email', 'e-mail', 'email address']);
+      if (iEmail < 0) {
+        toast.error('CSV musí mít sloupec „email“.');
+        return;
+      }
+      const iFirst = idx(['jmeno', 'jméno', 'first_name', 'firstname', 'first name']);
+      const iLast = idx(['prijmeni', 'příjmení', 'last_name', 'lastname', 'last name']);
+      const iTags = idx(['tagy', 'tags', 'tag']);
+      const cell = (cols: string[], i: number) => (i >= 0 ? (cols[i] || '').trim().replace(/^"|"$/g, '') : '');
+      const rows = lines.slice(1).map((line) => {
+        const cols = line.split(delim);
+        return {
+          email: cell(cols, iEmail).toLowerCase(),
+          firstName: cell(cols, iFirst) || undefined,
+          lastName: cell(cols, iLast) || undefined,
+          tags: cell(cols, iTags) ? cell(cols, iTags).split('|').map((t) => t.trim()).filter(Boolean) : undefined,
+        };
+      }).filter((r) => r.email);
+      if (rows.length === 0) {
+        toast.error('Žádné řádky s e-mailem.');
+        return;
+      }
+
+      let created = 0;
+      let updated = 0;
+      let failed = 0;
+      const CHUNK = 500;
+      for (let i = 0; i < rows.length; i += CHUNK) {
+        const res = await fetch(`${SERVER}/admin/mailing/subscribers/import`, {
+          method: 'POST',
+          headers: await getEdgeFunctionHeaders(true),
+          body: JSON.stringify({ rows: rows.slice(i, i + CHUNK), defaultTags: ['csv-import'] }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast.error(String(data.error || `Import selhal (${res.status})`));
+          return;
+        }
+        created += data.created || 0;
+        updated += data.updated || 0;
+        failed += data.failed || 0;
+        if (rows.length > CHUNK) {
+          toast.message(`Import: ${Math.min(i + CHUNK, rows.length)}/${rows.length} řádků…`);
+        }
+      }
+      toast.success(`Import hotov: ${created} nových, ${updated} aktualizovaných${failed ? `, ${failed} chyb` : ''}.`);
+      refreshAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Import selhal');
+    } finally {
+      setImportBusy(false);
+      if (importFileRef.current) importFileRef.current.value = '';
     }
   };
 
@@ -804,7 +1056,7 @@ export default function MailingAudiencePage() {
             <button
               type="button"
               onClick={() => void recomputeSubjectInterests()}
-              disabled={loading || subjectScoresBusy}
+              disabled={loading || subjectScoresBusy || engagementBusy}
               className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-[13px] font-bold text-sky-900 transition-colors hover:bg-sky-100 disabled:opacity-50"
               style={FF}
               title="Dávky po 1000 kontaktech (updated_at desc), dokud nedojdou záznamy"
@@ -812,6 +1064,47 @@ export default function MailingAudiencePage() {
               {subjectScoresBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {subjectScoresBusy ? 'Počítám zájmy…' : 'Přepočítat zájmy'}
             </button>
+            <button
+              type="button"
+              onClick={() => void recomputeEngagementAudiences()}
+              disabled={loading || engagementBusy || subjectScoresBusy}
+              className="inline-flex items-center gap-2 rounded-xl border border-[#7C3AED]/30 bg-[#7C3AED]/8 px-4 py-2 text-[13px] font-bold text-[#5b21b6] transition-colors hover:bg-[#7C3AED]/15 disabled:opacity-50"
+              style={FF}
+              title="Tagy Eng · Aktivní / Teplý / Chladný / Bez aktivity / Nový — podle open/click"
+            >
+              {engagementBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+              {engagementBusy ? 'Řadím podle aktivity…' : 'Rozřadit podle aktivity'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex items-center gap-2 rounded-xl border border-fuchsia-200 bg-fuchsia-50 px-4 py-2 text-[13px] font-bold text-fuchsia-900 transition-colors hover:bg-fuchsia-100"
+              style={FF}
+            >
+              <UserPlus className="h-4 w-4" />
+              Přidat kontakt
+            </button>
+            <button
+              type="button"
+              onClick={() => importFileRef.current?.click()}
+              disabled={importBusy}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2 text-[13px] font-bold text-[#001161] transition-colors hover:bg-gray-50 disabled:opacity-50"
+              style={FF}
+              title="CSV s hlavičkou: email, jmeno, prijmeni, tagy (tagy oddělené |)"
+            >
+              {importBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+              {importBusy ? 'Importuji…' : 'Import CSV'}
+            </button>
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImportCsvFile(f);
+              }}
+            />
             <Link
               to="/admin/migrace"
               className="inline-flex items-center gap-2 rounded-xl bg-[#001161] px-4 py-2 text-[13px] font-bold text-white transition-opacity hover:opacity-95"
@@ -822,6 +1115,99 @@ export default function MailingAudiencePage() {
             </Link>
           </div>
         </div>
+
+        {addOpen ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-[#001161]/30 p-4"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setAddOpen(false);
+            }}
+          >
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" style={FF}>
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-[18px] font-bold text-[#001161]">Přidat kontakt</h2>
+                <button type="button" onClick={() => setAddOpen(false)} className="text-[#001161]/40 hover:text-[#001161]">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="flex flex-col gap-3">
+                <label className="text-[12px] font-bold text-[#001161]/70">
+                  E-mail *
+                  <input
+                    type="email"
+                    value={addForm.email}
+                    onChange={(e) => setAddForm((f) => ({ ...f, email: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[14px] font-normal outline-none focus:border-fuchsia-400"
+                    placeholder="jana.novakova@skola.cz"
+                    autoFocus
+                  />
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="text-[12px] font-bold text-[#001161]/70">
+                    Jméno
+                    <input
+                      type="text"
+                      value={addForm.firstName}
+                      onChange={(e) => setAddForm((f) => ({ ...f, firstName: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[14px] font-normal outline-none focus:border-fuchsia-400"
+                    />
+                  </label>
+                  <label className="text-[12px] font-bold text-[#001161]/70">
+                    Příjmení
+                    <input
+                      type="text"
+                      value={addForm.lastName}
+                      onChange={(e) => setAddForm((f) => ({ ...f, lastName: e.target.value }))}
+                      className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[14px] font-normal outline-none focus:border-fuchsia-400"
+                    />
+                  </label>
+                </div>
+                <label className="text-[12px] font-bold text-[#001161]/70">
+                  Typ kontaktu
+                  <select
+                    value={addForm.contactType}
+                    onChange={(e) => setAddForm((f) => ({ ...f, contactType: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[14px] font-normal outline-none focus:border-fuchsia-400"
+                  >
+                    <option value="teacher">Učitel/ka</option>
+                    <option value="school_admin">Vedení školy</option>
+                    <option value="parent">Rodič</option>
+                    <option value="homeschool">Domácí výuka</option>
+                    <option value="unknown">Neznámý</option>
+                  </select>
+                </label>
+                <label className="text-[12px] font-bold text-[#001161]/70">
+                  Tagy (oddělené čárkou)
+                  <input
+                    type="text"
+                    value={addForm.tags}
+                    onChange={(e) => setAddForm((f) => ({ ...f, tags: e.target.value }))}
+                    className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-[14px] font-normal outline-none focus:border-fuchsia-400"
+                    placeholder="newsletter, fyzika"
+                  />
+                </label>
+              </div>
+              <div className="mt-5 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAddOpen(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-[13px] font-bold text-[#001161] hover:bg-gray-50"
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitAddContact()}
+                  disabled={addBusy || !addForm.email.trim()}
+                  className="inline-flex items-center gap-2 rounded-xl bg-fuchsia-600 px-4 py-2 text-[13px] font-bold text-white disabled:opacity-50"
+                >
+                  {addBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Přidat kontakt
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-[20px] border border-gray-200 bg-white shadow-[0_10px_30px_rgba(0,17,97,0.06)]">
           <div
@@ -841,6 +1227,27 @@ export default function MailingAudiencePage() {
                   '—'
                 )}
               </span>
+              <div className="relative" onClick={(e) => e.stopPropagation()}>
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#001161]/40" aria-hidden />
+                <input
+                  type="search"
+                  value={searchEmailInput}
+                  onChange={(e) => setSearchEmailInput(e.target.value)}
+                  placeholder="Hledat e-mail…"
+                  className="w-[170px] rounded-lg border border-gray-200 py-1.5 pl-8 pr-2.5 text-[12px] outline-none focus:border-fuchsia-400 sm:w-[210px]"
+                  style={FF}
+                />
+                {searchEmailInput ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchEmailInput('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[#001161]/40 hover:text-[#001161]"
+                    aria-label="Zrušit hledání"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
+              </div>
               <div
                 className="flex flex-wrap items-center gap-2 border-l border-gray-200 pl-3"
                 onClick={(e) => e.stopPropagation()}
@@ -1127,6 +1534,55 @@ export default function MailingAudiencePage() {
                   </button>
                 ) : null}
               </div>
+              <div className="flex flex-wrap items-center gap-1.5 border-l border-gray-200 pl-3">
+                {MAILING_SOURCE_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => {
+                      setFilterSources((prev) =>
+                        prev.includes(o.value) ? prev.filter((s) => s !== o.value) : [...prev, o.value],
+                      );
+                      setPage(0);
+                    }}
+                    className={`rounded-lg px-2.5 py-1.5 text-[11px] font-bold transition-colors ${
+                      filterSources.includes(o.value)
+                        ? 'bg-[#001161] text-white'
+                        : 'border border-gray-200 bg-white text-[#001161]/65 hover:bg-gray-50'
+                    }`}
+                    style={FF}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              {saveableAudienceFilter ? (
+                <div
+                  className="flex flex-wrap items-center gap-2 border-l border-gray-200 pl-3"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="text"
+                    value={saveAsTagName}
+                    onChange={(e) => setSaveAsTagName(e.target.value)}
+                    placeholder="Název segmentu (tag)…"
+                    className="w-[160px] rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-[#7C3AED]/45 sm:w-[200px]"
+                    style={FF}
+                    onKeyDown={(e) => e.key === 'Enter' && void saveFilterAsTag()}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveFilterAsTag()}
+                    disabled={saveAsTagBusy || !saveAsTagName.trim()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-1.5 text-[12px] font-bold text-white disabled:opacity-50"
+                    style={FF}
+                    title="Označí všechny přihlášené kontakty ve filtru tímto tagem — pak jde použít při odesílání kampaně"
+                  >
+                    {saveAsTagBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                    Uložit filtr jako tag
+                  </button>
+                </div>
+              ) : null}
             </div>
             {showPager && (
               <span>
@@ -1501,7 +1957,9 @@ export default function MailingAudiencePage() {
                                     ev.campaigns?.subject_line || ev.campaigns?.name || null;
                                   return (
                                     <li key={i} className="flex flex-wrap items-baseline gap-x-2 px-3 py-2">
-                                      <span className="font-bold capitalize text-fuchsia-800">{ev.event_type}</span>
+                                      <span className="font-bold capitalize text-fuchsia-800">
+                                        {EVENT_LABELS[ev.event_type] || ev.event_type}
+                                      </span>
                                       <span className="text-[#001161]/45">{when}</span>
                                       {camp ? (
                                         <span className="min-w-0 truncate text-[#001161]/65" title={camp}>

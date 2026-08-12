@@ -37,18 +37,30 @@ type CampaignStats = {
   failed: number;
   pending: number;
   skipped: number;
+  delivered: number;
+  hard_bounces: number;
+  soft_bounces: number;
   unique_opens: number;
   unique_clicks: number;
   unsubscribes: number;
   bounces: number;
+  complaints: number;
 };
 
 type TopLink = { url: string; clicks: number };
 type FailedRecipient = { email: string; error: string | null };
+type BouncedRecipient = { email: string; type: string; reason: string | null };
 
 type CampaignDetail = {
   topLinks: TopLink[];
   failed: FailedRecipient[];
+  bounced: BouncedRecipient[];
+};
+
+const BOUNCE_LABELS: Record<string, string> = {
+  hard: 'trvalý',
+  soft: 'dočasný',
+  undetermined: 'neurčeno',
 };
 
 const STATUS_LABELS: Record<string, { label: string; cls: string }> = {
@@ -82,6 +94,12 @@ export default function MailingCampaignsPage() {
   const [details, setDetails] = useState<Record<string, CampaignDetail>>({});
   const [detailLoading, setDetailLoading] = useState<string | null>(null);
   const [cancellingId, setCancellingId] = useState<string | null>(null);
+
+  /* Odesláno bez jediného potvrzeného doručení = Resend webhook nejspíš není napojený. */
+  const deliveryUnknown = campaigns.some((c) => {
+    const s = stats[c.id];
+    return !!s && s.sent > 0 && s.delivered === 0;
+  });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -125,7 +143,7 @@ export default function MailingCampaignsPage() {
     setDetailLoading(campaignId);
     try {
       const supabase = getSupabaseBrowser();
-      const [linksRes, clicksRes, failedRes] = await Promise.all([
+      const [linksRes, clicksRes, failedRes, bouncedRes] = await Promise.all([
         supabase.from('email_links').select('id, url').eq('campaign_id', campaignId).limit(500),
         supabase
           .from('email_events')
@@ -140,10 +158,17 @@ export default function MailingCampaignsPage() {
           .eq('campaign_id', campaignId)
           .eq('status', 'failed')
           .limit(50),
+        supabase
+          .from('campaign_recipients')
+          .select('bounce_type, bounce_reason, subscriber:subscribers(email)')
+          .eq('campaign_id', campaignId)
+          .not('bounce_type', 'is', null)
+          .limit(50),
       ]);
       if (linksRes.error) throw new Error(linksRes.error.message);
       if (clicksRes.error) throw new Error(clicksRes.error.message);
       if (failedRes.error) throw new Error(failedRes.error.message);
+      if (bouncedRes.error) throw new Error(bouncedRes.error.message);
 
       const urlByLinkId = new Map((linksRes.data || []).map((l) => [l.id as string, l.url as string]));
       const clickCounts = new Map<string, number>();
@@ -161,7 +186,13 @@ export default function MailingCampaignsPage() {
         error: (r.error as string | null) ?? null,
       }));
 
-      setDetails((prev) => ({ ...prev, [campaignId]: { topLinks, failed } }));
+      const bounced: BouncedRecipient[] = (bouncedRes.data || []).map((r) => ({
+        email: ((r.subscriber as { email?: string } | null)?.email as string) || '(neznámý)',
+        type: (r.bounce_type as string) || 'undetermined',
+        reason: (r.bounce_reason as string | null) ?? null,
+      }));
+
+      setDetails((prev) => ({ ...prev, [campaignId]: { topLinks, failed, bounced } }));
     } catch (e) {
       console.error('Campaign detail error:', e);
       toast.error(`Detail kampaně: ${e instanceof Error ? e.message : String(e)}`);
@@ -217,8 +248,17 @@ export default function MailingCampaignsPage() {
         </div>
 
         <p className="text-[12px] text-[#001161]/45 leading-snug">
-          Kampaně odeslané vlastním mailingem (Resend). Open/click rate se počítá z unikátních kontaktů vůči odeslaným.
+          Kampaně odeslané vlastním mailingem (Resend). Doručeno hlásí webhook, open/click rate se počítá
+          z unikátních kontaktů vůči odeslaným.
         </p>
+
+        {deliveryUnknown && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[12px] text-amber-800 leading-snug">
+            U některých kampaní není potvrzené žádné doručení. Zkontrolujte, že je v Resendu zaregistrovaný
+            webhook na <code className="font-mono">/webhooks/resend</code> s událostmi <em>delivered</em>,{' '}
+            <em>bounced</em>, <em>complained</em> a že sedí <code className="font-mono">RESEND_WEBHOOK_SECRET</code>.
+          </div>
+        )}
 
         {loading && campaigns.length === 0 ? (
           <div className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-8 justify-center text-[13px] text-[#001161]/50">
@@ -240,7 +280,7 @@ export default function MailingCampaignsPage() {
             <table className="w-full text-left">
               <thead>
                 <tr className="border-b border-gray-100 bg-[#fafbfd]">
-                  {['', 'Kampaň', 'Stav', 'Odesláno', 'Open rate', 'Click rate', 'Odhlášení', 'Chyby', ''].map((h, i) => (
+                  {['', 'Kampaň', 'Stav', 'Odesláno', 'Doručeno', 'Open rate', 'Click rate', 'Odhlášení', 'Chyby', ''].map((h, i) => (
                     <th key={i} className="px-3 py-2.5 text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/40">
                       {h}
                     </th>
@@ -279,6 +319,20 @@ export default function MailingCampaignsPage() {
                         </td>
                         <td className="px-3 py-3 text-[12px] text-[#001161]/70">
                           {s ? `${s.sent}${s.pending > 0 ? ` / ${s.recipients_total}` : ''}` : '—'}
+                        </td>
+                        <td className="px-3 py-3 text-[12px] text-[#001161]/70">
+                          {!s || s.sent === 0 ? (
+                            '—'
+                          ) : s.delivered > 0 ? (
+                            <>
+                              <span>{pct(s.delivered, s.sent)}</span>
+                              <span className="block text-[10px] text-[#001161]/40">{s.delivered} z {s.sent}</span>
+                            </>
+                          ) : (
+                            <span className="text-[#001161]/35" title="Resend zatím nepotvrdil doručení — zkontrolujte webhook.">
+                              nehlášeno
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-3 text-[12px] text-[#001161]/70">{s ? pct(s.unique_opens, s.sent) : '—'}</td>
                         <td className="px-3 py-3 text-[12px] text-[#001161]/70">{s ? pct(s.unique_clicks, s.sent) : '—'}</td>
@@ -321,26 +375,42 @@ export default function MailingCampaignsPage() {
                       </tr>
                       {expanded && (
                         <tr className="border-b border-gray-50 bg-[#fafbfd]">
-                          <td colSpan={9} className="px-6 py-4">
+                          <td colSpan={10} className="px-6 py-4">
                             {detailLoading === cam.id && !detail ? (
                               <div className="flex items-center gap-2 text-[12px] text-[#001161]/50">
                                 <Loader2 className="w-4 h-4 animate-spin text-[#7C3AED]" aria-hidden />
                                 Načítám detail…
                               </div>
                             ) : (
-                              <div className="grid gap-4 lg:grid-cols-3">
+                              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                                 <div>
                                   <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/40 mb-2">Čísla</p>
                                   {s ? (
                                     <dl className="space-y-1 text-[12px] text-[#001161]/70">
                                       <div className="flex justify-between gap-3"><dt>Příjemců celkem</dt><dd className="font-bold">{s.recipients_total}</dd></div>
                                       <div className="flex justify-between gap-3"><dt>Odesláno</dt><dd className="font-bold">{s.sent}</dd></div>
+                                      <div className="flex justify-between gap-3">
+                                        <dt>Doručeno</dt>
+                                        <dd className="font-bold">{s.delivered} {s.sent > 0 && s.delivered > 0 ? `(${pct(s.delivered, s.sent)})` : ''}</dd>
+                                      </div>
                                       <div className="flex justify-between gap-3"><dt>Ve frontě</dt><dd>{s.pending}</dd></div>
                                       <div className="flex justify-between gap-3"><dt>Přeskočeno</dt><dd>{s.skipped}</dd></div>
                                       <div className="flex justify-between gap-3"><dt>Otevřelo (unikátně)</dt><dd className="font-bold">{s.unique_opens}</dd></div>
                                       <div className="flex justify-between gap-3"><dt>Kliklo (unikátně)</dt><dd className="font-bold">{s.unique_clicks}</dd></div>
                                       <div className="flex justify-between gap-3"><dt>Odhlásilo se</dt><dd>{s.unsubscribes}</dd></div>
-                                      <div className="flex justify-between gap-3"><dt>Bounce</dt><dd>{s.bounces}</dd></div>
+                                      <div className="flex justify-between gap-3"><dt>Bounce celkem</dt><dd>{s.bounces}</dd></div>
+                                      <div className="flex justify-between gap-3">
+                                        <dt className="pl-3 text-[#001161]/50">z toho trvalé</dt>
+                                        <dd className={s.hard_bounces > 0 ? 'text-red-600 font-bold' : ''}>{s.hard_bounces}</dd>
+                                      </div>
+                                      <div className="flex justify-between gap-3">
+                                        <dt className="pl-3 text-[#001161]/50">z toho dočasné</dt>
+                                        <dd>{s.soft_bounces}</dd>
+                                      </div>
+                                      <div className="flex justify-between gap-3">
+                                        <dt>Stížnosti na spam</dt>
+                                        <dd className={s.complaints > 0 ? 'text-red-600 font-bold' : ''}>{s.complaints}</dd>
+                                      </div>
                                     </dl>
                                   ) : (
                                     <p className="text-[12px] text-[#001161]/45">Bez statistik.</p>
@@ -359,6 +429,24 @@ export default function MailingCampaignsPage() {
                                     </ul>
                                   ) : (
                                     <p className="text-[12px] text-[#001161]/45">Zatím žádné kliky.</p>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/40 mb-2">Nedoručeno (bounce)</p>
+                                  {detail && detail.bounced.length > 0 ? (
+                                    <ul className="space-y-1.5">
+                                      {detail.bounced.map((b, i) => (
+                                        <li key={i} className="text-[12px] text-[#001161]/70 leading-snug">
+                                          <span className="font-bold">{b.email}</span>
+                                          <span className={b.type === 'hard' ? 'text-red-600' : 'text-amber-700'}>
+                                            {' '}— {BOUNCE_LABELS[b.type] || b.type}
+                                          </span>
+                                          {b.reason ? <span className="block text-[11px] text-[#001161]/45">{b.reason}</span> : null}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-[12px] text-[#001161]/45">Žádné bounce.</p>
                                   )}
                                 </div>
                                 <div>

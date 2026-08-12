@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Users, Search, Building2, Tag, Mail, Clock, Sparkles, Layers, Radio } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { projectId } from '../../utils/supabase/info';
+import { getEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
 import { cn } from '../ui/utils';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -119,7 +120,7 @@ export default function MarketingContactsPage() {
   const loadMeta = useCallback(async () => {
     try {
       const res = await fetch(`${SERVER}/admin/marketing/contacts/meta`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: await getEdgeFunctionHeaders(),
       });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -145,7 +146,7 @@ export default function MarketingContactsPage() {
       params.set('limit', String(limit));
       params.set('offset', String(offset));
       const res = await fetch(`${SERVER}/admin/marketing/contacts?${params}`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: await getEdgeFunctionHeaders(),
       });
       const text = await res.text();
       let d: { rows?: ContactRow[]; total?: number; error?: string } = {};
@@ -185,10 +186,7 @@ export default function MarketingContactsPage() {
       try {
         const res = await fetch(`${SERVER}/admin/marketing/contacts/webinar-attendance`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
-            'Content-Type': 'application/json',
-          },
+          headers: await getEdgeFunctionHeaders(true),
           body: JSON.stringify({ emails }),
         });
         const d = await res.json().catch(() => ({}));
@@ -219,10 +217,7 @@ export default function MarketingContactsPage() {
       for (;;) {
         const res = await fetch(`${SERVER}/admin/marketing/contacts/sync`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${publicAnonKey}`,
-            'Content-Type': 'application/json',
-          },
+          headers: await getEdgeFunctionHeaders(true),
           body: JSON.stringify({ reset: call === 0 && forceResetFromScratch }),
         });
         const text = await res.text();

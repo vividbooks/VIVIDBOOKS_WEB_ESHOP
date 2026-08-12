@@ -6,7 +6,7 @@ import {
   CopyPlus, ClipboardCopy, ClipboardPaste, ExternalLink, X,
   Sparkles, Brain,
   PanelLeftClose, PanelLeftOpen,
-  ArrowUp, ChevronUp, ChevronDown, Settings2, MousePointerClick, TextCursor,
+  ArrowUp, ArrowLeft, ChevronUp, ChevronDown, Settings2, MousePointerClick, TextCursor,
   Layers, Code, ImageIcon, Video, Undo2, Redo2, LayoutTemplate,
   AlignLeft, AlignCenter, AlignRight, Minus, RectangleHorizontal, Columns2, Columns3, PanelTop, ShoppingBag,
   ArrowDown, SquareDashed,
@@ -14,10 +14,12 @@ import {
   Upload,
   GripVertical,
   BetweenVerticalStart,
-  Bold, Italic, Underline, Strikethrough, Link2, List, ListOrdered,
+  Bold, Italic, Underline, Strikethrough, Link2, Unlink, List, ListOrdered,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { projectId } from '../../utils/supabase/info';
+import { fetchWithAdminAuth, getRequiredEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
+import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import CollageModal from './CollageModal';
 import { EmailProductCollagePanel, type EmailProductCollageLivePayload } from './EmailProductCollagePanel';
 import { EmailWebinarPanel, type EmailWebinarLivePayload } from './EmailWebinarPanel';
@@ -32,8 +34,11 @@ import {
   readWebinarStateFromElement,
 } from './emailWebinarBlock';
 import { EmailImageEditModal } from './EmailImageEditModal';
+import { EmailImageCropPanel } from './EmailImageCropPanel';
 import { EmailAssetPickerModal } from './EmailAssetPickerModal';
 import { buildEmailProductImagesTableHtml } from './collageUtils';
+import { EmailPreviewBgColorField, VividbooksColorButton } from './VividbooksColorButton';
+import { hydrateEmailAiEditorBlocks } from './emailAiBlockHydrate';
 import {
   EMAIL_BUILDER_AI_TIER_KEY,
   type EmailAiTier,
@@ -50,22 +55,62 @@ import {
   type EmailSectionFill,
   buildEmailBlockHtml,
   buildEmailSectionHtml,
+  type EmailBlockGroupState,
+  ensureRowIsSection,
   extractFirstImage,
   extractFirstLink,
   findDndBlockFromDragTarget,
+  findSelectableEmailBlock,
+  ensureEmailColumnUnits,
+  ensureColumnUnitAtTarget,
+  findEmailBlockById,
+  getColumnsHostForBlock,
+  isEmailColumnUnit,
+  getEmailGroupRow,
+  getHostSectionForBlock,
   findTextBlockLibraryDropSplitIndex,
   findTopLevelTextBlockHostForDrop,
   getEmailBlockLabel,
   getTextBlockElementChildren,
   inferEmailBlockType,
   isDndReorderableEmailBlock,
+  groupEmailBlocksIntoSection,
+  isolateEmailBlockGroup,
+  moveEmailBlockNode,
+  moveEmailBlockBeforeTarget,
+  setEmailBlockColumns,
+  readEmailBlockColumns,
+  readElementHasShadow,
+  parseBlockPadding,
+  formatBlockPadding,
+  EMAIL_BLOCK_SHADOW,
+  fillEmailColumnChooser,
+  buildColumnChooserHtml,
+  type EmailBlockColumnCount,
+  type EmailColumnContentKind,
+  type EmailSectionChrome,
+  type EmailHighlightChrome,
   normalizeEmailBodyHtml,
   randomBlockId,
   readElementBackground,
   readElementPadding,
+  readEmailBlockGroupState,
+  readHighlightChrome,
+  applySectionChrome,
+  applyHighlightChrome,
   setInlineStyleValue,
   wrapRootBlockInSection,
 } from './emailBlocks';
+import { compileEmailBodyForSend } from './emailExport';
+import {
+  isFirstGradeTagName,
+  isWebinarTagName,
+  MAILING_SOURCE_OPTIONS,
+  MAILING_SUBJECT_OPTIONS,
+  summarizeAudienceFilter,
+  toggleId,
+  type MailingAudienceFilter,
+} from '../../lib/mailingAudienceFilter';
 
 /** Přetahování typu bloku z knihovny do iframe náhledu (HTML5 DnD). */
 const VB_EMAIL_LIBRARY_DRAG_TYPE = 'application/x-vb-email-block-type';
@@ -78,8 +123,9 @@ const EMAIL_BLOCK_CHROME_HIT_PADDING_PX = 100;
 const EMAIL_PRESET_TYPE_SET = new Set<EmailBlockType>(EMAIL_BLOCK_PRESETS.map((p) => p.type));
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
-const AUTH_H = { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
-const AUTH_H_NO_CT = { Authorization: `Bearer ${publicAnonKey}` } as const;
+/** Admin mailing endpointy vyžadují user JWT (X-User-Access-Token) — viz admin-auth.ts na serveru. */
+const authHeaders = () => getRequiredEdgeFunctionHeaders(true);
+const authHeadersNoCt = () => getRequiredEdgeFunctionHeaders(false);
 const F = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 /** HTML jednoho bloku (bez `data-vb-block-id`) pro vložení v jiném mailu přes + v postranní liště. */
 const EMAIL_BLOCK_CLIPBOARD_STORAGE_KEY = 'vb-email-block-clipboard-html';
@@ -111,6 +157,8 @@ interface EmailDraft {
   status: 'draft' | 'pushed' | 'sent';
   mailchimpCampaignId?: string;
   mailchimpUrl?: string;
+  /** ID kampaně ve vlastním mailingu (Postgres `campaigns`) — vazba draft ↔ kampaň. */
+  mailingCampaignId?: string;
   /** ISO čas plánovaného odeslání (uloží se s draftem; Mailchimp push zatím neplánuje). */
   scheduledSendAt?: string | null;
   createdAt: string;
@@ -192,6 +240,8 @@ interface BlockInspectorState {
   ctaText: string;
   ctaUrl: string;
   imageSrc: string;
+  /** Šířka <img> v % rodiče (10–100). */
+  imageWidthPct: number;
 }
 
 function normalizeDraftForBuilder(draft: EmailDraft): EmailDraft {
@@ -233,6 +283,32 @@ function normalizeBodyForBuilder(html: string): string {
   return normalizeEmailBodyHtml(html || '');
 }
 
+
+function readImageWidthPct(img: HTMLImageElement | null | undefined): number {
+  if (!img) return 100;
+  const styleW = (img.style.width || '').trim();
+  const pct = styleW.match(/^(\d+(?:\.\d+)?)%$/);
+  if (pct) {
+    const n = Math.round(Number(pct[1]));
+    if (Number.isFinite(n)) return Math.max(10, Math.min(100, n));
+  }
+  const attrW = (img.getAttribute('width') || '').trim();
+  if (attrW.endsWith('%')) {
+    const n = Math.round(Number(attrW.slice(0, -1)));
+    if (Number.isFinite(n)) return Math.max(10, Math.min(100, n));
+  }
+  return 100;
+}
+
+function applyImageWidthPct(img: HTMLImageElement, pct: number) {
+  const safe = Math.max(10, Math.min(100, Math.round(pct)));
+  img.style.width = `${safe}%`;
+  img.style.maxWidth = '100%';
+  img.style.height = 'auto';
+  img.removeAttribute('width');
+  img.removeAttribute('height');
+}
+
 function createBlockInspectorState(el: HTMLElement): BlockInspectorState {
   const link = extractFirstLink(el);
   const image = extractFirstImage(el);
@@ -248,6 +324,7 @@ function createBlockInspectorState(el: HTMLElement): BlockInspectorState {
     ctaText: skipLinkImageInspector ? '' : (link?.textContent || '').trim(),
     ctaUrl: skipLinkImageInspector ? '' : (link?.getAttribute('href') || ''),
     imageSrc: skipLinkImageInspector ? '' : (image?.getAttribute('src') || ''),
+    imageWidthPct: skipLinkImageInspector ? 100 : readImageWidthPct(image),
   };
 }
 
@@ -522,31 +599,59 @@ function buildEmailSrcDoc(
   const fontLockCss = imageEditMode
     ? ''
     : 'body *{font-family:Arial,Helvetica,sans-serif !important;}';
+  /** Zvýraznění bloků řeší jen `.vb-block-hover` / `.vb-block-selected` — žádné CSS `:hover`, ať se outliny nekříží. */
   const imgEditCss = imageEditMode
-    ? `body.vb-img-edit img{cursor:grab;transition:outline .12s ease}body.vb-img-edit img:hover{outline:2px solid rgba(124,58,237,0.45);outline-offset:2px}
-body.vb-img-edit .vb-email-root [data-vb-block="section"]>[data-vb-block-id]{cursor:grab}
-body.vb-img-edit .vb-email-root [data-vb-block="section"]>[data-vb-block-id]:hover{outline:1px dashed rgba(124,58,237,0.35);outline-offset:2px}
-body.vb-img-edit .vb-email-root>[data-vb-block="section"]{cursor:grab}
-body.vb-img-edit .vb-email-root>[data-vb-block="section"]:hover{outline:1px dashed rgba(124,58,237,0.25);outline-offset:2px}
-body.vb-img-edit .vb-dnd-dragging{opacity:0.55!important;outline:2px solid #7C3AED!important}
-body .vb-email-root [data-vb-block-id]{position:relative}
-body .vb-email-root [data-vb-block-id].vb-block-selected{outline:1px solid rgba(0,17,97,0.14)!important;outline-offset:2px}`
+    ? `body.vb-img-edit img{cursor:grab}
+body.vb-img-edit .vb-email-root [data-vb-block="section"]>[data-vb-block-id],
+body.vb-img-edit .vb-email-root>[data-vb-block="section"]{cursor:grab}`
     : '';
   const bodyClass = imageEditMode ? ' class="vb-img-edit"' : '';
   const previewLayoutCss = `
 :root{--vb-preview-outer:${outer};--vb-preview-card:${card};}
+.vb-email-root .vb-dnd-dragging{opacity:0.45!important;outline:2px dashed #7C3AED!important;outline-offset:-2px!important;}
 html,body{margin:0;padding:0;-webkit-text-size-adjust:100%;}
-html{font-family:Arial,Helvetica,sans-serif;background:var(--vb-preview-outer);color-scheme:light;}
-body{font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333;background:var(--vb-preview-outer);color-scheme:light;-webkit-forced-color-adjust:none;forced-color-adjust:none;}
-html.vb-island-layout .vb-email-root{background:transparent!important;min-height:100%;}
-/* Bloky uvnitř skupiny — sjednocený vnitřní padding (užší okraje = širší text) */
+/*
+ * Iframe je vždy vysoký přesně jako obsah (viz syncHeight) a uvnitř se nikdy neroluje —
+ * jinak by dokument v iframu sebral kolečko a plátno editoru by se nehýbalo.
+ */
+html{
+  font-family:Arial,Helvetica,sans-serif;background:var(--vb-preview-outer);color-scheme:light;
+  height:auto;overflow:hidden;
+}
+/* Šedé plátno přes celý iframe; padding = aktivní boky pro laso (Mailchimp styl). */
+body{
+  font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#333;
+  background:var(--vb-preview-outer);color-scheme:light;-webkit-forced-color-adjust:none;forced-color-adjust:none;
+  height:auto;min-height:0;box-sizing:border-box;cursor:crosshair;
+  padding:28px 56px 48px;
+}
+/* Pevný 600px sloupec — nikdy neroztahovat přes plátno. */
+html.vb-island-layout .vb-email-root{
+  background:transparent!important;
+  width:600px!important;
+  max-width:100%!important;
+  margin-left:auto!important;
+  margin-right:auto!important;
+  box-sizing:border-box;
+  padding:0!important;
+  cursor:auto;
+}
+@media only screen and (max-width:720px){
+  body{padding:16px 12px 32px;}
+}
+/* Bloky uvnitř skupiny — výchozí okraje. Bez !important, aby je nastavení bloku (inline style) přebilo. */
 .vb-email-root [data-vb-block="section"]>[data-vb-block-id]:not([data-vb-block="divider"]):not([data-vb-block="flow-break"]){
   box-sizing:border-box;
-  padding:18px 14px!important;
+  padding:16px 8px;
+}
+/* Text: 24 px boky, 10 px vertikálně */
+.vb-email-root [data-vb-block="section"]>[data-vb-block="text"],
+.vb-email-root [data-vb-block="text"]{
+  padding:10px 24px;
 }
 .vb-email-root [data-vb-block="section"]>[data-vb-block="divider"]{
   box-sizing:border-box;
-  padding:10px 14px!important;
+  padding:10px 8px;
 }
 .vb-email-root [data-vb-block="section"]>[data-vb-block="flow-break"]{
   box-sizing:border-box;
@@ -555,28 +660,107 @@ html.vb-island-layout .vb-email-root{background:transparent!important;min-height
 }
 .vb-email-root [data-vb-block="section"]>[data-vb-block="gap-content"]{
   box-sizing:border-box;
-  padding:12px 14px!important;
+  padding:12px 8px;
 }
+/* Chrome skupiny = inline style + data-vb-chrome-* na section (ne na vnitřních blocích). */
 html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]{
-  background:var(--vb-preview-card)!important;
-  border-radius:16px;
-  box-shadow:0 2px 12px rgba(0,0,0,0.06);
-  border:1px solid rgba(0,17,97,0.06);
   margin-bottom:32px!important;
-  overflow:hidden;
+  overflow:visible;
   box-sizing:border-box;
-  padding-left:12px!important;
-  padding-right:12px!important;
+  padding-left:0!important;
+  padding-right:0!important;
+  padding-bottom:28px!important;
 }
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]:not([data-vb-chrome-bg]){
+  background:var(--vb-preview-card)!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"][data-vb-chrome-border="1"]{
+  border:1px solid rgba(0,17,97,0.08)!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"][data-vb-chrome-border="0"],
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]:not([data-vb-chrome-border]){
+  border:none!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"][data-vb-chrome-shadow="1"]{
+  box-shadow:0 6px 18px rgba(0,17,97,0.10)!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"][data-vb-chrome-shadow="0"],
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]:not([data-vb-chrome-shadow]){
+  box-shadow:none!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"],
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"] *{
+  text-shadow:none!important;
+}
+/* Vnitřní bloky NIKDY nemají vlastní kartu — chrome jen skupina (highlight má vnitřní data-vb-highlight-box). */
 html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]{
   background:transparent!important;
-  box-shadow:none!important;
   border:none!important;
-  border-radius:0!important;
+  box-shadow:none!important;
+  filter:none!important;
   margin-bottom:0!important;
 }
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]:not([data-vb-highlight-bleed="1"]){
+  border-radius:0!important;
+}
 html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]:not(:last-child){
-  border-bottom:1px solid rgba(0,17,97,0.06);
+  border-bottom:1px solid rgba(0,17,97,0.06)!important;
+}
+/* Highlight sám ve skupině = full-bleed (je tím blokem). Boční mezery jen s dalšími bloky. */
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]>[data-vb-block="highlight"][data-vb-highlight-bleed="1"],
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]>[data-vb-block="highlight"]:only-child{
+  padding:0!important;
+}
+/* Webinář ve skupině s dalšími bloky — odsazení nahoře + po stranách. */
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]>[data-vb-block="webinar"][data-vb-webinar-inset="1"],
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]>[data-vb-block="webinar"]:not(:only-child){
+  padding:18px 22px 12px 22px!important;
+  box-sizing:border-box!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]>[data-vb-block="webinar"]:only-child{
+  padding:0!important;
+}
+html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block="highlight"]:only-child{
+  border-bottom:none!important;
+}
+/* Full-bleed highlight: skupina bez vlastního borderu/stínu — jedno ohraničení na boxu. */
+html.vb-island-layout .vb-email-root>[data-vb-block="section"]:has(>[data-vb-highlight-bleed="1"]:only-child){
+  border:none!important;
+  box-shadow:none!important;
+  background:transparent!important;
+}
+.vb-email-root [data-vb-highlight-box]{
+  width:100%;
+  max-width:100%;
+  box-sizing:border-box;
+}
+/* Kompaktní webinář: cover vždy vyplní levou půlku (i při změně výšky). */
+.vb-email-root [data-vb-block="webinar"][data-vb-wb-layout="compact"] [data-vb-wb-thumb]{
+  background-size:cover!important;
+  background-position:center center!important;
+  background-repeat:no-repeat!important;
+  overflow:hidden!important;
+  padding:0!important;
+  line-height:0!important;
+  font-size:0!important;
+}
+.vb-email-root [data-vb-block="webinar"][data-vb-wb-layout="compact"] [data-vb-wb-thumb] a{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  overflow:hidden!important;
+}
+.vb-email-root [data-vb-block="webinar"][data-vb-wb-layout="compact"] [data-vb-wb-thumb] img{
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  min-width:100%!important;
+  min-height:100%!important;
+  object-fit:cover!important;
+  object-position:center center!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
 }
 html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-fill="plain"]{
   background:transparent!important;
@@ -593,6 +777,16 @@ html.vb-island-layout .vb-email-root>[data-vb-block="section"][data-vb-section-f
   border:none!important;
   border-radius:0!important;
 }
+/* Sloupce z panelu — tabulka se nikdy nesmí roztáhnout přes 600px sloupec. */
+.vb-email-root [data-vb-columns]{width:100%!important;table-layout:fixed;border-collapse:collapse;}
+.vb-email-root [data-vb-columns] img{max-width:100%;height:auto;}
+.vb-email-root [data-vb-col-chooser]{user-select:none;-webkit-user-select:none;}
+.vb-email-root [data-vb-col-chooser] button[data-vb-col-choose]:hover{
+  border-color:#7C3AED!important;background:#F3F0FF!important;
+}
+.vb-email-root [data-vb-col-chooser] button[data-vb-col-choose]:hover>span:first-child{
+  background:#7C3AED!important;color:#ffffff!important;
+}
 html.vb-island-layout .vb-email-root>[data-vb-block="section"]:last-child{margin-bottom:0!important;}
 html.vb-island-layout .vb-email-root [data-vb-block="section"]>[data-vb-block="flow-break"]{
   background:transparent!important;
@@ -606,6 +800,27 @@ html.vb-island-layout .vb-email-root [data-vb-block="section"]>[data-vb-block="f
   margin:0!important;
   overflow:hidden;
 }
+/* Zvýraznění bloku — jedno pravidlo, vždy uvnitř boxu (venkovní outline ořízne overflow karty). */
+.vb-email-root [data-vb-block-id]{position:relative}
+.vb-email-root [data-vb-block-id].vb-block-hover:not(.vb-block-selected){
+  outline:1px dashed rgba(124,58,237,0.45)!important;
+  outline-offset:-2px!important;
+  box-shadow:none!important;
+}
+.vb-email-root [data-vb-block-id].vb-block-selected{
+  outline:2px solid #7C3AED!important;
+  outline-offset:-2px!important;
+  box-shadow:none!important;
+}
+/* Krajní blok v kartě: rámeček kopíruje zaoblení karty. Full-bleed highlight má vlastní radius z panelu. */
+.vb-email-root [data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]:not([data-vb-highlight-bleed="1"]):is(.vb-block-hover,.vb-block-selected):first-child{
+  border-top-left-radius:14px!important;
+  border-top-right-radius:14px!important;
+}
+.vb-email-root [data-vb-block="section"][data-vb-section-fill="card"]>[data-vb-block-id]:not([data-vb-highlight-bleed="1"]):is(.vb-block-hover,.vb-block-selected):last-child{
+  border-bottom-left-radius:14px!important;
+  border-bottom-right-radius:14px!important;
+}
 `;
   return `<!DOCTYPE html><html${htmlClass}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">${fontLinks}<style>
 ${previewLayoutCss}
@@ -615,13 +830,13 @@ a{color:#7C3AED;}
 img{max-width:100%;height:auto;}
 ${imgEditCss}
 @media only screen and (max-width:600px){
-  body{font-size:17px!important;line-height:1.65!important;}
+  body{font-size:15px!important;line-height:1.65!important;}
   body p:not(:is([data-email-webinar="true"] *)),
-  body li:not(:is([data-email-webinar="true"] *)){font-size:17px!important;line-height:1.65!important;}
+  body li:not(:is([data-email-webinar="true"] *)){font-size:15px!important;line-height:1.65!important;}
   body h1:not(:is([data-email-webinar="true"] *)){font-size:26px!important;line-height:1.2!important;}
   body h2:not(:is([data-email-webinar="true"] *)){font-size:22px!important;line-height:1.25!important;}
   body h3:not(:is([data-email-webinar="true"] *)){font-size:19px!important;}
-  a.vb-preview-cta{font-size:17px!important;padding:16px 28px!important;line-height:1.2!important;}
+  a.vb-preview-cta{font-size:15px!important;padding:16px 28px!important;line-height:1.2!important;}
 }
 </style></head><body${bodyClass}>${inner}</body></html>`;
 }
@@ -1003,11 +1218,7 @@ function findEditableBlock(start: Element | null, body: HTMLElement): HTMLElemen
 function findTopLevelEmailBlock(start: Element | null, doc: Document): HTMLElement | null {
   if (!start) return null;
   const root = getEmailDndRoot(doc);
-  const hit = start.nodeType === Node.TEXT_NODE ? start.parentElement : (start as Element);
-  if (!hit || !root.contains(hit)) return null;
-  const el = hit.closest?.('[data-vb-block-id]') as HTMLElement | null;
-  if (!el || !root.contains(el)) return null;
-  return el;
+  return findSelectableEmailBlock(start, root);
 }
 
 function getEmailBlockRectInParentViewport(block: HTMLElement, iframeEl: HTMLIFrameElement) {
@@ -1021,36 +1232,155 @@ function getEmailBlockRectInParentViewport(block: HTMLElement, iframeEl: HTMLIFr
   };
 }
 
+/** Blok, který se opravdu přesouvá (u sloupců celý layout, ne jedna buňka). */
+function resolveReorderableBlock(el: HTMLElement, root: HTMLElement): HTMLElement | null {
+  const host = getColumnsHostForBlock(el) || el;
+  if (isDndReorderableEmailBlock(host, root)) return host;
+  return findDndBlockFromDragTarget(host, root);
+}
+
+function dndSiblingBlocks(parent: HTMLElement): HTMLElement[] {
+  return [...parent.children].filter(
+    (n): n is HTMLElement => n.nodeType === 1 && !/^(STYLE|SCRIPT)$/i.test(n.tagName),
+  );
+}
+
 /**
- * Blok pro plovoucí lištu: nejdřív z cíle události, jinak rozšířený hit-test (kurzor u okraje / nad prázdným místem).
+ * Kam vložit přetahovaný blok podle Y v iframu.
+ * Vrací i linku indikátoru ve viewportu parent okna.
+ */
+function computeEmailBlockDropTarget(
+  iframeEl: HTMLIFrameElement,
+  moving: HTMLElement,
+  clientX: number,
+  clientY: number,
+): {
+  destParent: HTMLElement;
+  insertBefore: HTMLElement | null;
+  indicator: { top: number; left: number; width: number };
+} | null {
+  const doc = iframeEl.contentDocument;
+  if (!doc?.body) return null;
+  const root = getEmailDndRoot(doc);
+  if (!root.contains(moving)) return null;
+
+  const ir = iframeEl.getBoundingClientRect();
+  const iframeX = clientX - ir.left;
+  const iframeY = clientY - ir.top;
+  const hit = doc.elementFromPoint(iframeX, iframeY);
+  const targetSectionUnder = hit?.closest?.('[data-vb-block="section"]') as HTMLElement | null;
+  const dragParent = moving.parentElement;
+  const owningSection = moving.closest('[data-vb-block="section"]') as HTMLElement | null;
+
+  let destParent: HTMLElement = root;
+  if (dragParent === root) {
+    destParent = root;
+  } else if (dragParent?.getAttribute('data-vb-block') === 'section') {
+    destParent =
+      targetSectionUnder && root.contains(targetSectionUnder) && targetSectionUnder !== moving
+        ? targetSectionUnder
+        : dragParent;
+  } else if (owningSection && root.contains(owningSection)) {
+    destParent =
+      targetSectionUnder && root.contains(targetSectionUnder) && targetSectionUnder !== moving
+        ? targetSectionUnder
+        : owningSection;
+  }
+
+  let insertBefore: HTMLElement | null = null;
+  for (const child of dndSiblingBlocks(destParent)) {
+    if (child === moving) continue;
+    const r = child.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    if (iframeY < mid) {
+      insertBefore = child;
+      break;
+    }
+  }
+
+  if (insertBefore === moving) return null;
+  if (insertBefore && moving.contains(insertBefore)) return null;
+
+  const lineY = insertBefore
+    ? insertBefore.getBoundingClientRect().top
+    : (() => {
+        const kids = dndSiblingBlocks(destParent).filter((c) => c !== moving);
+        if (kids.length === 0) return destParent.getBoundingClientRect().top + 8;
+        const last = kids[kids.length - 1];
+        return last.getBoundingClientRect().bottom;
+      })();
+
+  const col = root.getBoundingClientRect();
+  return {
+    destParent,
+    insertBefore,
+    indicator: {
+      top: ir.top + lineY,
+      left: ir.left + col.left,
+      width: Math.max(120, col.width),
+    },
+  };
+}
+
+function applyEmailBlockDrop(
+  moving: HTMLElement,
+  destParent: HTMLElement,
+  insertBefore: HTMLElement | null,
+): boolean {
+  if (insertBefore === moving) return false;
+  if (insertBefore && moving.contains(insertBefore)) return false;
+  const prevParent = moving.parentElement;
+  const prevNext = moving.nextElementSibling;
+  try {
+    if (insertBefore) destParent.insertBefore(moving, insertBefore);
+    else destParent.appendChild(moving);
+  } catch {
+    return false;
+  }
+  return prevParent !== moving.parentElement || prevNext !== moving.nextElementSibling;
+}
+
+/**
+ * Blok pro plovoucí lištu.
+ * `clientX/Y` jsou z mouse eventu uvnitř iframe (= viewport iframe), ne parent okna.
  */
 function findEmailBlockForChromeAtPoint(
   doc: Document,
-  iframeEl: HTMLIFrameElement,
+  _iframeEl: HTMLIFrameElement,
   clientX: number,
   clientY: number,
   targetEl: Element | null,
   pad: number,
 ): HTMLElement | null {
+  const root = getEmailDndRoot(doc);
+  ensureEmailColumnUnits(root);
+  // 1) Přímý zásah pod kurzorem — vždy spolehlivější než pad kolem.
   const fromTarget = targetEl ? findTopLevelEmailBlock(targetEl, doc) : null;
   if (fromTarget) return fromTarget;
-  const root = getEmailDndRoot(doc);
+
+  // 2) Rozšířený hit-test jen mimo blok (okraj / mezera) — recty v iframe viewportu.
   let best: HTMLElement | null = null;
   let bestArea = Infinity;
+  let bestDist = Infinity;
   for (const raw of root.querySelectorAll('[data-vb-block-id]')) {
     const h = raw as HTMLElement;
-    const b = getEmailBlockRectInParentViewport(h, iframeEl);
-    if (
-      clientX >= b.left - pad &&
-      clientX <= b.left + b.width + pad &&
-      clientY >= b.top - pad &&
-      clientY <= b.top + b.height + pad
-    ) {
-      const area = b.width * b.height;
-      if (area < bestArea) {
-        bestArea = area;
-        best = h;
-      }
+    const t = h.getAttribute('data-vb-block');
+    if (t === 'section') continue;
+    if ((t === 'columns-2' || t === 'columns-3') && h.querySelector('[data-vb-col-unit]')) continue;
+    const b = h.getBoundingClientRect();
+    const left = b.left - pad;
+    const right = b.right + pad;
+    const top = b.top - pad;
+    const bottom = b.bottom + pad;
+    if (clientX < left || clientX > right || clientY < top || clientY > bottom) continue;
+    const dx = clientX < b.left ? b.left - clientX : clientX > b.right ? clientX - b.right : 0;
+    const dy = clientY < b.top ? b.top - clientY : clientY > b.bottom ? clientY - b.bottom : 0;
+    const dist = dx * dx + dy * dy;
+    const area = Math.max(1, b.width * b.height);
+    if (dist < bestDist || (dist === bestDist && area < bestArea)) {
+      bestDist = dist;
+      bestArea = area;
+      best = h;
     }
   }
   return best;
@@ -1100,18 +1430,115 @@ function wrapSelectionInStyledSpan(doc: Document, styleKey: string, styleValue: 
   sel.removeAllRanges();
   const nr = doc.createRange();
   nr.selectNodeContents(span);
-  nr.collapse(false);
   sel.addRange(nr);
+}
+
+const HIGHLIGHT_STYLE_KEYS = ['background-color', 'background', 'background-image'] as const;
+
+function stripHighlightStylesFromElement(el: HTMLElement) {
+  for (const key of HIGHLIGHT_STYLE_KEYS) {
+    el.style.removeProperty(key);
+  }
+  const styleAttr = el.getAttribute('style');
+  if (styleAttr != null && !styleAttr.replace(/;+/g, '').trim()) {
+    el.removeAttribute('style');
+  }
+}
+
+/** Sundá podbarvení textu — ne jen „transparent“ span přes existující highlight. */
+function clearTextHighlightInRange(doc: Document, root: HTMLElement, range: Range) {
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  const hits: HTMLElement[] = [];
+  let node = walker.nextNode();
+  while (node) {
+    const el = node as HTMLElement;
+    if (range.intersectsNode(el)) {
+      const bg = (el.style.backgroundColor || el.style.background || '').trim();
+      const styleAttr = el.getAttribute('style') || '';
+      if (
+        bg ||
+        /background(-color)?\s*:/i.test(styleAttr)
+      ) {
+        hits.push(el);
+      }
+    }
+    node = walker.nextNode();
+  }
+
+  // Speciálně: highlight často sedí na spanu, který celý leží ve výběru
+  for (const el of hits) {
+    stripHighlightStylesFromElement(el);
+  }
+
+  // Fallback přes execCommand (Chrome)
+  try {
+    doc.execCommand('styleWithCSS', false, 'true');
+  } catch { /* ignore */ }
+  try {
+    const applied = doc.execCommand('hiliteColor', false, 'transparent');
+    if (!applied) doc.execCommand('backColor', false, 'transparent');
+  } catch { /* ignore */ }
+
+  // Ještě jednou projít výběr — execCommand občas nechá inline background
+  const again: HTMLElement[] = [];
+  const w2 = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  let n2 = w2.nextNode();
+  while (n2) {
+    const el = n2 as HTMLElement;
+    if (range.intersectsNode(el)) {
+      const bg = (el.style.backgroundColor || el.style.background || '').trim().toLowerCase();
+      if (bg && bg !== 'transparent' && bg !== 'rgba(0, 0, 0, 0)') {
+        again.push(el);
+      }
+    }
+    n2 = w2.nextNode();
+  }
+  for (const el of again) stripHighlightStylesFromElement(el);
+}
+
+function clearTextHighlightInBlock(block: HTMLElement) {
+  const els = [
+    block,
+    ...block.querySelectorAll<HTMLElement>('[style*="background"]'),
+  ];
+  for (const el of els) stripHighlightStylesFromElement(el);
+}
+
+function rangeBelongsToBlock(range: Range, block: HTMLElement): boolean {
+  const start =
+    range.startContainer.nodeType === 1
+      ? (range.startContainer as Element)
+      : range.startContainer.parentElement;
+  const end =
+    range.endContainer.nodeType === 1
+      ? (range.endContainer as Element)
+      : range.endContainer.parentElement;
+  return !!start && !!end && block.contains(start) && block.contains(end);
+}
+
+function applyFontSizeToWholeBlock(block: HTMLElement, px: string) {
+  const textHosts = [
+    ...block.querySelectorAll(
+      'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,address,pre,a,button',
+    ),
+  ] as HTMLElement[];
+  if (textHosts.length === 0) {
+    block.style.fontSize = `${px}px`;
+    return;
+  }
+  for (const el of textHosts) el.style.fontSize = `${px}px`;
 }
 
 /** Horní lišta formátování (Mailchimp styl) — příkazy vůči `designMode` dokumentu v iframe. */
 function EmailRichTextToolbar({
   iframeRef,
+  selectedBlockId,
   refreshEpoch,
   bumpToolbar,
   embeddedInHeader,
 }: {
   iframeRef: React.RefObject<HTMLIFrameElement | null>;
+  selectedBlockId: string | null;
   /** Zvýšit po změně výběru v iframe, aby se přepočet stavu tlačítek. */
   refreshEpoch: number;
   bumpToolbar: () => void;
@@ -1121,25 +1548,99 @@ function EmailRichTextToolbar({
   void refreshEpoch;
   const doc = iframeRef.current?.contentDocument;
   const compact = !!embeddedInHeader;
-  const run = (cmd: string, val?: string) => {
+  const savedTextRangeRef = useRef<Range | null>(null);
+
+  const rememberTextSelection = () => {
+    const d = iframeRef.current?.contentDocument;
+    const root = d ? getEmailDndRoot(d) : null;
+    const block = root && selectedBlockId ? findEmailBlockById(root, selectedBlockId) : null;
+    const sel = d?.getSelection();
+    if (!block || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
+      savedTextRangeRef.current = null;
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    savedTextRangeRef.current = rangeBelongsToBlock(range, block) ? range.cloneRange() : null;
+  };
+
+  /**
+   * Nezkolabovaný výběr v označeném bloku = jen vybraný text.
+   * Jinak označíme celý aktuální blok, takže lišta mění celý jeho text.
+   */
+  const prepareToolbarTarget = (): {
+    doc: Document;
+    win: Window;
+    block: HTMLElement;
+    textSelection: boolean;
+  } | null => {
     const fr = iframeRef.current;
     const d = fr?.contentDocument;
     const w = fr?.contentWindow;
-    if (!fr || !d || !w || d.designMode !== 'on') return;
+    if (!fr || !d || !w || d.designMode !== 'on' || !selectedBlockId) return null;
+    const root = getEmailDndRoot(d);
+    const block = findEmailBlockById(root, selectedBlockId);
+    if (!block) return null;
+
+    const sel = d.getSelection();
+    const current =
+      sel && sel.rangeCount > 0 && !sel.isCollapsed && rangeBelongsToBlock(sel.getRangeAt(0), block)
+        ? sel.getRangeAt(0).cloneRange()
+        : savedTextRangeRef.current &&
+            !savedTextRangeRef.current.collapsed &&
+            rangeBelongsToBlock(savedTextRangeRef.current, block)
+          ? savedTextRangeRef.current.cloneRange()
+          : null;
+
     w.focus();
-    try {
-      d.execCommand('styleWithCSS', false, 'true');
-    } catch { /* ignore */ }
-    try {
-      if (val !== undefined) d.execCommand(cmd, false, val);
-      else d.execCommand(cmd, false);
-    } catch { /* ignore */ }
+    const nextSel = d.getSelection();
+    nextSel?.removeAllRanges();
+    if (current) {
+      nextSel?.addRange(current);
+      return { doc: d, win: w, block, textSelection: true };
+    }
+
+    const whole = d.createRange();
+    whole.selectNodeContents(block);
+    nextSel?.addRange(whole);
+    return { doc: d, win: w, block, textSelection: false };
+  };
+
+  const emitToolbarInput = (d: Document, preserveTextSelection: boolean) => {
     try {
       d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
     } catch {
       d.body.dispatchEvent(new Event('input', { bubbles: true }));
     }
+    const sel = d.getSelection();
+    if (preserveTextSelection && sel && sel.rangeCount > 0 && !sel.isCollapsed) {
+      savedTextRangeRef.current = sel.getRangeAt(0).cloneRange();
+    } else {
+      if (sel && sel.rangeCount > 0) {
+        const end = sel.getRangeAt(0).cloneRange();
+        end.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(end);
+      }
+      savedTextRangeRef.current = null;
+    }
     bumpToolbar();
+  };
+
+  const run = (cmd: string, val?: string) => {
+    const target = prepareToolbarTarget();
+    if (!target) return;
+    const { doc: d } = target;
+    try {
+      d.execCommand('styleWithCSS', false, 'true');
+    } catch { /* ignore */ }
+    try {
+      const applied =
+        val !== undefined ? d.execCommand(cmd, false, val) : d.execCommand(cmd, false);
+      if (cmd === 'hiliteColor' && val !== undefined && !applied) {
+        d.execCommand('backColor', false, val);
+      }
+    } catch { /* ignore */ }
+    emitToolbarInput(d, target.textSelection);
   };
 
   let blockValue = 'p';
@@ -1184,8 +1685,9 @@ function EmailRichTextToolbar({
       }
       style={F}
       onMouseDown={(e) => {
+        rememberTextSelection();
         const el = e.target as HTMLElement;
-        if (el.closest('select') || el.closest('input[type="color"]')) return;
+        if (el.closest('select') || el.closest('[aria-haspopup="dialog"]')) return;
         e.preventDefault();
       }}
     >
@@ -1220,19 +1722,12 @@ function EmailRichTextToolbar({
         defaultValue=""
         onChange={e => {
           const px = e.target.value;
-          if (!px || !doc) return;
-          const fr = iframeRef.current;
-          const d = fr?.contentDocument;
-          const w = fr?.contentWindow;
-          if (!d || !w || d.designMode !== 'on') return;
-          w.focus();
-          wrapSelectionInStyledSpan(d, 'font-size', `${px}px`);
-          try {
-            d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
-          } catch {
-            d.body.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          bumpToolbar();
+          if (!px) return;
+          const target = prepareToolbarTarget();
+          if (!target) return;
+          if (target.textSelection) wrapSelectionInStyledSpan(target.doc, 'font-size', `${px}px`);
+          else applyFontSizeToWholeBlock(target.block, px);
+          emitToolbarInput(target.doc, target.textSelection);
           e.target.selectedIndex = 0;
         }}
       >
@@ -1245,37 +1740,56 @@ function EmailRichTextToolbar({
           </option>
         ))}
       </select>
-      <label
-        className={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+      <VividbooksColorButton
         title="Barva textu"
+        buttonClassName={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+        onSelect={color => {
+          if (color === 'transparent') {
+            const target = prepareToolbarTarget();
+            if (!target) return;
+            wrapSelectionInStyledSpan(target.doc, 'color', 'inherit');
+            emitToolbarInput(target.doc, target.textSelection);
+            return;
+          }
+          run('foreColor', color);
+        }}
       >
         <span className={`${compact ? 'text-[11px]' : 'text-[10px]'} font-bold underline decoration-2 underline-offset-2 text-[#001161]`}>A</span>
-        <input
-          type="color"
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-          aria-label="Barva textu"
-          onChange={e => run('foreColor', e.target.value)}
-        />
-      </label>
-      <label
-        className={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+      </VividbooksColorButton>
+      <VividbooksColorButton
         title="Zvýraznění pozadím"
+        palette="pastelSolid"
+        buttonClassName={`relative flex ${btnSz} cursor-pointer items-center justify-center rounded-md border border-gray-200 bg-white hover:bg-gray-50`}
+        onSelect={color => {
+          const target = prepareToolbarTarget();
+          if (!target) return;
+          if (color === 'transparent') {
+            if (target.textSelection) {
+              const sel = target.doc.getSelection();
+              const range =
+                sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
+              if (range && !range.collapsed) {
+                clearTextHighlightInRange(target.doc, target.block, range);
+              } else {
+                clearTextHighlightInBlock(target.block);
+              }
+            } else {
+              clearTextHighlightInBlock(target.block);
+            }
+            emitToolbarInput(target.doc, target.textSelection);
+            return;
+          }
+          // pastelSolid → hex (vč. 0 % průhlednosti = plná barva)
+          if (target.textSelection) {
+            wrapSelectionInStyledSpan(target.doc, 'background-color', color);
+            emitToolbarInput(target.doc, target.textSelection);
+            return;
+          }
+          run('hiliteColor', color);
+        }}
       >
         <span className={`rounded-sm border border-gray-300 bg-amber-100 px-0.5 ${compact ? 'text-[10px]' : 'text-[9px]'} font-bold text-[#001161]`}>A</span>
-        <input
-          type="color"
-          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-          aria-label="Barva zvýraznění"
-          defaultValue="#fff9c4"
-          onChange={e => {
-            try {
-              run('hiliteColor', e.target.value);
-            } catch {
-              run('backColor', e.target.value);
-            }
-          }}
-        />
-      </label>
+      </VividbooksColorButton>
       <div className={`mx-0.5 ${compact ? 'h-[19px]' : 'h-5'} w-px shrink-0 bg-gray-300`} aria-hidden />
       <button type="button" className={tbBtn(cmdState('bold'))} title="Tučné" onClick={() => run('bold')}>
         <Bold className={iconSz} strokeWidth={2.2} />
@@ -1327,22 +1841,14 @@ function EmailRichTextToolbar({
         className={tbBtn(false)}
         title="Odkaz"
         onClick={() => {
-          const fr = iframeRef.current;
-          const d = fr?.contentDocument;
-          const w = fr?.contentWindow;
-          if (!d || !w || d.designMode !== 'on') return;
           const url = window.prompt('URL odkazu', 'https://');
           if (!url?.trim()) return;
-          w.focus();
+          const target = prepareToolbarTarget();
+          if (!target) return;
           try {
-            d.execCommand('createLink', false, url.trim());
+            target.doc.execCommand('createLink', false, url.trim());
           } catch { /* ignore */ }
-          try {
-            d.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
-          } catch {
-            d.body.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          bumpToolbar();
+          emitToolbarInput(target.doc, target.textSelection);
         }}
       >
         <Link2 className={iconSz} strokeWidth={2.2} />
@@ -1350,6 +1856,393 @@ function EmailRichTextToolbar({
     </div>
   );
 }
+
+/**
+ * Vzhled bloku: padding na sliderech, stín a rozdělení do sloupců.
+ * Slidery píšou přes `onPreviewStyle` přímo do náhledu (uložení řeší debounce v iframu) —
+ * přestavba dokumentu při každém pixelu tažení by byla nepoužitelná. `onCommitStyle`
+ * je pro jednorázová přepnutí, kde na přestavbě nezáleží.
+ */
+type BlockCornerRadii = {
+  topLeft: number;
+  topRight: number;
+  bottomRight: number;
+  bottomLeft: number;
+};
+
+function readBlockCornerRadii(el: HTMLElement): BlockCornerRadii {
+  const shorthand = Number.parseFloat(el.style.borderRadius || '') || 0;
+  const read = (value: string) => {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? Math.max(0, Math.min(80, parsed)) : shorthand;
+  };
+  return {
+    topLeft: read(el.style.borderTopLeftRadius),
+    topRight: read(el.style.borderTopRightRadius),
+    bottomRight: read(el.style.borderBottomRightRadius),
+    bottomLeft: read(el.style.borderBottomLeftRadius),
+  };
+}
+
+
+function EmailImageSizeSlider({
+  blockId,
+  widthPct,
+  onPreview,
+  onMarkHistory,
+  onCommit,
+}: {
+  blockId: string;
+  widthPct: number;
+  onPreview: (pct: number) => void;
+  onMarkHistory: () => void;
+  onCommit: (pct: number) => void;
+}) {
+  const [pct, setPct] = useState(() => Math.max(10, Math.min(100, Math.round(widthPct || 100))));
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    setPct(Math.max(10, Math.min(100, Math.round(widthPct || 100))));
+  }, [blockId, widthPct]);
+
+  const sliderCls =
+    'w-full accent-[#7C3AED] cursor-pointer h-1.5 rounded-full bg-gray-200 appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#7C3AED] [&::-webkit-slider-thumb]:cursor-grab';
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+          Velikost obrázku
+        </label>
+        <span style={F} className="text-[10px] font-bold text-[#001161]/50 tabular-nums">
+          {pct} %
+        </span>
+      </div>
+      <input
+        type="range"
+        min={10}
+        max={100}
+        step={1}
+        value={pct}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          setPct(next);
+          if (!draggingRef.current) {
+            draggingRef.current = true;
+            onMarkHistory();
+          }
+          onPreview(next);
+        }}
+        onPointerUp={(e) => {
+          draggingRef.current = false;
+          onCommit(Number((e.currentTarget as HTMLInputElement).value));
+        }}
+        onKeyUp={(e) => {
+          draggingRef.current = false;
+          onCommit(Number((e.currentTarget as HTMLInputElement).value));
+        }}
+        onBlur={(e) => {
+          draggingRef.current = false;
+          onCommit(Number((e.currentTarget as HTMLInputElement).value));
+        }}
+        className={sliderCls}
+        aria-label="Šířka obrázku v procentech"
+      />
+      <p style={F} className="mt-1 text-[10px] text-[#001161]/40 leading-snug">
+        Šířka v rámci bloku (10–100 %).
+      </p>
+    </div>
+  );
+}
+
+function EmailBlockAppearancePanel({
+  blockId,
+  padding,
+  hasShadow,
+  columns,
+  cornerRadii,
+  onPreviewStyle,
+  onCommitStyle,
+  onMarkHistory,
+  onColumnsChange,
+  hideChrome = false,
+}: {
+  blockId: string;
+  padding: string;
+  hasShadow: boolean;
+  columns: EmailBlockColumnCount;
+  cornerRadii: BlockCornerRadii;
+  onPreviewStyle: (property: string, value: string) => void;
+  onCommitStyle: (property: string, value: string) => void;
+  onMarkHistory: () => void;
+  onColumnsChange: (count: EmailBlockColumnCount) => void;
+  /** Chrome (stín / radius) je na skupině — v panelu bloku schovat. */
+  hideChrome?: boolean;
+}) {
+  const initial = parseBlockPadding(padding);
+  const [vertical, setVertical] = useState(initial.vertical);
+  const [horizontal, setHorizontal] = useState(initial.horizontal);
+  const [radii, setRadii] = useState<BlockCornerRadii>(cornerRadii);
+  const [cornersLinked, setCornersLinked] = useState(
+    new Set(Object.values(cornerRadii).map(Math.round)).size === 1,
+  );
+  const [activeCorner, setActiveCorner] = useState<keyof BlockCornerRadii>('topLeft');
+  const draggingRef = useRef(false);
+
+  useEffect(() => {
+    const next = parseBlockPadding(padding);
+    setVertical(next.vertical);
+    setHorizontal(next.horizontal);
+    setRadii(cornerRadii);
+    setCornersLinked(new Set(Object.values(cornerRadii).map(Math.round)).size === 1);
+    setActiveCorner('topLeft');
+  }, [
+    blockId,
+    padding,
+    cornerRadii.topLeft,
+    cornerRadii.topRight,
+    cornerRadii.bottomRight,
+    cornerRadii.bottomLeft,
+  ]);
+
+  /** Do historie se tažení zapíše jen jednou, na začátku — uložení řeší debounce v náhledu. */
+  const previewPadding = (v: number, h: number) => {
+    if (!draggingRef.current) {
+      draggingRef.current = true;
+      onMarkHistory();
+    }
+    onPreviewStyle('padding', formatBlockPadding(v, h));
+  };
+  const endDrag = () => {
+    draggingRef.current = false;
+  };
+
+  const cornerProperties: Record<keyof BlockCornerRadii, string> = {
+    topLeft: 'border-top-left-radius',
+    topRight: 'border-top-right-radius',
+    bottomRight: 'border-bottom-right-radius',
+    bottomLeft: 'border-bottom-left-radius',
+  };
+  const previewRadii = (next: BlockCornerRadii) => {
+    if (!draggingRef.current) {
+      draggingRef.current = true;
+      onMarkHistory();
+    }
+    for (const key of Object.keys(cornerProperties) as Array<keyof BlockCornerRadii>) {
+      onPreviewStyle(cornerProperties[key], `${next[key]}px`);
+    }
+  };
+  const setCornerValue = (value: number) => {
+    const safe = Math.max(0, Math.min(80, value));
+    const next = cornersLinked
+      ? { topLeft: safe, topRight: safe, bottomRight: safe, bottomLeft: safe }
+      : { ...radii, [activeCorner]: safe };
+    setRadii(next);
+    previewRadii(next);
+  };
+
+  const sliderCls =
+    'w-full accent-[#7C3AED] cursor-pointer h-1.5 rounded-full bg-gray-200 appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-[#7C3AED] [&::-webkit-slider-thumb]:cursor-grab';
+  const segBtn = (active: boolean) =>
+    `flex-1 rounded-lg border px-2 py-1.5 text-[11px] font-bold transition-colors cursor-pointer ${
+      active
+        ? 'border-[#7C3AED] bg-[#7C3AED]/10 text-[#001161]'
+        : 'border-gray-200 bg-white text-[#001161]/70 hover:bg-gray-50'
+    }`;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="flex items-baseline justify-between mb-1">
+          <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+            Padding
+          </label>
+          <span style={F} className="text-[10px] font-bold text-[#001161]/50 tabular-nums">
+            {Math.round(vertical)} / {Math.round(horizontal)} px
+          </span>
+        </div>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span style={F} className="w-[52px] shrink-0 text-[10px] text-[#001161]/45">
+              svisle
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={80}
+              step={2}
+              value={vertical}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setVertical(v);
+                previewPadding(v, horizontal);
+              }}
+              onPointerUp={endDrag}
+              onKeyUp={endDrag}
+              onBlur={endDrag}
+              className={sliderCls}
+              aria-label="Svislý padding bloku"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span style={F} className="w-[52px] shrink-0 text-[10px] text-[#001161]/45">
+              po bocích
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={80}
+              step={2}
+              value={horizontal}
+              onChange={(e) => {
+                const h = Number(e.target.value);
+                setHorizontal(h);
+                previewPadding(vertical, h);
+              }}
+              onPointerUp={endDrag}
+              onKeyUp={endDrag}
+              onBlur={endDrag}
+              className={sliderCls}
+              aria-label="Vodorovný padding bloku"
+            />
+          </div>
+        </div>
+      </div>
+
+      {!hideChrome && (
+      <div>
+        <div className="mb-1.5 flex items-baseline justify-between">
+          <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+            Zakulacení rohů
+          </label>
+          <span style={F} className="text-[10px] font-bold tabular-nums text-[#001161]/50">
+            {Math.round(cornersLinked ? radii.topLeft : radii[activeCorner])} px
+          </span>
+        </div>
+        <div className="mb-2 flex rounded-lg bg-gray-100 p-0.5">
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
+              cornersLinked ? 'bg-white text-[#5139ED] shadow-sm' : 'text-[#001161]/50 hover:text-[#001161]'
+            }`}
+            onClick={() => {
+              if (cornersLinked) return;
+              const value = radii[activeCorner];
+              const next = { topLeft: value, topRight: value, bottomRight: value, bottomLeft: value };
+              setCornersLinked(true);
+              setRadii(next);
+              onMarkHistory();
+              for (const key of Object.keys(cornerProperties) as Array<keyof BlockCornerRadii>) {
+                onPreviewStyle(cornerProperties[key], `${value}px`);
+              }
+            }}
+          >
+            Všechny rohy
+          </button>
+          <button
+            type="button"
+            className={`flex-1 rounded-md px-2 py-1.5 text-[10px] font-bold transition-colors ${
+              !cornersLinked ? 'bg-white text-[#5139ED] shadow-sm' : 'text-[#001161]/50 hover:text-[#001161]'
+            }`}
+            onClick={() => setCornersLinked(false)}
+          >
+            Jednotlivě
+          </button>
+        </div>
+        {!cornersLinked && (
+          <div className="mb-2 grid grid-cols-2 gap-1.5 rounded-xl border border-gray-200 bg-gray-50 p-2">
+            {([
+              ['topLeft', '↖', 'Levý horní roh'],
+              ['topRight', '↗', 'Pravý horní roh'],
+              ['bottomLeft', '↙', 'Levý dolní roh'],
+              ['bottomRight', '↘', 'Pravý dolní roh'],
+            ] as const).map(([key, glyph, label]) => (
+              <button
+                key={key}
+                type="button"
+                title={label}
+                aria-label={label}
+                onClick={() => setActiveCorner(key)}
+                className={`flex items-center justify-between rounded-lg border px-2.5 py-2 text-[11px] font-bold transition-colors ${
+                  activeCorner === key
+                    ? 'border-[#5139ED] bg-white text-[#5139ED] shadow-sm'
+                    : 'border-transparent bg-white/70 text-[#001161]/50 hover:border-gray-200'
+                }`}
+              >
+                <span className="text-base leading-none">{glyph}</span>
+                <span className="tabular-nums">{Math.round(radii[key])} px</span>
+              </button>
+            ))}
+          </div>
+        )}
+        <input
+          type="range"
+          min={0}
+          max={48}
+          step={1}
+          value={cornersLinked ? radii.topLeft : radii[activeCorner]}
+          onChange={event => setCornerValue(Number(event.target.value))}
+          onPointerUp={endDrag}
+          onKeyUp={endDrag}
+          onBlur={endDrag}
+          className={sliderCls}
+          aria-label={cornersLinked ? 'Zakulacení všech rohů' : 'Zakulacení vybraného rohu'}
+        />
+      </div>
+      )}
+
+      {!hideChrome && (
+      <div className="flex items-center justify-between gap-2">
+        <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+          Stín bloku
+        </label>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={hasShadow}
+          onClick={() => onCommitStyle('box-shadow', hasShadow ? '' : EMAIL_BLOCK_SHADOW)}
+          title={hasShadow ? 'Vypnout stín bloku' : 'Zapnout stín bloku'}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+            hasShadow ? 'bg-[#7C3AED]' : 'bg-gray-300'
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+              hasShadow ? 'left-[22px]' : 'left-0.5'
+            }`}
+          />
+        </button>
+      </div>
+      )}
+
+      <div>
+        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+          Sloupce
+        </label>
+        <div className="flex items-center gap-1.5">
+          {([1, 2, 3] as EmailBlockColumnCount[]).map((count) => (
+            <button
+              key={count}
+              type="button"
+              onClick={() => onColumnsChange(count)}
+              className={segBtn(columns === count)}
+              style={F}
+              title={
+                count === 1
+                  ? 'Jeden sloupec'
+                  : `Stejný layout jako blok „${count} sloupce“ — obsah zůstane vlevo, další sloupec doplníte`
+              }
+            >
+              {count === 1 ? '1 sloupec' : `${count} sloupce`}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type EmailLassoRect = { left: number; top: number; width: number; height: number };
 
 function EmailIframeEditor({
   draftId,
@@ -1359,9 +2252,12 @@ function EmailIframeEditor({
   outerBackground,
   builderMode,
   selectedBlockId,
+  selectedBlockIds,
   onBodyChange,
   onImageClick,
   onBlockSelect,
+  onBlocksSelect,
+  onLassoRect,
   /** Nad iframe je panel předmět/preview (pak spodní rohy iframe zaoblené jinak). */
   hasMailboxStackAbove,
   readOnlyBody,
@@ -1383,10 +2279,15 @@ function EmailIframeEditor({
   outerBackground: string;
   builderMode: EmailBuilderMode;
   selectedBlockId: string | null;
+  selectedBlockIds: string[];
   /** Vždy zapisuj pod `draftId` vlastníka iframe — při přepnutí draftu cleanup nesmí použít už nový `selected`. */
   onBodyChange: (draftId: string, html: string) => void;
   onImageClick: (src: string) => void;
-  onBlockSelect?: (block: BlockInspectorState | null) => void;
+  onBlockSelect?: (block: BlockInspectorState | null, opts?: { additive?: boolean }) => void;
+  /** Multi-výběr z lasa (obsahové bloky). */
+  onBlocksSelect?: (blocks: BlockInspectorState[]) => void;
+  /** Obdélník lasa ve viewportu parent okna (null = skryt). */
+  onLassoRect?: (rect: EmailLassoRect | null) => void;
   hasMailboxStackAbove: boolean;
   /** true = režim „Náhled mailu“ — tělo nejde přepisovat, odkazy jdou klikat. */
   readOnlyBody: boolean;
@@ -1420,6 +2321,10 @@ function EmailIframeEditor({
   onImageClickRef.current = onImageClick;
   const onBlockSelectRef = useRef(onBlockSelect);
   onBlockSelectRef.current = onBlockSelect;
+  const onBlocksSelectRef = useRef(onBlocksSelect);
+  onBlocksSelectRef.current = onBlocksSelect;
+  const onLassoRectRef = useRef(onLassoRect);
+  onLassoRectRef.current = onLassoRect;
   const onTextSelectRef = useRef(onTextSelect);
   onTextSelectRef.current = onTextSelect;
   const onHoverBlockChromeRef = useRef(onHoverBlockChrome);
@@ -1440,6 +2345,8 @@ function EmailIframeEditor({
 
   const selectedBlockIdRef = useRef(selectedBlockId);
   selectedBlockIdRef.current = selectedBlockId;
+  const selectedBlockIdsRef = useRef(selectedBlockIds);
+  selectedBlockIdsRef.current = selectedBlockIds;
 
   const builderModeRef = useRef(builderMode);
   builderModeRef.current = builderMode;
@@ -1472,52 +2379,61 @@ function EmailIframeEditor({
     if (!d) return;
     d.designMode = readOnlyBody ? 'off' : 'on';
 
+    const rootDndEarly = getEmailDndRoot(d);
+    /** Hover značí stejný uzel, jaký by vybral klik — jinak by svítily dva rámečky nad sebou. */
+    const setHoverBlockUi = (block: HTMLElement | null) => {
+      rootDndEarly.querySelectorAll('.vb-block-hover').forEach((n) => n.classList.remove('vb-block-hover'));
+      if (!block || builderModeRef.current !== 'block') return;
+      // Uvnitř sloupců hover na jednotku buňky, ne na celý layout.
+      const target = findSelectableEmailBlock(block, rootDndEarly) || block;
+      target.classList.add('vb-block-hover');
+    };
+
     let moveTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingMove: MouseEvent | null = null;
+    const flushMove = () => {
+      moveTimer = null;
+      const e = pendingMove;
+      pendingMove = null;
+      if (!e) return;
+      const t = e.target as Node;
+      const el =
+        t.nodeType === Node.TEXT_NODE ? (t.parentElement as Element | null) : (t as Element);
+      const block = !el
+        ? null
+        : builderModeRef.current === 'block'
+          ? findEmailBlockForChromeAtPoint(
+              d,
+              fr,
+              e.clientX,
+              e.clientY,
+              el,
+              EMAIL_BLOCK_CHROME_HIT_PADDING_PX,
+            )
+          : findEditableBlock(el, d.body);
+      if (hoverBlockRef) hoverBlockRef.current = block;
+      setHoverBlockUi(builderModeRef.current === 'block' ? block : null);
+      const chromeCb = onHoverBlockChromeRef.current;
+      if (!block) {
+        chromeCb?.(null);
+        return;
+      }
+      if (chromeCb && builderModeRef.current === 'block') {
+        const bid = block.getAttribute('data-vb-block-id');
+        if (bid) chromeCb({ ...getEmailBlockRectInParentViewport(block, fr), blockId: bid });
+        else chromeCb(null);
+      } else {
+        chromeCb?.(null);
+      }
+    };
     const onMove = (e: MouseEvent) => {
+      pendingMove = e;
       if (moveTimer) return;
-      moveTimer = setTimeout(() => {
-        moveTimer = null;
-        const t = e.target as Node;
-        const el =
-          t.nodeType === Node.TEXT_NODE ? (t.parentElement as Element | null) : (t as Element);
-        const block = !el
-          ? null
-          : builderModeRef.current === 'block'
-            ? findEmailBlockForChromeAtPoint(
-                d,
-                fr,
-                e.clientX,
-                e.clientY,
-                el,
-                EMAIL_BLOCK_CHROME_HIT_PADDING_PX,
-              )
-            : findEditableBlock(el, d.body);
-        if (hoverBlockRef) hoverBlockRef.current = block;
-        const chromeCb = onHoverBlockChromeRef.current;
-        if (!block) {
-          chromeCb?.(null);
-          return;
-        }
-        const r = block.getBoundingClientRect();
-        const ir = fr.getBoundingClientRect();
-        if (chromeCb) {
-          if (builderModeRef.current === 'block') {
-            const bid = block.getAttribute('data-vb-block-id');
-            if (bid) {
-              chromeCb({
-                top: ir.top + r.top,
-                left: ir.left + r.left,
-                width: r.width,
-                height: r.height,
-                blockId: bid,
-              });
-            } else chromeCb(null);
-          } else chromeCb(null);
-        }
-      }, 45);
+      moveTimer = setTimeout(flushMove, 32);
     };
 
     const onLeave = () => {
+      setHoverBlockUi(null);
       onIframeLeaveRef.current?.();
     };
 
@@ -1529,7 +2445,9 @@ function EmailIframeEditor({
     const onPreviewLinkClick = (e: MouseEvent) => {
       if (!readOnlyBody) return;
       const raw = e.target;
-      const el = raw instanceof Element ? raw : (raw as Node).parentElement;
+      // Cíl je z iframu — `instanceof Element` z hlavního okna tu neplatí.
+      const node = raw as Node | null;
+      const el = (node?.nodeType === 1 ? (node as Element) : node?.parentElement) ?? null;
       const a = el?.closest?.('a') as HTMLAnchorElement | null;
       if (!a) return;
       const hrefAttr = a.getAttribute('href');
@@ -1558,10 +2476,21 @@ function EmailIframeEditor({
     }
 
     const MIN_H = 280;
+    let lastSyncedH = 0;
+    /**
+     * Iframe drží přesnou výšku obsahu — plátno editoru je pak jediný scroller.
+     * Měříme až po layoutu a zapisujeme jen při reálné změně, ať se ResizeObserver nezacyklí.
+     */
     const syncHeight = () => {
       const doc = fr.contentDocument;
       if (!doc?.body) return;
-      const h = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight, MIN_H);
+      const h = Math.max(
+        Math.ceil(doc.documentElement.scrollHeight),
+        Math.ceil(doc.body.scrollHeight),
+        MIN_H,
+      );
+      if (Math.abs(h - lastSyncedH) < 2) return;
+      lastSyncedH = h;
       fr.style.height = `${h}px`;
     };
 
@@ -1577,7 +2506,7 @@ function EmailIframeEditor({
     let suppressImgClickAfterDnD = false;
     let draggedBlock: HTMLElement | null = null;
 
-    const rootDnd = getEmailDndRoot(d);
+    const rootDnd = rootDndEarly;
 
     const dndSiblings = (parent: HTMLElement): HTMLElement[] =>
       [...parent.children].filter(
@@ -1587,14 +2516,60 @@ function EmailIframeEditor({
 
     const syncSelectedBlockUi = () => {
       rootDnd.querySelectorAll('.vb-block-selected').forEach((n) => n.classList.remove('vb-block-selected'));
-      const id = selectedBlockIdRef.current;
-      if (builderModeRef.current !== 'block' || !id) return;
-      const mark = rootDnd.querySelector(`[data-vb-block-id="${CSS.escape(id)}"]`);
-      mark?.classList.add('vb-block-selected');
+      if (builderModeRef.current !== 'block') return;
+      const ids = selectedBlockIdsRef.current.length
+        ? selectedBlockIdsRef.current
+        : selectedBlockIdRef.current
+          ? [selectedBlockIdRef.current]
+          : [];
+      for (const id of ids) {
+        if (!id) continue;
+        try {
+          rootDnd
+            .querySelector(`[data-vb-block-id="${CSS.escape(id)}"]`)
+            ?.classList.add('vb-block-selected');
+        } catch {
+          /* ignore invalid id */
+        }
+      }
     };
+
+    /** Laso nezačíná jen v textu (tam má jít výběr/editace). Všude jinde tah = laso. */
+    const isTextEditTarget = (target: EventTarget | null): boolean => {
+      if (!target || typeof (target as Node).nodeType !== 'number') return false;
+      const node = target as Node;
+      if (node.nodeType === Node.TEXT_NODE) return true;
+      const el = node.nodeType === 1 ? (node as Element) : null;
+      if (!el) return false;
+      if (/^(P|SPAN|A|LI|H[1-6]|STRONG|EM|B|I|U|FONT|LABEL|TD|TH)$/i.test(el.tagName)) return true;
+      return !!el.closest?.('p, span, a, li, h1, h2, h3, h4, h5, h6, td, th, strong, em, b, i, u');
+    };
+
+    const listLassoSelectableBlocks = (): HTMLElement[] =>
+      ([...rootDnd.querySelectorAll('[data-vb-block-id]')] as HTMLElement[]).filter((el) => {
+        if (el.getAttribute('data-vb-block') === 'section') return false;
+        if (isEmailColumnUnit(el)) return true;
+        const t = el.getAttribute('data-vb-block');
+        // Layout sloupců s jednotkami — laso bere buňky, ne celý řádek.
+        if ((t === 'columns-2' || t === 'columns-3') && el.querySelector('[data-vb-col-unit]')) {
+          return false;
+        }
+        // Preferuj přeuspořadatelný obsah; fallback na jakýkoli obsahový blok s id.
+        if (isDndReorderableEmailBlock(el, rootDnd)) return true;
+        return el.parentElement === rootDnd || !!el.closest('[data-vb-block="section"]');
+      });
+
+    const rectsIntersect = (
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ) => !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
 
     /** Bloky se nepřetahují z těla mailu (konflikt s výběrem textu) — jen z úchytu v liště. */
     const applyDraggableAttrs = () => {
+      // Migrace: staré 2/3 sloupce bez jednotek buněk → jde je vybrat jednotlivě.
+      if (ensureEmailColumnUnits(rootDnd)) {
+        schedule();
+      }
       rootDnd.querySelectorAll('[data-vb-block-id]').forEach((raw) => {
         (raw as HTMLElement).removeAttribute('draggable');
       });
@@ -1940,30 +2915,196 @@ function EmailIframeEditor({
       }
     };
 
-    const onInput = () => {
+    const onInput = (e?: Event) => {
+      // Úprava výchozí karty sloupce → už to není výplň, při sloučení na 1 sloupec se nesmí zahodit.
+      const t = (e?.target as Node | null) || null;
+      const el = t?.nodeType === Node.TEXT_NODE ? (t as Text).parentElement : (t as HTMLElement | null);
+      el?.closest?.('[data-vb-col-placeholder]')?.removeAttribute('data-vb-col-placeholder');
       onRichTextActivityRef.current?.();
       applyDraggableAttrs();
       schedule();
       requestAnimationFrame(syncHeight);
     };
     const onImgClick = (e: Event) => {
-      if (suppressImgClickAfterDnD) return;
-      const t = e.target as HTMLElement;
-      if (t.tagName === 'IMG') {
+      // Klik na obrázek jen vybere blok — popup výměny otevírá levé menu („Nahradit obrázek“).
+      if (suppressImgClickAfterDnD && (e.target as HTMLElement | null)?.tagName === 'IMG') {
         e.preventDefault();
-        const im = t as HTMLImageElement;
-        const key = im.getAttribute('src')?.trim() || im.src;
-        onImageClickRef.current(key);
       }
+    };
+
+    let lassoActive = false;
+    let lassoMoved = false;
+    let lassoStartX = 0;
+    let lassoStartY = 0;
+    let suppressNextBlockClick = false;
+
+    const publishLassoRect = (x0: number, y0: number, x1: number, y1: number) => {
+      const ir = fr.getBoundingClientRect();
+      const left = ir.left + Math.min(x0, x1);
+      const top = ir.top + Math.min(y0, y1);
+      const width = Math.abs(x1 - x0);
+      const height = Math.abs(y1 - y0);
+      onLassoRectRef.current?.({ left, top, width, height });
+    };
+
+    const endLasso = (clientX: number, clientY: number) => {
+      if (!lassoActive) return;
+      lassoActive = false;
+      onLassoRectRef.current?.(null);
+      const dx = clientX - lassoStartX;
+      const dy = clientY - lassoStartY;
+      if (Math.hypot(dx, dy) < 4) {
+        lassoMoved = false;
+        return;
+      }
+      suppressNextBlockClick = true;
+      lassoMoved = true;
+      const sel = {
+        left: Math.min(lassoStartX, clientX),
+        top: Math.min(lassoStartY, clientY),
+        right: Math.max(lassoStartX, clientX),
+        bottom: Math.max(lassoStartY, clientY),
+      };
+      const hit: BlockInspectorState[] = [];
+      for (const el of listLassoSelectableBlocks()) {
+        const r = el.getBoundingClientRect();
+        if (
+          rectsIntersect(sel, {
+            left: r.left,
+            top: r.top,
+            right: r.right,
+            bottom: r.bottom,
+          })
+        ) {
+          hit.push(createBlockInspectorState(el));
+        }
+      }
+      if (hit.length > 0) {
+        selectedBlockIdRef.current = hit[hit.length - 1]?.id ?? null;
+        selectedBlockIdsRef.current = hit.map((b) => b.id);
+        onBlocksSelectRef.current?.(hit);
+        syncSelectedBlockUi();
+      }
+    };
+
+    const onLassoMouseDown = (e: MouseEvent) => {
+      if (builderModeRef.current !== 'block' || readOnlyBody) return;
+      if (e.button !== 0) return;
+      // Výběr typu sloupce / text — nespouštět laso.
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.('[data-vb-col-chooser],[data-vb-col-choose]')) return;
+      if (isTextEditTarget(e.target) && !e.altKey) return;
+      lassoActive = true;
+      lassoMoved = false;
+      lassoStartX = e.clientX;
+      lassoStartY = e.clientY;
+      // Overlay až po pohybu — krátký klik zůstane výběrem bloku.
+    };
+
+    const onLassoMouseMove = (e: MouseEvent) => {
+      if (!lassoActive) return;
+      const dist = Math.hypot(e.clientX - lassoStartX, e.clientY - lassoStartY);
+      if (dist < 4) return;
+      if (!lassoMoved) {
+        lassoMoved = true;
+        try {
+          d.getSelection()?.removeAllRanges();
+        } catch {
+          /* ignore */
+        }
+      }
+      publishLassoRect(lassoStartX, lassoStartY, e.clientX, e.clientY);
+    };
+
+    const onLassoMouseUp = (e: MouseEvent) => {
+      endLasso(e.clientX, e.clientY);
+    };
+
+    /** mouseup mimo iframe (parent window) — jinak laso zůstane viset. */
+    const onParentLassoMouseUp = (e: MouseEvent) => {
+      if (!lassoActive) return;
+      const ir = fr.getBoundingClientRect();
+      endLasso(e.clientX - ir.left, e.clientY - ir.top);
+    };
+    const onParentLassoMouseMove = (e: MouseEvent) => {
+      if (!lassoActive) return;
+      const ir = fr.getBoundingClientRect();
+      const x = e.clientX - ir.left;
+      const y = e.clientY - ir.top;
+      const dist = Math.hypot(x - lassoStartX, y - lassoStartY);
+      if (dist < 4) return;
+      if (!lassoMoved) {
+        lassoMoved = true;
+        try {
+          d.getSelection()?.removeAllRanges();
+        } catch {
+          /* ignore */
+        }
+      }
+      publishLassoRect(lassoStartX, lassoStartY, x, y);
+    };
+
+    const onColumnChooseClick = (e: Event) => {
+      if (readOnlyBody) return;
+      const raw = e.target as HTMLElement | null;
+      const btn = raw?.closest?.('[data-vb-col-choose]') as HTMLElement | null;
+      if (!btn || !d.body.contains(btn)) return;
+      const kind = btn.getAttribute('data-vb-col-choose') as EmailColumnContentKind | null;
+      if (kind !== 'text' && kind !== 'image' && kind !== 'button') return;
+      e.preventDefault();
+      e.stopPropagation();
+      const unit = fillEmailColumnChooser(btn, kind);
+      if (!unit) return;
+      // Stejná cesta jako psaní v náhledu — historie + uložení přes debounced commit.
+      commit();
+      requestAnimationFrame(syncHeight);
+      const next = createBlockInspectorState(unit);
+      selectedBlockIdRef.current = next.id;
+      selectedBlockIdsRef.current = [next.id];
+      onBlockSelectRef.current?.(next, { additive: false });
+      syncSelectedBlockUi();
     };
 
     const onBlockClick = (e: Event) => {
       if (builderModeRef.current !== 'block' || readOnlyBody) return;
-      const block = findDndBlockFromDragTarget(e.target, rootDnd);
+      // Klik na výběr typu sloupce řeší `onColumnChooseClick`.
+      if ((e.target as HTMLElement | null)?.closest?.('[data-vb-col-choose],[data-vb-col-chooser]')) return;
+      if (suppressNextBlockClick || lassoMoved) {
+        suppressNextBlockClick = false;
+        lassoMoved = false;
+        return;
+      }
+      const me = e as MouseEvent;
+      const beforeUnits = rootDnd.querySelectorAll('[data-vb-col-unit]').length;
+      // Migrace při kliknutí — staré 2/3 sloupce bez wrapperů jinak vždy vyberou celý layout.
+      ensureEmailColumnUnits(rootDnd);
+      let block = findSelectableEmailBlock(e.target, rootDnd);
       if (!block) return;
+      const hostType = block.getAttribute('data-vb-block');
+      if (hostType === 'columns-2' || hostType === 'columns-3') {
+        const td = (e.target as Element | null)?.closest?.('td, th') as HTMLElement | null;
+        if (td && block.contains(td)) {
+          const unit =
+            (td.querySelector(':scope > [data-vb-col-unit], [data-vb-col-unit]') as HTMLElement | null) ||
+            ensureColumnUnitAtTarget(td.firstElementChild || td, rootDnd);
+          if (unit) block = unit;
+        }
+      }
+      if (rootDnd.querySelectorAll('[data-vb-col-unit]').length !== beforeUnits) {
+        schedule();
+      }
       const next = createBlockInspectorState(block);
+      const additive = !!(me.shiftKey || me.metaKey || me.ctrlKey);
       selectedBlockIdRef.current = next.id;
-      onBlockSelectRef.current?.(next);
+      if (additive) {
+        const prev = selectedBlockIdsRef.current;
+        selectedBlockIdsRef.current = prev.includes(next.id)
+          ? prev.filter((id) => id !== next.id)
+          : [...prev, next.id];
+      } else {
+        selectedBlockIdsRef.current = [next.id];
+      }
+      onBlockSelectRef.current?.(next, { additive });
       syncSelectedBlockUi();
     };
 
@@ -1973,8 +3114,14 @@ function EmailIframeEditor({
       applyDraggableAttrs();
       syncSelectedBlockUi();
       d.body.addEventListener('input', onInput);
+      d.addEventListener('click', onColumnChooseClick, true);
       d.addEventListener('click', onImgClick, true);
       d.addEventListener('click', onBlockClick, true);
+      d.addEventListener('mousedown', onLassoMouseDown, true);
+      d.addEventListener('mousemove', onLassoMouseMove, true);
+      d.addEventListener('mouseup', onLassoMouseUp, true);
+      window.addEventListener('mousemove', onParentLassoMouseMove, true);
+      window.addEventListener('mouseup', onParentLassoMouseUp, true);
       rootDnd.addEventListener('dragstart', onDragStartDnd, true);
       rootDnd.addEventListener('dragend', onDragEndDnd, true);
       dragEvtRoot.addEventListener('dragenter', onDragEnterDnd, true);
@@ -2009,6 +3156,38 @@ function EmailIframeEditor({
       }, 60);
     };
 
+    /**
+     * Kolečko nad náhledem musí rolovat plátno editoru. Iframe uvnitř neroluje (overflow:hidden),
+     * ale prohlížeče přebublání wheelu z iframu do rodiče řeší různě — tak ho předáme ručně.
+     */
+    const findCanvasScroller = (): HTMLElement | null => {
+      let n: HTMLElement | null = fr.parentElement;
+      while (n) {
+        const style = n.ownerDocument.defaultView?.getComputedStyle(n);
+        const canScroll =
+          !!style &&
+          /(auto|scroll|overlay)/.test(style.overflowY) &&
+          n.scrollHeight > n.clientHeight + 1;
+        if (canScroll) return n;
+        n = n.parentElement;
+      }
+      return null;
+    };
+    const wheelDeltaPx = (e: WheelEvent, viewportH: number): number => {
+      if (e.deltaMode === 1) return e.deltaY * 16;
+      if (e.deltaMode === 2) return e.deltaY * viewportH;
+      return e.deltaY;
+    };
+    const onWheelInsidePreview = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) return;
+      const scroller = findCanvasScroller();
+      if (!scroller) return;
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + wheelDeltaPx(e, scroller.clientHeight);
+      if (scroller.scrollTop !== before) e.preventDefault();
+    };
+    d.addEventListener('wheel', onWheelInsidePreview, { passive: false });
+
     d.addEventListener('selectionchange', scheduleReportSelection);
     d.addEventListener('mouseup', scheduleReportSelection);
     d.addEventListener('keyup', scheduleReportSelection);
@@ -2021,6 +3200,7 @@ function EmailIframeEditor({
 
     const ro = new ResizeObserver(() => syncHeight());
     ro.observe(d.body);
+    ro.observe(d.documentElement);
 
     const imgLoads: Array<{ el: Element; fn: () => void }> = [];
     d.body.querySelectorAll('img').forEach(el => {
@@ -2039,6 +3219,7 @@ function EmailIframeEditor({
       }
       fr.removeEventListener('mouseleave', onLeave);
       fr.removeEventListener('mouseenter', onEnter);
+      d.removeEventListener('wheel', onWheelInsidePreview);
       if (readOnlyBody) {
         d.removeEventListener('click', onPreviewLinkClick, true);
       }
@@ -2059,7 +3240,14 @@ function EmailIframeEditor({
       if (!readOnlyBody) {
         d.body.removeEventListener('input', onInput);
         d.removeEventListener('click', onImgClick, true);
+        d.removeEventListener('click', onColumnChooseClick, true);
         d.removeEventListener('click', onBlockClick, true);
+        d.removeEventListener('mousedown', onLassoMouseDown, true);
+        d.removeEventListener('mousemove', onLassoMouseMove, true);
+        d.removeEventListener('mouseup', onLassoMouseUp, true);
+        window.removeEventListener('mousemove', onParentLassoMouseMove, true);
+        window.removeEventListener('mouseup', onParentLassoMouseUp, true);
+        onLassoRectRef.current?.(null);
         rootDnd.removeEventListener('dragstart', onDragStartDnd, true);
         rootDnd.removeEventListener('dragend', onDragEndDnd, true);
         const dragEvtRootCleanup: Document | Window = d.defaultView ?? d;
@@ -2075,17 +3263,27 @@ function EmailIframeEditor({
   useEffect(() => {
     if (readOnlyBody) return;
     applyDraggableAttrsRef.current?.();
-  }, [selectedBlockId, builderMode, bodyEditEpoch, readOnlyBody]);
+  }, [selectedBlockId, selectedBlockIds, builderMode, bodyEditEpoch, readOnlyBody]);
 
   useEffect(() => {
     const d = innerRef.current?.contentDocument;
     if (!d?.body) return;
     const root = getEmailDndRoot(d);
     root.querySelectorAll('.vb-block-selected').forEach((n) => n.classList.remove('vb-block-selected'));
-    if (builderMode === 'block' && selectedBlockId) {
-      root.querySelector(`[data-vb-block-id="${CSS.escape(selectedBlockId)}"]`)?.classList.add('vb-block-selected');
+    if (builderMode !== 'block') return;
+    const ids = selectedBlockIds.length
+      ? selectedBlockIds
+      : selectedBlockId
+        ? [selectedBlockId]
+        : [];
+    for (const id of ids) {
+      try {
+        root.querySelector(`[data-vb-block-id="${CSS.escape(id)}"]`)?.classList.add('vb-block-selected');
+      } catch {
+        /* ignore */
+      }
     }
-  }, [selectedBlockId, builderMode, bodyEditEpoch]);
+  }, [selectedBlockId, selectedBlockIds, builderMode, bodyEditEpoch]);
 
   useEffect(() => {
     const d = innerRef.current?.contentDocument;
@@ -2096,8 +3294,27 @@ function EmailIframeEditor({
     d.documentElement.style.setProperty('--vb-preview-outer', outer);
     d.documentElement.style.setProperty('--vb-preview-card', column);
     d.documentElement.style.colorScheme = 'light';
+    // Uvnitř iframu se nikdy neroluje — scrolluje plátno editoru (viz syncHeight).
+    d.documentElement.style.height = 'auto';
+    d.documentElement.style.overflow = 'hidden';
     d.body.style.colorScheme = 'light';
-  }, [columnBackground, outerBackground]);
+    d.body.style.background = outer;
+    d.body.style.padding = '28px 56px 48px';
+    d.body.style.height = 'auto';
+    d.body.style.minHeight = '0px';
+    const root = d.querySelector('.vb-email-root') as HTMLElement | null;
+    if (root) {
+      root.style.width = '600px';
+      root.style.minHeight = '';
+      root.style.maxWidth = '100%';
+      root.style.marginLeft = 'auto';
+      root.style.marginRight = 'auto';
+    }
+    // Sjednoť chrome attrs → inline (export + náhled); boky bez paddingu.
+    root?.querySelectorAll('[data-vb-block="section"]').forEach((raw) => {
+      applySectionChrome(raw as HTMLElement);
+    });
+  }, [columnBackground, outerBackground, bodyEditEpoch]);
 
   return (
     <iframe
@@ -2134,8 +3351,24 @@ export default function EmailBuilder() {
   const [pushing, setPushing] = useState(false);
   const [sendingTestMail, setSendingTestMail] = useState(false);
   const [testMailRecipient, setTestMailRecipient] = useState<string>(EMAIL_TEST_RECIPIENTS[0]);
+  /* Vlastní mailing (Resend) — dialog odeslání kampaně na Postgres audienci. */
+  const [mailingDialogOpen, setMailingDialogOpen] = useState(false);
+  const [mailingTags, setMailingTags] = useState<{ id: string; name: string }[]>([]);
+  const [mailingIncludeTagIds, setMailingIncludeTagIds] = useState<string[]>([]);
+  const [mailingExcludeTagIds, setMailingExcludeTagIds] = useState<string[]>([]);
+  const [mailingSources, setMailingSources] = useState<string[]>([]);
+  const [mailingSubjects, setMailingSubjects] = useState<string[]>([]);
+  const [mailingTagSearch, setMailingTagSearch] = useState('');
+  const [mailingShowAllTags, setMailingShowAllTags] = useState(false);
+  /** Počet příjemců z posledního prepare — null = filtr se změnil, je potřeba přepočítat. */
+  const [mailingRecipientCount, setMailingRecipientCount] = useState<number | null>(null);
+  const [mailingPreparing, setMailingPreparing] = useState(false);
+  const [mailingSending, setMailingSending] = useState(false);
+  const [sendingResendTest, setSendingResendTest] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toolPanelMode, setToolPanelMode] = useState<'ai' | 'block' | 'settings'>('ai');
+  /** Mailchimp-styl: při otevřeném draftu schovat seznam a nechat workspace editor. */
+  const editorWorkspaceOpen = !!selected;
 
   const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -2190,8 +3423,12 @@ export default function EmailBuilder() {
   const insertHoverBlockIdRef = useRef<string | null>(null);
   const pendingInsertAnchorRef = useRef<string | null>(null);
   const insertLineHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Kurzor je nad plovoucí lištou / bobánkem v parent okně (mimo iframe). */
+  const chromePointerInsideRef = useRef(false);
   /** Otevřená nabídka „+“ u postranní lišty bloku. */
   const [blockChromeAddMenuOpen, setBlockChromeAddMenuOpen] = useState(false);
+  const blockChromeAddMenuOpenRef = useRef(false);
+  blockChromeAddMenuOpenRef.current = blockChromeAddMenuOpen;
   /** Po zkopírování bloku — invalidace náhledu + menu (schránka v `sessionStorage`). */
   const [emailBlockClipboardTick, setEmailBlockClipboardTick] = useState(0);
   const pendingInsertBeforeBlockIdRef = useRef<string | null>(null);
@@ -2206,6 +3443,16 @@ export default function EmailBuilder() {
     height: number;
     blockId: string;
   } | null>(null);
+  /**
+   * Přesun bloku tažením za „bobánek“ nahoře — pointer events v parent okně
+   * (HTML5 DnD přes iframe je nespolehlivý).
+   */
+  const [blockPointerDrag, setBlockPointerDrag] = useState<{
+    blockId: string;
+    indicator: { top: number; left: number; width: number } | null;
+  } | null>(null);
+  const blockPointerDragRef = useRef(blockPointerDrag);
+  blockPointerDragRef.current = blockPointerDrag;
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
   /** Kliknutý <img> v těle — úprava URL / ořez / galerie. */
   const [imageToolSrc, setImageToolSrc] = useState<string | null>(null);
@@ -2223,7 +3470,15 @@ export default function EmailBuilder() {
   const [aiInsertAfterAnchorId, setAiInsertAfterAnchorId] = useState<string | null>(null);
   /** Blok (`data-vb-block-id`), před který má AI vložit nový obsah (tlačítko + u lišty). */
   const [aiInsertBeforeBlockId, setAiInsertBeforeBlockId] = useState<string | null>(null);
+  /** Blok (`data-vb-block-id`), který má AI upravit (žluté kolečko AI u lišty bloku). */
+  const [aiEditBlockId, setAiEditBlockId] = useState<string | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<BlockInspectorState | null>(null);
+  const selectedBlockRef = useRef(selectedBlock);
+  selectedBlockRef.current = selectedBlock;
+  /** Multi-výběr (klik / Shift+klik / laso) — inspector zůstává u primárního bloku. */
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
+  /** Laso obdélník ve viewportu (parent) během tažení. */
+  const [lassoRect, setLassoRect] = useState<EmailLassoRect | null>(null);
 
   const [selectedCanvasText, setSelectedCanvasText] = useState('');
   const [capturedSelection, setCapturedSelection] = useState<string | null>(null);
@@ -2337,6 +3592,8 @@ export default function EmailBuilder() {
     setHistoryFuture([]);
     setSelected(normalized);
     setSelectedBlock(null);
+    setSelectedBlockIds([]);
+    setSidebarOpen(false); // workspace editor — seznam emailů schovat
     setChatMsgs(normalized.chatHistory || []);
     setChatInput('');
     setCapturedSelection(null);
@@ -2350,6 +3607,18 @@ export default function EmailBuilder() {
     );
   }, []);
 
+  /** Z workspace editoru zpět na seznam emailů (Mailchimp „exit“). */
+  const exitEditorWorkspace = useCallback(() => {
+    selectedIdRef.current = null;
+    setSelected(null);
+    setSelectedBlock(null);
+    setSelectedBlockIds([]);
+    setLassoRect(null);
+    setSidebarOpen(true);
+    setChatMsgs([]);
+    setChatInput('');
+  }, []);
+
   useEffect(() => {
     const ac = new AbortController();
     const { signal } = ac;
@@ -2357,7 +3626,7 @@ export default function EmailBuilder() {
     const run = async () => {
       setLoading(true);
       try {
-        const r = await fetch(`${SERVER}/admin/email-drafts`, { headers: AUTH_H, signal });
+        const r = await fetchWithAdminAuth(`${SERVER}/admin/email-drafts`, { signal, json: true });
         const data = await r.json();
         if (signal.aborted) return;
         if (data.error) throw new Error(data.error);
@@ -2406,9 +3675,9 @@ export default function EmailBuilder() {
       const historyToSave =
         draft !== undefined && draft.chatHistory !== undefined ? draft.chatHistory : chatMsgs;
       const toSave = normalizeDraftForBuilder({ ...d, chatHistory: historyToSave, updatedAt: new Date().toISOString() });
-      const r = await fetch(`${SERVER}/admin/email-drafts`, {
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/email-drafts`, {
         method: 'POST',
-        headers: AUTH_H,
+        json: true,
         body: JSON.stringify(toSave),
       });
       const data = await r.json();
@@ -2491,7 +3760,7 @@ export default function EmailBuilder() {
   const deleteDraft = async (id: string) => {
     if (!confirm('Smazat tento draft?')) return;
     try {
-      await fetch(`${SERVER}/admin/email-drafts/${id}`, { method: 'DELETE', headers: AUTH_H });
+      await fetchWithAdminAuth(`${SERVER}/admin/email-drafts/${id}`, { method: 'DELETE', json: true });
       setDrafts(prev => prev.filter(d => d.id !== id));
       if (selected?.id === id) {
         const remaining = drafts.filter(d => d.id !== id);
@@ -2676,7 +3945,7 @@ export default function EmailBuilder() {
       try {
         const fd = new FormData();
         fd.append('file', file);
-        const res = await fetch(`${SERVER}/upload-image`, { method: 'POST', headers: AUTH_H_NO_CT, body: fd });
+        const res = await fetch(`${SERVER}/upload-image`, { method: 'POST', headers: await authHeadersNoCt(), body: fd });
         const data = await res.json();
         const newUrl = (data && (data.url as string)) || '';
         if (!newUrl) {
@@ -2902,6 +4171,7 @@ export default function EmailBuilder() {
     clearPendingInsertAnchor();
     setAiInsertAfterAnchorId(null);
     setAiInsertBeforeBlockId(null);
+    setAiEditBlockId(null);
     ctaInsertBeforeBlockIdRef.current = null;
     pendingInsertBeforeBlockIdRef.current = null;
   }, [clearPendingInsertAnchor]);
@@ -3071,17 +4341,60 @@ export default function EmailBuilder() {
     }
   }, []);
 
+  const syncChromeToBlockId = useCallback((blockId: string | null) => {
+    const fr = previewIframeRef.current;
+    const doc = fr?.contentDocument;
+    if (!fr || !doc?.body || !blockId) {
+      setBlockActionChrome(null);
+      return;
+    }
+    const root = getEmailDndRoot(doc);
+    const el = findEmailBlockById(root, blockId);
+    if (!el || !root.contains(el)) {
+      setBlockActionChrome(null);
+      return;
+    }
+    const r = getEmailBlockRectInParentViewport(el, fr);
+    setBlockActionChrome({ ...r, blockId });
+    insertHoverBlockIdRef.current = blockId;
+  }, []);
+
   const scheduleInsertLineHide = useCallback(() => {
     cancelInsertLineHide();
     insertLineHideTimerRef.current = window.setTimeout(() => {
       insertLineHideTimerRef.current = null;
+      if (blockPointerDragRef.current) return;
+      // Kurzor mezitím dojel na lištu v parent okně — neschovávej.
+      if (chromePointerInsideRef.current || blockChromeAddMenuOpenRef.current) return;
+      // Stále hover nad blokem v iframe — lišta zůstane u něj, ne u starého výběru.
+      const hoverEl = iframeHoverBlockRef.current;
+      const hoverId = hoverEl?.getAttribute('data-vb-block-id') || null;
+      if (hoverId && hoverEl?.isConnected) {
+        syncChromeToBlockId(hoverId);
+        return;
+      }
+      const selectedId = selectedBlockRef.current?.id ?? null;
+      if (selectedId) {
+        syncChromeToBlockId(selectedId);
+        return;
+      }
       clearPendingInsertAnchor();
       iframeHoverBlockRef.current = null;
       insertHoverBlockIdRef.current = null;
       setBlockChromeAddMenuOpen(false);
       setBlockActionChrome(null);
-    }, 380);
-  }, [cancelInsertLineHide, clearPendingInsertAnchor]);
+    }, 500);
+  }, [cancelInsertLineHide, clearPendingInsertAnchor, syncChromeToBlockId]);
+
+  const keepChromePointerAlive = useCallback(() => {
+    chromePointerInsideRef.current = true;
+    cancelInsertLineHide();
+  }, [cancelInsertLineHide]);
+
+  const releaseChromePointer = useCallback(() => {
+    chromePointerInsideRef.current = false;
+    if (!blockPointerDragRef.current) scheduleInsertLineHide();
+  }, [scheduleInsertLineHide]);
 
   const handleHoverBlockChrome = useCallback(
     (payload: { top: number; left: number; width: number; height: number; blockId: string } | null) => {
@@ -3090,34 +4403,154 @@ export default function EmailBuilder() {
         setBlockActionChrome(null);
         return;
       }
+      if (blockPointerDragRef.current) return;
       if (payload) {
         cancelInsertLineHide();
         insertHoverBlockIdRef.current = payload.blockId;
-      } else {
-        insertHoverBlockIdRef.current = null;
+        setBlockActionChrome(payload);
+        return;
       }
-      setBlockActionChrome(payload);
+      // Kurzor v iframe mimo blok — neschovávej hned, ať stihne dojít na boční lištu.
+      if (chromePointerInsideRef.current || blockChromeAddMenuOpenRef.current) return;
+      scheduleInsertLineHide();
     },
-    [activeBuilderMode, cancelInsertLineHide],
+    [activeBuilderMode, cancelInsertLineHide, scheduleInsertLineHide],
   );
 
   useEffect(() => {
     if (activeBuilderMode !== 'block') setBlockActionChrome(null);
   }, [activeBuilderMode]);
 
+  /** Vybraný blok drží bobánek a lištu, pokud zrovna nehoveruju jiný blok. */
+  useEffect(() => {
+    if (activeBuilderMode !== 'block' || showInboxChrome) return;
+    if (!selectedBlock?.id) return;
+    if (blockPointerDragRef.current) return;
+    if (chromePointerInsideRef.current || blockChromeAddMenuOpenRef.current) return;
+    const hoverId = iframeHoverBlockRef.current?.getAttribute('data-vb-block-id') || null;
+    if (hoverId && hoverId !== selectedBlock.id) return;
+    syncChromeToBlockId(selectedBlock.id);
+  }, [selectedBlock?.id, bodyEditEpoch, activeBuilderMode, showInboxChrome, syncChromeToBlockId]);
+
+  const endBlockPointerDrag = useCallback(
+    (clientX: number, clientY: number) => {
+      const drag = blockPointerDragRef.current;
+      if (!drag) return;
+      const fr = previewIframeRef.current;
+      const doc = fr?.contentDocument;
+      const root = doc ? getEmailDndRoot(doc) : null;
+      const moving = root ? findEmailBlockById(root, drag.blockId) : null;
+      moving?.classList.remove('vb-dnd-dragging');
+
+      if (fr && moving && root) {
+        const target = computeEmailBlockDropTarget(fr, moving, clientX, clientY);
+        if (target && applyEmailBlockDrop(moving, target.destParent, target.insertBefore)) {
+          const html = normalizeBodyForBuilder(doc!.body.innerHTML);
+          const now = new Date().toISOString();
+          const id = selectedRef.current?.id;
+          if (id) {
+            setDrafts((prev) =>
+              prev.map((d) =>
+                d.id === id ? normalizeDraftForBuilder({ ...d, bodyHtml: html, updatedAt: now }) : d,
+              ),
+            );
+            setSelected((prev) =>
+              prev?.id === id
+                ? normalizeDraftForBuilder({ ...prev, bodyHtml: html, updatedAt: now })
+                : prev,
+            );
+          }
+          bumpBodyEpoch();
+        }
+      }
+      setBlockPointerDrag(null);
+      const keepId = selectedBlockRef.current?.id || drag.blockId;
+      requestAnimationFrame(() => syncChromeToBlockId(keepId));
+    },
+    [bumpBodyEpoch, syncChromeToBlockId],
+  );
+
+  const beginBlockPointerDrag = useCallback(
+    (blockId: string, e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (blockPointerDragRef.current) return;
+      const fr = previewIframeRef.current;
+      const doc = fr?.contentDocument;
+      if (!fr || !doc?.body) return;
+      const root = getEmailDndRoot(doc);
+      const el = findEmailBlockById(root, blockId);
+      if (!el) return;
+      const moving = resolveReorderableBlock(el, root);
+      const moveId = moving?.getAttribute('data-vb-block-id');
+      if (!moving || !moveId) {
+        toast.info('Tenhle blok se přetahovat nedá.');
+        return;
+      }
+      cancelInsertLineHide();
+      commitHistoryBeforeMutation();
+      moving.classList.add('vb-dnd-dragging');
+      setBlockPointerDrag({ blockId: moveId, indicator: null });
+
+      // Listener na window — re-render bobánku nesmí přerušit gesto (capture na elementu by spadl).
+      const onMove = (ev: PointerEvent) => {
+        const cur = blockPointerDragRef.current;
+        if (!cur) return;
+        const frame = previewIframeRef.current;
+        const d = frame?.contentDocument;
+        if (!frame || !d?.body) return;
+        const r = getEmailDndRoot(d);
+        const node = findEmailBlockById(r, cur.blockId);
+        if (!node) return;
+        const target = computeEmailBlockDropTarget(frame, node, ev.clientX, ev.clientY);
+        setBlockPointerDrag({
+          blockId: cur.blockId,
+          indicator: target?.indicator ?? null,
+        });
+      };
+      const onUp = (ev: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove, true);
+        window.removeEventListener('pointerup', onUp, true);
+        window.removeEventListener('pointercancel', onUp, true);
+        endBlockPointerDrag(ev.clientX, ev.clientY);
+      };
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
+    },
+    [cancelInsertLineHide, commitHistoryBeforeMutation, endBlockPointerDrag],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setLassoRect(null);
+      if (selectedBlockIds.length > 1) {
+        if (selectedBlock) setSelectedBlockIds([selectedBlock.id]);
+        else setSelectedBlockIds([]);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedBlockIds.length, selectedBlock]);
+
   useEffect(() => {
     cancelInsertLineHide();
+    chromePointerInsideRef.current = false;
     iframeHoverBlockRef.current = null;
     insertHoverBlockIdRef.current = null;
     setBlockChromeAddMenuOpen(false);
     setBlockLibraryExpanded(false);
     setBlockActionChrome(null);
+    setSelectedBlockIds([]);
+    setLassoRect(null);
     clearAiInsertIntent();
   }, [selected?.id, cancelInsertLineHide, clearAiInsertIntent]);
 
   useEffect(() => {
     if (!showInboxChrome) return;
     cancelInsertLineHide();
+    chromePointerInsideRef.current = false;
     iframeHoverBlockRef.current = null;
     insertHoverBlockIdRef.current = null;
     setBlockChromeAddMenuOpen(false);
@@ -3142,12 +4575,24 @@ export default function EmailBuilder() {
     }
   }, [toolPanelMode, activeBuilderMode]);
 
-  const handleBlockSelect = useCallback((block: BlockInspectorState | null) => {
+  const handleBlockSelect = useCallback((
+    block: BlockInspectorState | null,
+    opts?: { additive?: boolean },
+  ) => {
     // Na záložce AI nechat panel u chatu — výběr bloku slouží jen jako kontext (přepsat přes AI atd.).
     if (block && activeBuilderMode === 'block' && toolPanelMode !== 'ai') {
       setToolPanelMode('block');
     }
     setSelectedBlock(block);
+    if (!block) {
+      setSelectedBlockIds([]);
+    } else if (opts?.additive) {
+      setSelectedBlockIds((prev) =>
+        prev.includes(block.id) ? prev.filter((id) => id !== block.id) : [...prev, block.id],
+      );
+    } else {
+      setSelectedBlockIds([block.id]);
+    }
     setSelected(prev => {
       if (!prev) return prev;
       const updated = normalizeDraftForBuilder({
@@ -3160,13 +4605,37 @@ export default function EmailBuilder() {
     });
   }, [activeBuilderMode, toolPanelMode]);
 
+  const handleBlocksSelect = useCallback((blocks: BlockInspectorState[]) => {
+    if (blocks.length === 0) {
+      setSelectedBlock(null);
+      setSelectedBlockIds([]);
+      return;
+    }
+    if (activeBuilderMode === 'block' && toolPanelMode !== 'ai') {
+      setToolPanelMode('block');
+    }
+    const primary = blocks[blocks.length - 1];
+    setSelectedBlock(primary);
+    setSelectedBlockIds(blocks.map((b) => b.id));
+    setSelected((prev) => {
+      if (!prev) return prev;
+      const updated = normalizeDraftForBuilder({
+        ...prev,
+        lastSelectedBlockType: primary.type ?? null,
+        updatedAt: new Date().toISOString(),
+      });
+      setDrafts((draftsPrev) => draftsPrev.map((d) => (d.id === updated.id ? updated : d)));
+      return updated;
+    });
+  }, [activeBuilderMode, toolPanelMode]);
+
   const applyStructuredBodyMutation = useCallback((mutate: (block: HTMLElement, root: HTMLElement, doc: Document) => string | null | void) => {
     const currentSelected = selectedRef.current;
     const blockInfo = selectedBlock;
     const doc = previewIframeRef.current?.contentDocument;
     if (!currentSelected || !blockInfo?.id || !doc?.body) return false;
     const root = getEmailDndRoot(doc);
-    const block = doc.querySelector(`[data-vb-block-id="${blockInfo.id}"]`) as HTMLElement | null;
+    const block = findEmailBlockById(root, blockInfo.id);
     if (!block || !root.contains(block)) {
       toast.error('Vybraný blok už v náhledu není.');
       return false;
@@ -3177,10 +4646,7 @@ export default function EmailBuilder() {
 
     const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
     const nextBlockId = preferredNextId === undefined ? blockInfo.id : preferredNextId;
-    const nextBlock =
-      nextBlockId
-        ? (doc.querySelector(`[data-vb-block-id="${nextBlockId}"]`) as HTMLElement | null)
-        : null;
+    const nextBlock = nextBlockId ? findEmailBlockById(root, nextBlockId) : null;
     const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
     const updated = normalizeDraftForBuilder({
       ...currentSelected,
@@ -3192,6 +4658,7 @@ export default function EmailBuilder() {
     setSelected(updated);
     setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
     setSelectedBlock(nextInspector);
+    setSelectedBlockIds(nextInspector?.id ? [nextInspector.id] : []);
     bumpBodyEpoch();
     return true;
   }, [selectedBlock, commitHistoryBeforeMutation, bumpBodyEpoch]);
@@ -3231,6 +4698,7 @@ export default function EmailBuilder() {
     setSelected(updated);
     setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
     setSelectedBlock(nextInspector);
+    setSelectedBlockIds(nextInspector?.id ? [nextInspector.id] : []);
     bumpBodyEpoch();
     return true;
   }, [commitHistoryBeforeMutation, bumpBodyEpoch]);
@@ -3288,11 +4756,22 @@ export default function EmailBuilder() {
       const block = doc.querySelector(`[data-vb-block-id="${escaped}"]`) as HTMLElement | null;
       if (!block || !root.contains(block)) return;
 
-      const newEnc = encodeWebinarPayload(payload.layout, payload.snapshot);
-      if (block.getAttribute('data-vb-wb-encoded') === newEnc) return;
+      const newEnc = encodeWebinarPayload(payload.layout, payload.snapshot, payload.layoutHeight);
+      if (
+        block.getAttribute('data-vb-wb-encoded') === newEnc &&
+        (block.getAttribute('data-vb-wb-height') || '') ===
+          (payload.layout === 'hero' ? '' : String(payload.layoutHeight))
+      ) {
+        return;
+      }
 
       commitHistoryBeforeMutation();
-      const html = buildWebinarBlockHtml(payload.layout, payload.snapshot, payload.blockId);
+      const html = buildWebinarBlockHtml(
+        payload.layout,
+        payload.snapshot,
+        payload.blockId,
+        payload.layoutHeight,
+      );
       const tmp = doc.createElement('div');
       tmp.innerHTML = html.trim();
       const next = tmp.firstElementChild as HTMLElement | null;
@@ -3317,91 +4796,265 @@ export default function EmailBuilder() {
   );
 
   const moveBlockById = useCallback((blockId: string, direction: 'up' | 'down') => {
-    applyStructuredBodyMutationByBlockId(blockId, (block) => {
-      const parent = block.parentElement as HTMLElement | null;
-      if (!parent) return;
-      if (direction === 'up') {
-        const sibling = block.previousElementSibling as HTMLElement | null;
-        if (!sibling || /^(STYLE|SCRIPT)$/i.test(sibling.tagName)) return;
-        parent.insertBefore(block, sibling);
-      } else {
-        const sibling = block.nextElementSibling as HTMLElement | null;
-        if (!sibling || /^(STYLE|SCRIPT)$/i.test(sibling.tagName)) return;
-        parent.insertBefore(sibling, block);
+    applyStructuredBodyMutationByBlockId(blockId, (block, root) => {
+      const result = moveEmailBlockNode(block, root, direction);
+      if (!result.ok) {
+        toast.info(result.reason);
+        return;
       }
+      return result.keepBlockId;
     });
   }, [applyStructuredBodyMutationByBlockId]);
 
   const duplicateBlockById = useCallback((blockId: string) => {
     applyStructuredBodyMutationByBlockId(blockId, (block) => {
-      const clone = block.cloneNode(true) as HTMLElement;
+      // Duplikovat layout sloupců, ne jen jednu buňku.
+      const target = getColumnsHostForBlock(block) || block;
+      const clone = target.cloneNode(true) as HTMLElement;
       clone.removeAttribute('data-vb-block-id');
-      clone.removeAttribute('data-vb-block');
       clone.querySelectorAll('[data-vb-block-id]').forEach((el) => {
         el.removeAttribute('data-vb-block-id');
       });
-      block.insertAdjacentElement('afterend', clone);
-      const inserted = clone;
-      const type = inferEmailBlockType(inserted);
-      inserted.setAttribute('data-vb-block', type);
-      return block.getAttribute('data-vb-block-id');
+      target.insertAdjacentElement('afterend', clone);
+      const type = inferEmailBlockType(clone);
+      clone.setAttribute('data-vb-block', type);
+      return target.getAttribute('data-vb-block-id');
     });
   }, [applyStructuredBodyMutationByBlockId]);
 
   const deleteBlockById = useCallback((blockId: string) => {
-    applyStructuredBodyMutationByBlockId(blockId, (block, root) => deleteEmailBlockNode(block, root));
+    applyStructuredBodyMutationByBlockId(blockId, (block, root) => {
+      if (isEmailColumnUnit(block)) {
+        const host = getColumnsHostForBlock(block);
+        const cell = block.parentElement;
+        block.remove();
+        if (cell && cell.tagName === 'TD' && cell.children.length === 0) {
+          cell.innerHTML = buildColumnChooserHtml();
+        }
+        return host?.getAttribute('data-vb-block-id') || null;
+      }
+      return deleteEmailBlockNode(block, root);
+    });
   }, [applyStructuredBodyMutationByBlockId]);
 
   const moveSelectedBlock = useCallback((direction: 'up' | 'down') => {
-    applyStructuredBodyMutation((block) => {
-      const parent = block.parentElement as HTMLElement | null;
-      if (!parent) return;
-      const sibling = direction === 'up'
-        ? block.previousElementSibling
-        : block.nextElementSibling;
-      if (!sibling) return;
-      if (direction === 'up') parent.insertBefore(block, sibling);
-      else parent.insertBefore(sibling, block);
+    applyStructuredBodyMutation((block, root) => {
+      const result = moveEmailBlockNode(block, root, direction);
+      if (!result.ok) {
+        toast.info(result.reason);
+        return;
+      }
+      return result.keepBlockId;
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const moveSelectedBlockBefore = useCallback((targetBlockId: string) => {
+    if (!targetBlockId) return;
+    applyStructuredBodyMutation((block, root) => {
+      const target = findEmailBlockById(root, targetBlockId);
+      if (!target) {
+        toast.info('Cílový blok už v náhledu není.');
+        return;
+      }
+      const result = moveEmailBlockBeforeTarget(block, target, root);
+      if (!result.ok) {
+        toast.info(result.reason);
+        return;
+      }
+      if (result.noop) toast.info('Blok už je na této pozici.');
+      else toast.success('Blok přesunut.');
+      return result.keepBlockId;
     });
   }, [applyStructuredBodyMutation]);
 
   const duplicateSelectedBlock = useCallback(() => {
     applyStructuredBodyMutation((block) => {
-      const clone = block.cloneNode(true) as HTMLElement;
+      // U sloupců duplikovat celý layout, ne jen jednu buňku.
+      const target = getColumnsHostForBlock(block) || block;
+      const clone = target.cloneNode(true) as HTMLElement;
       clone.removeAttribute('data-vb-block-id');
-      clone.removeAttribute('data-vb-block');
       clone.querySelectorAll('[data-vb-block-id]').forEach((el) => {
         el.removeAttribute('data-vb-block-id');
       });
-      block.insertAdjacentElement('afterend', clone);
-      const inserted = clone;
-      const type = inferEmailBlockType(inserted);
-      inserted.setAttribute('data-vb-block', type);
-      return block.getAttribute('data-vb-block-id');
+      target.insertAdjacentElement('afterend', clone);
+      const type = inferEmailBlockType(clone);
+      clone.setAttribute('data-vb-block', type);
+      return target.getAttribute('data-vb-block-id');
     });
   }, [applyStructuredBodyMutation]);
 
   const deleteSelectedBlock = useCallback(() => {
-    applyStructuredBodyMutation((block, root) => deleteEmailBlockNode(block, root));
-  }, [applyStructuredBodyMutation]);
-
-  const updateSelectedSectionFill = useCallback((fill: EmailSectionFill) => {
-    applyStructuredBodyMutation((block) => {
-      const sec =
-        block.getAttribute('data-vb-block') === 'section'
-          ? block
-          : (block.closest('[data-vb-block="section"]') as HTMLElement | null);
-      if (!sec) {
-        toast.info('Skupinu se nepodařilo najít.');
-        return;
+    applyStructuredBodyMutation((block, root) => {
+      // Jednotka ve sloupci → místo smazání celého layoutu vrátíme výběr typu.
+      if (isEmailColumnUnit(block)) {
+        const host = getColumnsHostForBlock(block);
+        const cell = block.parentElement;
+        block.remove();
+        if (cell && cell.tagName === 'TD' && cell.children.length === 0) {
+          cell.innerHTML = buildColumnChooserHtml();
+        }
+        return host?.getAttribute('data-vb-block-id') || null;
       }
-      sec.setAttribute('data-vb-section-fill', fill);
+      return deleteEmailBlockNode(block, root);
     });
   }, [applyStructuredBodyMutation]);
 
+  const updateSelectedSectionChrome = useCallback((patch: Partial<EmailSectionChrome>) => {
+    applyStructuredBodyMutation((block, root, doc) => {
+      const host = getHostSectionForBlock(block, root);
+      const target = host || (getEmailGroupRow(block, root)
+        ? ensureRowIsSection(getEmailGroupRow(block, root)!, doc)
+        : null);
+      if (!target) {
+        toast.info('Skupinu se nepodařilo najít.');
+        return;
+      }
+      applySectionChrome(target, patch);
+      // Jediný highlight ve skupině — zakulacení jen na boxu (ne dvě různá ohraničení).
+      const only = [...target.children].filter(
+        (c) =>
+          c.nodeType === 1 &&
+          !/^(STYLE|SCRIPT)$/i.test((c as HTMLElement).tagName) &&
+          (c as HTMLElement).hasAttribute('data-vb-block-id'),
+      ) as HTMLElement[];
+      if (
+        only.length === 1 &&
+        only[0].getAttribute('data-vb-block') === 'highlight' &&
+        patch.radius !== undefined
+      ) {
+        applyHighlightChrome(only[0], { radius: patch.radius });
+      }
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const updateSelectedSectionFill = useCallback((fill: EmailSectionFill) => {
+    updateSelectedSectionChrome({ fill });
+  }, [updateSelectedSectionChrome]);
+
+  const updateSelectedHighlightChrome = useCallback((patch: Partial<EmailHighlightChrome>) => {
+    applyStructuredBodyMutation((block) => {
+      if (block.getAttribute('data-vb-block') !== 'highlight') {
+        toast.info('Chrome boxu platí jen u zvýrazněného boxu.');
+        return;
+      }
+      applyHighlightChrome(block, patch);
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const groupSelectedBlocksIntoSection = useCallback(() => {
+    const ids = selectedBlockIds.length >= 2
+      ? selectedBlockIds
+      : selectedBlock?.id
+        ? [selectedBlock.id]
+        : [];
+    if (ids.length < 2) {
+      toast.info('Označ lasem nebo Shift+klikem aspoň dva bloky.');
+      return;
+    }
+    const currentSelected = selectedRef.current;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!currentSelected || !doc?.body) return;
+    const root = getEmailDndRoot(doc);
+    commitHistoryBeforeMutation();
+    const result = groupEmailBlocksIntoSection(ids, root, doc);
+    if (!result.ok) {
+      toast.info(result.reason);
+      return;
+    }
+    const normalizedBody = normalizeBodyForBuilder(doc.body.innerHTML);
+    const nextBlockId = result.keepBlockId;
+    const nextBlock = nextBlockId ? findEmailBlockById(root, nextBlockId) : null;
+    const nextInspector = nextBlock ? createBlockInspectorState(nextBlock) : null;
+    const updated = normalizeDraftForBuilder({
+      ...currentSelected,
+      bodyHtml: normalizedBody,
+      updatedAt: new Date().toISOString(),
+      lastSelectedBlockType: nextInspector?.type ?? null,
+    });
+    setSelected(updated);
+    setDrafts((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+    setSelectedBlock(nextInspector);
+    setSelectedBlockIds(nextInspector?.id ? [nextInspector.id] : []);
+    bumpBodyEpoch();
+    if (result.noop) toast.info('Bloky už tvoří jednu skupinu.');
+    else toast.success('Sloučeno do jedné skupiny.');
+  }, [selectedBlockIds, selectedBlock?.id, commitHistoryBeforeMutation, bumpBodyEpoch]);
+
+  const isolateSelectedBlockGroup = useCallback(() => {
+    applyStructuredBodyMutation((block, root, doc) => {
+      const result = isolateEmailBlockGroup(block, root, doc);
+      if (!result.ok) {
+        toast.info(result.reason);
+        return;
+      }
+      if (result.noop) toast.info('Blok už má vlastní kartu.');
+      else toast.success('Vyňato ze skupiny.');
+      return result.keepBlockId;
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const nextBlockStyle = (block: HTMLElement, property: string, value: string): string => {
+    let style = block.getAttribute('style') || '';
+    // Zkratka `background:` by novou barvu překryla — u pozadí ji nejdřív zahodíme.
+    if (property === 'background-color') style = setInlineStyleValue(style, 'background', '');
+    return setInlineStyleValue(style, property, value);
+  };
+
   const updateSelectedBlockStyle = useCallback((property: string, value: string) => {
     applyStructuredBodyMutation((block) => {
-      block.setAttribute('style', setInlineStyleValue(block.getAttribute('style') || '', property, value));
+      block.setAttribute('style', nextBlockStyle(block, property, value));
+      if (property === 'box-shadow') {
+        const on = !!value.trim() && value.trim().toLowerCase() !== 'none';
+        if (on) block.setAttribute('data-vb-has-shadow', '1');
+        else block.removeAttribute('data-vb-has-shadow');
+      }
+    });
+  }, [applyStructuredBodyMutation]);
+
+  /**
+   * Průběžná změna stylu při tažení slideru: zapíše se přímo do bloku v náhledu.
+   * Vědomě NEbumpuje `bodyEditEpoch` (ten přepisuje celý dokument v iframu) — uložení
+   * zajistí debounced commit, který se pověsí na `input` v náhledu.
+   */
+  const previewBlockStyleLive = useCallback((property: string, value: string) => {
+    const doc = previewIframeRef.current?.contentDocument;
+    const blockId = selectedBlock?.id;
+    if (!doc?.body || !blockId) return;
+    const block = findEmailBlockById(getEmailDndRoot(doc), blockId);
+    if (!block) return;
+    block.setAttribute('style', nextBlockStyle(block, property, value));
+    try {
+      doc.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    } catch {
+      doc.body.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }, [selectedBlock?.id]);
+
+  /**
+   * Začátek tažení slideru: uložíme stav před změnou a označíme „dávku“, aby ho
+   * debounced commit z náhledu nezapsal do historie ještě jednou.
+   */
+  const beginPreviewStyleHistory = useCallback(() => {
+    commitHistoryBeforeMutation();
+    iframeHistoryBurstRef.current = true;
+  }, [commitHistoryBeforeMutation]);
+
+  const setSelectedBlockColumns = useCallback((count: EmailBlockColumnCount) => {
+    applyStructuredBodyMutation((block, _root, doc) => {
+      const host = getColumnsHostForBlock(block) || block;
+      const result = setEmailBlockColumns(host, count, doc);
+      if (!result.ok) {
+        toast.info(result.reason);
+        return;
+      }
+      if (!result.noop) {
+        toast.success(
+          count === 1
+            ? 'Zpět na jeden sloupec.'
+            : `Layout ${count} sloupců — obsah zůstal vlevo, doplňte další.`,
+        );
+      }
+      return result.keepBlockId;
     });
   }, [applyStructuredBodyMutation]);
 
@@ -3419,6 +5072,30 @@ export default function EmailBuilder() {
       const image = extractFirstImage(block);
       if (!image) return;
       image.setAttribute('src', value);
+    });
+  }, [applyStructuredBodyMutation]);
+
+  const previewSelectedImageWidthLive = useCallback((pct: number) => {
+    const doc = previewIframeRef.current?.contentDocument;
+    const blockId = selectedBlock?.id;
+    if (!doc?.body || !blockId) return;
+    const block = findEmailBlockById(getEmailDndRoot(doc), blockId);
+    if (!block) return;
+    const image = extractFirstImage(block);
+    if (!image) return;
+    applyImageWidthPct(image, pct);
+    try {
+      doc.body.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    } catch {
+      doc.body.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }, [selectedBlock?.id]);
+
+  const commitSelectedImageWidth = useCallback((pct: number) => {
+    applyStructuredBodyMutation((block) => {
+      const image = extractFirstImage(block);
+      if (!image) return;
+      applyImageWidthPct(image, pct);
     });
   }, [applyStructuredBodyMutation]);
 
@@ -3578,7 +5255,7 @@ export default function EmailBuilder() {
     try {
       const r = await fetch(`${SERVER}/admin/mailchimp/generate-inline-cta`, {
         method: 'POST',
-        headers: AUTH_H,
+        headers: await authHeaders(),
         body: JSON.stringify({
           contextText,
           subject: selected.subject,
@@ -3602,6 +5279,7 @@ export default function EmailBuilder() {
   const startChatInsertFromPlusBeforeBlock = useCallback((blockId: string) => {
     clearPendingInsertAnchor();
     setAiInsertAfterAnchorId(null);
+    setAiEditBlockId(null);
     setAiInsertBeforeBlockId(blockId);
     setBlockChromeAddMenuOpen(false);
     setToolPanelMode('ai');
@@ -3612,6 +5290,24 @@ export default function EmailBuilder() {
     } catch { /* ignore */ }
     window.getSelection()?.removeAllRanges();
     window.setTimeout(() => chatInputRef.current?.focus(), 50);
+  }, [clearPendingInsertAnchor]);
+
+  /** Žluté AI u lišty bloku → upravit právě tento blok v AI agentovi. */
+  const startAiEditBlock = useCallback((blockId: string) => {
+    clearPendingInsertAnchor();
+    setAiInsertAfterAnchorId(null);
+    setAiInsertBeforeBlockId(null);
+    setAiEditBlockId(blockId);
+    setBlockChromeAddMenuOpen(false);
+    setToolPanelMode('ai');
+    setCapturedSelection(null);
+    setSelectedCanvasText('');
+    try {
+      previewIframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
+    } catch { /* ignore */ }
+    window.getSelection()?.removeAllRanges();
+    window.setTimeout(() => chatInputRef.current?.focus(), 50);
+    toast.message('AI upraví zvolený blok — napište změnu do chatu.', { duration: 2800 });
   }, [clearPendingInsertAnchor]);
 
   const regenerateCtaSuggestion = useCallback(async () => {
@@ -3639,7 +5335,7 @@ export default function EmailBuilder() {
     try {
       const r = await fetch(`${SERVER}/admin/mailchimp/generate-inline-cta`, {
         method: 'POST',
-        headers: AUTH_H,
+        headers: await authHeaders(),
         body: JSON.stringify({
           contextText,
           subject: selected.subject,
@@ -3683,9 +5379,11 @@ export default function EmailBuilder() {
 
     const insertAnchorId = aiInsertAfterAnchorId;
     const insertBeforeBlockId = aiInsertBeforeBlockId;
+    const editBlockId = aiEditBlockId;
     const selectionSlice =
       (!insertAnchorId &&
         !insertBeforeBlockId &&
+        !editBlockId &&
         (capturedSelection?.trim() || selectedCanvasText.trim() || '')) ||
       null;
 
@@ -3693,6 +5391,7 @@ export default function EmailBuilder() {
       Boolean(selectionSlice) &&
       !insertAnchorId &&
       !insertBeforeBlockId &&
+      !editBlockId &&
       !options?.fullBodyHtmlReplace;
 
     let selectionMarkerId: string | null = null;
@@ -3726,11 +5425,71 @@ export default function EmailBuilder() {
     }
 
     try {
+      // Rychlá oprava bez Gemini: „bloky webinářů“ / odstranění divného hero na aktuálním HTML
+      const localFix =
+        activeBuilderMode === 'block' &&
+        !!selected?.bodyHtml &&
+        !usePlainSelectionPath &&
+        !insertAnchorId &&
+        !insertBeforeBlockId &&
+        !editBlockId &&
+        /(?:blok(y)?\s+webin|webin[aá]?[rř].*blok|převeď.*webin|webin.*odkaz|oprav\s+hero|bez\s+hero|odstraň\s+hero)/i.test(
+          msg,
+        );
+      if (localFix && selected) {
+        const headers = await authHeaders();
+        const [webRes, prodRes] = await Promise.all([
+          fetch(`${SERVER}/webinare`, { headers }),
+          fetch(`${SERVER}/products`, { headers }),
+        ]);
+        const webJson = webRes.ok ? await webRes.json().catch(() => null) : null;
+        const prodJson = prodRes.ok ? await prodRes.json().catch(() => null) : null;
+        const webinars = Array.isArray(webJson?.items)
+          ? webJson.items
+          : Array.isArray(webJson)
+            ? webJson
+            : [];
+        const products = Array.isArray(prodJson?.products)
+          ? prodJson.products
+          : Array.isArray(prodJson)
+            ? prodJson
+            : [];
+        const hydrated = hydrateEmailAiEditorBlocks(selected.bodyHtml, webinars, products, {
+          headline: selected.headline,
+          forceInjectWebinars: /webin/i.test(msg),
+        });
+        const now = new Date().toISOString();
+        const aiMsg: ChatMsg = {
+          id: crypto.randomUUID(),
+          role: 'ai',
+          content:
+            hydrated.notes.length > 0
+              ? `✅ Hotovo bez nového generování: ${hydrated.notes.join(' ')}`
+              : 'V mailu jsem nenašel co napojit — zkontroluj, že názvy webinářů sedí s CMS, nebo nech AI mail přegenerovat.',
+          timestamp: now,
+        };
+        const updatedHistory = [...historyWithUser, aiMsg];
+        setChatMsgs(updatedHistory);
+        if (hydrated.html !== selected.bodyHtml) {
+          const updatedDraft: EmailDraft = {
+            ...selected,
+            bodyHtml: hydrated.html,
+            updatedAt: now,
+            chatHistory: updatedHistory,
+          };
+          setSelected(updatedDraft);
+          setDrafts(prev => prev.map(d => (d.id === updatedDraft.id ? updatedDraft : d)));
+          bumpBodyEpoch();
+          await saveDraft(updatedDraft);
+        }
+        return;
+      }
+
       if (usePlainSelectionPath && selectionMarkerId && selectionSlice) {
         const runPlain = async () => {
           const response = await fetch(`${SERVER}/admin/mailchimp/rewrite-email-selection-plain`, {
             method: 'POST',
-            headers: AUTH_H,
+            headers: await authHeaders(),
             body: JSON.stringify({
               instruction: msg,
               selectedPlainText: selectionSlice,
@@ -3811,6 +5570,11 @@ export default function EmailBuilder() {
           insertBeforeBlockId &&
           docLive?.body?.querySelector(`[data-vb-block-id="${CSS.escape(insertBeforeBlockId)}"]`)
         );
+      const editTargetStill =
+        !!(
+          editBlockId &&
+          docLive?.body?.querySelector(`[data-vb-block-id="${CSS.escape(editBlockId)}"]`)
+        );
 
       let currentEmailCtx = '';
       if (selected && (selected.subject || selected.bodyHtml)) {
@@ -3832,7 +5596,26 @@ export default function EmailBuilder() {
       }
 
       let insertCtx = '';
-      if (insertBeforeBlockId) {
+      if (editBlockId) {
+        if (!editTargetStill) {
+          toast.warning('Blok pro AI úpravu už v náhledu není — zvolte ho znovu žlutým AI u lišty.');
+          clearAiInsertIntent();
+        } else {
+          const targetHtml = getBlockOuterHtmlForAiByBlockId(docLive, editBlockId);
+          if (targetHtml) {
+            insertCtx =
+              '\n\n[DŮLEŽITÉ — režim úpravy JEDNOHO bloku: Uživatel v Email Builderu zvolil konkrétní blok (žluté AI u lišty). ' +
+              `Jeho data-vb-block-id="${editBlockId}". ` +
+              'V poli bodyHtml vrať CELÉ HTML těla zprávy: tento jeden blok NAHRAĎ upravenou verzí podle pokynu v poslední zprávě; ' +
+              'zachovej stejné data-vb-block-id na obalu (data-vb-block můžeš změnit, pokud změna typu dává smysl). ' +
+              'Všechny ostatní bloky, sekce a struktura musí zůstat beze změny — nic jinde nepřepisuj ani neodstraňuj. ' +
+              `Blok k úpravě:\n"""${targetHtml}"""`;
+          } else {
+            toast.warning('Nepodařilo se přečíst blok pro AI úpravu — zkuste znovu.');
+            clearAiInsertIntent();
+          }
+        }
+      } else if (insertBeforeBlockId) {
         if (!beforeTargetStill) {
           toast.warning('Cílový blok v náhledu už není — zrušte režim vložení nebo zvolte blok znovu.');
           clearAiInsertIntent();
@@ -3879,7 +5662,7 @@ export default function EmailBuilder() {
       };
       const { data } = await fetchGenerateEmailWithRetry(
         `${SERVER}/admin/mailchimp/generate-email`,
-        AUTH_H,
+        await authHeaders(),
         genBody,
         () =>
           toast.info('Gemini je dočasně přetížená — zkouším znovu za pár sekund…', { duration: 5000 }),
@@ -3921,6 +5704,65 @@ export default function EmailBuilder() {
         chatHistory: updatedHistory,
       };
 
+      // Napoj webináře/koláž na editovatelné bloky; odstraň divný duplicitní hero
+      if (activeBuilderMode === 'block' && updatedDraft.bodyHtml) {
+        const wantsWebinarBlocks =
+          /webin[aá]?[rř]|blok(y)?\s+webin|data-ai-webinar|dvpp|naživo/i.test(
+            `${msg}\n${updatedDraft.bodyHtml}`,
+          );
+        const needsHydrate =
+          wantsWebinarBlocks ||
+          /data-ai-webinar-slug|data-ai-product-ids|data-vb-block=["']hero["']|#00116[18]/i.test(
+            updatedDraft.bodyHtml,
+          );
+        if (needsHydrate) {
+          try {
+            const headers = await authHeaders();
+            const [webRes, prodRes] = await Promise.all([
+              fetch(`${SERVER}/webinare`, { headers }),
+              fetch(`${SERVER}/products`, { headers }),
+            ]);
+            const webJson = webRes.ok ? await webRes.json().catch(() => null) : null;
+            const prodJson = prodRes.ok ? await prodRes.json().catch(() => null) : null;
+            const webinars = Array.isArray(webJson?.items)
+              ? webJson.items
+              : Array.isArray(webJson?.webinars)
+                ? webJson.webinars
+                : Array.isArray(webJson)
+                  ? webJson
+                  : [];
+            const products = Array.isArray(prodJson?.products)
+              ? prodJson.products
+              : Array.isArray(prodJson?.items)
+                ? prodJson.items
+                : Array.isArray(prodJson)
+                  ? prodJson
+                  : [];
+            const hydrated = hydrateEmailAiEditorBlocks(updatedDraft.bodyHtml, webinars, products, {
+              headline: updatedDraft.headline,
+              forceInjectWebinars: wantsWebinarBlocks,
+            });
+            if (hydrated.html !== updatedDraft.bodyHtml) {
+              updatedDraft.bodyHtml = hydrated.html;
+              updatedDraft.updatedAt = new Date().toISOString();
+              if (hydrated.notes.length) {
+                const note: ChatMsg = {
+                  id: crypto.randomUUID(),
+                  role: 'ai',
+                  content: `✅ Bloky editoru: ${hydrated.notes.join(' ')}`,
+                  timestamp: new Date().toISOString(),
+                };
+                updatedHistory.push(note);
+                updatedDraft.chatHistory = updatedHistory;
+                setChatMsgs(updatedHistory);
+              }
+            }
+          } catch (hydrateErr) {
+            console.warn('[EmailBuilder] AI block hydrate failed', hydrateErr);
+          }
+        }
+      }
+
       setSelected(updatedDraft);
       setDrafts(prev => {
         const idx = prev.findIndex(x => x.id === updatedDraft.id);
@@ -3934,7 +5776,16 @@ export default function EmailBuilder() {
       bumpBodyEpoch();
 
       const productImages: string[] = e.productImages || data.email?.productImages || [];
-      if (productImages.length >= 2 && updatedDraft.bodyHtml && updatedDraft.bodyHtml.includes('data-product-collage')) {
+      const hasEncodedCollage = /data-vb-pc-encoded=/i.test(updatedDraft.bodyHtml || '');
+      const hasAiCollageIds = /data-ai-product-ids=/i.test(updatedDraft.bodyHtml || '');
+      // Legacy fallback: prázdný data-product-collage bez encoded payloadu
+      if (
+        !hasEncodedCollage &&
+        !hasAiCollageIds &&
+        productImages.length >= 2 &&
+        updatedDraft.bodyHtml &&
+        updatedDraft.bodyHtml.includes('data-product-collage')
+      ) {
         const tableHtml = buildEmailProductImagesTableHtml(
           productImages.map((url: string) => ({ url, title: 'Produkt' })),
           3,
@@ -3957,7 +5808,12 @@ export default function EmailBuilder() {
         };
         setChatMsgs(prev => [...prev, successNote]);
         updatedDraft.chatHistory = [...(updatedDraft.chatHistory || []), successNote];
-      } else if (productImages.length === 1 && updatedDraft.bodyHtml) {
+      } else if (
+        !hasEncodedCollage &&
+        !hasAiCollageIds &&
+        productImages.length === 1 &&
+        updatedDraft.bodyHtml
+      ) {
         const singleImgTag =
           `<img src="${productImages[0]}" alt="Produkt" style="max-width:100%;height:auto;border-radius:8px;margin:12px 0;" />`;
         if (updatedDraft.bodyHtml.includes('data-product-collage')) {
@@ -3972,7 +5828,7 @@ export default function EmailBuilder() {
       }
 
       await saveDraft(updatedDraft);
-      if (insertAnchorId || insertBeforeBlockId) clearAiInsertIntent();
+      if (insertAnchorId || insertBeforeBlockId || editBlockId) clearAiInsertIntent();
     } catch (e: unknown) {
       if (selectionMarkerId) {
         try {
@@ -4006,8 +5862,8 @@ export default function EmailBuilder() {
   /** Rychlá přeměna označeného úseku podle typologie bloků (stejná jako v system promptu generate-email). */
   const sendSelectionBlockTransform = async (kind: 'text' | 'block' | 'infographic') => {
     if (generating) return;
-    if (aiInsertAfterAnchorId || aiInsertBeforeBlockId) {
-      toast.info('Zrušte nejdřív režim vložení z náhledu (+ / uložené místo v chatu).');
+    if (aiInsertAfterAnchorId || aiInsertBeforeBlockId || aiEditBlockId) {
+      toast.info('Zrušte nejdřív režim vložení / úpravy bloku v chatu (křížek u žlutého / jantarového pruhu).');
       return;
     }
     const sel = (capturedSelection?.trim() || selectedCanvasText.trim());
@@ -4046,14 +5902,14 @@ export default function EmailBuilder() {
       const saved = await saveDraft(snap, { quiet: true });
       if (!saved) return;
 
-      const r = await fetch(`${SERVER}/admin/mailchimp/create-draft`, {
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/mailchimp/create-draft`, {
         method: 'POST',
-        headers: AUTH_H,
+        json: true,
         body: JSON.stringify({
           subject: saved.subject,
           previewText: saved.previewText,
           headline: saved.headline,
-          bodyContent: saved.bodyHtml,
+          bodyContent: compileEmailBodyForSend(saved.bodyHtml),
           ctaText: saved.ctaText,
           ctaUrl: saved.ctaUrl,
           audience: saved.audience,
@@ -4081,6 +5937,241 @@ export default function EmailBuilder() {
     }
   };
 
+  /* ── Vlastní mailing (Resend + Postgres audience) ── */
+
+  /** Uloží mailingCampaignId do draftu (state + KV), aby další odeslání aktualizovalo tutéž kampaň. */
+  const persistMailingCampaignId = async (draft: EmailDraft, campaignId: string) => {
+    if (draft.mailingCampaignId === campaignId) return;
+    const updated = normalizeDraftForBuilder({ ...draft, mailingCampaignId: campaignId, updatedAt: new Date().toISOString() });
+    setSelected(updated);
+    setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+    await saveDraft(updated, { quiet: true });
+  };
+
+  const mailingAudienceFilter = useMemo((): MailingAudienceFilter => ({
+    includeTagIds: mailingIncludeTagIds,
+    excludeTagIds: mailingExcludeTagIds,
+    sources: mailingSources,
+    subjectInterestSlugs: mailingSubjects,
+  }), [mailingIncludeTagIds, mailingExcludeTagIds, mailingSources, mailingSubjects]);
+
+  const mailingTagNameById = useMemo(
+    () => new Map(mailingTags.map((t) => [t.id, t.name])),
+    [mailingTags],
+  );
+
+  const mailingWebinarTags = useMemo(
+    () => mailingTags.filter((t) => isWebinarTagName(t.name)),
+    [mailingTags],
+  );
+
+  const mailingOtherTags = useMemo(() => {
+    const q = mailingTagSearch.trim().toLowerCase();
+    return mailingTags
+      .filter((t) => !isWebinarTagName(t.name))
+      .filter((t) => !q || t.name.toLowerCase().includes(q));
+  }, [mailingTags, mailingTagSearch]);
+
+  const bumpMailingFilter = useCallback(() => setMailingRecipientCount(null), []);
+
+  const applyMailingPreset = useCallback((kind: 'all' | 'webinars' | 'first-grade' | 'newsletter' | 'eng-hot' | 'eng-warm') => {
+    bumpMailingFilter();
+    if (kind === 'all') {
+      setMailingIncludeTagIds([]);
+      setMailingExcludeTagIds([]);
+      setMailingSources([]);
+      setMailingSubjects([]);
+      return;
+    }
+    if (kind === 'eng-hot' || kind === 'eng-warm') {
+      const slug = kind;
+      const tag = mailingTags.find((t) => {
+        const n = t.name.trim().toLowerCase();
+        return n.includes(slug === 'eng-hot' ? 'aktivní' : 'teplý') || n.includes(slug);
+      });
+      setMailingSources([]);
+      setMailingSubjects([]);
+      setMailingIncludeTagIds(tag ? [tag.id] : []);
+      if (!tag) {
+        toast.message('Nejdřív v Audience spusť „Rozřadit podle aktivity“ — tag Eng · … ještě neexistuje.');
+      }
+      return;
+    }
+    if (kind === 'webinars') {
+      /* Preferuj tag (pokrývá i staré MC importy); jinak source=webinar. Ne AND — jinak se množiny zbytečně zúží. */
+      const reg = mailingTags.find((t) => t.name.trim().toLowerCase() === 'webinar-registrace');
+      const anyWeb = mailingTags.filter((t) => isWebinarTagName(t.name)).map((t) => t.id);
+      setMailingSubjects([]);
+      if (reg) {
+        setMailingSources([]);
+        setMailingIncludeTagIds([reg.id]);
+      } else if (anyWeb.length > 0) {
+        setMailingSources([]);
+        setMailingIncludeTagIds(anyWeb);
+      } else {
+        setMailingSources(['webinar']);
+        setMailingIncludeTagIds([]);
+      }
+      return;
+    }
+    if (kind === 'newsletter') {
+      setMailingSources(['newsletter']);
+      setMailingSubjects([]);
+      setMailingIncludeTagIds([]);
+      return;
+    }
+    /* 1. stupeň: tag když existuje, jinak heuristika prvouka. */
+    const gradeIds = mailingTags.filter((t) => isFirstGradeTagName(t.name)).map((t) => t.id);
+    setMailingSources([]);
+    if (gradeIds.length > 0) {
+      setMailingSubjects([]);
+      setMailingIncludeTagIds(gradeIds);
+    } else {
+      setMailingSubjects(['prvouka']);
+      setMailingIncludeTagIds([]);
+    }
+  }, [bumpMailingFilter, mailingTags]);
+
+  const openMailingSendDialog = async () => {
+    const snap = selectedRef.current;
+    if (!snap) return;
+    if (!snap.subject.trim()) {
+      toast.error('Nejdřív vyplňte předmět.');
+      return;
+    }
+    setMailingRecipientCount(null);
+    setMailingTagSearch('');
+    setMailingShowAllTags(false);
+    setMailingDialogOpen(true);
+    try {
+      const supabase = getSupabaseBrowser();
+      const { data, error } = await supabase.from('tags').select('id, name').order('name');
+      if (error) throw new Error(error.message);
+      setMailingTags((data || []) as { id: string; name: string }[]);
+    } catch (e) {
+      console.error('Mailing tags load error:', e);
+      toast.error('Nepodařilo se načíst tagy pro filtr příjemců.');
+    }
+  };
+
+  /** Uloží draft, vytvoří/aktualizuje kampaň v Postgresu a spočítá příjemce (prepare). */
+  const prepareMailingCampaign = async (): Promise<{ campaignId: string; total: number } | null> => {
+    const snap = selectedRef.current;
+    if (!snap) return null;
+    setMailingPreparing(true);
+    try {
+      const saved = await saveDraft(snap, { quiet: true });
+      if (!saved) return null;
+
+      const createRes = await fetchWithAdminAuth(`${SERVER}/admin/mailing/campaigns`, {
+        method: 'POST',
+        json: true,
+        body: JSON.stringify({
+          id: saved.mailingCampaignId || undefined,
+          name: saved.subject,
+          subjectLine: saved.subject,
+          previewText: saved.previewText,
+          bodyContent: compileEmailBodyForSend(saved.bodyHtml),
+          outerBackground: normalizeHexColor(saved.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG),
+          draftId: saved.id,
+          audienceFilter: mailingAudienceFilter,
+          scheduledAt: saved.scheduledSendAt || undefined,
+        }),
+      });
+      const created = await createRes.json();
+      if (!created.ok) throw new Error(created.error || `HTTP ${createRes.status}`);
+      const campaignId = String(created.campaign?.id || '');
+      if (!campaignId) throw new Error('Server nevrátil id kampaně.');
+      await persistMailingCampaignId(saved, campaignId);
+
+      const prepRes = await fetchWithAdminAuth(`${SERVER}/admin/mailing/campaigns/${campaignId}/prepare`, {
+        method: 'POST',
+        json: true,
+      });
+      const prep = await prepRes.json();
+      if (!prep.ok) throw new Error(prep.error || `HTTP ${prepRes.status}`);
+      setMailingRecipientCount(prep.total);
+      return { campaignId, total: prep.total };
+    } catch (e) {
+      console.error('Mailing prepare error:', e);
+      toast.error(`Příprava kampaně: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    } finally {
+      setMailingPreparing(false);
+    }
+  };
+
+  const confirmMailingSend = async () => {
+    const snap = selectedRef.current;
+    if (!snap?.mailingCampaignId || mailingRecipientCount === null) return;
+    const campaignId = snap.mailingCampaignId;
+    const scheduled = snap.scheduledSendAt && Date.parse(snap.scheduledSendAt) > Date.now();
+    setMailingSending(true);
+    try {
+      if (scheduled) {
+        /* Kampaň už je uložená se scheduled_at — odešle ji cron. */
+        toast.success(`Kampaň naplánována na ${new Date(snap.scheduledSendAt!).toLocaleString('cs-CZ')} pro ${mailingRecipientCount} příjemců.`);
+        setMailingDialogOpen(false);
+        return;
+      }
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/mailing/campaigns/${campaignId}/send`, {
+        method: 'POST',
+        json: true,
+      });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const updated = normalizeDraftForBuilder({ ...snap, status: 'sent' as const, updatedAt: new Date().toISOString() });
+      setSelected(updated);
+      setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+      await saveDraft(updated, { quiet: true });
+      setMailingDialogOpen(false);
+      toast.success(
+        data.remaining > 0
+          ? `Odesílání běží — ${data.sent} odesláno, ${data.remaining} ve frontě (dokončí se automaticky).`
+          : `Kampaň odeslána ${data.sent} příjemcům.`,
+      );
+    } catch (e) {
+      console.error('Mailing send error:', e);
+      toast.error(`Odeslání kampaně: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMailingSending(false);
+    }
+  };
+
+  /** Test e-mail přes vlastní mailing (Resend) — stejná šablona jako ostrá kampaň. */
+  const sendResendTestMail = async () => {
+    const snap = selectedRef.current;
+    if (!snap || !testMailRecipient) return;
+    if (!snap.subject.trim()) {
+      toast.error('Nejdřív vyplňte předmět.');
+      return;
+    }
+    setSendingResendTest(true);
+    try {
+      const saved = await saveDraft(snap, { quiet: true });
+      if (!saved) return;
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/mailing/send-test`, {
+        method: 'POST',
+        json: true,
+        body: JSON.stringify({
+          to: testMailRecipient,
+          subject: saved.subject,
+          previewText: saved.previewText,
+          bodyContent: compileEmailBodyForSend(saved.bodyHtml),
+          outerBackground: normalizeHexColor(saved.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG),
+        }),
+      });
+      const data = await r.json();
+      if (!data.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      toast.success(`Test (Resend) odeslán na ${testMailRecipient}`);
+    } catch (e) {
+      console.error('Resend test error:', e);
+      toast.error(`Test přes Resend: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSendingResendTest(false);
+    }
+  };
+
   const sendTestMail = async () => {
     const snap = selectedRef.current;
     if (!snap || !testMailRecipient) return;
@@ -4093,15 +6184,16 @@ export default function EmailBuilder() {
       const saved = await saveDraft(snap, { quiet: true });
       if (!saved) return;
 
-      const r = await fetch(`${SERVER}/admin/mailchimp/send-test-email`, {
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/mailchimp/send-test-email`, {
         method: 'POST',
-        headers: AUTH_H,
+        json: true,
         body: JSON.stringify({
           to: testMailRecipient,
           subject: saved.subject,
           previewText: saved.previewText,
           headline: saved.headline,
-          bodyContent: saved.bodyHtml,
+          bodyContent: compileEmailBodyForSend(saved.bodyHtml),
+          outerBackground: normalizeHexColor(saved.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG),
           ctaText: saved.ctaText,
           ctaUrl: saved.ctaUrl,
           audience: saved.audience,
@@ -4134,6 +6226,77 @@ export default function EmailBuilder() {
       ),
     [selectedBlock?.id, bodyEditEpoch, selected?.id, selected?.bodyHtml],
   );
+  /** Stav se čte ze stejného dokumentu, na kterém běží mutace — jinak by se stav a akce rozešly. */
+  const selectedGroupState = useMemo<EmailBlockGroupState | null>(() => {
+    const id = selectedBlock?.id;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!id || !doc?.body) return null;
+    const root = getEmailDndRoot(doc);
+    const el = findEmailBlockById(root, id);
+    if (!el || !root.contains(el)) return null;
+    return readEmailBlockGroupState(el, root);
+  }, [selectedBlock?.id, bodyEditEpoch, selected?.id, selected?.bodyHtml]);
+
+  /** Stín z vybrané jednotky; počet sloupců z hostitelského layoutu (i když je vybraná buňka). */
+  const selectedBlockAppearance = useMemo(() => {
+    const id = selectedBlock?.id;
+    const doc = previewIframeRef.current?.contentDocument;
+    const noRadii = { topLeft: 0, topRight: 0, bottomRight: 0, bottomLeft: 0 };
+    if (!id || !doc?.body) {
+      return { hasShadow: false, columns: 1 as EmailBlockColumnCount, cornerRadii: noRadii };
+    }
+    const el = findEmailBlockById(getEmailDndRoot(doc), id);
+    if (!el) return { hasShadow: false, columns: 1 as EmailBlockColumnCount, cornerRadii: noRadii };
+    const columnsHost = getColumnsHostForBlock(el) || el;
+    return {
+      hasShadow: readElementHasShadow(el),
+      columns: readEmailBlockColumns(columnsHost),
+      cornerRadii: readBlockCornerRadii(el),
+    };
+  }, [selectedBlock?.id, bodyEditEpoch, selected?.bodyHtml]);
+  const selectedBlockHasShadow = selectedBlockAppearance.hasShadow;
+  const selectedBlockColumns = selectedBlockAppearance.columns;
+  const selectedBlockCornerRadii = selectedBlockAppearance.cornerRadii;
+
+  const selectedHighlightChrome = useMemo<EmailHighlightChrome | null>(() => {
+    if (selectedBlock?.type !== 'highlight') return null;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!doc?.body) return null;
+    const el = findEmailBlockById(getEmailDndRoot(doc), selectedBlock.id);
+    if (!el) return null;
+    return readHighlightChrome(el);
+  }, [selectedBlock?.id, selectedBlock?.type, bodyEditEpoch, selected?.bodyHtml]);
+
+  const blockPositionOptions = useMemo(() => {
+    const id = selectedBlock?.id;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!id || !doc?.body) return [] as Array<{ id: string; label: string }>;
+    const root = getEmailDndRoot(doc);
+    const selectedEl = findEmailBlockById(root, id);
+    if (!selectedEl) return [];
+    const selectedUnit = resolveReorderableBlock(selectedEl, root);
+    const selectedUnitId = selectedUnit?.getAttribute('data-vb-block-id') || '';
+    const seen = new Set<string>();
+    const options: Array<{ id: string; label: string }> = [];
+
+    for (const raw of root.querySelectorAll('[data-vb-block-id]')) {
+      const el = raw as HTMLElement;
+      const unit = resolveReorderableBlock(el, root);
+      if (!unit || unit.getAttribute('data-vb-block') === 'section') continue;
+      const unitId = unit.getAttribute('data-vb-block-id') || '';
+      if (!unitId || unitId === selectedUnitId || seen.has(unitId)) continue;
+      seen.add(unitId);
+      const type = inferEmailBlockType(unit);
+      const text = (unit.innerText || unit.textContent || '').replace(/\s+/g, ' ').trim();
+      const excerpt = text ? ` — ${text.slice(0, 42)}${text.length > 42 ? '…' : ''}` : '';
+      options.push({
+        id: unitId,
+        label: `${options.length + 1}. ${getEmailBlockLabel(type)}${excerpt}`,
+      });
+    }
+    return options;
+  }, [selectedBlock?.id, bodyEditEpoch, selected?.bodyHtml]);
+
   const BLOCK_LIB_PREVIEW = 6;
   const visibleBlockPresets = blockLibraryExpanded
     ? blockPresetsOrdered
@@ -4177,7 +6340,64 @@ export default function EmailBuilder() {
           }
           const btnClass =
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[#001161]/65 hover:bg-[#7C3AED]/12 hover:text-[#7C3AED] cursor-pointer transition-colors';
+          const pillW = 44;
+          const pillH = 22;
+          const pillLeft = c.left + c.width / 2 - pillW / 2;
+          const pillTop = Math.max(8, c.top - pillH / 2);
+          const dragging = blockPointerDrag?.blockId === bid || !!blockPointerDrag;
           return createPortal(
+            <>
+            {blockPointerDrag && (
+              <div
+                data-email-block-drag-shield
+                aria-hidden
+                className="fixed inset-0 z-[19955] cursor-grabbing touch-none select-none"
+                style={{
+                  background: 'transparent',
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                  touchAction: 'none',
+                }}
+              />
+            )}
+            {/* Bobánek na horní hraně — jediný spolehlivý úchyt pro přesun. */}
+            <div
+              data-email-block-drag-handle
+              className={`pointer-events-auto flex items-center justify-center rounded-full border shadow-md select-none touch-none ${
+                blockPointerDrag
+                  ? 'border-[#7C3AED] bg-[#7C3AED] text-white cursor-grabbing'
+                  : 'border-gray-200 bg-white text-[#001161]/55 hover:border-[#7C3AED] hover:text-[#7C3AED] cursor-grab'
+              }`}
+              style={{
+                position: 'fixed',
+                zIndex: 19960,
+                left: pillLeft,
+                top: pillTop,
+                width: pillW,
+                height: pillH,
+              }}
+              title="Chytni a přetáhni blok na jiné místo"
+              onMouseEnter={keepChromePointerAlive}
+              onMouseLeave={releaseChromePointer}
+              onPointerDown={(ev) => beginBlockPointerDrag(bid, ev)}
+            >
+              <GripVertical className="h-3.5 w-3.5" strokeWidth={2.4} aria-hidden />
+            </div>
+            {blockPointerDrag?.indicator && (
+              <div
+                aria-hidden
+                className="pointer-events-none fixed z-[19970]"
+                style={{
+                  left: blockPointerDrag.indicator.left,
+                  top: blockPointerDrag.indicator.top - 1,
+                  width: blockPointerDrag.indicator.width,
+                  height: 3,
+                  borderRadius: 2,
+                  background: '#7C3AED',
+                  boxShadow: '0 0 0 2px rgba(124,58,237,0.25)',
+                }}
+              />
+            )}
             <div
               data-email-block-chrome
               className="pointer-events-auto flex flex-row items-center"
@@ -4187,17 +6407,36 @@ export default function EmailBuilder() {
                 left: chromeOnRight ? c.left + c.width : left,
                 top: vertTop,
                 height: vertH,
+                opacity: dragging && blockPointerDrag ? 0.35 : 1,
               }}
-              onMouseEnter={cancelInsertLineHide}
-              onMouseLeave={scheduleInsertLineHide}
+              onMouseEnter={keepChromePointerAlive}
+              onMouseLeave={releaseChromePointer}
             >
               {chromeOnRight && (
-                <div className="shrink-0" style={{ width: bridgeW, height: '100%' }} aria-hidden />
+                <div className="shrink-0" style={{ width: Math.max(bridgeW, 12), height: '100%' }} aria-hidden />
               )}
               <div
                 className="flex shrink-0 flex-col gap-0.5 rounded-xl border border-gray-200 bg-white p-1 shadow-lg"
                 style={{ width: barW, alignSelf: 'center' }}
               >
+              <button
+                type="button"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full cursor-pointer transition-all ${
+                  aiEditBlockId === bid
+                    ? 'bg-[#FFDD00] text-[#001161] ring-2 ring-[#001161]/25 shadow-sm'
+                    : 'bg-[#FFDD00] text-[#001161] hover:brightness-95 hover:shadow-sm'
+                }`}
+                title="Upravit tento blok přes AI agenta"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cancelInsertLineHide();
+                  startAiEditBlock(bid);
+                }}
+              >
+                <span className="text-[9px] font-black leading-none tracking-tight" style={F}>
+                  AI
+                </span>
+              </button>
               <div
                 className={`relative ${blockChromeAddMenuOpen ? 'z-[1]' : ''}`}
                 data-email-chrome-add-menu
@@ -4358,29 +6597,12 @@ export default function EmailBuilder() {
               >
                 <Trash2 className="h-4 w-4" strokeWidth={2} />
               </button>
-              <div
-                draggable
-                role="button"
-                tabIndex={0}
-                className={`${btnClass} cursor-grab active:cursor-grabbing border-t border-gray-100 mt-0.5 pt-0.5`}
-                title="Přesunout blok — táhni do náhledu na požadované místo"
-                onDragStart={(ev) => {
-                  vbEmailActiveBlockMoveId = bid;
-                  ev.dataTransfer?.setData(VB_EMAIL_BLOCK_MOVE_DRAG_TYPE, bid);
-                  ev.dataTransfer?.setData('text/plain', `vb-move-block:${bid}`);
-                  if (ev.dataTransfer) ev.dataTransfer.effectAllowed = 'move';
-                }}
-                onDragEnd={() => {
-                  vbEmailActiveBlockMoveId = null;
-                }}
-              >
-                <GripVertical className="h-4 w-4" strokeWidth={2} aria-hidden />
-              </div>
               </div>
               {!chromeOnRight && (
-                <div className="shrink-0" style={{ width: bridgeW, height: '100%' }} aria-hidden />
+                <div className="shrink-0" style={{ width: Math.max(bridgeW, 12), height: '100%' }} aria-hidden />
               )}
-            </div>,
+            </div>
+            </>,
             document.body,
           );
         })()
@@ -4411,6 +6633,258 @@ export default function EmailBuilder() {
       )}
 
       {blockChromePortal}
+
+      {selected && mailingDialogOpen && (
+        <div
+          className="fixed inset-0 z-[21000] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onClick={() => !mailingSending && setMailingDialogOpen(false)}
+        >
+          <div
+            className="w-full max-w-[640px] rounded-2xl bg-white shadow-2xl border border-gray-100 overflow-hidden"
+            style={F}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-5 pt-4 pb-3 border-b border-gray-100">
+              <h2 className="text-[15px] font-bold text-[#001161]">Odeslat kampaň — vlastní mailing</h2>
+              <p className="text-[11px] text-[#001161]/45 mt-1 leading-snug">
+                Jen status „přihlášen“. Rychlé volby + zdroj / předmět / webinář / tagy (vrstvy se sčítají — AND).
+              </p>
+            </div>
+            <div className="px-5 py-4 space-y-4 max-h-[62vh] overflow-y-auto">
+              <div>
+                <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                  Rychlé volby
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {([
+                    ['all', 'Všichni přihlášení'],
+                    ['eng-hot', 'Aktivní (30 dní)'],
+                    ['eng-warm', 'Teplí (90 dní)'],
+                    ['webinars', 'Byli na webináři'],
+                    ['first-grade', '1. stupeň'],
+                    ['newsletter', 'Newsletter'],
+                  ] as const).map(([kind, label]) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => applyMailingPreset(kind)}
+                      className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-[#7C3AED]/10 text-[#7C3AED] hover:bg-[#7C3AED] hover:text-white transition-colors cursor-pointer"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                  Zdroj kontaktu
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {MAILING_SOURCE_OPTIONS.map((o) => (
+                    <button
+                      key={o.value}
+                      type="button"
+                      onClick={() => {
+                        setMailingSources((prev) => toggleId(prev, o.value));
+                        bumpMailingFilter();
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                        mailingSources.includes(o.value)
+                          ? 'bg-[#001161] text-white'
+                          : 'bg-gray-100 text-[#001161]/60 hover:bg-[#001161]/10'
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                  Zájem o předmět (heuristika)
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {MAILING_SUBJECT_OPTIONS.map((o) => (
+                    <button
+                      key={o.slug}
+                      type="button"
+                      onClick={() => {
+                        setMailingSubjects((prev) => toggleId(prev, o.slug));
+                        bumpMailingFilter();
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                        mailingSubjects.includes(o.slug)
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-gray-100 text-[#001161]/60 hover:bg-emerald-50 hover:text-emerald-700'
+                      }`}
+                    >
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {mailingWebinarTags.length > 0 && (
+                <div>
+                  <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                    Webináře (tag) — OR
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                    {mailingWebinarTags.map((t) => (
+                      <button
+                        key={`web-${t.id}`}
+                        type="button"
+                        onClick={() => {
+                          setMailingIncludeTagIds((prev) => toggleId(prev, t.id));
+                          bumpMailingFilter();
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                          mailingIncludeTagIds.includes(t.id)
+                            ? 'bg-[#7C3AED] text-white'
+                            : 'bg-gray-100 text-[#001161]/60 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED]'
+                        }`}
+                      >
+                        {t.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide">
+                    Další tagy (OR)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setMailingShowAllTags((v) => !v)}
+                    className="text-[10px] font-bold text-[#7C3AED] hover:underline cursor-pointer"
+                  >
+                    {mailingShowAllTags ? 'Skrýt' : 'Zobrazit / hledat'}
+                  </button>
+                </div>
+                {mailingShowAllTags && (
+                  <>
+                    <input
+                      type="search"
+                      value={mailingTagSearch}
+                      onChange={(e) => setMailingTagSearch(e.target.value)}
+                      placeholder="Hledat tag…"
+                      className="mb-2 w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-[#7C3AED]/45"
+                    />
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                      {mailingTags.length === 0 && (
+                        <span className="text-[11px] text-[#001161]/40">Načítám tagy…</span>
+                      )}
+                      {mailingOtherTags.map((t) => (
+                        <button
+                          key={`inc-${t.id}`}
+                          type="button"
+                          onClick={() => {
+                            setMailingIncludeTagIds((prev) => toggleId(prev, t.id));
+                            bumpMailingFilter();
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                            mailingIncludeTagIds.includes(t.id)
+                              ? 'bg-[#7C3AED] text-white'
+                              : 'bg-gray-100 text-[#001161]/60 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED]'
+                          }`}
+                        >
+                          {t.name}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {mailingIncludeTagIds.length > 0 && (
+                  <p className="mt-1.5 text-[11px] text-[#001161]/50">
+                    Vybrané: {mailingIncludeTagIds.map((id) => mailingTagNameById.get(id) || id).join(', ')}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                  Vyloučit tagy
+                </label>
+                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                  {(mailingShowAllTags ? mailingTags : mailingTags.filter((t) => mailingExcludeTagIds.includes(t.id) || isWebinarTagName(t.name))).slice(0, mailingShowAllTags ? 999 : 24).map((t) => (
+                    <button
+                      key={`exc-${t.id}`}
+                      type="button"
+                      onClick={() => {
+                        setMailingExcludeTagIds((prev) => toggleId(prev, t.id));
+                        bumpMailingFilter();
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                        mailingExcludeTagIds.includes(t.id)
+                          ? 'bg-[#F06632] text-white'
+                          : 'bg-gray-100 text-[#001161]/60 hover:bg-[#F06632]/15 hover:text-[#F06632]'
+                      }`}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-[#001161]/45 leading-snug rounded-xl bg-[#fafbfd] border border-gray-100 px-3 py-2">
+                Filtr: {summarizeAudienceFilter(mailingAudienceFilter, mailingTagNameById)}
+              </p>
+
+              {selected.scheduledSendAt && Date.parse(selected.scheduledSendAt) > Date.now() && (
+                <p className="text-[11px] text-[#001161]/60 bg-[#7C3AED]/6 rounded-xl px-3 py-2 leading-relaxed">
+                  Kampaň se naplánuje na {new Date(selected.scheduledSendAt).toLocaleString('cs-CZ')} — odešle ji automaticky cron.
+                </p>
+              )}
+              <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 flex items-center justify-between gap-2">
+                <span className="text-[12px] text-[#001161]/60">
+                  {mailingPreparing
+                    ? 'Počítám příjemce…'
+                    : mailingRecipientCount === null
+                      ? 'Počet příjemců zatím nespočítán.'
+                      : `Příjemců podle filtru: ${mailingRecipientCount}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void prepareMailingCampaign()}
+                  disabled={mailingPreparing || mailingSending}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold bg-white border border-gray-200 text-[#7C3AED] hover:border-[#7C3AED]/35 disabled:opacity-45 cursor-pointer"
+                >
+                  {mailingPreparing ? <Loader2 className="w-3.5 h-3.5 animate-spin inline" aria-hidden /> : 'Spočítat'}
+                </button>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-end gap-2 bg-[#fafbfd]">
+              <button
+                type="button"
+                onClick={() => setMailingDialogOpen(false)}
+                disabled={mailingSending}
+                className="px-4 py-2 rounded-xl text-[12px] font-bold text-[#001161]/55 hover:bg-gray-100 cursor-pointer disabled:opacity-45"
+              >
+                Zrušit
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmMailingSend()}
+                disabled={mailingSending || mailingPreparing || mailingRecipientCount === null || mailingRecipientCount === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl text-[12px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-45 disabled:pointer-events-none cursor-pointer"
+              >
+                {mailingSending ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Send className="w-4 h-4" aria-hidden />}
+                {selected.scheduledSendAt && Date.parse(selected.scheduledSendAt) > Date.now()
+                  ? 'Naplánovat'
+                  : mailingRecipientCount !== null
+                    ? `Odeslat ${mailingRecipientCount} příjemcům`
+                    : 'Odeslat'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {selected && ctaInsertModalOpen && (
         <div
@@ -4518,7 +6992,7 @@ export default function EmailBuilder() {
       )}
 
       <div
-        className={`${sidebarOpen ? 'w-[280px]' : 'w-0'} transition-all duration-200 border-r border-gray-100 bg-[#fafbfd] flex flex-col min-h-0 overflow-hidden shrink-0`}
+        className={`${sidebarOpen && !editorWorkspaceOpen ? 'w-[280px]' : 'w-0'} transition-all duration-200 border-r border-gray-100 bg-[#fafbfd] flex flex-col min-h-0 overflow-hidden shrink-0`}
       >
         <div className="p-3 border-b border-gray-100 flex items-center gap-2">
           <button
@@ -4585,7 +7059,11 @@ export default function EmailBuilder() {
         </div>
       </div>
 
-      <div className="w-[360px] border-r border-gray-100 flex flex-col min-h-0 overflow-hidden bg-white shrink-0">
+      <div
+        className={`${
+          editorWorkspaceOpen ? 'w-[300px]' : 'w-[360px]'
+        } border-r border-gray-100 flex flex-col min-h-0 overflow-hidden bg-white shrink-0 transition-[width] duration-200`}
+      >
         <div className="px-3 py-2.5 border-b border-gray-100 flex flex-col gap-1.5 shrink-0 min-w-0">
           <div className="flex items-center min-w-0">
             <div className="flex flex-wrap items-center gap-1 rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd]">
@@ -4791,6 +7269,27 @@ export default function EmailBuilder() {
             </div>
 
             <div className="shrink-0 p-3 border-t border-gray-100 bg-white">
+              {aiEditBlockId && (
+                <div className="mb-2 px-2 py-1.5 rounded-lg bg-[#FFDD00]/25 border border-[#FFDD00]/70 flex items-center gap-2">
+                  <span
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[#FFDD00] text-[7px] font-black text-[#001161]"
+                    style={F}
+                  >
+                    AI
+                  </span>
+                  <span style={F} className="text-[9px] text-[#001161]/90 leading-snug flex-1">
+                    Úprava zvoleného bloku — AI změní jen tento blok v náhledu, zbytek mailu nechá.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={clearAiInsertIntent}
+                    className="p-0.5 rounded hover:bg-[#FFDD00]/40 cursor-pointer"
+                    title="Zrušit úpravu bloku"
+                  >
+                    <X className="w-3 h-3 text-[#001161]/50" />
+                  </button>
+                </div>
+              )}
               {aiInsertAfterAnchorId && (
                 <div className="mb-2 px-2 py-1.5 rounded-lg bg-amber-50 border border-amber-100/80 flex items-center gap-2">
                   <Sparkles className="w-3 h-3 text-amber-700 shrink-0" />
@@ -4823,7 +7322,7 @@ export default function EmailBuilder() {
                   </button>
                 </div>
               )}
-              {(capturedSelection?.trim() || selectedCanvasText.trim()) && !aiInsertAfterAnchorId && !aiInsertBeforeBlockId && (
+              {(capturedSelection?.trim() || selectedCanvasText.trim()) && !aiInsertAfterAnchorId && !aiInsertBeforeBlockId && !aiEditBlockId && (
                 <div className="mb-2 space-y-2">
                   <div className="px-2 py-1.5 rounded-lg bg-[#7C3AED]/5 border border-[#7C3AED]/10 flex items-center gap-2">
                     <TextCursor className="w-3 h-3 text-[#7C3AED] shrink-0" />
@@ -4889,11 +7388,13 @@ export default function EmailBuilder() {
                     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
                   }}
                   placeholder={
-                    aiInsertBeforeBlockId
-                      ? 'Popište, co se má vložit nad zvolený blok v náhledu…'
-                      : aiInsertAfterAnchorId
-                        ? 'Popište, co se má vložit za zvolené místo v náhledu…'
-                        : 'Označte text v náhledu vpravo, napište úpravu…'
+                    aiEditBlockId
+                      ? 'Popište, jak upravit zvolený blok…'
+                      : aiInsertBeforeBlockId
+                        ? 'Popište, co se má vložit nad zvolený blok v náhledu…'
+                        : aiInsertAfterAnchorId
+                          ? 'Popište, co se má vložit za zvolené místo v náhledu…'
+                          : 'Označte text v náhledu vpravo, napište úpravu…'
                   }
                   rows={2}
                   className="flex-1 bg-[#f7f8fc] border border-gray-200 rounded-lg px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:border-[#7C3AED]/30 focus:ring-2 focus:ring-[#7C3AED]/10 resize-none"
@@ -4992,18 +7493,29 @@ export default function EmailBuilder() {
 
                 <button
                   type="button"
-                  onClick={() => void pushToMailchimp()}
-                  disabled={pushing || !selected.subject.trim()}
+                  onClick={() => void openMailingSendDialog()}
+                  disabled={mailingSending || !selected.subject.trim()}
                   className="w-full flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-[12px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
                   style={F}
                 >
+                  {mailingSending ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Send className="w-4 h-4" aria-hidden />}
+                  Odeslat kampaň
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void pushToMailchimp()}
+                  disabled={pushing || !selected.subject.trim()}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#001161]/60 hover:border-[#7C3AED]/35 hover:text-[#7C3AED] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                  style={F}
+                >
                   {pushing ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Send className="w-4 h-4" aria-hidden />}
-                  Poslat do Mailchimpu
+                  Poslat do Mailchimpu (legacy)
                 </button>
 
                 <div className="mt-4 rounded-xl border border-gray-200 bg-[#fafbfd] p-4 space-y-3">
                   <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#7C3AED]/80 mb-0">
-                    Testovací odeslání (Mailchimp)
+                    Testovací odeslání
                   </label>
                   <select
                     value={testMailRecipient}
@@ -5025,17 +7537,31 @@ export default function EmailBuilder() {
                   </select>
                   <button
                     type="button"
-                    onClick={() => void sendTestMail()}
-                    disabled={sendingTestMail || pushing || !selected.subject.trim()}
+                    onClick={() => void sendResendTestMail()}
+                    disabled={sendingResendTest || sendingTestMail || pushing || !selected.subject.trim()}
                     className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#7C3AED] hover:border-[#7C3AED]/35 hover:bg-[#7C3AED]/5 disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
                     style={F}
                   >
-                    {sendingTestMail ? (
+                    {sendingResendTest ? (
                       <Loader2 className="w-4 h-4 animate-spin text-[#7C3AED]" aria-hidden />
                     ) : (
                       <Mail className="w-4 h-4 text-[#7C3AED]" aria-hidden />
                     )}
-                    Poslat test mail
+                    Poslat test (Resend)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void sendTestMail()}
+                    disabled={sendingTestMail || sendingResendTest || pushing || !selected.subject.trim()}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#001161]/55 hover:border-[#7C3AED]/35 hover:text-[#7C3AED] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                    style={F}
+                  >
+                    {sendingTestMail ? (
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Mail className="w-4 h-4" aria-hidden />
+                    )}
+                    Poslat test (Mailchimp, legacy)
                   </button>
                 </div>
               </div>
@@ -5054,50 +7580,18 @@ export default function EmailBuilder() {
                   </p>
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">
-                      Plocha za sloupcem
-                    </label>
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="color"
-                        aria-label="Barva pozadí okolo mailu"
-                        className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                        value={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
-                        onChange={e => updateField('previewOuterBg', e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                        value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
-                        onChange={e => updateField('previewOuterBg', e.target.value)}
-                        placeholder="#f3f4f6"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">
-                      Sloupec / karty
-                    </label>
-                    <div className="flex gap-2 items-center">
-                      <input
-                        type="color"
-                        aria-label="Barva sloupce a výplně karet"
-                        className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                        value={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
-                        onChange={e => updateField('previewColumnBg', e.target.value)}
-                      />
-                      <input
-                        type="text"
-                        spellCheck={false}
-                        className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                        value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
-                        onChange={e => updateField('previewColumnBg', e.target.value)}
-                        placeholder="#ffffff"
-                      />
-                    </div>
-                  </div>
+                  <EmailPreviewBgColorField
+                    label="Plocha za sloupcem"
+                    value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
+                    fallback={DEFAULT_PREVIEW_OUTER_BG}
+                    onChange={color => updateField('previewOuterBg', color)}
+                  />
+                  <EmailPreviewBgColorField
+                    label="Sloupec / karty"
+                    value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
+                    fallback={DEFAULT_PREVIEW_COLUMN_BG}
+                    onChange={color => updateField('previewColumnBg', color)}
+                  />
                 </div>
                 <button
                   type="button"
@@ -5221,27 +7715,58 @@ export default function EmailBuilder() {
                     </button>
                   </div>
 
-                  {selectedSectionFill != null && (
-                    <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 min-w-0">
+                  <div>
+                    <label
+                      style={F}
+                      className="mb-1 block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35"
+                    >
+                      Přesunout na pozici
+                    </label>
+                    <select
+                      key={`move-position:${selectedBlock.id}:${bodyEditEpoch}`}
+                      defaultValue=""
+                      disabled={blockPositionOptions.length === 0}
+                      onChange={(e) => {
+                        const targetId = e.target.value;
+                        if (targetId) moveSelectedBlockBefore(targetId);
+                      }}
+                      className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-[11px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15 disabled:cursor-not-allowed disabled:opacity-45"
+                      style={F}
+                    >
+                      <option value="">
+                        {blockPositionOptions.length > 0
+                          ? 'Vyber blok, nad který přesunout…'
+                          : 'Žádný další blok'}
+                      </option>
+                      {blockPositionOptions.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {selectedGroupState && (
+                    <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 min-w-0 space-y-2.5">
                       <div className="flex flex-nowrap items-center gap-2 min-w-0">
                         <p style={F} className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/45 shrink-0">
-                          Skupina (náhled)
+                          Skupina
                         </p>
                         <p
                           style={F}
                           className="text-[10px] leading-snug text-[#001161]/45 min-w-0 flex-1 truncate"
-                          title="Platí pro celou skupinu okolo vybraného bloku. Karta = bílý panel, bez pozadí = obsah přímo na barvě sloupce."
+                          title="Barva, stín a ohraničení platí pro celou skupinu — ne pro jednotlivé bloky uvnitř."
                         >
-                          Platí pro celou skupinu okolo vybraného bloku. Karta = bílý panel, bez pozadí = obsah přímo na barvě sloupce.
+                          Chrome (barva / stín / ohraničení) patří celé skupině.
                         </p>
                         <div className="flex items-center gap-1.5 shrink-0">
                           <button
                             type="button"
                             onClick={() => updateSelectedSectionFill('card')}
-                            title="Karta — bílý panel ve skupině"
+                            title="Karta — skupina má vlastní pozadí"
                             aria-label="Skupina jako karta"
                             className={`rounded-xl border px-2.5 py-2 cursor-pointer transition-colors flex items-center justify-center ${
-                              selectedSectionFill === 'card'
+                              (selectedGroupState.chrome?.fill ?? selectedGroupState.fill ?? selectedSectionFill) === 'card'
                                 ? 'border-[#7C3AED] bg-[#7C3AED]/10 text-[#001161]'
                                 : 'border-gray-200 bg-white text-[#001161] hover:bg-gray-50'
                             }`}
@@ -5254,7 +7779,7 @@ export default function EmailBuilder() {
                             title="Bez pozadí — obsah přímo na barvě sloupce"
                             aria-label="Skupina bez pozadí karty"
                             className={`rounded-xl border px-2.5 py-2 cursor-pointer transition-colors flex items-center justify-center ${
-                              selectedSectionFill === 'plain'
+                              (selectedGroupState.chrome?.fill ?? selectedGroupState.fill ?? selectedSectionFill) === 'plain'
                                 ? 'border-[#7C3AED] bg-[#7C3AED]/10 text-[#001161]'
                                 : 'border-gray-200 bg-white text-[#001161] hover:bg-gray-50'
                             }`}
@@ -5262,6 +7787,138 @@ export default function EmailBuilder() {
                             <SquareDashed className="h-4 w-4 shrink-0" strokeWidth={2.25} />
                           </button>
                         </div>
+                      </div>
+
+                      {(selectedGroupState.chrome?.fill ?? selectedGroupState.fill ?? selectedSectionFill) === 'card' &&
+                        selectedGroupState.chrome && (
+                        <div className="space-y-2.5 pt-1 border-t border-gray-200/80">
+                          <div>
+                            <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                              Pozadí skupiny
+                            </label>
+                            <VividbooksColorButton
+                              key={`sec-bg:${selectedBlock?.id}:${selectedGroupState.chrome.background || ''}`}
+                              title="Barva pozadí celé skupiny"
+                              palette="pastel"
+                              onSelect={(color) => updateSelectedSectionChrome({ background: color === 'transparent' ? '' : color })}
+                              buttonClassName="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[11px] font-medium text-[#001161]/65 hover:border-[#5139ED]/35 hover:bg-gray-50"
+                            >
+                              <span
+                                className="h-5 w-5 shrink-0 rounded-md border border-black/10 shadow-sm"
+                                style={{ backgroundColor: selectedGroupState.chrome.background || '#ffffff' }}
+                              />
+                              Vybrat barvu
+                              <ChevronDown className="ml-auto h-3.5 w-3.5 text-[#001161]/35" />
+                            </VividbooksColorButton>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                              Ohraničení
+                            </label>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={selectedGroupState.chrome.border}
+                              onClick={() =>
+                                updateSelectedSectionChrome({ border: !selectedGroupState.chrome!.border })
+                              }
+                              title={selectedGroupState.chrome.border ? 'Vypnout ohraničení' : 'Zapnout ohraničení'}
+                              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                                selectedGroupState.chrome.border ? 'bg-[#7C3AED]' : 'bg-gray-300'
+                              }`}
+                            >
+                              <span
+                                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                                  selectedGroupState.chrome.border ? 'left-[22px]' : 'left-0.5'
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-2">
+                            <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                              Stín
+                            </label>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={selectedGroupState.chrome.shadow}
+                              onClick={() =>
+                                updateSelectedSectionChrome({ shadow: !selectedGroupState.chrome!.shadow })
+                              }
+                              title={selectedGroupState.chrome.shadow ? 'Vypnout stín' : 'Zapnout stín'}
+                              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                                selectedGroupState.chrome.shadow ? 'bg-[#7C3AED]' : 'bg-gray-300'
+                              }`}
+                            >
+                              <span
+                                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                                  selectedGroupState.chrome.shadow ? 'left-[22px]' : 'left-0.5'
+                                }`}
+                              />
+                            </button>
+                          </div>
+
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                                Zakulacení
+                              </label>
+                              <span style={F} className="text-[11px] tabular-nums text-[#001161]/55">
+                                {selectedGroupState.chrome.radius} px
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={32}
+                              step={1}
+                              value={selectedGroupState.chrome.radius}
+                              onChange={(e) =>
+                                updateSelectedSectionChrome({
+                                  radius: Number(e.target.value) || 0,
+                                })
+                              }
+                              className="w-full accent-[#7C3AED]"
+                              aria-label="Zakulacení rohů skupiny"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="pt-2 border-t border-gray-200/80 space-y-1.5">
+                          <p style={F} className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/45">
+                            Výběr a skupina
+                          </p>
+                          <p style={F} className="text-[10px] leading-snug text-[#001161]/45">
+                            {selectedBlockIds.length >= 2
+                              ? `Vybráno ${selectedBlockIds.length} bloků — sloučením dostanou společný chrome.`
+                              : 'Táhni myší přes náhled (mimo text) = laso. Shift+klik přidá blok. Pak Sloučit do skupiny.'}
+                          </p>
+                          <button
+                            type="button"
+                            disabled={selectedBlockIds.length < 2}
+                            onClick={groupSelectedBlocksIntoSection}
+                            title="Sloučit vybrané bloky do jedné skupiny"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-2 py-2 text-[11px] font-bold text-[#001161] hover:bg-gray-50 cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-35 disabled:pointer-events-none"
+                            style={F}
+                          >
+                            <SquareStack className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} />
+                            Sloučit do skupiny
+                            {selectedBlockIds.length >= 2 ? ` (${selectedBlockIds.length})` : ''}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!selectedGroupState.canIsolate}
+                            onClick={isolateSelectedBlockGroup}
+                            title="Vyjmout blok ze skupiny — dostane vlastní kartu"
+                            className="w-full rounded-xl border border-gray-200 bg-white px-2 py-2 text-[11px] font-bold text-[#001161] hover:bg-gray-50 cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-35 disabled:pointer-events-none"
+                            style={F}
+                          >
+                            <Unlink className="h-3.5 w-3.5 shrink-0" strokeWidth={2.25} />
+                            Vyjmout ze skupiny
+                          </button>
                       </div>
                     </div>
                   )}
@@ -5296,35 +7953,130 @@ export default function EmailBuilder() {
                     />
                   )}
 
+                  {selectedBlock.type === 'highlight' && selectedHighlightChrome && (
+                    <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 space-y-2.5">
+                      <p style={F} className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/45">
+                        Zvýrazněný box
+                      </p>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                          Barva boxu
+                        </label>
+                        <VividbooksColorButton
+                          key={`hl-bg:${selectedBlock.id}:${selectedHighlightChrome.background}`}
+                          title="Barva boxu — ovlivní i ohraničení"
+                          palette="pastelSolid"
+                          onSelect={(color) => {
+                            if (color === 'transparent') return;
+                            updateSelectedHighlightChrome({ background: color });
+                          }}
+                          buttonClassName="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[11px] font-medium text-[#001161]/65 hover:border-[#5139ED]/35 hover:bg-gray-50"
+                        >
+                          <span
+                            className="h-5 w-5 shrink-0 rounded-md border border-black/10 shadow-sm"
+                            style={{ backgroundColor: selectedHighlightChrome.background }}
+                          />
+                          Vybrat barvu
+                          <ChevronDown className="ml-auto h-3.5 w-3.5 text-[#001161]/35" />
+                        </VividbooksColorButton>
+                        <p style={F} className="mt-1 text-[10px] leading-snug text-[#001161]/40">
+                          Barva nastaví výplň i modré/barevné ohraničení. Sám ve skupině jde přes celou šířku; mezery po stranách jen když jsou ve skupině další bloky.
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                          Ohraničení
+                        </label>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={selectedHighlightChrome.border}
+                          onClick={() =>
+                            updateSelectedHighlightChrome({ border: !selectedHighlightChrome.border })
+                          }
+                          title={selectedHighlightChrome.border ? 'Vypnout ohraničení' : 'Zapnout ohraničení'}
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                            selectedHighlightChrome.border ? 'bg-[#7C3AED]' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                              selectedHighlightChrome.border ? 'left-[22px]' : 'left-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                          Stín
+                        </label>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={selectedHighlightChrome.shadow}
+                          onClick={() =>
+                            updateSelectedHighlightChrome({ shadow: !selectedHighlightChrome.shadow })
+                          }
+                          title={selectedHighlightChrome.shadow ? 'Vypnout stín' : 'Zapnout stín'}
+                          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors cursor-pointer ${
+                            selectedHighlightChrome.shadow ? 'bg-[#7C3AED]' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                              selectedHighlightChrome.shadow ? 'left-[22px]' : 'left-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                            Zakulacení
+                          </label>
+                          <span style={F} className="text-[11px] tabular-nums text-[#001161]/55">
+                            {selectedHighlightChrome.radius} px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={32}
+                          step={1}
+                          value={selectedHighlightChrome.radius}
+                          onChange={(e) =>
+                            updateSelectedHighlightChrome({
+                              radius: Number(e.target.value) || 0,
+                            })
+                          }
+                          className="w-full accent-[#7C3AED]"
+                          aria-label="Zakulacení rohů boxu"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   {selectedBlock.type !== 'section' &&
                     selectedBlock.type !== 'product-collage' &&
                     selectedBlock.type !== 'webinar' && (
                     <>
-                      <div>
-                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Background</label>
-                        <input
-                          type="color"
-                          defaultValue={selectedBlock.background && selectedBlock.background.startsWith('#') ? selectedBlock.background : '#ffffff'}
-                          onChange={e => updateSelectedBlockStyle('background-color', e.target.value)}
-                          className="h-10 w-full rounded-lg border border-gray-200 bg-white cursor-pointer"
-                        />
-                      </div>
-
-                      <div>
-                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Padding</label>
-                        <input
-                          type="text"
-                          defaultValue={selectedBlock.padding}
-                          onBlur={e => updateSelectedBlockStyle('padding', e.target.value)}
-                          placeholder="např. 18px 0"
-                          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
-                          style={F}
-                        />
-                      </div>
+                      <EmailBlockAppearancePanel
+                        blockId={selectedBlock.id}
+                        padding={selectedBlock.padding}
+                        hasShadow={selectedBlockHasShadow}
+                        columns={selectedBlockColumns}
+                        cornerRadii={selectedBlockCornerRadii}
+                        onPreviewStyle={previewBlockStyleLive}
+                        onCommitStyle={updateSelectedBlockStyle}
+                        onMarkHistory={beginPreviewStyleHistory}
+                        onColumnsChange={setSelectedBlockColumns}
+                        hideChrome
+                      />
 
                       <div>
                         <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">Zarovnání</label>
                         <select
+                          key={`align:${selectedBlock.id}:${selectedBlock.textAlign || ''}`}
                           defaultValue={selectedBlock.textAlign || ''}
                           onChange={e => updateSelectedBlockStyle('text-align', e.target.value)}
                           className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] text-[#001161] bg-white focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/15"
@@ -5381,7 +8133,7 @@ export default function EmailBuilder() {
                           className="rounded-xl border border-gray-200 px-3 py-2 text-[11px] font-bold text-[#001161] hover:bg-gray-50 cursor-pointer"
                           style={F}
                         >
-                          Upravit obrázek
+                          Nahradit obrázek
                         </button>
                         <button
                           type="button"
@@ -5395,6 +8147,21 @@ export default function EmailBuilder() {
                           Nahradit koláží
                         </button>
                       </div>
+                      <EmailImageSizeSlider
+                        key={`size-${selectedBlock.id}-${selectedBlock.imageSrc}`}
+                        blockId={selectedBlock.id}
+                        widthPct={selectedBlock.imageWidthPct}
+                        onPreview={(pct) => previewSelectedImageWidthLive(pct)}
+                        onMarkHistory={beginPreviewStyleHistory}
+                        onCommit={(pct) => commitSelectedImageWidth(pct)}
+                      />
+                      <EmailImageCropPanel
+                        key={selectedBlock.imageSrc}
+                        src={selectedBlock.imageSrc}
+                        onApply={(newUrl) => {
+                          updateSelectedBlockImage(newUrl);
+                        }}
+                      />
                     </>
                   )}
                   {selectedBlock.type === 'image' && (
@@ -5435,17 +8202,38 @@ export default function EmailBuilder() {
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <div className="shrink-0 border-b border-gray-100 bg-white flex flex-col">
           <div className="h-12 flex items-center px-4 gap-2">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(v => !v)}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition-all cursor-pointer"
-              title={sidebarOpen ? 'Skrýt sidebar' : 'Zobrazit sidebar'}
-            >
-              {sidebarOpen ? <PanelLeftClose className="w-4 h-4 text-[#001161]/40" /> : <PanelLeftOpen className="w-4 h-4 text-[#001161]/40" />}
-            </button>
+            {editorWorkspaceOpen ? (
+              <button
+                type="button"
+                onClick={exitEditorWorkspace}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-[11px] font-bold text-[#001161] hover:bg-gray-50 transition-all cursor-pointer shrink-0"
+                style={F}
+                title="Zpět na seznam emailů"
+              >
+                <ArrowLeft className="w-3.5 h-3.5 shrink-0" strokeWidth={2.25} />
+                Emaily
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(v => !v)}
+                className="p-1.5 rounded-lg hover:bg-gray-100 transition-all cursor-pointer"
+                title={sidebarOpen ? 'Skrýt sidebar' : 'Zobrazit sidebar'}
+              >
+                {sidebarOpen ? <PanelLeftClose className="w-4 h-4 text-[#001161]/40" /> : <PanelLeftOpen className="w-4 h-4 text-[#001161]/40" />}
+              </button>
+            )}
 
             {selected && (
               <>
+                <div className="min-w-0 max-w-[220px] shrink-0 hidden sm:block">
+                  <p style={F} className="text-[12px] font-bold text-[#001161] truncate leading-tight">
+                    {selected.subject || 'Bez předmětu'}
+                  </p>
+                  <p style={F} className="text-[10px] text-[#001161]/40 truncate leading-tight">
+                    Editor · 600px
+                  </p>
+                </div>
                 <div
                   className="flex items-center gap-0.5 rounded-lg border border-gray-200 p-0.5 bg-[#fafbfd] shrink-0"
                   role="group"
@@ -5559,6 +8347,7 @@ export default function EmailBuilder() {
               <EmailRichTextToolbar
                 embeddedInHeader
                 iframeRef={previewIframeRef}
+                selectedBlockId={selectedBlock?.id ?? null}
                 refreshEpoch={richToolbarEpoch}
                 bumpToolbar={bumpRichToolbar}
               />
@@ -5593,18 +8382,11 @@ export default function EmailBuilder() {
             ) : (
               <div
                 data-email-preview-root
-                className="flex flex-col w-full min-w-0 min-h-full p-3 md:p-5"
+                className="flex flex-col w-full min-w-0 min-h-full"
               >
-                <div className="w-[600px] max-w-full mx-auto flex flex-col flex-1 min-h-0">
-                  <div
-                    className="w-full overflow-hidden flex flex-col flex-1 min-h-0"
-                    style={{
-                      backgroundColor: 'transparent',
-                    }}
-                  >
                     {showInboxChrome && (
                       <div
-                        className="px-5 py-4 border-b border-gray-100 bg-white rounded-t-xl shadow-[0_2px_12px_rgba(0,0,0,0.06)]"
+                        className="w-[600px] max-w-full mx-auto mt-3 md:mt-5 px-5 py-4 border-b border-gray-100 bg-white rounded-t-xl shadow-[0_2px_12px_rgba(0,0,0,0.06)]"
                       >
                         <p style={F} className="text-[10px] font-bold text-[#001161]/35 uppercase tracking-wider mb-2">
                           Jako ve schránce — klikněte do řádků a upravujte
@@ -5692,46 +8474,18 @@ export default function EmailBuilder() {
                                 Nastaví šedivou plochu kolem mailu a barvu 600px sloupce včetně těla zprávy v náhledu. Ovlivní to neposílané HTML do Mailchimpu, dokud barvy nevložíte do obsahu.
                               </p>
                               <div className="grid gap-3 sm:grid-cols-2">
-                                <div>
-                                  <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">Plocha za sloupcem</label>
-                                  <div className="flex gap-2 items-center">
-                                    <input
-                                      type="color"
-                                      aria-label="Barva pozadí okolo mailu"
-                                      className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                                      value={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
-                                      onChange={e => updateField('previewOuterBg', e.target.value)}
-                                    />
-                                    <input
-                                      type="text"
-                                      spellCheck={false}
-                                      className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                                      value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
-                                      onChange={e => updateField('previewOuterBg', e.target.value)}
-                                      placeholder="#f3f4f6"
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <label style={F} className="text-[9px] font-bold text-[#001161]/40 uppercase block mb-1">600px sloupec + tělo</label>
-                                  <div className="flex gap-2 items-center">
-                                    <input
-                                      type="color"
-                                      aria-label="Barva sloupce a iframe"
-                                      className="h-9 w-11 shrink-0 cursor-pointer rounded border border-gray-200 bg-white p-0"
-                                      value={normalizeHexColor(selected.previewColumnBg, DEFAULT_PREVIEW_COLUMN_BG)}
-                                      onChange={e => updateField('previewColumnBg', e.target.value)}
-                                    />
-                                    <input
-                                      type="text"
-                                      spellCheck={false}
-                                      className="flex-1 min-w-0 rounded-lg border border-gray-200 px-2 py-2 text-[11px] font-mono text-[#001161] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20"
-                                      value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
-                                      onChange={e => updateField('previewColumnBg', e.target.value)}
-                                      placeholder="#ffffff"
-                                    />
-                                  </div>
-                                </div>
+                                <EmailPreviewBgColorField
+                                  label="Plocha za sloupcem"
+                                  value={selected.previewOuterBg ?? DEFAULT_PREVIEW_OUTER_BG}
+                                  fallback={DEFAULT_PREVIEW_OUTER_BG}
+                                  onChange={color => updateField('previewOuterBg', color)}
+                                />
+                                <EmailPreviewBgColorField
+                                  label="600px sloupec + tělo"
+                                  value={selected.previewColumnBg ?? DEFAULT_PREVIEW_COLUMN_BG}
+                                  fallback={DEFAULT_PREVIEW_COLUMN_BG}
+                                  onChange={color => updateField('previewColumnBg', color)}
+                                />
                               </div>
                               <button
                                 type="button"
@@ -5759,7 +8513,7 @@ export default function EmailBuilder() {
 
                     <div
                       ref={emailPreviewDropShellRef}
-                      className={`relative flex flex-col flex-1 min-h-0 px-3 py-4 md:px-6 ${showInboxChrome ? 'rounded-b-xl' : 'rounded-xl'}`}
+                      className={`relative flex flex-col flex-1 min-h-0 w-full ${showInboxChrome ? 'rounded-b-xl' : ''}`}
                       onDragEnter={(e) => {
                         if (showInboxChrome || !handleImageFileDropRef.current) return;
                         if (!dataTransferMayContainFiles(e.dataTransfer)) return;
@@ -5871,6 +8625,22 @@ export default function EmailBuilder() {
                           </div>
                         </div>
                       )}
+                      {lassoRect &&
+                        createPortal(
+                          <div
+                            className="pointer-events-none rounded-sm border-2 border-[#7C3AED] bg-[#7C3AED]/20"
+                            style={{
+                              position: 'fixed',
+                              left: lassoRect.left,
+                              top: lassoRect.top,
+                              width: Math.max(lassoRect.width, 2),
+                              height: Math.max(lassoRect.height, 2),
+                              zIndex: 2147483000,
+                            }}
+                            aria-hidden
+                          />,
+                          document.body,
+                        )}
                       <EmailIframeEditor
                         draftId={selected.id}
                         bodyEditEpoch={bodyEditEpoch}
@@ -5879,9 +8649,12 @@ export default function EmailBuilder() {
                         outerBackground={normalizeHexColor(selected.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG)}
                         builderMode={activeBuilderMode}
                         selectedBlockId={selectedBlock?.id || null}
+                        selectedBlockIds={selectedBlockIds}
                         onBodyChange={applyIframeBodyHtml}
                         onImageClick={setImageToolSrc}
                         onBlockSelect={handleBlockSelect}
+                        onBlocksSelect={handleBlocksSelect}
+                        onLassoRect={setLassoRect}
                         hasMailboxStackAbove={showInboxChrome}
                         readOnlyBody={showInboxChrome}
                         iframeRef={previewIframeRef}
@@ -5894,8 +8667,6 @@ export default function EmailBuilder() {
                         onImageFileDrop={showInboxChrome ? undefined : handleImageFileDrop}
                       />
                     </div>
-                  </div>
-                </div>
               </div>
             )}
         </div>

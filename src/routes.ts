@@ -102,10 +102,6 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
         },
         {
-          path: 'cs/dvpp-webinare',
-          lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
-        },
-        {
           path: 'app-uvod',
           lazy: lazyNamed(() => import('./components/AppUvodPage'), 'AppUvodPage'),
         },

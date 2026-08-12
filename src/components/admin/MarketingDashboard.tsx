@@ -5,7 +5,8 @@ import {
   ArrowRight, BarChart3, Mail, Target, Image, Search,
 } from 'lucide-react';
 import { fetchCollection } from '../../utils/adminApi';
-import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { projectId } from '../../utils/supabase/info';
+import { getEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
 
 interface StatCard {
   label: string;
@@ -31,7 +32,7 @@ export default function MarketingDashboard() {
         try {
           const BASE = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
           const r = await fetch(`${BASE}/admin/mailchimp/campaigns`, {
-            headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+            headers: await getEdgeFunctionHeaders(),
           });
           if (r.ok) {
             const d = await r.json();

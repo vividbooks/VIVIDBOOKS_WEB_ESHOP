@@ -30,13 +30,29 @@ function json(body: unknown, status: number, req: Request): Response {
   });
 }
 
+/** JWT s rolí anon/service_role — nesmí se brát jako přihlášení admina. */
+function isAnonOrServiceJwt(token: string, anonKey: string): boolean {
+  if (!token) return true;
+  if (anonKey && token === anonKey) return true;
+  try {
+    const part = token.split('.')[1];
+    if (!part) return false;
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'));
+    const payload = JSON.parse(json) as { role?: string };
+    const role = String(payload?.role || '');
+    return role === 'anon' || role === 'service_role';
+  } catch {
+    return false;
+  }
+}
+
 /** Uživatelský JWT (ne anon) z hlaviček — stejná konvence jako make-server-954b19ad. */
 export function getUserAccessTokenFromRequest(req: Request): string {
   const anon = Deno.env.get('SUPABASE_ANON_KEY')?.trim() ?? '';
   const fromX = req.headers.get('X-User-Access-Token')?.trim();
-  if (fromX && fromX !== anon) return fromX;
+  if (fromX && !isAnonOrServiceJwt(fromX, anon)) return fromX;
   const auth = req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '').trim() ?? '';
-  if (auth && auth !== anon) return auth;
+  if (auth && !isAnonOrServiceJwt(auth, anon)) return auth;
   return '';
 }
 
@@ -63,14 +79,33 @@ export async function requireAdminJwt(req: Request): Promise<{ email: string } |
   }
   const token = getUserAccessTokenFromRequest(req);
   if (!token) {
-    return json({ error: 'Unauthorized.' }, 401, req);
+    return json(
+      { error: 'Unauthorized. Chybí přihlášení — obnovte stránku a přihlaste se znovu.' },
+      401,
+      req,
+    );
   }
-  const supabase = createClient(url, anon, {
-    global: { headers: { Authorization: `Bearer ${token}` } },
+  // Service role spolehlivěji ověří user JWT na Edge (anon client občas vrací false negative).
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim() || anon;
+  const supabase = createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
   });
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser(token);
   if (error || !user?.email) {
-    return json({ error: 'Unauthorized.' }, 401, req);
+    console.warn(
+      `[admin-auth] getUser failed: ${error?.message || 'no email'} (tokenLen=${token.length})`,
+    );
+    return json(
+      {
+        error:
+          'Unauthorized. Neplatná nebo vypršelá session — obnovte stránku a přihlaste se znovu přes Google.',
+      },
+      401,
+      req,
+    );
   }
   const em = user.email.trim().toLowerCase();
   if (!isAdminEmailAllowed(em)) {

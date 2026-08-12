@@ -128,6 +128,7 @@ const MAILING_SIDEBAR = [
       { label: 'Nový email', icon: Plus, path: '/mailing/novy-email' },
       { label: 'Emaily', icon: Mail, path: '/mailing/emaily' },
       { label: 'Audience', icon: Users, path: '/mailing/audience' },
+      { label: 'Kampaně', icon: BarChart3, path: '/mailing/kampane' },
       { label: 'Automatizace', icon: Sparkles, path: '/mailing/automatizace' },
     ],
   },

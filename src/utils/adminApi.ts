@@ -15,36 +15,14 @@ const HEADERS_AUTH_ONLY: Record<string, string> = {
 
 /** Edge funkce s `requireAdminJwt` — anon + JWT uživatele (viz supabase/functions/_shared/admin-auth.ts). */
 async function edgeAdminHeaders(): Promise<Record<string, string>> {
-  const h: Record<string, string> = {
-    Authorization: `Bearer ${publicAnonKey}`,
-    'Content-Type': 'application/json',
-  };
-  try {
-    const { getSupabaseBrowser } = await import('../lib/supabaseBrowser');
-    const { data: { session } } = await getSupabaseBrowser().auth.getSession();
-    if (session?.access_token) {
-      h['X-User-Access-Token'] = session.access_token;
-    }
-  } catch {
-    /* ignore */
-  }
-  return h;
+  const { getRequiredEdgeFunctionHeaders } = await import('../lib/edgeFunctionHeaders');
+  return getRequiredEdgeFunctionHeaders(true);
 }
 
 async function edgeAdminHeadersPdf(): Promise<Record<string, string>> {
-  const h: Record<string, string> = {
-    Authorization: `Bearer ${publicAnonKey}`,
-    Accept: 'application/pdf',
-  };
-  try {
-    const { getSupabaseBrowser } = await import('../lib/supabaseBrowser');
-    const { data: { session } } = await getSupabaseBrowser().auth.getSession();
-    if (session?.access_token) {
-      h['X-User-Access-Token'] = session.access_token;
-    }
-  } catch {
-    /* ignore */
-  }
+  const { getRequiredEdgeFunctionHeaders } = await import('../lib/edgeFunctionHeaders');
+  const h = await getRequiredEdgeFunctionHeaders(false);
+  h.Accept = 'application/pdf';
   return h;
 }
 

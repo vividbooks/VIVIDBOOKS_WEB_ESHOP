@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Sparkles, Copy, Check, Trash2, RefreshCw, Plus, MessageSquare, Clock, ChevronRight, ChevronLeft, X, Mail, ExternalLink, Eye, Loader2, Zap, LayoutTemplate } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getRequiredEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
 import {
   EMAIL_BUILDER_AI_TIER_KEY,
@@ -234,7 +235,7 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
         .join('\n');
       const { response: genRes, data } = await fetchGenerateEmailWithRetry(
         `${SERVER}/admin/mailchimp/generate-email`,
-        AUTH_H,
+        await getRequiredEdgeFunctionHeaders(true),
         {
           prompt: mcPrompt.trim() || 'Vytvoř newsletter email na základě naší konverzace',
           conversationContext: conversationCtx,
@@ -259,7 +260,7 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
     try {
       const res = await fetch(`${SERVER}/admin/mailchimp/create-draft`, {
         method: 'POST',
-        headers: AUTH_H,
+        headers: await getRequiredEdgeFunctionHeaders(true),
         body: JSON.stringify({
           subject: mcEmail.subject,
           previewText: mcEmail.previewText,
@@ -294,7 +295,7 @@ export default function MarketingAgent({ model: _ignored }: { model?: string }) 
   const syncMailchimp = async () => {
     setMcSyncing(true);
     try {
-      const res = await fetch(`${SERVER}/admin/mailchimp/sync?skipRag=1`, { method: 'POST', headers: AUTH_H });
+      const res = await fetch(`${SERVER}/admin/mailchimp/sync?skipRag=1`, { method: 'POST', headers: await getRequiredEdgeFunctionHeaders(true) });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Sync selhal');
       if ((data.campaigns ?? 0) === 0) {

@@ -234,7 +234,7 @@ function cellCompact(it: EmailProductCollageItem, ctx: CellCtx, colPct: string, 
     ? `<img src="${img}" alt="${alt}" width="${thumb}" style="display:block;width:${thumb}px;max-width:100%;height:auto;border-radius:${R_COMPACT}px;border:0;margin:0 auto 6px auto;" />`
     : '';
   return (
-    `<td width="${colPct}" valign="top" style="padding:8px 6px;vertical-align:top;text-align:center;${rowBorder}">` +
+    `<td class="vb-email-col" width="${colPct}" valign="top" style="padding:8px 6px;vertical-align:top;text-align:center;${rowBorder}">` +
     linkCell(
       it,
       `${imgHtml}` +
@@ -268,7 +268,7 @@ export function buildProductCollageInnerHtml(
     }
     return (
       `<div style="border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;overflow:hidden;">` +
-      `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
+      `<table class="vb-email-cols" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
       inner +
       `</table></div>`
     );
@@ -285,13 +285,13 @@ export function buildProductCollageInnerHtml(
       inner += '<tr>';
       for (let j = 0; j < cols; j++) {
         if (i + j < items.length) inner += cellCompact(items[i + j], ctx, colPct, line);
-        else inner += `<td width="${colPct}" style="${line}"></td>`;
+        else inner += `<td class="vb-email-col" width="${colPct}" style="${line}"></td>`;
       }
       inner += '</tr>';
     }
     return (
       `<div style="border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;overflow:hidden;">` +
-      `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
+      `<table class="vb-email-cols" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
       inner +
       `</table></div>`
     );
@@ -308,16 +308,16 @@ export function buildProductCollageInnerHtml(
     inner += '<tr>';
     for (let j = 0; j < cols; j++) {
       if (i + j < items.length) {
-        inner += `<td width="${colPct}" valign="top" style="padding:10px 8px;${line}">${cellGrid(items[i + j], ctx)}</td>`;
+        inner += `<td class="vb-email-col" width="${colPct}" valign="top" style="padding:10px 8px;${line}">${cellGrid(items[i + j], ctx)}</td>`;
       } else {
-        inner += `<td width="${colPct}" style="${line}"></td>`;
+        inner += `<td class="vb-email-col" width="${colPct}" style="${line}"></td>`;
       }
     }
     inner += '</tr>';
   }
   return (
     `<div style="border:1px solid #e5e7eb;border-radius:8px;background:#ffffff;overflow:hidden;">` +
-    `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
+    `<table class="vb-email-cols" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0;width:100%;">` +
     inner +
     `</table></div>`
   );
@@ -335,7 +335,7 @@ export function buildProductCollageBlockHtml(
   const id = safeAttr(blockId);
   const encAttr = safeAttr(encoded);
   return (
-    `<div data-vb-block="product-collage" data-vb-block-id="${id}" data-product-collage="true" ` +
+    `<div class="vb-email-collage" data-vb-block="product-collage" data-vb-block-id="${id}" data-product-collage="true" ` +
     `data-vb-pc-layout="${layout}" data-vb-pc-encoded="${encAttr}" ` +
     `style="padding:0;background:transparent;">${inner}</div>`
   );

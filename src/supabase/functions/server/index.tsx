@@ -7,7 +7,19 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
 import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
+import { sendResendEmail } from './resendClient.ts';
+import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
+import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
+import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
+import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
+import {
+  isAudienceFilterEmpty,
+  normalizeAudienceFilter,
+  resolveAudienceSubscriberIds,
+} from './audienceFilter.ts';
+import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
+import { runEngagementAudienceRecompute } from './engagementAudienceRecompute.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
@@ -28,6 +40,19 @@ import {
   applyAllDigitalBundleStripe,
 } from '../../../utils/digitalSubscription.ts';
 import { MARKETING_ORIGIN_PRIMARY_DEFAULT, MARKETING_ORIGINS_CANONICAL_SET } from '../../../config/marketingSiteConstants.ts';
+import {
+  buildAplikaceMarketingCtx,
+  promptWantsAplikaceWebAssets,
+} from '../../../data/aplikaceMarketingAssets.ts';
+import {
+  buildFetchedUrlsCtxFromList,
+  buildFixedPagesCtx,
+  buildHeroSlidesCtx,
+  buildSubjectTabsCtx,
+  extractUrlsFromText,
+} from './emailWebContext.ts';
+import { hydrateEmailBodyForBuilder } from './emailBuilderAiHydrate.ts';
+import { compileEmailBodyForSend, EMAIL_BODY_MOBILE_CSS } from './emailExport.ts';
 
 const app = new Hono();
 
@@ -1092,6 +1117,9 @@ function productToMarketingFeedItem(product: any, allProducts: readonly any[]): 
   if (!MARKETING_FEED_PRODUCT_TYPES.has(type)) {
     return { skip: { ...baseSkip, reason: 'unsupported_type' } };
   }
+  if (product?.hideFromCatalog === true || product?.handedness === 'left') {
+    return { skip: { ...baseSkip, reason: 'hidden_from_catalog' } };
+  }
   if (!id) return { skip: { ...baseSkip, reason: 'missing_id' } };
   if (!name) return { skip: { ...baseSkip, reason: 'missing_title' } };
 
@@ -1278,6 +1306,39 @@ app.use('*', cors(corsOptions));
 app.use('/*', cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use('/*', logger(console.log));
+
+/**
+ * Admin mailing brána — když klient pošle user JWT (`X-User-Access-Token`), ověříme allowlist.
+ * Legacy produkční build EmailBuilderu posílá jen anon Bearer — ten zatím pouštíme dál
+ * (jinak mailing padá na 401, dokud není nasazený frontend s fetchWithAdminAuth).
+ * Gateway má `verify_jwt = false`.
+ */
+function isMailingAdminPath(pathname: string): boolean {
+  // Path může (deploy) i nemusí (interní mount) začínat prefixem funkce.
+  const p = pathname.replace(/^\/make-server-93a20b6f/, '');
+  return (
+    p.startsWith('/admin/mailing/') ||
+    p.startsWith('/admin/mailchimp/') ||
+    p.startsWith('/admin/email-drafts') ||
+    p.startsWith('/admin/marketing/contacts') ||
+    p === '/admin/migrate-mailchimp-contacts' ||
+    p === '/admin/mailchimp-tag-suggest'
+  );
+}
+
+app.use('/*', async (c, next) => {
+  if (c.req.method !== 'OPTIONS' && isMailingAdminPath(new URL(c.req.url).pathname)) {
+    const { getUserAccessTokenFromRequest } = await import('../../../../supabase/functions/_shared/admin-auth.ts');
+    const userJwt = getUserAccessTokenFromRequest(c.req.raw);
+    if (userJwt) {
+      const gate = await requireAdminJwt(c.req.raw);
+      if (gate instanceof Response) return gate;
+    } else {
+      console.warn('[mailing-auth] legacy client without user JWT — allowing (deploy frontend with X-User-Access-Token)');
+    }
+  }
+  await next();
+});
 app.onError((err, c) => {
   const origin = c.req.header('Origin');
   const errorMessage = err instanceof Error ? err.message : 'Internal server error';
@@ -3176,7 +3237,7 @@ app.get('/make-server-93a20b6f/public/notifikace', async (c) => {
         title: nextWebinar.title,
         subtitle: `${nextWebinar.day}. ${nextWebinar.monthName} ${nextWebinar.year} v ${nextWebinar.time}`,
         emoji: '\uD83D\uDD14',
-        link: `/webinar/${nextWebinar.id}`,
+        link: `/webinar/${nextWebinar.slug || nextWebinar.id}`,
         isActive: true,
         webinarId: nextWebinar.id,
       };
@@ -3504,6 +3565,39 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         detail: 'Chybí MAILCHIMP_API_KEY nebo audience (NEWSLETTER / NO_NEWSLETTER).',
       };
       console.log(`[Mailchimp] Preskoceno - chybi API klic nebo audience ID`);
+    }
+
+    /** Dual-write: Postgres subscribers (vlastní mailing) — neblokuje registraci. */
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const nameParts = name.trim().split(' ');
+        const explicitTag = typeof bodyMailchimpTag === 'string' && bodyMailchimpTag.trim() ? bodyMailchimpTag.trim().slice(0, 100) : '';
+        const subTags = [explicitTag || `webinar-${slug}`, 'webinar-registrace'];
+        if (newsletter) subTags.push('newsletter');
+        const up = await upsertSubscriber(sbMailing, {
+          email: cleanEmail,
+          firstName: nameParts[0] || null,
+          lastName: nameParts.slice(1).join(' ') || null,
+          phone: phone?.trim() || null,
+          schoolName: schoolName || null,
+          ico: icoDigits || null,
+          positionLabel: String(position || '').trim() || null,
+          source: 'webinar',
+          contactType: notTeacher ? 'unknown' : 'teacher',
+          status: 'subscribed',
+          tags: subTags,
+          mergeFields: {
+            ...(usesVividbooksNorm ? { uses_vividbooks: usesVividbooksNorm } : {}),
+            ...(webinarMotivation ? { webinar_motivation: webinarMotivation } : {}),
+          },
+        });
+        if (!up.ok) console.warn(`[Subscribers] Webinar upsert selhal (neblokuje): ${up.error}`);
+        if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+      }
+    } catch (subErr) {
+      console.warn('[Subscribers] Webinar upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
     }
 
     type PipedriveWebinarSyncState = {
@@ -4044,6 +4138,33 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
       }
     }
 
+    /** Dual-write: Postgres subscribers (vlastní mailing) — neblokuje registraci. */
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const nameParts = name.trim().split(' ');
+        const slug = videoSlug || videoId;
+        const subTags = ['dvpp-video', `dvpp-video-${slug}`];
+        if (registration.newsletter) subTags.push('newsletter');
+        const up = await upsertSubscriber(sbMailing, {
+          email: cleanEmail,
+          firstName: nameParts[0] || null,
+          lastName: nameParts.slice(1).join(' ') || null,
+          phone: phone?.trim() || null,
+          positionLabel: String(resolvedPosition || '').trim() || null,
+          source: 'webinar',
+          contactType: 'teacher',
+          status: 'subscribed',
+          tags: subTags,
+        });
+        if (!up.ok) console.warn(`[Subscribers] DVPP upsert selhal (neblokuje): ${up.error}`);
+        if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+      }
+    } catch (subErr) {
+      console.warn('[Subscribers] DVPP upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
+    }
+
     // ── Mandrill confirmation email ────────────────────────────────
     const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
     if (mandrillKey) {
@@ -4166,6 +4287,30 @@ app.get('/make-server-93a20b6f/verify-token/:token', async (c) => {
         } catch (mcErr: any) {
           console.log(`[Mailchimp] trial-active selhal: ${mcErr.message}`);
         }
+      }
+
+      /** Dual-write: Postgres subscribers — trial aktivace (neblokuje ověření tokenu). */
+      try {
+        const srEnv = getServiceRoleEnv();
+        if (srEnv) {
+          const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+          const nameParts = String(data.name || '').trim().split(' ');
+          const up = await upsertSubscriber(sbMailing, {
+            email: String(data.email || ''),
+            firstName: nameParts[0] || null,
+            lastName: nameParts.slice(1).join(' ') || null,
+            source: 'trial',
+            status: 'subscribed',
+            tags: ['trial-active'],
+            trialStatus: 'active',
+            trialStartedAt: new Date().toISOString(),
+            ...(data.expires ? { trialExpiresAt: String(data.expires) } : {}),
+          });
+          if (!up.ok) console.warn(`[Subscribers] Trial upsert selhal (neblokuje): ${up.error}`);
+          if (up.ok) await enrollInFlows(sbMailing, { type: 'trial_activated' }, up.subscriberId);
+        }
+      } catch (subErr) {
+        console.warn('[Subscribers] Trial upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
       }
     }
 
@@ -4616,6 +4761,79 @@ async function markPastWebinarsInCollection(): Promise<{ updated: number }> {
   });
   if (updated > 0) await saveCollection(WEBINARS_KEY, next);
   return { updated };
+}
+
+/** Přepočet isPast podle termínu (KV flag může zaostávat za cronem). */
+function withLiveWebinarPastFlag(w: any, nowMs = Date.now()): any {
+  if (!w || typeof w !== 'object') return w;
+  try {
+    const hasSchedule =
+      Number.isFinite(Number(w.year)) &&
+      (Number.isFinite(Number(w.monthNum)) || String(w.monthName || '').trim());
+    if (hasSchedule) {
+      const endMs = webinarEndEpochMsPrague(w);
+      if (Number.isFinite(endMs) && endMs > 0) {
+        return { ...w, isPast: endMs < nowMs };
+      }
+    }
+  } catch {
+    /* keep stored flag */
+  }
+  return { ...w, isPast: w.isPast === true };
+}
+
+/** Nadcházející nejdřív (nejbližší nahoře), minulé podle data sestupně. */
+function compareWebinarsUpcomingFirst(a: any, b: any): number {
+  const ap = !!a?.isPast;
+  const bp = !!b?.isPast;
+  if (ap !== bp) return ap ? 1 : -1;
+  let ta = 0;
+  let tb = 0;
+  try {
+    ta = webinarStartEpochMsPrague(a);
+  } catch {
+    ta = 0;
+  }
+  try {
+    tb = webinarStartEpochMsPrague(b);
+  } catch {
+    tb = 0;
+  }
+  if (!ap) return ta - tb;
+  return tb - ta;
+}
+
+/**
+ * Seznam webinářů pro AI prompt / CTA: live isPast + upcoming-first.
+ * Pokud existují nadcházející, minulé do promptu nejdou (jinak AI bere „Záznam“).
+ * Minulé jen když žádné upcoming nejsou, nebo když includePast=true (záznamy).
+ */
+function selectWebinarsForEmailAi(
+  webinars: any[],
+  limit: number,
+  opts?: { includePast?: boolean },
+): any[] {
+  const nowMs = Date.now();
+  const normalized = (Array.isArray(webinars) ? webinars : [])
+    .filter((w) => w && (w.slug || w.id || w.title))
+    .map((w) => withLiveWebinarPastFlag(w, nowMs))
+    .sort(compareWebinarsUpcomingFirst);
+  const upcoming = normalized.filter((w) => !w.isPast);
+  const past = normalized.filter((w) => w.isPast);
+  const cap = Math.max(0, Math.floor(limit) || 0);
+  if (!cap) return [];
+  if (opts?.includePast) {
+    return [...upcoming, ...past].slice(0, cap);
+  }
+  if (upcoming.length > 0) return upcoming.slice(0, cap);
+  return past.slice(0, cap);
+}
+
+function normalizeWebinarsForEmailAi(webinars: any[]): any[] {
+  const nowMs = Date.now();
+  return (Array.isArray(webinars) ? webinars : [])
+    .map((w) => withLiveWebinarPastFlag(w, nowMs))
+    .sort(compareWebinarsUpcomingFirst);
 }
 
 function webinarReminderMorningKey(webinarId: string, emailHash: string): string {
@@ -8318,7 +8536,7 @@ app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
 
   try {
     const webinarItems = await getCollection(WEBINARS_KEY);
-    webinarUrls = webinarItems.map((w: any) => '/webinar/' + w.id);
+    webinarUrls = webinarItems.map((w: any) => '/webinar/' + (w.slug || w.id));
   } catch {}
 
   try {
@@ -8732,6 +8950,922 @@ app.post('/make-server-93a20b6f/admin/mailing/recompute-subject-interests', asyn
     });
     if (!result.ok) return c.json(result, 500);
     return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Admin: rozřaď subscribed kontakty do engagement audience (tagy Eng · …).
+ * Body: `{ "limit": 1000, "offset": 0 }` — dávkově, stejně jako zájmy o předměty.
+ * Bez AI — open/click/recency z last_opened_at / last_clicked_at.
+ */
+app.post('/make-server-93a20b6f/admin/mailing/recompute-engagement-audiences', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const limit = body?.limit != null ? Number(body.limit) : 1000;
+    const offset = body?.offset != null ? Number(body.offset) : 0;
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')?.trim();
+    const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+    if (!supabaseUrl || !serviceKey) {
+      return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    }
+    const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+    const result = await runEngagementAudienceRecompute(supabase, {
+      limit: Number.isFinite(limit) ? limit : 1000,
+      offset: Number.isFinite(offset) ? offset : 0,
+    });
+    return c.json(result);
+  } catch (e: any) {
+    console.error('[recompute-engagement-audiences]', e);
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Adresy pro testovací odeslání (EmailBuilder „Send test“ i Resend smoke test).
+ * Secret MAILING_TEST_EMAILS (čárkou); fallback = historický hardcoded seznam.
+ */
+function getMailingTestEmails(): Set<string> {
+  const raw = Deno.env.get('MAILING_TEST_EMAILS')?.trim();
+  const list = raw
+    ? raw.split(/[,;\n]+/).map((s) => s.trim().toLowerCase()).filter(Boolean)
+    : ['vitekskop@gmail.com', 'frantisek@vividbooks.com', 'gabriela@vividbooks.com', 'dan@vividbooks.com'];
+  return new Set(list);
+}
+
+/** Admin: ruční přidání kontaktu (dialog v Audience). */
+app.post('/make-server-93a20b6f/admin/mailing/subscribers', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const email = String(body?.email || '').trim().toLowerCase();
+    if (!email || !isValidEmailFormat(email)) {
+      return c.json({ ok: false, error: 'Neplatný e-mail.' }, 400);
+    }
+    const srEnv = getServiceRoleEnv();
+    if (!srEnv) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const supabase = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+    const result = await upsertSubscriber(supabase, {
+      email,
+      firstName: typeof body?.firstName === 'string' ? body.firstName : null,
+      lastName: typeof body?.lastName === 'string' ? body.lastName : null,
+      phone: typeof body?.phone === 'string' ? body.phone : null,
+      schoolName: typeof body?.schoolName === 'string' ? body.schoolName : null,
+      positionLabel: typeof body?.positionLabel === 'string' ? body.positionLabel : null,
+      source: 'manual',
+      contactType: ['teacher', 'school_admin', 'parent', 'homeschool'].includes(body?.contactType)
+        ? body.contactType
+        : 'unknown',
+      status: 'subscribed',
+      tags: Array.isArray(body?.tags) ? body.tags.map((t: unknown) => String(t)) : [],
+    });
+    if (!result.ok) return c.json({ ok: false, error: result.error }, 400);
+    return c.json({ ok: true, subscriberId: result.subscriberId, created: result.created });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Admin: import kontaktů z CSV (parsuje klient, posílá JSON řádky).
+ * Body: `{ rows: [{ email, firstName?, lastName?, tags?: string[] }], defaultTags?: string[] }` — max 2000 řádků na volání.
+ */
+app.post('/make-server-93a20b6f/admin/mailing/subscribers/import', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const rows: unknown[] = Array.isArray(body?.rows) ? body.rows : [];
+    if (rows.length === 0) return c.json({ ok: false, error: 'Žádné řádky k importu.' }, 400);
+    if (rows.length > 2000) return c.json({ ok: false, error: 'Max 2000 řádků na jedno volání.' }, 400);
+    const defaultTags = Array.isArray(body?.defaultTags)
+      ? body.defaultTags.map((t: unknown) => String(t).trim()).filter(Boolean)
+      : [];
+    const srEnv = getServiceRoleEnv();
+    if (!srEnv) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const supabase = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+
+    let created = 0;
+    let updated = 0;
+    const errors: { email: string; error: string }[] = [];
+    for (const raw of rows) {
+      const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+      const email = String(r.email || '').trim().toLowerCase();
+      if (!email || !isValidEmailFormat(email)) {
+        errors.push({ email: email || '(prázdný)', error: 'Neplatný e-mail' });
+        continue;
+      }
+      const rowTags = Array.isArray(r.tags) ? r.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+      const result = await upsertSubscriber(supabase, {
+        email,
+        firstName: typeof r.firstName === 'string' ? r.firstName : null,
+        lastName: typeof r.lastName === 'string' ? r.lastName : null,
+        source: 'manual',
+        status: 'subscribed',
+        tags: [...defaultTags, ...rowTags],
+      });
+      if (!result.ok) {
+        errors.push({ email, error: result.error });
+      } else if (result.created) {
+        created += 1;
+      } else {
+        updated += 1;
+      }
+    }
+    return c.json({ ok: true, created, updated, failed: errors.length, errors: errors.slice(0, 50) });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: smoke test Resend odesílání (Fáze 0 vlastního mailingu). */
+app.post('/make-server-93a20b6f/admin/mailing/resend-test', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const to = String(body?.to || '').trim().toLowerCase();
+    if (!getMailingTestEmails().has(to)) {
+      return c.json({ ok: false, error: 'Adresa není v seznamu povolených testovacích adres (MAILING_TEST_EMAILS).' }, 400);
+    }
+    const result = await sendResendEmail({
+      to,
+      subject: '/TEST/ Vividbooks mailing přes Resend',
+      html: '<p>Testovací e-mail z vlastního mailingu Vividbooks (Resend). Pokud ho čteš, odesílání funguje.</p>',
+      tags: [{ name: 'kind', value: 'resend-smoke-test' }],
+    });
+    if (!result.ok) {
+      return c.json({ ok: false, error: `Resend ${result.status}: ${result.error}` }, 502);
+    }
+    return c.json({ ok: true, id: result.id, message: `Test odeslán na ${to}` });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   VLASTNÍ MAILING — send engine, tracking, unsubscribe (Fáze 2)
+══════════════════════════════════════════════════════════════════ */
+
+function mailingServiceClient(): ReturnType<typeof createClient> | null {
+  const srEnv = getServiceRoleEnv();
+  if (!srEnv) return null;
+  return createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+}
+
+/** Admin: založ / aktualizuj kampaň z EmailBuilderu (status draft, případně scheduled). */
+app.post('/make-server-93a20b6f/admin/mailing/campaigns', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+
+    const id = typeof body?.id === 'string' && body.id.trim() ? body.id.trim() : null;
+    const scheduledAtRaw = typeof body?.scheduledAt === 'string' ? body.scheduledAt.trim() : '';
+    const scheduledAt = scheduledAtRaw && !Number.isNaN(Date.parse(scheduledAtRaw)) ? new Date(scheduledAtRaw).toISOString() : null;
+    /* EmailBuilder posílá jen tělo editoru (bodyContent) — obal stejnou šablonou jako test send. */
+    const htmlBody =
+      String(body?.htmlBody || '') ||
+      (body?.bodyContent
+        ? vividbooksEmailTestMatchEditorTemplate({
+            body: String(body.bodyContent),
+            preheader: String(body?.previewText || ''),
+            outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+          })
+        : '');
+    const row: Record<string, unknown> = {
+      name: String(body?.name || body?.subjectLine || 'Kampaň').slice(0, 300),
+      subject_line: String(body?.subjectLine || '').slice(0, 500),
+      preview_text: String(body?.previewText || '').slice(0, 500),
+      html_body: htmlBody,
+      audience_filter: body?.audienceFilter && typeof body.audienceFilter === 'object' ? body.audienceFilter : {},
+      draft_id: typeof body?.draftId === 'string' ? body.draftId : null,
+      campaign_type: 'regular',
+      scheduled_at: scheduledAt,
+    };
+    if (!row.subject_line) return c.json({ ok: false, error: 'Chybí předmět kampaně.' }, 400);
+    if (!row.html_body) return c.json({ ok: false, error: 'Chybí HTML kampaně.' }, 400);
+
+    if (id) {
+      /* Update jen kampaně, která ještě neodešla. */
+      const { data: cur, error: curErr } = await supabase.from('campaigns').select('id, status').eq('id', id).maybeSingle();
+      if (curErr) return c.json({ ok: false, error: curErr.message }, 500);
+      if (!cur) return c.json({ ok: false, error: 'Kampaň neexistuje.' }, 404);
+      if (['sending', 'sent'].includes(String(cur.status))) {
+        return c.json({ ok: false, error: `Kampaň už je ve stavu ${cur.status} — nelze upravit.` }, 409);
+      }
+      row.status = scheduledAt ? 'scheduled' : 'draft';
+      const { data, error } = await supabase.from('campaigns').update(row).eq('id', id).select('id, status').single();
+      if (error) return c.json({ ok: false, error: error.message }, 500);
+      return c.json({ ok: true, campaign: data });
+    }
+
+    row.status = scheduledAt ? 'scheduled' : 'draft';
+    const { data, error } = await supabase.from('campaigns').insert(row).select('id, status').single();
+    if (error) return c.json({ ok: false, error: error.message }, 500);
+    return c.json({ ok: true, campaign: data });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: vyhodnoť audience filtr a naplň campaign_recipients. Vrací počet příjemců. */
+app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/prepare', async (c) => {
+  try {
+    const campaignId = c.req.param('id')?.trim();
+    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const result = await prepareCampaignRecipients(supabase, campaignId);
+    if (!result.ok) return c.json(result, 400);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: spočítej příjemce podle filtru (bez zakládání kampaně). */
+app.post('/make-server-93a20b6f/admin/mailing/audience/preview', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const filter = normalizeAudienceFilter(body?.audienceFilter);
+    filter.subscribedOnly = body?.subscribedOnly === false ? false : true;
+    const ids = await resolveAudienceSubscriberIds(supabase, filter);
+    return c.json({ ok: true, total: ids.length, emptyFilter: isAudienceFilterEmpty(filter) });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Admin: materializuj aktuální filtr jako tag (segment).
+ * Najde matching kontakty a přiřadí jim tag (source=system). Idempotentní upsert.
+ */
+app.post('/make-server-93a20b6f/admin/mailing/audience/save-as-tag', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const tagName = String(body?.tagName || '').trim();
+    if (!tagName) return c.json({ ok: false, error: 'Chybí název tagu.' }, 400);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+
+    const filter = normalizeAudienceFilter(body?.audienceFilter);
+    if (isAudienceFilterEmpty(filter)) {
+      return c.json({ ok: false, error: 'Nejdřív nastav filtr (tagy, zdroj, předmět…). Prázdný filtr by označil celou databázi.' }, 400);
+    }
+    filter.subscribedOnly = body?.subscribedOnly === false ? false : true;
+
+    const tag = await mailingTagCreate(supabase, tagName);
+    const ids = await resolveAudienceSubscriberIds(supabase, filter);
+    let attached = 0;
+    const CHUNK = 500;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const rows = ids.slice(i, i + CHUNK).map((subscriber_id) => ({
+        subscriber_id,
+        tag_id: tag.id,
+        source: 'system' as const,
+      }));
+      const { data: inserted, error } = await supabase
+        .from('subscriber_tags')
+        .upsert(rows, { onConflict: 'subscriber_id,tag_id', ignoreDuplicates: true })
+        .select('subscriber_id');
+      if (error) return c.json({ ok: false, error: error.message }, 500);
+      attached += (inserted || []).length;
+    }
+    return c.json({
+      ok: true,
+      tag,
+      matched: ids.length,
+      attached,
+      message: `Tag „${tag.name}“ — ${ids.length} kontaktů ve filtru, ${attached} nově přiřazeno.`,
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: spusť odesílání (worker běží ~45 s, zbytek dožene self-invoke / cron). */
+app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/send', async (c) => {
+  try {
+    const campaignId = c.req.param('id')?.trim();
+    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+
+    const { data: cur, error: curErr } = await supabase.from('campaigns').select('id, status').eq('id', campaignId).maybeSingle();
+    if (curErr) return c.json({ ok: false, error: curErr.message }, 500);
+    if (!cur) return c.json({ ok: false, error: 'Kampaň neexistuje.' }, 404);
+    if (cur.status === 'sent') return c.json({ ok: false, error: 'Kampaň už byla odeslána.' }, 409);
+    if (cur.status === 'cancelled') return c.json({ ok: false, error: 'Kampaň je zrušená.' }, 409);
+
+    /* Fronta musí existovat — prepare je součást flow v UI, ale pojistka neuškodí. */
+    const { count } = await supabase
+      .from('campaign_recipients')
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', campaignId);
+    if (!count) {
+      const prep = await prepareCampaignRecipients(supabase, campaignId);
+      if (!prep.ok) return c.json(prep, 400);
+      if (prep.total === 0) return c.json({ ok: false, error: 'Filtr nevybral žádné příjemce.' }, 400);
+    }
+
+    await supabase.from('campaigns').update({ status: 'sending', scheduled_at: null }).eq('id', campaignId);
+    const result = await runCampaignSendBatches(supabase, campaignId, { timeBudgetMs: 45_000 });
+    if (result.remaining > 0) scheduleSendContinuation();
+    return c.json({ ok: result.ok, ...result });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: zruš kampaň (draft/scheduled/sending — už odeslané e-maily nevrátíme). */
+app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/cancel', async (c) => {
+  try {
+    const campaignId = c.req.param('id')?.trim();
+    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const { data: cur } = await supabase.from('campaigns').select('status').eq('id', campaignId).maybeSingle();
+    if (!cur) return c.json({ ok: false, error: 'Kampaň neexistuje.' }, 404);
+    if (cur.status === 'sent') return c.json({ ok: false, error: 'Kampaň už byla odeslána.' }, 409);
+    await supabase.from('campaigns').update({ status: 'cancelled' }).eq('id', campaignId);
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: testovací odeslání kampaně / draftu přes Resend (allowlist MAILING_TEST_EMAILS). */
+app.post('/make-server-93a20b6f/admin/mailing/send-test', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const to = String(body?.to || '').trim().toLowerCase();
+    const subject = String(body?.subject || '').trim();
+    /* Buď hotové html, nebo tělo editoru (bodyContent) — obal šablonou náhledu. */
+    const html =
+      String(body?.html || '') ||
+      (body?.bodyContent
+        ? vividbooksEmailTestMatchEditorTemplate({
+            body: String(body.bodyContent),
+            preheader: String(body?.previewText || ''),
+            outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+          })
+        : '');
+    if (!getMailingTestEmails().has(to)) {
+      return c.json({ ok: false, error: 'Adresa není v seznamu povolených testovacích adres (MAILING_TEST_EMAILS).' }, 400);
+    }
+    if (!subject || !html) return c.json({ ok: false, error: 'Chybí subject nebo html.' }, 400);
+    const result = await sendResendEmail({
+      to,
+      subject: `/TEST/ ${subject}`,
+      /* U testu není příjemce v DB — unsubscribe merge tag jen zneškodnit. */
+      html: html.split('*|UNSUB|*').join('#'),
+      tags: [{ name: 'kind', value: 'campaign-test' }],
+    });
+    if (!result.ok) return c.json({ ok: false, error: `Resend ${result.status}: ${result.error}` }, 502);
+    return c.json({ ok: true, id: result.id });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Cron / self-invoke: due naplánované kampaně → sending; rozpracované kampaně → další dávky. */
+app.post('/make-server-93a20b6f/cron/mailing-send', async (c) => {
+  try {
+    const secret = Deno.env.get('MAILING_CRON_SECRET')?.trim();
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || '';
+    const hdr = c.req.header('X-Cron-Secret') || '';
+    if (!secret || (auth !== secret && hdr !== secret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+
+    /* 1. Naplánované kampaně, jejichž čas nastal. */
+    const { data: due } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('status', 'scheduled')
+      .lte('scheduled_at', new Date().toISOString())
+      .limit(10);
+    for (const cam of due || []) {
+      const prep = await prepareCampaignRecipients(supabase, cam.id as string);
+      if (!prep.ok) {
+        console.warn(`[mailing-cron] prepare ${cam.id} selhal: ${prep.error}`);
+        continue;
+      }
+      await supabase.from('campaigns').update({ status: 'sending' }).eq('id', cam.id);
+    }
+
+    /* 2. Kampaně ve stavu sending — dožeň pending dávky (sdílený časový rozpočet). */
+    const { data: sending } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('status', 'sending')
+      .limit(10);
+    const results: Record<string, unknown>[] = [];
+    let anyRemaining = false;
+    const startedAt = Date.now();
+    for (const cam of sending || []) {
+      const budgetLeft = 45_000 - (Date.now() - startedAt);
+      if (budgetLeft < 5_000) {
+        anyRemaining = true;
+        break;
+      }
+      const r = await runCampaignSendBatches(supabase, cam.id as string, { timeBudgetMs: budgetLeft });
+      results.push({ campaignId: cam.id, ...r });
+      if (r.remaining > 0) anyRemaining = true;
+    }
+    if (anyRemaining) scheduleSendContinuation();
+    return c.json({ ok: true, started: (due || []).length, results });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/* ══════════════════════════════════════════════════════════════════
+   AUTOMATIZACE — flows CRUD + runner (Fáze 3)
+══════════════════════════════════════════════════════════════════ */
+
+/** Admin: založ / uprav flow. Body: { id?, name, slug?, isActive?, definition }. */
+app.post('/make-server-93a20b6f/admin/mailing/flows', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+
+    const id = typeof body?.id === 'string' && body.id.trim() ? body.id.trim() : null;
+    const name = String(body?.name || '').trim();
+    if (!name) return c.json({ ok: false, error: 'Chybí název flow.' }, 400);
+    const definition = body?.definition && typeof body.definition === 'object' ? body.definition : {};
+    const row: Record<string, unknown> = {
+      name: name.slice(0, 200),
+      definition,
+      ...(typeof body?.isActive === 'boolean' ? { is_active: body.isActive } : {}),
+      ...(typeof body?.slug === 'string' && body.slug.trim() ? { slug: body.slug.trim().slice(0, 100) } : {}),
+    };
+
+    if (id) {
+      const { data, error } = await supabase.from('automation_flows').update(row).eq('id', id).select('id').single();
+      if (error) return c.json({ ok: false, error: error.message }, 500);
+      return c.json({ ok: true, flow: data });
+    }
+    const { data, error } = await supabase.from('automation_flows').insert(row).select('id').single();
+    if (error) return c.json({ ok: false, error: error.message }, 500);
+    return c.json({ ok: true, flow: data });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: zapni/vypni flow (pauza flow zastaví runner pro jeho enrollmenty). */
+app.post('/make-server-93a20b6f/admin/mailing/flows/:id/toggle', async (c) => {
+  try {
+    const id = c.req.param('id')?.trim();
+    const body = await c.req.json().catch(() => ({}));
+    const isActive = Boolean(body?.isActive);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const { error } = await supabase.from('automation_flows').update({ is_active: isActive }).eq('id', id);
+    if (error) return c.json({ ok: false, error: error.message }, 500);
+    return c.json({ ok: true, isActive });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: smaž flow (enrollmenty spadnou kaskádou). */
+app.delete('/make-server-93a20b6f/admin/mailing/flows/:id', async (c) => {
+  try {
+    const id = c.req.param('id')?.trim();
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const { error } = await supabase.from('automation_flows').delete().eq('id', id);
+    if (error) return c.json({ ok: false, error: error.message }, 500);
+    return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** První 4 připravené flows (neaktivní, placeholder texty — obsah dodá uživatel z MC exportu). */
+const DEFAULT_AUTOMATION_FLOWS: { name: string; slug: string; definition: Record<string, unknown> }[] = [
+  {
+    name: 'Trial welcome',
+    slug: 'trial-welcome',
+    definition: {
+      trigger: { type: 'trial_activated' },
+      steps: [
+        { key: 'day0-welcome', type: 'send_email', subject: 'Vítejte ve Vividbooks — začněte tady', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — uvítání den 0: co trial obsahuje, první kroky. Doplnit z Mailchimp journey.]</p>' },
+        { key: 'wait-3d', type: 'wait', days: 3 },
+        { key: 'day3-tips', type: 'send_email', subject: 'Tipy, jak vytěžit z trialu maximum', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — tipy den 3. Doplnit z Mailchimp journey.]</p>' },
+        { key: 'wait-7d', type: 'wait', days: 7 },
+        { key: 'day10-offer', type: 'send_email', subject: 'Jak pokračovat s Vividbooks po trialu', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — nabídka den 10. Doplnit z Mailchimp journey.]</p>' },
+      ],
+    },
+  },
+  {
+    name: 'Trial expirace',
+    slug: 'trial-expirace',
+    definition: {
+      trigger: { type: 'trial_activated' },
+      steps: [
+        { key: 'wait-till-expiry', type: 'wait', untilField: 'trial_expires_at', offsetDays: -5 },
+        { key: 'expiry-reminder', type: 'send_email', subject: 'Váš trial Vividbooks brzy končí', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — trial končí za 5 dní, jak objednat licenci. Doplnit z Mailchimp journey.]</p>' },
+      ],
+    },
+  },
+  {
+    name: 'Webinar follow-up',
+    slug: 'webinar-follow-up',
+    definition: {
+      trigger: { type: 'webinar_registered' },
+      steps: [
+        { key: 'wait-1d', type: 'wait', days: 1 },
+        { key: 'follow-up', type: 'send_email', subject: 'Děkujeme za účast — materiály a další kroky', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — follow-up den po webináři: záznam, materiály, CTA na trial. Doplnit z Mailchimp journey.]</p>' },
+      ],
+    },
+  },
+  {
+    name: 'Newsletter welcome',
+    slug: 'newsletter-welcome',
+    definition: {
+      trigger: { type: 'subscriber_created', filter: { source: 'newsletter' } },
+      steps: [
+        { key: 'welcome', type: 'send_email', subject: 'Vítejte v newsletteru Vividbooks', html: '<p>Dobrý den {{first_name|učiteli}},</p><p>[PLACEHOLDER — uvítání po potvrzení odběru: co čekat, nejlepší obsah. Doplnit z Mailchimp journey.]</p>' },
+      ],
+    },
+  },
+];
+
+/** Admin: doplní chybějící připravené flows (idempotentní podle slugu, vytváří neaktivní). */
+app.post('/make-server-93a20b6f/admin/mailing/flows/seed-defaults', async (c) => {
+  try {
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const { data: existing } = await supabase.from('automation_flows').select('slug');
+    const have = new Set((existing || []).map((f) => f.slug as string));
+    const toInsert = DEFAULT_AUTOMATION_FLOWS.filter((f) => !have.has(f.slug)).map((f) => ({
+      name: f.name,
+      slug: f.slug,
+      definition: f.definition,
+      is_active: false,
+    }));
+    if (toInsert.length > 0) {
+      const { error } = await supabase.from('automation_flows').insert(toInsert);
+      if (error) return c.json({ ok: false, error: error.message }, 500);
+    }
+    return c.json({ ok: true, created: toInsert.length });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Cron á 5 min: vykonat splatné kroky aktivních enrollmentů. */
+app.post('/make-server-93a20b6f/cron/automation-runner', async (c) => {
+  try {
+    const secret = Deno.env.get('MAILING_CRON_SECRET')?.trim();
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || '';
+    const hdr = c.req.header('X-Cron-Secret') || '';
+    if (!secret || (auth !== secret && hdr !== secret)) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const result = await runAutomationSteps(supabase, { timeBudgetMs: 45_000 });
+    if (result.errors.length > 0) console.warn('[automation-runner]', result.errors.join(' | '));
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/* ── Tracking: open pixel + click redirect ── */
+
+const TRACKING_GIF = Uint8Array.from(
+  atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'),
+  (ch) => ch.charCodeAt(0),
+);
+
+function trackingGifResponse(): Response {
+  return new Response(TRACKING_GIF, {
+    headers: {
+      'Content-Type': 'image/gif',
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+    },
+  });
+}
+
+/** Open pixel — event `open` s dedupe per kampaň+kontakt+hodina. */
+app.get('/make-server-93a20b6f/t/o/:token', async (c) => {
+  try {
+    const raw = c.req.param('token') || '';
+    const token = raw.replace(/\.gif$/i, '');
+    const verified = await verifyTrackingToken(token);
+    if (!verified.ok) return trackingGifResponse();
+    const supabase = mailingServiceClient();
+    if (!supabase) return trackingGifResponse();
+    const hourBucket = new Date().toISOString().slice(0, 13);
+    const nowIso = new Date().toISOString();
+    await supabase.from('email_events').upsert(
+      {
+        event_type: 'open',
+        source: 'resend',
+        occurred_at: nowIso,
+        campaign_id: verified.campaignId,
+        subscriber_id: verified.subscriberId,
+        user_agent: (c.req.header('User-Agent') || '').slice(0, 300),
+        dedupe_key: `pixel:open:${verified.campaignId}:${verified.subscriberId}:${hourBucket}`,
+      },
+      { onConflict: 'dedupe_key', ignoreDuplicates: true },
+    );
+    await supabase.from('subscribers').update({ last_opened_at: nowIso }).eq('id', verified.subscriberId);
+    return trackingGifResponse();
+  } catch {
+    return trackingGifResponse();
+  }
+});
+
+/** Click redirect — event `click` + email_links + redirect 302 na cílovou URL. */
+app.get('/make-server-93a20b6f/t/c/:token', async (c) => {
+  const fallback = normalizePublicSiteOrigin(getPublicSiteOrigin());
+  try {
+    const token = c.req.param('token') || '';
+    const url = c.req.query('u') || '';
+    const target = /^https?:\/\//i.test(url) ? url : fallback;
+    const verified = await verifyTrackingToken(token);
+    if (!verified.ok) return c.redirect(target, 302);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.redirect(target, 302);
+
+    const nowIso = new Date().toISOString();
+    /* email_links upsert (campaign+md5(url) unikát v DB — konflikt řešíme selectem). */
+    let linkId: string | null = null;
+    const { data: linkIns, error: linkErr } = await supabase
+      .from('email_links')
+      .insert({ campaign_id: verified.campaignId, url: target.slice(0, 2000) })
+      .select('id')
+      .maybeSingle();
+    if (!linkErr && linkIns?.id) {
+      linkId = linkIns.id as string;
+    } else {
+      const { data: linkSel } = await supabase
+        .from('email_links')
+        .select('id')
+        .eq('campaign_id', verified.campaignId)
+        .eq('url', target.slice(0, 2000))
+        .maybeSingle();
+      linkId = (linkSel?.id as string | undefined) ?? null;
+    }
+
+    const minuteBucket = nowIso.slice(0, 16);
+    await supabase.from('email_events').upsert(
+      {
+        event_type: 'click',
+        source: 'resend',
+        occurred_at: nowIso,
+        campaign_id: verified.campaignId,
+        subscriber_id: verified.subscriberId,
+        link_id: linkId,
+        user_agent: (c.req.header('User-Agent') || '').slice(0, 300),
+        dedupe_key: `pixel:click:${verified.campaignId}:${verified.subscriberId}:${linkId || 'x'}:${minuteBucket}`,
+      },
+      { onConflict: 'dedupe_key', ignoreDuplicates: true },
+    );
+    await supabase.from('subscribers').update({ last_clicked_at: nowIso }).eq('id', verified.subscriberId);
+    return c.redirect(target, 302);
+  } catch {
+    return c.redirect(fallback, 302);
+  }
+});
+
+/* ── Unsubscribe (stránka + one-click POST) ── */
+
+async function performUnsubscribe(email: string): Promise<{ ok: boolean; error?: string }> {
+  const supabase = mailingServiceClient();
+  if (!supabase) return { ok: false, error: 'Chybí service role env.' };
+  const clean = email.trim().toLowerCase();
+  const nowIso = new Date().toISOString();
+  const { data: sub, error } = await supabase
+    .from('subscribers')
+    .select('id, status')
+    .eq('email', clean)
+    .maybeSingle();
+  if (error) return { ok: false, error: error.message };
+  if (!sub) return { ok: true };
+  if (sub.status !== 'unsubscribed') {
+    const { error: updErr } = await supabase
+      .from('subscribers')
+      .update({ status: 'unsubscribed', unsubscribed_at: nowIso })
+      .eq('id', sub.id);
+    if (updErr) return { ok: false, error: updErr.message };
+    await supabase.from('email_events').upsert(
+      {
+        event_type: 'unsubscribe',
+        source: 'resend',
+        occurred_at: nowIso,
+        subscriber_id: sub.id,
+        dedupe_key: `unsub:${sub.id}:${nowIso.slice(0, 10)}`,
+      },
+      { onConflict: 'dedupe_key', ignoreDuplicates: true },
+    );
+  }
+  return { ok: true };
+}
+
+function unsubscribePageHtml(opts: { title: string; message: string; confirmToken?: string }): string {
+  const site = normalizePublicSiteOrigin(getPublicSiteOrigin());
+  const form = opts.confirmToken
+    ? `<form method="post" action="?token=${encodeURIComponent(opts.confirmToken)}" style="margin:0 0 16px;">
+<button type="submit" style="padding:12px 28px;background:#dc2626;color:#fff;border:0;font-weight:bold;font-size:14px;border-radius:10px;cursor:pointer;">Odhlásit se z odběru</button>
+</form>`
+    : '';
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${opts.title}</title></head>
+<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f4f6fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="max-width:440px;background:#fff;border-radius:16px;padding:40px 32px;text-align:center;box-shadow:0 4px 24px rgba(0,17,97,0.08);margin:16px;">
+<h1 style="color:#001161;font-size:22px;margin:0 0 12px;">${opts.title}</h1>
+<p style="color:#4a5568;font-size:15px;line-height:1.6;margin:0 0 24px;">${opts.message}</p>
+${form}
+<a href="${site}" style="display:inline-block;padding:12px 28px;background:#001161;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;border-radius:10px;">Přejít na Vividbooks</a>
+</div></body></html>`;
+}
+
+/** GET: potvrzovací stránka s tlačítkem. */
+app.get('/make-server-93a20b6f/unsubscribe', async (c) => {
+  const token = c.req.query('token') || '';
+  const verified = token ? await verifyMailingToken('unsub', token) : { ok: false as const, error: 'Chybí token.' };
+  if (!verified.ok) {
+    return c.html(unsubscribePageHtml({
+      title: 'Odkaz není platný',
+      message: 'Odkaz pro odhlášení je neúplný nebo poškozený. Napište nám na hello@vividbooks.com a odhlásíme vás ručně.',
+    }), 400);
+  }
+  return c.html(unsubscribePageHtml({
+    title: 'Odhlásit odběr novinek?',
+    message: `Kliknutím níže odhlásíte adresu ${verified.email} z marketingových e-mailů Vividbooks. Transakční e-maily (objednávky, webináře) chodí dál.`,
+    confirmToken: token,
+  }));
+});
+
+/** POST: samotné odhlášení (tlačítko na stránce i One-Click z hlavičky List-Unsubscribe-Post). */
+app.post('/make-server-93a20b6f/unsubscribe', async (c) => {
+  const token = c.req.query('token') || '';
+  const verified = token ? await verifyMailingToken('unsub', token) : { ok: false as const, error: 'Chybí token.' };
+  if (!verified.ok) {
+    return c.html(unsubscribePageHtml({ title: 'Odkaz není platný', message: 'Odhlášení se nepodařilo ověřit.' }), 400);
+  }
+  const result = await performUnsubscribe(verified.email);
+  if (!result.ok) {
+    return c.html(unsubscribePageHtml({ title: 'Chyba', message: 'Odhlášení se nepodařilo uložit. Zkuste to prosím později.' }), 500);
+  }
+  return c.html(unsubscribePageHtml({
+    title: 'Jste odhlášeni',
+    message: `Adresa ${verified.email} už nebude dostávat marketingové e-maily Vividbooks.`,
+  }));
+});
+
+/* ── Resend webhook (svix podpis) — delivered / bounced / complained / opened / clicked ── */
+
+async function verifySvixSignature(req: Request, payload: string): Promise<boolean> {
+  const secretRaw = Deno.env.get('RESEND_WEBHOOK_SECRET')?.trim();
+  if (!secretRaw) return false;
+  const id = req.headers.get('svix-id') || '';
+  const timestamp = req.headers.get('svix-timestamp') || '';
+  const sigHeader = req.headers.get('svix-signature') || '';
+  if (!id || !timestamp || !sigHeader) return false;
+  /* Ochrana proti replay (±5 min). */
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) return false;
+
+  const secretB64 = secretRaw.startsWith('whsec_') ? secretRaw.slice(6) : secretRaw;
+  let keyBytes: Uint8Array;
+  try {
+    const bin = atob(secretB64);
+    keyBytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) keyBytes[i] = bin.charCodeAt(i);
+  } catch {
+    keyBytes = new TextEncoder().encode(secretB64);
+  }
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${id}.${timestamp}.${payload}`));
+  const expected = encodeBase64(new Uint8Array(signed));
+  return sigHeader.split(' ').some((part) => {
+    const sig = part.includes(',') ? part.split(',')[1] : part;
+    return sig === expected;
+  });
+}
+
+type ResendEventType = 'delivered' | 'delivery_delayed' | 'open' | 'click' | 'bounce' | 'complaint' | 'failed';
+
+const RESEND_EVENT_MAP: Record<string, ResendEventType> = {
+  'email.delivered': 'delivered',
+  'email.delivery_delayed': 'delivery_delayed',
+  'email.opened': 'open',
+  'email.clicked': 'click',
+  'email.bounced': 'bounce',
+  'email.complained': 'complaint',
+  'email.failed': 'failed',
+};
+
+/** Události, které pro danou zprávu nastanou nejvýš jednou — dedupe bez svix-id (odolné vůči retry). */
+const RESEND_ONCE_PER_MESSAGE: ResendEventType[] = ['delivered', 'bounce', 'complaint', 'failed'];
+
+/** Resend bounce.type: Permanent = trvalé odmítnutí, Transient = dočasné (plná schránka, throttling). */
+function classifyBounce(raw?: string): 'hard' | 'soft' | 'undetermined' {
+  const t = String(raw || '').toLowerCase();
+  if (t === 'permanent') return 'hard';
+  if (t === 'transient') return 'soft';
+  return 'undetermined';
+}
+
+app.post('/make-server-93a20b6f/webhooks/resend', async (c) => {
+  try {
+    const payload = await c.req.text();
+    const valid = await verifySvixSignature(c.req.raw, payload);
+    if (!valid) return c.json({ error: 'Invalid signature' }, 401);
+
+    const event = JSON.parse(payload) as {
+      type?: string;
+      created_at?: string;
+      data?: {
+        email_id?: string;
+        bounce?: { type?: string; subType?: string; message?: string };
+        failed?: { reason?: string };
+      };
+    };
+    const type = String(event.type || '');
+    const emailId = String(event.data?.email_id || '');
+    if (!emailId) return c.json({ ok: true, skipped: 'no email_id' });
+
+    const eventType = RESEND_EVENT_MAP[type];
+    if (!eventType) return c.json({ ok: true, skipped: type });
+
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+
+    const { data: rec } = await supabase
+      .from('campaign_recipients')
+      .select('id, campaign_id, subscriber_id, delivered_at')
+      .eq('provider_message_id', emailId)
+      .maybeSingle();
+
+    const occurredAt = event.created_at && !Number.isNaN(Date.parse(event.created_at))
+      ? new Date(event.created_at).toISOString()
+      : new Date().toISOString();
+
+    const bounceType = eventType === 'bounce' ? classifyBounce(event.data?.bounce?.type) : null;
+    const reason = (event.data?.bounce?.message || event.data?.failed?.reason || '').slice(0, 500) || null;
+
+    const dedupeKey = RESEND_ONCE_PER_MESSAGE.includes(eventType)
+      ? `resend:${eventType}:${emailId}`
+      : `resend:${eventType}:${emailId}:${c.req.header('svix-id') || occurredAt}`;
+
+    await supabase.from('email_events').upsert(
+      {
+        event_type: eventType,
+        source: 'resend',
+        occurred_at: occurredAt,
+        campaign_id: (rec?.campaign_id as string | undefined) ?? null,
+        subscriber_id: (rec?.subscriber_id as string | undefined) ?? null,
+        provider_event_id: emailId,
+        dedupe_key: dedupeKey,
+        metadata: {
+          webhookType: type,
+          ...(bounceType ? { bounceType, bounceSubType: event.data?.bounce?.subType ?? null } : {}),
+          ...(reason ? { reason } : {}),
+        },
+      },
+      { onConflict: 'dedupe_key', ignoreDuplicates: true },
+    );
+
+    if (rec?.id) {
+      if (eventType === 'delivered' && !rec.delivered_at) {
+        await supabase.from('campaign_recipients').update({ delivered_at: occurredAt }).eq('id', rec.id);
+      }
+      if (eventType === 'bounce') {
+        await supabase
+          .from('campaign_recipients')
+          .update({ bounce_type: bounceType, bounce_reason: reason })
+          .eq('id', rec.id);
+      }
+      if (eventType === 'failed') {
+        await supabase
+          .from('campaign_recipients')
+          .update({ status: 'failed', error: `Resend failed: ${reason || 'bez detailu'}`.slice(0, 500) })
+          .eq('id', rec.id);
+      }
+    }
+
+    /* Kontakt čistíme jen u trvalého odmítnutí a stížnosti — soft bounce může být plná schránka. */
+    if ((eventType === 'complaint' || (eventType === 'bounce' && bounceType === 'hard')) && rec?.subscriber_id) {
+      await supabase.from('subscribers').update({ status: 'cleaned' }).eq('id', rec.subscriber_id).neq('status', 'unsubscribed');
+    }
+    if (eventType === 'open' && rec?.subscriber_id) {
+      await supabase.from('subscribers').update({ last_opened_at: occurredAt }).eq('id', rec.subscriber_id);
+    }
+    if (eventType === 'click' && rec?.subscriber_id) {
+      await supabase.from('subscribers').update({ last_clicked_at: occurredAt }).eq('id', rec.subscriber_id);
+    }
+
+    return c.json({ ok: true });
   } catch (e: any) {
     return c.json({ ok: false, error: e?.message || String(e) }, 500);
   }
@@ -10993,7 +12127,8 @@ app.post('/make-server-93a20b6f/newsletter/subscribe', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const rawEmail = String(body?.email || '').trim();
-    const source = typeof body?.source === 'string' ? body.source : 'unknown';
+    const profile = parseNewsletterSubscribeProfile(body);
+    const source = profile.source;
     const email = rawEmail.toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return c.json({ error: 'Neplatný e-mail' }, 400);
@@ -11003,38 +12138,189 @@ app.post('/make-server-93a20b6f/newsletter/subscribe', async (c) => {
     const already = existing.find(
       (s: any) => String(s?.email || '').toLowerCase().trim() === email,
     );
-    if (already) return c.json({ success: true, duplicate: true });
 
-    const entry = {
-      id: Date.now(),
-      email,
-      source,
-      subscribedAt: new Date().toISOString(),
-    };
-    await kv.set(NEWSLETTER_KEY, [...existing, entry]);
-    console.log(`[newsletter] subscribed: ${email} from ${source}`);
+    if (!already) {
+      const entry = {
+        id: Date.now(),
+        email,
+        source,
+        subscribedAt: new Date().toISOString(),
+      };
+      await kv.set(NEWSLETTER_KEY, [...existing, entry]);
+      console.log(`[newsletter] subscribed: ${email} from ${source}`);
+    }
+
+    /** Postgres subscribers: double opt-in — nový kontakt čeká jako `pending` na potvrzení. */
+    let pgStatus: string | null = null;
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const mergeFields: Record<string, unknown> = { newsletter_signup_source: source };
+        if (profile.consentVersion) mergeFields.consent_version = profile.consentVersion;
+        if (profile.consentedAt) mergeFields.consented_at = profile.consentedAt;
+        const subscriberSource =
+          profile.contactType === 'teacher' && source === 'vividbooks-app-teacher-registration'
+            ? source
+            : 'newsletter';
+        const up = await upsertSubscriber(sbMailing, {
+          email,
+          firstName: profile.firstName,
+          lastName: profile.lastName,
+          schoolName: profile.schoolName,
+          positionLabel: profile.positionLabel,
+          source: subscriberSource,
+          contactType: profile.contactType,
+          status: 'pending',
+          mergeFields,
+        });
+        if (up.ok) pgStatus = up.status;
+        else console.warn(`[newsletter] Postgres upsert selhal (neblokuje): ${up.error}`);
+      }
+    } catch (subErr) {
+      console.warn('[newsletter] Postgres upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
+    }
+
+    if (already && pgStatus !== 'pending') return c.json({ success: true, duplicate: true });
 
     let confirmationEmailSent = false;
-    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
-    if (mandrillKey) {
+    if (pgStatus === 'pending') {
+      /** Double opt-in: potvrzovací e-mail s podepsaným odkazem (platnost 7 dní). */
+      try {
+        const token = await createMailingToken('optin', email, 7);
+        const fnBase = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
+        const confirmUrl = `${fnBase}/functions/v1/make-server-93a20b6f/newsletter/confirm?token=${encodeURIComponent(token)}`;
+        const html = buildNewsletterOptInConfirmHtml(confirmUrl);
+        const subject = 'Potvrďte prosím odběr novinek — Vividbooks';
+        const resend = await sendResendEmail({
+          to: email,
+          subject,
+          html,
+          tags: [{ name: 'kind', value: 'newsletter-optin' }],
+        });
+        if (resend.ok) {
+          confirmationEmailSent = true;
+        } else {
+          /* Fallback: Mandrill (Resend zatím nemusí být nakonfigurovaný). */
+          const r = await sendMandrillHtmlResult({
+            toEmail: email,
+            toName: email.split('@')[0],
+            subject,
+            html,
+          });
+          confirmationEmailSent = r.ok;
+          if (!r.ok) console.log(`[newsletter] opt-in e-mail neodeslán (Resend: ${resend.error}; Mandrill: ${r.detail || '?'})`);
+        }
+      } catch (e) {
+        console.log('[newsletter] opt-in e-mail chyba:', e instanceof Error ? e.message : e);
+      }
+    } else {
+      /* Kontakt už je subscribed (webinar/trial/…) — pošleme klasické poděkování. */
       const html = buildNewsletterSubscribeConfirmationHtml();
-      const toName = email.split('@')[0];
       const r = await sendMandrillHtmlResult({
         toEmail: email,
-        toName,
+        toName: email.split('@')[0],
         subject: 'Děkujeme za odběr newsletteru — Vividbooks',
         html,
       });
       confirmationEmailSent = r.ok;
       if (!r.ok) console.log(`[newsletter] Mandrill potvrzení neodesláno: ${r.detail || '?'}`);
-    } else {
-      console.log('[newsletter] MANDRILL_API_KEY chybí — potvrzovací e-mail přeskočen');
     }
 
-    return c.json({ success: true, confirmationEmailSent });
+    return c.json({ success: true, confirmationEmailSent, doubleOptIn: pgStatus === 'pending' });
   } catch (e: any) {
     console.log('[newsletter] error:', e.message);
     return c.json({ error: e.message }, 500);
+  }
+});
+
+/** Jednoduchý potvrzovací e-mail double opt-inu (tlačítko s podepsaným odkazem). */
+function buildNewsletterOptInConfirmHtml(confirmUrl: string): string {
+  const esc = remEscHtmlReminder;
+  const site = esc(normalizePublicSiteOrigin(getPublicSiteOrigin()));
+  const logoSrc = esc(webinarEmailHeaderLogoAbsoluteUrl());
+  const year = new Date().getFullYear();
+  const url = esc(confirmUrl);
+  return `<!DOCTYPE html>
+<html lang="cs"><head><meta charset="utf-8"/><meta name="color-scheme" content="light dark"/></head>
+<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb;padding:24px 12px;">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
+<tr><td style="background:#001161;padding:22px 24px 20px;text-align:center;border-radius:12px 12px 0 0;">
+<a href="${site}" style="text-decoration:none;border:0;display:inline-block;">
+<img src="${logoSrc}" alt="Vividbooks" width="${WEBINAR_EMAIL_HEADER_LOGO_PX}" style="display:block;margin:0 auto;width:${WEBINAR_EMAIL_HEADER_LOGO_PX}px;max-width:${WEBINAR_EMAIL_HEADER_LOGO_PX}px;height:auto;border:0;"/>
+</a>
+<p style="margin:12px 0 0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Newsletter pro učitele</p>
+</td></tr>
+<tr><td style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
+<p style="margin:0 0 1em;">Dobrý den,</p>
+<p style="margin:0 0 1em;">děkujeme za zájem o novinky Vividbooks. Zbývá poslední krok — <strong style="color:#001161;">potvrďte prosím svou adresu</strong> kliknutím na tlačítko níže. Bez potvrzení vám newsletter posílat nebudeme.</p>
+</td></tr>
+<tr><td style="padding:8px 28px 12px;" align="center">
+<a href="${url}" style="display:inline-block;padding:14px 32px;background:#E8942A;color:#ffffff !important;text-decoration:none;font-weight:bold;font-size:15px;border-radius:10px;">Potvrdit odběr novinek</a>
+</td></tr>
+<tr><td style="padding:0 28px 20px;color:#6b7280;font-size:12px;line-height:1.6;">
+<p style="margin:0;">Odkaz platí 7 dní. Pokud tlačítko nefunguje, zkopírujte adresu do prohlížeče:<br/><span style="word-break:break-all;color:#001161;">${url}</span></p>
+</td></tr>
+<tr><td style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
+<p style="margin:0 0 1em;">Pokud jste o odběr nežádali, tento e-mail ignorujte — nic dalšího vám nepřijde.</p>
+<p style="margin:0;">© ${year} Vividbooks · <a href="mailto:hello@vividbooks.com" style="color:#6b7280;">hello@vividbooks.com</a></p>
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
+/** Potvrzení double opt-inu — podepsaný odkaz z e-mailu → subscribed + poděkování. */
+app.get('/make-server-93a20b6f/newsletter/confirm', async (c) => {
+  const htmlPage = (title: string, message: string, ok: boolean) => {
+    const site = normalizePublicSiteOrigin(getPublicSiteOrigin());
+    return c.html(
+      `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${title}</title></head>
+<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f4f6fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="max-width:440px;background:#fff;border-radius:16px;padding:40px 32px;text-align:center;box-shadow:0 4px 24px rgba(0,17,97,0.08);margin:16px;">
+<p style="font-size:40px;margin:0 0 12px;">${ok ? '✅' : '⚠️'}</p>
+<h1 style="color:#001161;font-size:22px;margin:0 0 12px;">${title}</h1>
+<p style="color:#4a5568;font-size:15px;line-height:1.6;margin:0 0 24px;">${message}</p>
+<a href="${site}" style="display:inline-block;padding:12px 28px;background:#001161;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;border-radius:10px;">Přejít na Vividbooks</a>
+</div></body></html>`,
+      ok ? 200 : 400,
+    );
+  };
+  try {
+    const token = c.req.query('token') || '';
+    if (!token) return htmlPage('Chybí token', 'Odkaz je neúplný — použijte prosím celý odkaz z e-mailu.', false);
+    const verified = await verifyMailingToken('optin', token);
+    if (!verified.ok) {
+      return htmlPage('Odkaz není platný', `${verified.error} Přihlaste se k odběru prosím znovu na našem webu.`, false);
+    }
+    const srEnv = getServiceRoleEnv();
+    if (!srEnv) return htmlPage('Chyba serveru', 'Zkuste to prosím později.', false);
+    const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+    const up = await upsertSubscriber(sbMailing, {
+      email: verified.email,
+      source: 'newsletter',
+      resubscribe: true,
+      tags: ['newsletter'],
+    });
+    if (!up.ok) return htmlPage('Chyba', 'Potvrzení se nepodařilo uložit. Zkuste to prosím později.', false);
+
+    /* Automatizace: newsletter welcome flow (trigger subscriber_created + source newsletter). */
+    await enrollInFlows(sbMailing, { type: 'subscriber_created', source: 'newsletter' }, up.subscriberId).catch(() => {});
+
+    /* Uvítací e-mail po potvrzení (stejný jako dřívější poděkování). */
+    void sendMandrillHtmlResult({
+      toEmail: verified.email,
+      toName: verified.email.split('@')[0],
+      subject: 'Děkujeme za odběr newsletteru — Vividbooks',
+      html: buildNewsletterSubscribeConfirmationHtml(),
+    }).catch(() => {});
+
+    return htmlPage('Odběr potvrzen', 'Váš e-mail je potvrzený — od teď vám budeme posílat vybrané novinky a pozvánky. Díky!', true);
+  } catch (e) {
+    console.log('[newsletter] confirm error:', e instanceof Error ? e.message : e);
+    return htmlPage('Chyba', 'Něco se pokazilo. Zkuste to prosím později.', false);
   }
 });
 
@@ -19448,6 +20734,21 @@ function campaignToText(campaign: any): string {
   ].filter(Boolean).join('\n');
 }
 
+/** Do hotového full HTML (starší fullHtml) doplní mobilní CSS těla, pokud chybí. */
+function injectEmailBodyMobileCss(fullHtml: string): string {
+  let html = String(fullHtml || '');
+  if (!html.trim()) return html;
+  html = compileEmailBodyForSend(html);
+  if (html.includes('.vb-email-cols > tbody') || html.includes('td.vb-wb-stack {')) {
+    return html;
+  }
+  const styleTag = `<style type="text/css">${EMAIL_BODY_MOBILE_CSS}</style>`;
+  if (/<\/head>/i.test(html)) {
+    return html.replace(/<\/head>/i, `${styleTag}</head>`);
+  }
+  return `${styleTag}${html}`;
+}
+
 function vividbooksEmailTemplate(params: {
   headline: string;
   body: string;
@@ -19466,6 +20767,7 @@ function vividbooksEmailTemplate(params: {
     <tr><td class="vb-cta" style="padding:6px 24px 22px 24px;text-align:center;background-color:#ffffff;">
       <a href="${ctaUrl}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">${ctaText}</a>
     </td></tr>` : '';
+  const cleanBody = compileEmailBodyForSend(body);
   const mcResponsiveStyle = `<style type="text/css">
 @media only screen and (max-width: 600px) {
   .vb-shell-pad { padding: 12px 8px !important; }
@@ -19474,40 +20776,52 @@ function vividbooksEmailTemplate(params: {
   .vb-brand span { font-size: 22px !important; letter-spacing: 0.3px !important; }
   .vb-hero { padding: 26px 18px 24px 18px !important; }
   .vb-hero h1 { font-size: 22px !important; line-height: 1.28 !important; }
-  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 17px !important; line-height: 1.65 !important; }
+  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 15px !important; line-height: 1.65 !important; }
   .vb-cta { padding: 4px 16px 20px 16px !important; }
-  .vb-cta a { font-size: 17px !important; padding: 16px 28px !important; line-height: 1.2 !important; }
+  .vb-cta a { font-size: 15px !important; padding: 16px 28px !important; line-height: 1.2 !important; }
   .vb-foot { padding: 22px 18px !important; }
   .vb-foot p { font-size: 13px !important; }
   .vb-foot a { font-size: 13px !important; }
 }
+${EMAIL_BODY_MOBILE_CSS}
 </style>`;
   /* Původní náhled AI Email Agentu: světle šedé plátno + bílá zaoblená karta, tmavě modrý hero, fialové hlavní CTA. */
   const vbCanvas = '#E8EAED';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>${headline}</title>${preheader ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>` : ''}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-brand" style="background-color:${vbCanvas};padding:8px 20px 14px 20px;text-align:center;"><span style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#001161;letter-spacing:0.5px;">Vividbooks</span></td></tr><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-hero" style="background-color:#001161;padding:32px 26px;text-align:center;"><h1 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:#ffffff;line-height:1.3;">${headline}</h1></td></tr>${ctaBlock}<tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#333333;background-color:#ffffff;">${cleanBody}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /**
  * Testovací odeslání z editoru — odpovídá náhledu (jen obsah `bodyHtml` v bílé kartě),
  * bez horního loga, modrého hero a bez automatického CTA z produkční šablony.
  */
-function vividbooksEmailTestMatchEditorTemplate(params: { body: string; preheader?: string }): string {
+/**
+ * Test / mailing z editoru — odpovídá náhledu (island layout):
+ * šedé plátno + samostatné section karty, BEZ jedné vnější bílé karty kolem celého těla.
+ */
+function vividbooksEmailTestMatchEditorTemplate(params: {
+  body: string;
+  preheader?: string;
+  /** Barva plátna z editoru (`previewOuterBg`), default jako v EmailBuilderu. */
+  outerBackground?: string;
+}): string {
   const { body, preheader } = params;
+  const cleanBody = compileEmailBodyForSend(body);
+  const rawCanvas = String(params.outerBackground || '').trim();
+  const vbCanvas = /^#[0-9a-fA-F]{3,8}$/.test(rawCanvas) ? rawCanvas : '#f3f4f6';
   const mcResponsiveStyle = `<style type="text/css">
 @media only screen and (max-width: 600px) {
   .vb-shell-pad { padding: 12px 8px !important; }
-  .vb-card-outer { width: 100% !important; max-width: 100% !important; }
-  .vb-bodycell { padding: 18px 18px 24px 18px !important; font-size: 17px !important; line-height: 1.65 !important; }
+  .vb-bodycell { font-size: 15px !important; line-height: 1.65 !important; }
   .vb-foot { padding: 22px 18px !important; }
   .vb-foot p { font-size: 13px !important; }
   .vb-foot a { font-size: 13px !important; }
 }
+${EMAIL_BODY_MOBILE_CSS}
 </style>`;
-  const vbCanvas = '#E8EAED';
   const pre = preheader
     ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>`
     : '';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 10px 28px 10px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td align="center" style="padding:0;"><table role="presentation" class="vb-card-outer" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:#ffffff;border-radius:18px;overflow:hidden;box-shadow:0 4px 22px rgba(0,17,97,0.1);border:1px solid rgba(0,17,97,0.06);"><tr><td class="vb-bodycell" style="padding:22px 26px 28px 26px;font-family:Arial,Helvetica,sans-serif;font-size:16px;line-height:1.6;color:#333333;background-color:#ffffff;">${body}</td></tr></table></td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:20px 20px 8px 20px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${mcResponsiveStyle}<title>Test</title>${pre}</head><body style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;"><table role="presentation" class="vb-shell" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 12px 28px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-bodycell" style="padding:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#333333;background-color:transparent;">${cleanBody}</td></tr><tr><td class="vb-foot" style="background-color:${vbCanvas};padding:24px 12px 8px 12px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* GET /admin/mailchimp/campaigns */
@@ -19643,13 +20957,25 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
     const campaignId = campaign.id;
     const webId = campaign.web_id;
 
-    let finalHtml = htmlBody || vividbooksEmailTemplate({
-      headline: headline || subject,
-      body: bodyContent || '<p>Obsah emailu</p>',
-      ctaText: ctaText || 'Vyzkoušejte zdarma',
-      ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
-      preheader: previewText,
-    });
+    /* Preferuj bodyContent + aktuální šablonu (mobilní CSS + compile). hotové htmlBody jen jako fallback. */
+    let finalHtml = bodyContent
+      ? vividbooksEmailTemplate({
+          headline: headline || subject,
+          body: String(bodyContent),
+          ctaText: ctaText || 'Vyzkoušejte zdarma',
+          ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
+          preheader: previewText,
+        })
+      : (htmlBody || vividbooksEmailTemplate({
+          headline: headline || subject,
+          body: '<p>Obsah emailu</p>',
+          ctaText: ctaText || 'Vyzkoušejte zdarma',
+          ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
+          preheader: previewText,
+        }));
+    if (!bodyContent && htmlBody) {
+      finalHtml = injectEmailBodyMobileCss(String(htmlBody));
+    }
 
     await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
       method: 'PUT',
@@ -19667,13 +20993,8 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
   }
 });
 
-/** Povolené adresy pro Mailchimp „Send test“ z editoru kampaní (EmailBuilder → Nastavení). */
-const MAILCHIMP_TEST_EMAIL_ALLOWLIST = new Set([
-  'vitekskop@gmail.com',
-  'frantisek@vividbooks.com',
-  'gabriela@vividbooks.com',
-  'dan@vividbooks.com',
-]);
+/** Povolené adresy pro „Send test“ z editoru kampaní — sdílené s Resend testem (MAILING_TEST_EMAILS). */
+const MAILCHIMP_TEST_EMAIL_ALLOWLIST = getMailingTestEmails();
 
 /* POST /admin/mailchimp/send-test-email — dočasná kampaň, Mailchimp test send, pak smazání */
 app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
@@ -19724,6 +21045,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
       vividbooksEmailTestMatchEditorTemplate({
         body: bodyContent || '<p>Obsah emailu</p>',
         preheader: previewText,
+        outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
       });
 
     const putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
@@ -19811,6 +21133,9 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
       productsRes,
       webinarsRes,
       blogPackRes,
+      heroSlidesRes,
+      tabsRes,
+      fixedPagesRes,
     ] = await Promise.all([
       ragEnabled
         ? loadAllChunks().catch((e: any) => {
@@ -19825,6 +21150,9 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
       }),
       getCollection(WEBINARS_KEY).catch(() => []),
       Promise.all([getCollection(BLOG_KEY), getCollection(NOVINKY_KEY)]).catch(() => [[], []]),
+      getCollection(HERO_SLIDES_KEY).catch(() => []),
+      getCollection(TABS_KEY).catch(() => []),
+      getCollection(FIXED_PAGES_KEY).catch(() => []),
     ]);
 
     const allCh: any[] = Array.isArray(chunksRes) ? chunksRes : [];
@@ -19941,10 +21269,10 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
       if (allProducts.length > productSlice) allProducts = allProducts.slice(0, productSlice);
       if (allProducts.length > 0) {
         productCtx =
-          '\n\n## Aktualni produkty v katalogu Vividbooks (POUZIJ KONKRETNI NAZVY!):\n' +
+          '\n\n## Aktualni produkty v katalogu Vividbooks (POUZIJ KONKRETNI NAZVY + id!):\n' +
           allProducts
             .map((p: any) =>
-              `- **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: ${productPublicUrl(p, allProducts)}`,
+              `- id: ${p.id} | **${p.name}**${p.category ? ' (' + p.category + ')' : ''}${p.price ? ' — ' + p.price : ''}${p.rocnik ? ', ' + p.rocnik + '. rocnik' : ''}${p.predmet ? ', predmet: ' + p.predmet : ''}${p.image ? ' | img: ' + p.image : ''} | url: ${productPublicUrl(p, allProducts)}`,
             )
             .join('\n');
       }
@@ -19956,25 +21284,38 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
 
     let webinarCtx = '';
     let webinarCount = 0;
-    const webinars = Array.isArray(webinarsRes) ? webinarsRes : [];
+    const webinars = normalizeWebinarsForEmailAi(Array.isArray(webinarsRes) ? webinarsRes : []);
     const webLimit = preferFast ? 10 : 20;
+    const wantsPastWebinars = /z[aá]znam|probehl|prob[eě]hl|minul[éey]|archiv/i.test(
+      `${String(conversationContext || '')}\n${String(prompt || '')}`,
+    );
     try {
       webinarCount = webinars.length;
-      if (webinars.length > 0) {
+      const webinarsForPrompt = selectWebinarsForEmailAi(webinars, webLimit, {
+        includePast: wantsPastWebinars,
+      });
+      const upcomingInPrompt = webinarsForPrompt.filter((w: any) => !w.isPast).length;
+      if (webinarsForPrompt.length > 0) {
         webinarCtx =
           '\n\n## Webinare Vividbooks:\n' +
-          webinars
-            .slice(0, webLimit)
+          'Pro blokový editor používej přesné pole `slug:` (nebo `id:`) v AI placeholderu webináře.\n' +
+          (upcomingInPrompt > 0 && !wantsPastWebinars
+            ? 'Priorita: používej POUZE řádky označené (NADCHAZEJICI). Řádky (PROBEHLO) jen když uživatel výslovně chce záznam/minulé.\n'
+            : '') +
+          webinarsForPrompt
             .map((w: any) => {
               const slug = String(w.slug || w.id || '').trim();
+              const id = String(w.id || slug).trim();
               const pageUrl = slug ? marketingSitePath(`/webinar/${slug}`) : '';
               return (
-                `- **${w.title}**${w.subtitle ? ' — ' + w.subtitle : ''} | ${w.day || ''}. ${w.monthName || ''} ${w.year || ''} ${w.time || ''} | Lektor: ${w.lecturer || '?'}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'}${pageUrl ? ' | url: ' + pageUrl : ''}${w.coverImage ? ' | img: ' + w.coverImage : ''}`
+                `- slug: ${slug} | id: ${id} | **${w.title}**${w.subtitle ? ' — ' + w.subtitle : ''} | ${w.day || ''}. ${w.monthName || ''} ${w.year || ''} ${w.time || ''} | Lektor: ${w.lecturer || '?'}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'}${pageUrl ? ' | url: ' + pageUrl : ''}${w.coverImage ? ' | img: ' + w.coverImage : ''}${w.lecturerAvatar ? ' | avatar: ' + w.lecturerAvatar : ''}`
               );
             })
             .join('\n');
       }
-      console.log(`[MC Gen] Webinars: ${webinarCount} loaded`);
+      console.log(
+        `[MC Gen] Webinars: ${webinarCount} loaded, prompt=${webinarsForPrompt.length} (upcoming=${upcomingInPrompt}, includePast=${wantsPastWebinars})`,
+      );
     } catch (webErr: any) {
       console.log(`[MC Gen] Webinars error (non-fatal): ${webErr.message}`);
     }
@@ -20004,11 +21345,63 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
 
     (ragDebug as any).webinarCount = webinarCount;
 
-    const ragForBriefBundle = ragCtxDeep.trim() ? ragCtxDeep : ragCtx;
-    const bundleCtx = `${productCtx}${webinarCtx}${blogCtx}${ragForBriefBundle}${campStats}${campStructures}`;
     const convStr = String(conversationContext || '');
     const promptStr = String(prompt || '');
     const combinedDetect = `${convStr}\n${promptStr}`;
+    const wantsAplikaceAssets = promptWantsAplikaceWebAssets(combinedDetect);
+    const aplikaceCtx = buildAplikaceMarketingCtx(marketingSitePath);
+    if (wantsAplikaceAssets) {
+      console.log('[MC Gen] Aplikace web assets: user asked for /aplikace slider images');
+    }
+
+    const heroCtx = buildHeroSlidesCtx(
+      Array.isArray(heroSlidesRes) ? heroSlidesRes : [],
+      marketingSitePath,
+      preferFast,
+    );
+    const tabsCtx = buildSubjectTabsCtx(
+      Array.isArray(tabsRes) ? tabsRes : [],
+      marketingSitePath,
+      preferFast,
+    );
+    const fixedCtx = buildFixedPagesCtx(Array.isArray(fixedPagesRes) ? fixedPagesRes : [], preferFast);
+
+    const urlsInPrompt = extractUrlsFromText(combinedDetect);
+    const wantsWebinarWeb =
+      preferEmailBuilderBlocks ||
+      /webin[aá]?[rř]|dvpp|školen|skolen|registrac/i.test(combinedDetect);
+    const autoSiteUrls: string[] = [];
+    if (wantsWebinarWeb) {
+      autoSiteUrls.push(marketingSitePath('/webinare'));
+      for (const w of webinars.filter((x: any) => !x?.isPast).slice(0, 3)) {
+        const slug = String(w?.slug || w?.id || '').trim();
+        if (slug) autoSiteUrls.push(marketingSitePath(`/webinar/${slug}`));
+      }
+    }
+    const urlsToFetch = [...urlsInPrompt];
+    for (const u of autoSiteUrls) {
+      if (!urlsToFetch.includes(u)) urlsToFetch.push(u);
+    }
+    let webFetchCtx = '';
+    if (urlsToFetch.length) {
+      console.log(
+        `[MC Gen] Fetching ${urlsToFetch.length} URL(s) for email context (prompt=${urlsInPrompt.length}, auto=${autoSiteUrls.length})`,
+      );
+      webFetchCtx = await buildFetchedUrlsCtxFromList(
+        urlsToFetch,
+        urlsInPrompt.length
+          ? 'Obsah načtený z URL (zadání + automaticky webináře z webu)'
+          : 'Obsah načtený z webu Vividbooks (webináře / listink)',
+      ).catch((e: any) => {
+        console.log(`[MC Gen] URL fetch ctx error: ${e?.message || e}`);
+        return '';
+      });
+    }
+
+    const siteMediaCtx = `${aplikaceCtx}${heroCtx}${tabsCtx}${fixedCtx}${webFetchCtx}`;
+
+    const ragForBriefBundle = ragCtxDeep.trim() ? ragCtxDeep : ragCtx;
+    const bundleCtx = `${productCtx}${webinarCtx}${blogCtx}${siteMediaCtx}${ragForBriefBundle}${campStats}${campStructures}`;
     /** Druhá fáze (HTML) sama — stejně jako dřív u úprav existujícího mailu nebo výběru v náhledu. */
     const iterationLike =
       body.skipBriefPhase === true ||
@@ -20037,7 +21430,7 @@ Struktura briefu (logické sekce s podnadpisy v čistém textu):
 - Hlavní témata rozepsaná v **souvislých odstavcích** (ne jednovětné blurby): „dopisová“ hloubka jako u kvalitních newsletterů — úvod s kontextem, proč to čtenáře zajímá, čas akce, výzva k akci v přirozené češtině
 - **Rozvinuté pasáže** pro druhého agenta: např. benefity / dárek pro účastníky (výčet faktů z dat); doprovodné produkty (minihry, aplikace); **„co od nás (můžete) očekávat“** — spolupráce s **jmenovanými** odborníky **jen pokud jsou v RAG nebo veřejných podkladech**; **horizont vydání / ročníky** z katalogu nebo RAG; **online podpora** (co umí, odkaz na návod); **zpětná vazba** (skupiny, kontakt — bez vymýšlených odkazů); **objednávky / PDF ukázky** — pokud to téma vyžaduje. Tyto bloky nemusí být vždy všechny, ale plnohodnotný mail z bohatých dat má mít **6–10 obsazených tematických celků** v briefu rozepsaných slovně.
 - Produkty / webináře / akce výslovně navázané na obsah (názvy a fakta jen z přiložených dat)
-- Sekce „Navrhované HTML bloky“ (povinná): jasně napiš, které typy bloků má druhý agent použít — více sekcí **(2) Text** s vlastními h2, **Blok (rámeček)** pro výčty benefitů, Produkt (vyjmenuj 1–3 konkrétní tituly z katalogu), Infografika (jen pokud jsou 3 ověřitelné statistiky z dat), Webinář — hlavní 6a / vedlejší 6b / seznam 6c (vyjmenuj přesný název webináře a datum z dat). Bez této sekce není brief kompletní.
+- Sekce „Navrhované HTML bloky“ (povinná): jasně napiš typy z **editoru e-mailu**: text, highlight, image, button, columns-2/3, product-collage (s ID produktů), webinar (s přesným slugem z dat + layout hero/compact), section, divider. U webináře uveď slug + datum; u produktů ID/názvy z katalogu. Bez této sekce není brief kompletní.
 - Sekce „Pozadí sekcí“ (doporučená, 2–4 odrážky): které části mají jít jako **plný pás** (např. #001161 webinář, #F06632 poděkování, žlutý tip), které jako **bílá karta v šedém pásu** (#E8EDF4), a u typů **(1)(2)(4)(6b)(6c)** které **pastelové karty** z „BARVY KARET“ použít (úvod #FFFBF7, text #F4F8FC, produkt #EFF6FF, …). Bez HTML — jen plán.
 - Tón a návrh úvodu vs. jádra zprávy
 - Sekce „Konkrétní fakta z podkladů“: tabulka nebo podnadpisy s tím, CO přesně říkají RAG úryvky o MŠMT, ročnících, aplikaci, ukázkách, webinářích (citace nebo těsné parafráze, ne jedna obecná věta)
@@ -20050,12 +21443,13 @@ KONKRÉTNOST (anti-vágnost):
 Pravidla:
 - Nevkládej HTML značky ani tabulky
 - Nic si nevymýšlej — URL, produkty a čísla jen z přiložených dat
-- Citace myšlenek z RAG můžeš přeformulovat, fakta a názvy drž věrně`;
+- Citace myšlenek z RAG můžeš přeformulovat, fakta a názvy drž věrně
+- Pokud je v datech sekce „Obsah načtený z URL“ / hero / tabs /aplikace, v briefu výslovně vyjmenuj které img URL má druhý agent vložit do mailu`;
 
       const briefUser =
         `UŽIVATELSKÉ ZADÁNÍ:\n${promptStr}\n` +
         (convStr.trim() ? `\nKONVERZACE / DODATEČNÝ KONTEXT:\n${convStr}\n` : '') +
-        `\n---\nDATA (produkty, webináře, blog, RAG, historie kampaní — pro fakta vycházej výhradně z nich):\n${bundleCtx.trim() || '(žádná extra data)'}\n`;
+        `\n---\nDATA (produkty, webináře, blog, CMS web, načtené URL, RAG, historie kampaní — pro fakta vycházej výhradně z nich):\n${bundleCtx.trim() || '(žádná extra data)'}\n`;
 
       const briefSchema = {
         type: 'OBJECT',
@@ -20196,7 +21590,7 @@ Plná šířka + žlutý „tip“ box (#F9E000 nebo #FFEB7A — jen jeden takov
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px 0;background-color:#E8EDF4;">
   <tr><td align="center" style="padding:20px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:540px;background-color:#ffffff;border-radius:16px;border:1px solid rgba(0,0,0,0.06);">
-      <tr><td style="padding:24px 22px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;color:#333;">
+      <tr><td style="padding:24px 22px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;color:#333;">
         … hlavní text …
       </td></tr>
     </table>
@@ -20213,6 +21607,7 @@ Pravidla:
 - „Newsletter jako dopis“ = **hodnotný dlouhý text** + bloky. **\`headline\` je už v hero** — \`bodyHtml\` MUSÍ obsahovat MINIMÁLNĚ: **úvod ve (2) TEXT** (**2–4 odstavce**, bez typu (1)) + **nejméně jeden (3) Blok** (benefity / novinky s ikonami nebo výčtem) + **nejméně dvě další sekce (2) TEXT** s vlastním \`<h2>\` (jiná témata z briefu) + **(4)(5)(6*)** podle dat. **(1) nepoužívej** jako standardní úvod. U jednoho \`<h2>\` nesmí viset jen jedna krátká věta — sekce má mít **obsah**.
 - Pokud brief nebo zadání zmiňuje konkrétní učebnice / ročníky / katalog: **povinně** použij **(4) Produkt** pro 1–3 nejrelevantnější tituly (přesné názvy a URL z „## Aktualni produkty“) **nebo** při 4+ produktech **značku data-product-collage + pole productImages**.
 - Pokud v „## Webinare Vividbooks“ existuje **alespoň jeden NADCHÁZEJÍCÍ** webinář související s tématem (nebo jde o obecný newsletter k DVPP): **povinně** použij jeden z **(6a) hlavní**, **(6b) vedlejší** (s cover obrázkem z řádku „img:“ v datech) **nebo (6c) seznam** (při 2+ nadcházejících). Datum, čas, název a odkaz „url:“ ber přesně z této sekce — žádné vymyšlené termíny.
+- **ZÁKAZ minulých webinářů při pozvánce:** existuje-li v „## Webinare“ jakýkoli řádek \`(NADCHAZEJICI)\`, **nesmíš** použít \`(PROBEHLO)\` / záznam — jen když uživatel výslovně chce záznamy nebo minulé akce.
 - **(3) Blok** (rámeček): použij **minimálně jednou** — 4–8 bodů (benefity, „s žáky můžete“, kroky); před blokem krátký **(2)** odstavec „proč“; dlouhé souvislé líčení nech v **(2)**.
 
 ═══ TON A PRIORITA (POVINNE) ═══
@@ -20251,8 +21646,8 @@ Každý typ má jinou HTML strukturu **i** jiný styl psaní. Při úpravě z ch
 
 (1) ÚVODNÍ BLOK — teplá karta, fialový pruh nahoře, stín; pozdrav + text + obrázek; volitelně žlutý tip dole (DNA).
 <div style="background:#FFFBF7;border-radius:20px;padding:26px 24px 0 24px;margin:0 0 20px 0;max-width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.06);border-top:3px solid #C4B5FD;box-shadow:0 2px 10px rgba(0,17,97,0.08);">
-  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;"><strong>Vážení učitelé,</strong></p>
-  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;">Úvodní odstavec; klíčová fakta <strong style="color:#2563EB">modře tučně</strong>.</p>
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;margin:0 0 12px 0;"><strong>Vážení učitelé,</strong></p>
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;margin:0 0 12px 0;">Úvodní odstavec; klíčová fakta <strong style="color:#2563EB">modře tučně</strong>.</p>
   <div style="margin:16px 0 0 0;">
     <img src="URL_OBRAZKU" alt="" style="max-width:100%;height:auto;border-radius:12px;display:block;" />
   </div>
@@ -20271,7 +21666,7 @@ Každý typ má jinou HTML strukturu **i** jiný styl psaní. Při úpravě z ch
 <div style="background:#ffffff;border-radius:20px;padding:28px 26px;margin:0 0 20px 0;max-width:100%;box-sizing:border-box;border:1px solid rgba(0,0,0,0.06);box-shadow:0 2px 10px rgba(0,17,97,0.08);">
   <h2 style="color:#F06632;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:800;margin:0 0 10px 0;">1) Nadpis sekce</h2>
   <h3 style="color:#001161;font-family:Arial,Helvetica,sans-serif;font-size:17px;font-weight:700;margin:16px 0 8px 0;">Podnadpis</h3>
-  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.75;margin:0 0 12px 0;">Odstavec s <a href="URL" style="color:#F06632;text-decoration:underline;font-weight:700;">→ odkazem v textu</a> …</p>
+  <p style="color:#333;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;margin:0 0 12px 0;">Odstavec s <a href="URL" style="color:#F06632;text-decoration:underline;font-weight:700;">→ odkazem v textu</a> …</p>
   <img src="URL" alt="" style="max-width:100%;height:auto;border-radius:10px;margin:14px 0;display:block;" />
 </div>
 
@@ -20417,12 +21812,12 @@ ODDELOVAC:
 ═══ EMAIL BUILDER — POVINNÉ OBALY BLOKŮ (data-vb-block) ═══
 Editor e-mailu pracuje s **bloky** podle atributů \`data-vb-block\` a \`data-vb-block-id\`. Bez nich model generuje „holé“ HTML a builder bloky nerozpozná / špatně je odhadne (např. každá tabulka jako sloupce).
 
-1. **Každý logický segment** z typologie (2)(3)(4)(5)(6) a každý samostatný pás (B), vnitřní karta (C), pill CTA, oddělovač nebo koláž musí být uvnitř \`vb-email-root\` obalen vlastním **kořenovým** \`<div>\` (nebo \`<div data-vb-block="section">\` pro skupinu), který má:
+1. **Každý logický segment** z typologie (2)(3)(4)(5)(6) a každý samostatný pás (B), pill CTA, oddělovač nebo koláž musí být uvnitř \`vb-email-root\` obalen vlastním **kořenovým** \`<div>\` (nebo \`section\` skupinou). **Kartový vzhled (bg/stín/border) patří jen na \`section\`**, ne na text/image bloky. Každý obal má:
    - \`data-vb-block="<typ>"\` — jedna z hodnot: **text**, **highlight**, **columns-2**, **columns-3**, **image**, **button**, **divider**, **flow-break**, **product-collage**, **webinar**, **hero**, **html**, **section**
    - \`data-vb-block-id="vb-block-<8+ náhodných znaků a–z0–9>"\` — **globálně unikátní** v celém \`bodyHtml\`; pro každý nový blok nové id (např. \`vb-block-x7k2m9pq\`). **Nikdy** stejné id u dvou bloků.
 
 2. **Mapování typologie na typ editoru (orientačně):**
-   - **(2) TEXT** → většinou \`data-vb-block="text"\` (odstavce, \`<h2>\`, \`<ul>\` v jednom obalu).
+   - **(2) TEXT** → většinou \`data-vb-block="text"\` (odstavce, \`<h2>\`, \`<ul>\` v jednom obalu); shell style \`padding:10px 24px;background:transparent;\`.
    - **(3) rámeček** s výrazným pozadím / boxem → \`data-vb-block="highlight"\`; krátký výčet bez silného boxu může zůstat v \`text\`.
    - **(4) Produkt** (tabulka \`vb-prod-img\` / \`vb-prod-txt\`) → \`data-vb-block="columns-2"\` (obal celou tabulku).
    - **Plné pásy (B)** a složité tabulky bez jiného typu → \`data-vb-block="html"\` (jeden obal = jeden blok).
@@ -20431,13 +21826,13 @@ Editor e-mailu pracuje s **bloky** podle atributů \`data-vb-block\` a \`data-vb
    - **Koláž:** obal s \`data-vb-block="product-collage"\` a uvnitř přesně \`<div data-product-collage="true"></div>\` (plus \`productImages\` v JSON jako dřív).
    - **Webinář (6*):** pokud používáš značku \`data-email-webinar\` ve vnitřku, nastav obalu \`data-vb-block="webinar"\`; jinak \`html\` nebo \`columns-2\` podle layoutu.
 
-3. **Skupiny (volitelné):** Související bloky můžeš seskupit do \`<div data-vb-block="section" data-vb-section-fill="card" data-vb-block-id="...">\` … vnořené bloky … \`</div>\`. Přímé děti sekce musí znovu mít vlastní \`data-vb-block\` + id (kromě \`style\`/\`script\`).
+3. **Skupiny:** Související bloky seskup do \`<div data-vb-block="section" data-vb-section-fill="card" data-vb-chrome-border="0" data-vb-chrome-shadow="0" data-vb-chrome-radius="16" data-vb-block-id="..." style="padding:0;background:#ffffff;border:none;box-shadow:none;border-radius:16px;overflow:hidden;">\` … vnořené bloky (bez vlastního stínu/border/bílé karty) … \`</div>\`. Chrome (barva/stín/ohraničení) jen na section.
 
 4. **Iterace / „Aktuální e-mail“ v kontextu:** U bloků, které **neměníš**, **ponech beze změny** jejich \`data-vb-block-id\` (i \`data-vb-block\`). Nové nebo nahrazené segmenty dostanou **nová** id. Tím editor nespletie staré a nové bloky.
 
 ═══ MOBIL — POUZE @media (max-width:600px), desktop se NEMENI ═══
 - U kazdeho emailu na ZACATEK bodyHtml (pred prvni vizualni blok) vloz PRESNE tento jeden styl + obal:
-<style type="text/css">@media only screen and (max-width:600px){.vb-email-root p,.vb-email-root li{font-size:17px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color: #F06632"],.vb-email-root a[style*="background-color:#7C3AED"],.vb-email-root a[style*="background-color: #7C3AED"]{font-size:17px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt{display:block!important;width:100%!important}.vb-prod-img{padding:0 0 14px 0!important;text-align:center!important;padding-right:0!important}.vb-prod-img img{width:100%!important;max-width:280px!important;height:auto!important}.vb-prod-txt{padding-left:0!important}.vb-web-split-img,.vb-web-split-txt{display:block!important;width:100%!important}.vb-web-split-img{padding:0 0 16px 0!important;padding-right:0!important;text-align:center!important}.vb-web-split-img img{max-width:280px!important;width:100%!important;margin:0 auto!important}.vb-web-split-txt{padding-left:0!important}.vb-inf-col{display:block!important;width:100%!important;margin-bottom:12px!important}}</style>
+<style type="text/css">@media only screen and (max-width:600px){.vb-email-root p,.vb-email-root li{font-size:15px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color: #F06632"],.vb-email-root a[style*="background-color:#7C3AED"],.vb-email-root a[style*="background-color: #7C3AED"]{font-size:15px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt{display:block!important;width:100%!important}.vb-prod-img{padding:0 0 14px 0!important;text-align:center!important;padding-right:0!important}.vb-prod-img img{width:100%!important;max-width:280px!important;height:auto!important}.vb-prod-txt{padding-left:0!important}.vb-web-split-img,.vb-web-split-txt{display:block!important;width:100%!important}.vb-web-split-img{padding:0 0 16px 0!important;padding-right:0!important;text-align:center!important}.vb-web-split-img img{max-width:280px!important;width:100%!important;margin:0 auto!important}.vb-web-split-txt{padding-left:0!important}.vb-inf-col{display:block!important;width:100%!important;margin-bottom:12px!important}}</style>
 <div class="vb-email-root" style="max-width:100%"> ... hned za style: posloupnost obalenych bloku (kazdy s data-vb-block + data-vb-block-id), viz sekce EMAIL BUILDER; zadne „hole“ top-level tabulky bez obalu ... </div>
 - Produktove karty MUSI pouzit tridy vb-prod-img a vb-prod-txt (desktop zustane side-by-side; na mobilu se zlomi podle CSS vyse).
 - Na sirce nad 600px se nesmi menit velikosti fontu oproti klasickemu newsletteru — upravy jen uvnitr @media.
@@ -20457,6 +21852,14 @@ Editor e-mailu pracuje s **bloky** podle atributů \`data-vb-block\` a \`data-vb
 - NIKDY nevymyslej URL! Pouze ze skutecnych dat!
 - Pouzij KONKRETNI nazvy z katalogu!
 
+═══ OBSAH Z WEBU / CMS / VLOŽENÉ URL ═══
+- Máš podklady: produkty, webináře, blog, RAG, **hero slidery**, **subject tabs**, **fixed pages**, **oficiální /aplikace slider**, a pokud uživatel vložil URL — sekci **„Obsah načtený z URL“** (živě stažené HTML + img).
+- Když uživatel chce „obsah/obrázky z webu“, slider, homepage, předmětovou stránku nebo vloží odkaz:
+  1) Preferuj \`img:\` URL z těchto web/CMS sekcí (ne náhodné obálky učebnic).
+  2) Text a fakta ber z načtené stránky / CMS; nevymýšlej URL.
+  3) Vlož obrázky do bodyHtml jako \`<img src="ABSOLUTNÍ_URL" …>\` v samostatných sekcích/kartách (3–8 dle zadání).
+  4) Pokud URL fetch selhal nebo SPA nevrátila obrázky, použij CMS/aplikace assety se stejným tématem — a krátce to zohledni ve výběru.
+${wantsAplikaceAssets ? '- POVINNÉ v TÉTO odpovědi: uživatel žádá /aplikace — aspoň 3 různé img ze sekce Oficiální obrázky /aplikace (ne katalog).\n' : ''}${urlsInPrompt.length ? '- Uživatel vložil URL — pokud fetch vrátil img:, MUSÍš aspoň část těchto obrázků použít v bodyHtml.\n' : ''}
 ═══ PŘÍKLADY ŘETĚZENÍ BLOKŮ ═══
 
 Produktový newsletter: **(2)** úvod (bez (1)) → **(2)** hlavní téma → **(3)** rámeček s body → **(4)** 1–2 produkty **nebo** koláž → **(2)** doplnění → případně **(6b)** pokud sedí webinář (CTA už v šabloně)
@@ -20467,7 +21870,7 @@ Obecný newsletter (novinky): **(2)** úvod (2–4 odst.) → **(3)** benefity /
 
 ═══ JAZYK ═══
 VZDY cesky. Jen HTML (zadny Markdown). Inline styly.
-${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
+${productCtx}${webinarCtx}${blogCtx}${siteMediaCtx}${ragCtx}${campStats}${campStructures}`;
 
     /** 2. krok: skládání HTML — u nového zadání často s textovým briefem z 1. kroku; u iterací beze změny jako dřív. */
     let fullPrompt: string;
@@ -20485,9 +21888,50 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
         : `${promptStr}${iterHint}`;
     }
     if (preferEmailBuilderBlocks) {
-      fullPrompt +=
-        '\n\n[VÝSTUP — BLOKOVÝ EDITOR] Požadavek jde z Email Builderu (blokový režim). Ve `bodyHtml` dodrž strukturu ze sekce EMAIL BUILDER: každý logický úsek má vlastní obal s `data-vb-block` a unikátním `data-vb-block-id`. Nepřepisuj celé tělo na „holé“ HTML bez těchto atributů, neupravuj globální mobilní `<style>` ani obal `.vb-email-root`, pokud to uživatel výslovně nechce, a neměň styly částí, které v zadání nejsou.\n';
+      fullPrompt += `
+\n\n[VÝSTUP — BLOKOVÝ EDITOR · POVINNÉ · PŘEPISUJE STARŠÍ TYPOLOGII (1)–(6)]
+Tento požadavek jde z Email Builderu. Výstup MUSÍ používat POUZE bloky, které editor umí vybrat a upravit v knihovně. Žádné „vlastní“ HTML karty mimo tyto typy.
+
+Povolené data-vb-block hodnoty (a nic jiného navíc):
+text | highlight | image | button | divider | flow-break | section | columns-2 | columns-3 | hero | product-collage | webinar | gap-content
+
+ZAKÁZÁNO (i když systémový prompt výše popisuje (4)/(5)/(6a–c)):
+- Volné tabulky webináře (6a/6b/6c) BEZ data-vb-block="webinar"
+- Volné produktové tabulky vb-prod-* mimo columns-2 / product-collage
+- Infografika (5) jako ad-hoc 3 sloupce → místo toho columns-3 s textem, nebo vynech
+- Holé HTML pásy bez data-vb-block obalu
+
+WEBINÁŘ — vždy placeholder editoru (klient naplní z CMS, půjde hned upravit v panelu):
+<div data-vb-block="webinar" data-vb-block-id="vb-block-XXXXXXXX" data-ai-webinar-slug="PRESNY_SLUG_Z_DAT" data-ai-webinar-layout="hero|compact|pill" style="padding:0;background:transparent;"></div>
+- data-ai-webinar-slug = přesné pole slug: z „## Webinare Vividbooks“ — u pozvánky jen slug z řádku (NADCHAZEJICI)
+- layout: hero (hlavní), compact (malý + bok), nebo pill (jen bobánek + text)
+- Uvnitř NEVKLÁDEJ vlastní HTML — nech prázdný
+- Odkazy v běžném textu ber z url: / z načteného webu
+- CTA „Přihlásit se“ = nadcházející; „Záznam“ = minulé — u budoucích webinářů NIKDY nedávej minulé slugy
+
+PRODUKTY — 2+ kusy jako product-collage:
+<div data-vb-block="product-collage" data-vb-block-id="vb-block-XXXXXXXX" data-ai-product-ids="id1,id2" data-ai-pc-layout="grid|list|compact" data-product-collage="true" style="padding:0;background:transparent;"></div>
+- ID jen z katalogu; do JSON productImages dej obálky (img:)
+
+OSTATNÍ:
+- text / highlight / button / image / divider / flow-break / hero / section / columns-2|3 / gap-content
+- Obrázky src jen z katalogu, webinářů, načteného webu nebo CMS
+- Každý úsek = vlastní unikátní data-vb-block-id; zachovej mobilní <style> + .vb-email-root
+
+SKUPINA = JEDINÝ CHROME (barva / stín / ohraničení) — MEGA ČISTÝ MODEL:
+- Chrome NIKDY na vnitřních blocích (text/image/…). Žádné box-shadow, card border, bílé kartové pozadí na \`data-vb-block\` dětech.
+- Související bloky dej do jedné skupiny:
+  \`<div data-vb-block="section" data-vb-section-fill="card" data-vb-chrome-border="0" data-vb-chrome-shadow="0" data-vb-chrome-radius="16" data-vb-block-id="..." style="padding:0;background:#ffffff;border:none;box-shadow:none;border-radius:16px;overflow:hidden;box-sizing:border-box;">\`
+- Vnitřní bloky: \`style="padding:…;background:transparent;"\` (+ typický obsah).
+- Ohraničení/stín skupiny zapni jen attrs: data-vb-chrome-border="1" / data-vb-chrome-shadow="1" (+ odpovídající inline na section).
+- data-vb-section-fill="plain" = bez karty (transparent, bez border/shadow).
+- Zvýrazněný box (highlight) — vlastní chrome na bloku + vnitřní \`data-vb-highlight-box\`:
+  \`<div data-vb-block="highlight" data-vb-chrome-bg="#F3F0FF" data-vb-chrome-border="1" data-vb-chrome-shadow="0" data-vb-chrome-radius="18" data-vb-block-id="..." style="padding:18px 22px;background:transparent;"><div data-vb-highlight-box="1" style="background:#F3F0FF;border:1px solid rgb(…od barvy…);border-radius:18px;padding:18px;box-shadow:none;">…</div></div>\`
+  Barva boxu (\`data-vb-chrome-bg\`) řídí výplň i tón ohraničení.
+- ZAKÁZÁNO: opakovat typologii „(2) TEXT — bílá karta + stín“ na každém bloku.
+`;
     }
+
     const emailJsonSchema = {
       type: 'OBJECT',
       properties: {
@@ -20625,6 +22069,27 @@ ${productCtx}${webinarCtx}${blogCtx}${ragCtx}${campStats}${campStructures}`;
     const productImages: string[] = emailData.productImages || [];
     console.log(`[MC Gen] Product images for collage: ${productImages.length}`);
 
+    // Napoj webináře / odstraň divný duplicitní hero — hlavně pro Email Builder
+    try {
+      const hydrated = hydrateEmailBodyForBuilder(String(emailData.bodyHtml || ''), {
+        webinars,
+        siteOrigin: getPublicSiteOrigin(),
+        headline: String(emailData.headline || emailData.subject || ''),
+        forceInjectWebinars:
+          preferEmailBuilderBlocks ||
+          /webin[aá]?[rř]|blok(y)?\s+webin|data-ai-webinar|dvpp/i.test(
+            `${promptStr}\n${convStr}\n${emailData.bodyHtml || ''}`,
+          ),
+      });
+      if (hydrated.html !== emailData.bodyHtml) {
+        emailData.bodyHtml = hydrated.html;
+        (ragDebug as any).builderHydrateNotes = hydrated.notes;
+        console.log(`[MC Gen] builder hydrate: ${hydrated.notes.join(' | ')}`);
+      }
+    } catch (hydErr: any) {
+      console.log(`[MC Gen] builder hydrate skip: ${hydErr?.message || hydErr}`);
+    }
+
     // For fullHtml (Mailchimp template), use HTML table grid as fallback
     let bodyForTemplate = emailData.bodyHtml || '';
     if (productImages.length > 0 && bodyForTemplate.includes('data-product-collage')) {
@@ -20667,11 +22132,12 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-inline-cta', async (c) 
     let webinarLines = '';
     try {
       const webinars = await getCollection(WEBINARS_KEY);
-      webinarLines = (webinars || [])
-        .filter((w: any) => w?.slug || w?.id)
-        .slice(0, 12)
+      const wantsPast = /z[aá]znam|probehl|prob[eě]hl|minul[éey]|archiv/i.test(
+        String(contextText || '') + '\n' + String(subject || '') + '\n' + String(headline || ''),
+      );
+      webinarLines = selectWebinarsForEmailAi(webinars || [], 12, { includePast: wantsPast })
         .map((w: any) =>
-          `- ${w.title} → ${marketingSitePath('/webinar/' + encodeURIComponent(String(w.slug || w.id)))}`,
+          `- ${w.title}${w.isPast ? ' (PROBEHLO)' : ' (NADCHAZEJICI)'} → ${marketingSitePath('/webinar/' + encodeURIComponent(String(w.slug || w.id)))}`,
         ).join('\n');
     } catch { /* ignore */ }
 
@@ -21588,7 +23054,7 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'publish_blog_post', description: 'Publikuje nebo odpublikuje blog článek.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, published: { type: 'BOOLEAN' } }, required: ['id', 'published'] } },
   { name: 'delete_blog_post', description: 'Smaže blog článek trvale. Nejdřív zavolej get_blog_posts pro zjištění ID.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
   // ── Webináře ──────────────────────────────────────────────────────
-  { name: 'get_webinars', description: 'Načte webináře.', parameters: { type: 'OBJECT', properties: { upcoming_only: { type: 'BOOLEAN', nullable: true } } } },
+  { name: 'get_webinars', description: 'Načte webináře seřazené upcoming-first. Default jen nadcházející (pozvánky). upcoming_only=false až když chceš záznamy/minulé.', parameters: { type: 'OBJECT', properties: { upcoming_only: { type: 'BOOLEAN', nullable: true, description: 'Default true. False = včetně minulých (záznamy).' } } } },
   { name: 'create_webinar', description: 'Vytvoří nový webinář.', parameters: { type: 'OBJECT', properties: { title: { type: 'STRING' }, subtitle: { type: 'STRING', nullable: true }, day: { type: 'NUMBER', nullable: true }, monthName: { type: 'STRING', nullable: true }, year: { type: 'NUMBER', nullable: true }, time: { type: 'STRING', nullable: true }, lecturer: { type: 'STRING', nullable: true }, zoomLink: { type: 'STRING', nullable: true }, targetAudience: { type: 'STRING', nullable: true } }, required: ['title'] } },
   { name: 'update_webinar', description: 'Upraví existující webinář.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT' } }, required: ['id', 'fields'] } },
   { name: 'delete_webinar', description: 'Smaže webinář.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
@@ -21603,7 +23069,7 @@ const ADMIN_AGENT_TOOLS = [
   { name: 'update_novinka', description: 'Upraví existující novinku.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT' } }, required: ['id', 'fields'] } },
   { name: 'delete_novinka', description: 'Smaže novinku trvale. Nejdřív zavolej get_novinky pro zjištění ID.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
   // ── Email kampaně ─────────────────────────────────────────────────
-  { name: 'create_email_campaign_draft', description: 'POVINNÉ při žádosti o mail do Mailchimpu / šablonu / canvas (Email Builder). Uloží draft v pravém panelu. Stejné jako generate-email (1)–(6): typ (2) převažuje slovně, plus (3)(4)(6); minimálně dvě různé barvy sekcí / karet (viz vrstvená pozadí v tool schema u bodyHtml). Každý logický segment v bodyHtml obal do divu s data-vb-block + unikátní data-vb-block-id (blokový editor). 1–2 CTA pill, Arial.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků' }, previewText: { type: 'STRING', description: 'Preheader', nullable: true }, headline: { type: 'STRING', description: 'Hlavní nadpis v šabloně' }, bodyHtml: { type: 'STRING', description: 'Jako generate-email: vb-email-root + mobile CSS, typy (1)–(6), vrstvená pozadí — full-width tabulky pro tmavý/oranžový/žlutý pás, šedý pás #E8EDF4 s bílou vnitřní kartou, produkt vb-prod-*, webinář vb-web-split-* a 6a jako width 100 % tabulka; CTA #F06632; 4+ produktů data-product-collage + URL z get_products. Každý segment: obal s data-vb-block a data-vb-block-id. Bez <!DOCTYPE>.' }, ctaText: { type: 'STRING' }, ctaUrl: { type: 'STRING' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true }, fullHtml: { type: 'STRING', description: 'Volitelné: celý dokument jako hotové HTML pro Mailchimp. Jinak se vygeneruje z bodyHtml + Vividbooks obálka.', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
+  { name: 'create_email_campaign_draft', description: 'POVINNÉ při žádosti o mail / Email Builder. bodyHtml POUZE s bloky editoru (data-vb-block: text|highlight|image|button|section|columns-2|columns-3|product-collage|webinar|divider). NE duplicitní tmavý hero v bodyHtml — headline jde do pole headline. Webináře: get_webinars + pro každý webinář prázdný placeholder <div data-vb-block=\"webinar\" data-vb-block-id=\"vb-block-…\" data-ai-webinar-slug=\"SLUG\" data-ai-webinar-layout=\"compact\"></div> (ne textový seznam). Produkty: data-ai-product-ids. vb-email-root + @media, Arial. Chrome (barva/stín/border) JEN na data-vb-block=section (data-vb-chrome-border/shadow/radius); vnitřní bloky bez box-shadow a card border.', parameters: { type: 'OBJECT', properties: { subject: { type: 'STRING', description: 'Subject line, max 60 znaků' }, previewText: { type: 'STRING', description: 'Preheader', nullable: true }, headline: { type: 'STRING', description: 'Titulek v šabloně (NE opakovat jako tmavý hero v bodyHtml)' }, bodyHtml: { type: 'STRING', description: 'Inline HTML pro Email Builder: vb-email-root + mobile CSS. Jen data-vb-block typy z editoru. Webináře výhradně jako data-ai-webinar-slug placeholdery (slug z get_webinars). Bez druhého #001161 hero boxu. Bez <!DOCTYPE>.' }, ctaText: { type: 'STRING' }, ctaUrl: { type: 'STRING' }, audience: { type: 'STRING', description: 'newsletter | no-newsletter', nullable: true }, fullHtml: { type: 'STRING', description: 'Volitelné celé HTML; jinak šablona z bodyHtml.', nullable: true } }, required: ['subject', 'headline', 'bodyHtml', 'ctaText', 'ctaUrl'] } },
   { name: 'get_email_drafts', description: 'Načte seznam existujících email draftů z Email Builderu.', parameters: { type: 'OBJECT', properties: {} } },
   // ── Delegace na specialisty ────────────────────────────────────────
   { name: 'delegate_to_seo_specialist', description: 'Předá zadání SEO specialistovi. Použij pro SEO brief, meta title/description, obsahovou strukturu, search intent, interní prolinkování a obsahovou strategii.', parameters: { type: 'OBJECT', properties: { task: { type: 'STRING', description: 'SEO nebo obsahový úkol.' }, context: { type: 'STRING', description: 'Doplňující kontext: URL, cílová stránka, publikum, produkt, téma.', nullable: true } }, required: ['task'] } },
@@ -22260,9 +23726,27 @@ async function runAdminTool(
     return { result: { success: true, id: item.id, title: item.title, blocksCount: contentBlocks.length, hasCover: !!coverImage }, action: { type: 'create_blog_post', id: item.id, title: item.title, reviewPath: `/admin/blog` } };
   }
   if (name === 'get_webinars') {
-    const items = await getCollection(WEBINARS_KEY);
-    const filtered = args.upcoming_only ? items.filter((w: any) => !w.isPast) : items;
-    return { result: { count: filtered.length, webinars: filtered.map((w: any) => ({ id: w.id, title: w.title, day: w.day, monthName: w.monthName, year: w.year, time: w.time, isPast: w.isPast })) } };
+    const items = normalizeWebinarsForEmailAi(await getCollection(WEBINARS_KEY));
+    // Default: upcoming — past jen když upcoming_only=false (záznamy / archiv).
+    const upcomingOnly = args.upcoming_only !== false;
+    const filtered = upcomingOnly ? items.filter((w: any) => !w.isPast) : items;
+    return {
+      result: {
+        count: filtered.length,
+        upcoming_only: upcomingOnly,
+        webinars: filtered.map((w: any) => ({
+          id: w.id,
+          slug: w.slug || w.id,
+          title: w.title,
+          day: w.day,
+          monthName: w.monthName,
+          monthNum: w.monthNum,
+          year: w.year,
+          time: w.time,
+          isPast: w.isPast === true,
+        })),
+      },
+    };
   }
   if (name === 'create_webinar') {
     const item = { id: `webinar-${Date.now()}`, isPast: false, ...args, createdAt: ts };
@@ -22513,8 +23997,28 @@ async function runAdminTool(
   if (name === 'create_email_campaign_draft') {
     const now = new Date().toISOString();
     const id = `draft-agent-${Date.now()}`;
-    const bodyHtml = String(args.bodyHtml || '');
+    let bodyHtml = String(args.bodyHtml || '');
     const headline = String(args.headline || args.subject || '');
+    try {
+      const webinars = normalizeWebinarsForEmailAi(
+        await getCollection(WEBINARS_KEY).catch(() => []),
+      );
+      const hydrated = hydrateEmailBodyForBuilder(bodyHtml, {
+        webinars,
+        siteOrigin: getPublicSiteOrigin(),
+        headline,
+        forceInjectWebinars:
+          /webin[aá]?[rř]|blok(y)?\s+webin|data-ai-webinar|dvpp/i.test(
+            `${bodyHtml}\n${JSON.stringify(ctx?.agentMessages || []).slice(0, 4000)}`,
+          ),
+      });
+      bodyHtml = hydrated.html;
+      if (hydrated.notes.length) {
+        console.log(`[AdminAgent] email hydrate: ${hydrated.notes.join(' | ')}`);
+      }
+    } catch (hydErr: any) {
+      console.log(`[AdminAgent] email hydrate skip: ${hydErr?.message || hydErr}`);
+    }
     const fullHtmlFromAgent = typeof args.fullHtml === 'string' && args.fullHtml.trim().length > 10 ? args.fullHtml.trim() : '';
     const fullHtml = fullHtmlFromAgent || vividbooksEmailTemplate({
       headline,
@@ -23172,8 +24676,12 @@ Máš k dispozici 2 specialisty:
 
 ### Email drafty (Mailchimp-ready HTML) — Canvas
 - **KRITICKÉ:** Jakmile uživatel chce **mail verzi**, **Mailchimp šablonu**, **otevřít v canvasu / editoru**, nebo **uložit do Email Builderu**, **NESMÍŠ** odpovědět jen dlouhým textem nebo osnovou bloků v chatu. **VŽDY nejdřív zavolej** \`create_email_campaign_draft\` s plným \`bodyHtml\` + subject, previewText, headline, ctaText, ctaUrl. Krátké potvrzení („Uloženo, otevři panel vpravo“) piš **až po** úspěšném nástroji. Teprve nástroj otevře uživateli email **canvas** (pravý panel).
-- **Typy bloků jako \`/admin/mailchimp/generate-email\`:** skládej **(1)–(6)** — **objem textu** převažuje v **(2)**, plus **(3)(4)(6)** dle dat. Střídej **pozadí sekcí**: full-width tabulky (\`#001161\`, oranžová, žlutý tip, šedý \`#E8EDF4\` s bílou vnitřní kartou), ne jen jedna barva. Oranžové CTA \`#F06632\`, \`vb-email-root\` + \`@media\`, 4+ produktů → koláž + URL z \`get_products\`. „Předělej na text“ = souvislé odstavce; „přidej webinář“ = **(6a–c)** z \`get_webinars\`. Font **Arial**.
-- **Marketing agent vs. ty:** Generátor v Marketing agentovi (\`generate-email\`) má navíc sestavený kontext (RAG, katalog, historie kampaní) — je **nejvhodnější pro nejbohatší první verzi**, pokud ji uživatel vygeneruje **ručně tam** a pak ji v Email Builderu upraví. Jako Web operátor ten kontext nemáš automaticky: pro plnou paritu **nejdřív načti produkty** (\`get_products\`) a text z briefu uživatele převeď na výše popsané HTML; nebo uživateli stručně řekni, že nejbohatší start je v Marketing agentovi, pokud nechce čekat na ruční kompozici.
+- **Bloky Email Builderu (POVINNÉ):** skládej jen \`data-vb-block\` typy z editoru: \`text\`, \`highlight\`, \`image\`, \`button\`, \`divider\`, \`section\`, \`columns-2|3\`, \`product-collage\`, \`webinar\`. **NE** vkládej do \`bodyHtml\` druhý tmavý hero (\`#001161\` box s titulkem) — titulek patří do pole \`headline\` (šablona). Font **Arial**, \`vb-email-root\` + mobilní \`@media\`.
+- **Webináře:** nejdřív \`get_webinars\` (default jen nadcházející; \`upcoming_only: false\` jen pro záznamy). Každý webinář = **samostatný placeholder** (ne textový seznam!):
+  \`<div data-vb-block="webinar" data-vb-block-id="vb-block-…" data-ai-webinar-slug="SLUG_Z_DAT" data-ai-webinar-layout="compact" style="padding:0;background:transparent;"></div>\`
+  Používej \`slug\` z výsledku. Server naplní kartu s odkazem \`/webinar/{slug}\`. Zakázáno: minulé/PROBEHLO při pozvánce na budoucí; zakázáno jen řádky „Po 25. 8. Název“ bez bloku.
+- **Produkty:** \`get_products\` → \`data-ai-product-ids="id1,id2"\` na \`product-collage\`, nebo odkazy v textu z katalogu.
+- **Marketing agent vs. ty:** \`generate-email\` má bohatší kontext; ty musíš nejdřív \`get_webinars\` / \`get_products\`, pak \`create_email_campaign_draft\`.
 - Pokud už v konverzaci existuje obsah emailu z dřívějška, **převeď ho** do plného \`bodyHtml\` podle tohoto layoutu a ulož nástrojem — neopisuj znovu jako Markdown osnovu.
 - Seznam draftů: \`get_email_drafts\`.
 - Volitelné \`fullHtml\` jen výjimečně; jinak systém obalí \`bodyHtml\` do Vividbooks šablony.
@@ -23953,8 +25461,8 @@ app.post('/make-server-93a20b6f/kv', async (c) => {
 /**
  * Normalizace pathname pro Supabase Edge:
  * 1) Odstranění `/functions/v1` z cesty (plná URL z gateway).
- * 2) Pokud zbývá např. jen `/admin/…` nebo `/public/…` bez segmentu s názvem funkce,
- *    doplníme `/make-server-93a20b6f` — jinak Hono vrací text „404 Not Found“.
+ * 2) Pokud zbývá cesta bez segmentu s názvem funkce (`/admin/…`, `/webhooks/…`,
+ *    tracking, newsletter…), doplníme `/make-server-93a20b6f` — jinak Hono 404.
  */
 Deno.serve((incoming) => {
   const url = new URL(incoming.url);
@@ -23965,11 +25473,16 @@ Deno.serve((incoming) => {
   }
   const fn = 'make-server-93a20b6f';
   const fnRoot = `/${fn}`;
-  if (
-    p !== fnRoot &&
-    !p.startsWith(`${fnRoot}/`) &&
-    (p.startsWith('/admin/') || p.startsWith('/public/'))
-  ) {
+  const needsFnPrefix =
+    p.startsWith('/admin/') ||
+    p.startsWith('/public/') ||
+    p.startsWith('/webhooks/') ||
+    p.startsWith('/newsletter/') ||
+    p.startsWith('/t/') ||
+    p === '/unsubscribe' ||
+    p.startsWith('/unsubscribe?') ||
+    p.startsWith('/unsubscribe/');
+  if (p !== fnRoot && !p.startsWith(`${fnRoot}/`) && needsFnPrefix) {
     p = `${fnRoot}${p}`;
   }
   /** Edge někdy doručí jen `/webinar-survey-submit` bez `/make-server-93a20b6f`. */

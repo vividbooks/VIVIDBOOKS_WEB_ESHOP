@@ -287,7 +287,9 @@ export async function uploadCollageToStorage(dataUrl: string): Promise<string | 
   try {
     const res = await fetch(dataUrl);
     const blob = await res.blob();
-    const file = new File([blob], `collage-auto-${Date.now()}.png`, { type: 'image/png' });
+    const mime = blob.type || (dataUrl.startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png');
+    const ext = mime.includes('jpeg') || mime.includes('jpg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png';
+    const file = new File([blob], `collage-auto-${Date.now()}.${ext}`, { type: mime });
     const fd = new FormData();
     fd.append('file', file);
     const uRes = await fetch(`${SERVER}/upload-image`, {
