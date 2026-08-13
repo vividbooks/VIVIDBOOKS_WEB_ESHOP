@@ -370,11 +370,14 @@ export async function enrichCzechAddressParts(
        * distributora se liší). Použijeme ho jen tam, kde si s už známou lokalitou neodporuje —
        * jinak bychom zásilku pro školu poslali na adresu zprostředkovatele.
        */
-      const sameLocation = parts.zip && fromAres.zip
-        ? parts.zip === fromAres.zip
-        : parts.city && fromAres.city
-        ? normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city)
-        : true;
+      /**
+       * Stejné PSČ nestačí — 66902 je Znojmo i Suchohrdly. Když známe město a ARES má jiné,
+       * sídlo z rejstříku není doručovací adresa (deal 26680: Znojmo vs. Pod Skalou / Suchohrdly).
+       */
+      const zipOk = !parts.zip || !fromAres.zip || parts.zip === fromAres.zip;
+      const cityOk = !parts.city || !fromAres.city
+        || normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city);
+      const sameLocation = zipOk && cityOk;
 
       if (!sameLocation) {
         options?.log?.('address_ares_location_mismatch', {
