@@ -44,6 +44,7 @@ import {
   findPisankaHandednessPair,
   getPisankaHandedness,
 } from '../utils/pisankaHandedness';
+import { useAppWorkbookForProduct } from '../lib/appLibraryCatalog';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const CHECKOUT_BOBAN_SCHOOL_IMG = publicAssetUrl('checkout/customer-school.png');
@@ -667,23 +668,26 @@ export function ProductDetailPage({
   const [kvBundleAddingId, setKvBundleAddingId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { addItem, openCart: openInternalCart } = useCart();
+  const catalogWorkbook = useAppWorkbookForProduct(product.id);
 
   const hasFlipbook = !!(product.flipbookLink || product.previewLink);
   /** Ignorovat prázdné řetězce a omylem uložený placeholder z administrace (`…` v URL). */
   const appLinkTrimmed = String(product.appLink || '').trim();
   const hasCustomAppLink =
     appLinkTrimmed.length > 0 && !/^https?:\/\/app\.vividbooks\.cz\/\.{3}\s*$/i.test(appLinkTrimmed);
-  const appLinkHref = (hasCustomAppLink ? appLinkTrimmed : '') || 'https://app.vividbooks.cz';
+  const catalogAppUrl = String(catalogWorkbook?.url || '').trim();
+  const hasResolvedAppLink = hasCustomAppLink || Boolean(catalogAppUrl);
+  const appLinkHref = (hasCustomAppLink ? appLinkTrimmed : catalogAppUrl) || 'https://app.vividbooks.cz';
   const previewVideoRaw = String(product.previewVideoLink || '').trim();
   const videoPreviewParsed = useMemo(
     () => parseProductVideoPreviewUrl(previewVideoRaw),
     [previewVideoRaw]
   );
   const hasVideoPreview = !!videoPreviewParsed;
-  /** Panel akcí u obrázku: flipbook / video / vlastní app odkaz. „Otevřít v aplikaci“ jen když je vyplněné pole appLink. */
-  const showImagePanelActions = hasFlipbook || hasCustomAppLink || hasVideoPreview;
+  /** Panel akcí u obrázku: flipbook / video / odkaz do aplikace (ruční appLink nebo most z katalogu). */
+  const showImagePanelActions = hasFlipbook || hasResolvedAppLink || hasVideoPreview;
   const imagePanelActionCount =
-    (hasFlipbook ? 1 : 0) + (hasVideoPreview ? 1 : 0) + (hasCustomAppLink ? 1 : 0);
+    (hasFlipbook ? 1 : 0) + (hasVideoPreview ? 1 : 0) + (hasResolvedAppLink ? 1 : 0);
   const imagePanelActionLayout = imagePanelActionCount > 1 ? 'flex-1' : 'w-full';
   const imagePanelActionBtnClass = `flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] ${imagePanelActionLayout}`;
   const flipbookUrl = product.flipbookLink || product.previewLink;
@@ -1457,7 +1461,7 @@ export function ProductDetailPage({
                         {'Uk\u00e1zka videa'}
                       </button>
                     )}
-                    {hasCustomAppLink && (
+                    {hasResolvedAppLink && (
                       <a
                         href={appLinkHref}
                         target="_blank"
