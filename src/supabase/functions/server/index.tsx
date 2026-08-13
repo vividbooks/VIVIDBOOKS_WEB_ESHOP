@@ -15170,8 +15170,23 @@ async function upsertPipedriveSchoolOrganization(
 }
 
 function readPipedrivePersonEmails(person: any) {
-  const raw = Array.isArray(person?.email) ? person.email : [];
-  return raw.map((entry: any) => String(entry?.value || entry || '').trim().toLowerCase()).filter(Boolean);
+  const out: string[] = [];
+  const push = (value: unknown) => {
+    const s = String(value ?? '').trim().toLowerCase();
+    if (s.includes('@')) out.push(s);
+  };
+  const rawEmail = person?.email;
+  if (Array.isArray(rawEmail)) {
+    for (const entry of rawEmail) push(entry?.value ?? entry);
+  } else if (rawEmail != null && rawEmail !== '') {
+    push(typeof rawEmail === 'object' ? (rawEmail as { value?: unknown }).value : rawEmail);
+  }
+  const rawEmails = person?.emails;
+  if (Array.isArray(rawEmails)) {
+    for (const entry of rawEmails) push(entry?.value ?? entry);
+  }
+  push(person?.primary_email);
+  return [...new Set(out)];
 }
 
 async function findOrCreatePipedrivePerson(
@@ -18518,18 +18533,26 @@ function parsePriceNumber(value: unknown) {
 
 async function searchPipedrivePersonByEmail(apiToken: string, email: string): Promise<any | null> {
   const clean = String(email || '').trim().toLowerCase();
-  if (!clean) return null;
+  if (!clean || !clean.includes('@')) return null;
   try {
     const data = await pipedriveRequest<any>(apiToken, '/persons/search', {}, {
       term: clean,
       fields: 'email',
     });
     const items: any[] = Array.isArray(data?.data?.items) ? data.data.items : [];
+    let extraLookups = 0;
     for (const entry of items) {
       const person = entry?.item || entry;
       if (!person?.id) continue;
-      const emails = readPipedrivePersonEmails(person);
-      if (emails.includes(clean)) return person;
+      if (readPipedrivePersonEmails(person).includes(clean)) return person;
+      /** Search payload často vrací `emails: string[]` bez `email[].value` — ověříme GET /persons/:id. */
+      if (extraLookups >= 5) continue;
+      const personId = parsePipedriveNumericId(person.id);
+      if (!personId) continue;
+      extraLookups += 1;
+      const full = await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null);
+      const fullPerson = full?.data;
+      if (fullPerson && readPipedrivePersonEmails(fullPerson).includes(clean)) return fullPerson;
     }
   } catch (error: any) {
     console.log(`[Pipedrive] persons/search: ${error.message}`);
@@ -18690,7 +18713,8 @@ function getEshopOrderNumberPayload(orderNumber: string | null | undefined): Rec
  *   - `b2b_transfer_open`   — B2B platba převodem; deal vždy vzniká jako open (zaplacení obchod řeší ručně / přes pipedrive-inbound-deal webhook).
  *   - `distributor_open`    — objednávka z neveřejné distributorské stránky. Deal vzniká jako open v pipeline 8
  *                             (Channel Partners Performance CP2), organizace se páruje **jen** podle IČO (pole CIN),
- *                             bez osoby, bez dopravy a bez exportu do Base.com.
+ *                             osoba se dohledá v Pipedrive podle e‑mailu z formuláře (nová se nezakládá),
+ *                             bez dopravy a bez exportu do Base.com.
  */
 type EshopPipedriveMode =
   | 'b2c_card_won'
@@ -18962,7 +18986,7 @@ async function createPipedriveEshopDealAdvanced(
   apiToken: string,
   params: {
     title: string;
-    /** `null` u distributorských dealů — v Pipedrive je jen organizace, kontaktní osoba se nezakládá. */
+    /** U distributora jen když se v Pipedrive najde osoba podle e‑mailu z formuláře; jinak `null`. */
     personId: number | null;
     orgId?: number | null;
     /** Pipedrive `user_id` — vlastník dealu. Bez něj zdědí vlastníka API tokenu (typicky Daniel Ondrášek). */
@@ -19523,7 +19547,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const personName = String((order as any).customer_name || '').trim() || 'Zákazník';
   const email = String((order as any).customer_email || '').trim();
   const phone = String((order as any).customer_phone || '').trim();
-  /** Distributor: deal patří organizaci podle IČO; e‑mail/telefon jdou do poznámky k dealu, ne na osobu. */
+  /** Distributor: e‑mail slouží k dohledání existující osoby v CRM; telefon zůstává v poznámce k dealu. */
   if (!email && !isDistributor) return await fail('missing_email');
   if (isDistributor && !ico) return await fail('missing_ico');
 
@@ -19550,7 +19574,32 @@ async function syncEshopOrderToPipedriveFromDb(
 
   let person: any = null;
   if (isDistributor) {
-    /* Distributor: deal patří organizaci nalezené podle IČO, kontaktní osobu formulář nesbírá. */
+    /**
+     * Osobu v CRM **nezakládáme** (jméno z formuláře je název firmy). Jen ji dohledáme
+     * podle e‑mailu z objednávky a přiřadíme k dealu. Když v Pipedrive není, deal jde dál
+     * jen s organizací — e‑mail zůstane v poznámce k dealu.
+     */
+    if (email) {
+      person = await searchPipedrivePersonByEmail(apiToken, email).catch((e: any) => {
+        console.log(`[Pipedrive distributor] persons/search: ${e?.message || e}`);
+        return null;
+      });
+      if (!person) {
+        person = await findPipedrivePersonByEmailInRecentList(apiToken, email).catch((e: any) => {
+          console.log(`[Pipedrive distributor] persons recent list: ${e?.message || e}`);
+          return null;
+        });
+      }
+      const foundId = parsePipedriveNumericId(person?.id);
+      if (foundId) {
+        console.log(`[Pipedrive distributor] osoba podle e-mailu ${email}: id=${foundId}`);
+      } else {
+        console.log(`[Pipedrive distributor] osoba s e-mailem ${email} v Pipedrive není — deal bez osoby`);
+        person = null;
+      }
+    } else {
+      console.log('[Pipedrive distributor] chybí e-mail objednávky — deal bez osoby');
+    }
   } else if (mode === 'b2c_card_won' || !isB2b) {
     person = await findOrCreatePipedrivePersonForEshopB2c(apiToken, { name: personName, email, phone }).catch((e: any) => {
       console.log(`[Pipedrive eshop] person B2C: ${e.message}`);
@@ -20315,7 +20364,8 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
  *
  * Zakládá řádek v `public.orders` se `source='distributor'` (v adminu vlastní badge) a deal
  * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
- * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, e‑mail + telefon +
+ * organizace se páruje podle IČO (pole CIN), osoba se dohledá v Pipedrive podle e‑mailu z formuláře
+ * (nová se nezakládá) a přiřadí k dealu, produkty se přidají z katalogu, e‑mail + telefon +
  * poznámka jdou jako HTML note k dealu. Na zadaný e‑mail jde shrnutí objednávky (Mandrill,
  * typ `distributor_order_received`). Do Base.com ani iDokladu nic nejde.
  */
