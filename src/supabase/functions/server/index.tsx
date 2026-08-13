@@ -20317,7 +20317,8 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
  * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
  * organizace se páruje podle IČO (pole CIN), produkty se přidají z katalogu, e‑mail + telefon +
  * poznámka jdou jako HTML note k dealu. Na zadaný e‑mail jde shrnutí objednávky (Mandrill,
- * typ `distributor_order_received`). Do Base.com ani iDokladu nic nejde.
+ * typ `distributor_order_received`). Do Base.com se objednávka pošle až po **won** v Pipedrive
+ * (`pipedrive-inbound-deal`); iDoklad se neposílá.
  */
 app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
   let body: {

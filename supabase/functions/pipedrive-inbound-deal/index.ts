@@ -21,13 +21,16 @@ import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
  *      při oříznutí zůstává plný název PD organizace v `admin_note`.
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
- *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
- *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu** (původní `shipping_method`, `payment_status`, `status` i `paid_at` zachováme —
- *      platba převodem ještě nemusí být na účtě, webhook je jen signál pro Base re-export)
- *      a **vždy** zařadíme Base export: pokud máme `basecom_order_id` →
+ *      vznikl synchronizací z e‑shopu (platba převodem **nebo distributorský formulář**). Obchodník
+ *      mohl produkty v dealu upravit. Najdeme původní objednávku přes `order_number`,
+ *      **přepíšeme `order_items` podle dealu**.
+ *      U běžného e‑shopu původní `shipping_method`, `payment_status`, `status` i `paid_at` zachováme
+ *      (převod ještě nemusí být na účtě). U `source='distributor'` formulář dopravu nemá
+ *      (`shipping_method='none'`), takže při won nastavíme stejné PPL + převod + `processing`
+ *      jako u scénáře A — jinak by Base dostal `delivery_method: none` a platbu „Platba kartou“.
+ *      V obou případech **zařadíme Base export**: pokud máme `basecom_order_id` →
  *      `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`, fallback
- *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
+ *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem. iDoklad se neposílá.
  *
  * Status u nově vytvořené objednávky (scénář A) je vždy:
  *   `status = 'processing'`, `payment_status = 'pending'`, `paid_at = null`
@@ -1228,29 +1231,49 @@ Deno.serve(async (req) => {
         }
 
         /**
-         * Scénář B (update existující eshop objednávky):
-         *   - `shipping_method` a `shipping_price` **nepřepisujeme** — eshop checkout dopravu zvolil
-         *     a obchodník v PD jen mění produkty/stav. `subtotal` a `total` přepočítáme z PD
-         *     položek + původní `shipping_price` z `orders`.
-         *   - `payment_status`, `status`, `paid_at` rovněž **nepřepisujeme**. Webhook „deal won"
-         *     v PD je jen signál pro Base re-export, není to potvrzení o platbě převodu (peníze
-         *     teprve dorazí). Skutečný `payment_status='paid'` nastavuje až bankovní integrace
-         *     nebo admin ručně. U Stripe objednávek je `paid_at` už uložené z `stripe-webhook`.
+         * Scénář B (update existující objednávky):
+         *   - E‑shop checkout: `shipping_method` a `shipping_price` **nepřepisujeme** — dopravu
+         *     zvolil zákazník. `subtotal` a `total` přepočítáme z PD položek + původní
+         *     `shipping_price`. `payment_status`, `status`, `paid_at` rovněž **nepřepisujeme**.
+         *   - Distributor (`source='distributor'`): formulář dopravu nemá (`none` / 0 Kč) a platba
+         *     je `invoice`. Při won nastavíme PPL + převod + `processing` stejně jako u ručního
+         *     CRM dealu (scénář A), ať Base dostane „PPL" / „Bankovní převod". Kontakt (e‑mail,
+         *     telefon, adresa z ARES) z formuláře neměníme — v PD dealu osoba není.
          */
         const existingShippingRows = await tx<{ shipping_price: number | null; shipping_method: string | null }[]>`
           select shipping_price, shipping_method from public.orders where id = ${target.id}::uuid limit 1
         `;
+        const isDistributor = String(target.source || '') === 'distributor';
         const existingShippingPrice = Number(existingShippingRows[0]?.shipping_price ?? 0);
-        const updateTotal = subtotal + (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+        const shippingPriceForUpdate = isDistributor
+          ? shippingPrice
+          : (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+        const updateTotal = subtotal + shippingPriceForUpdate;
+        const statusAfterUpdate = isDistributor ? orderStatus : target.status;
 
-        await tx`
-          update public.orders set
-            subtotal = ${subtotal},
-            total = ${updateTotal},
-            pipedrive_deal_id = ${dealIdStr},
-            updated_at = now()
-          where id = ${target.id}::uuid
-        `;
+        if (isDistributor) {
+          await tx`
+            update public.orders set
+              subtotal = ${subtotal},
+              total = ${updateTotal},
+              shipping_method = ${shipMethod},
+              shipping_price = ${shippingPrice},
+              payment_method = 'transfer',
+              status = ${orderStatus},
+              pipedrive_deal_id = ${dealIdStr},
+              updated_at = now()
+            where id = ${target.id}::uuid
+          `;
+        } else {
+          await tx`
+            update public.orders set
+              subtotal = ${subtotal},
+              total = ${updateTotal},
+              pipedrive_deal_id = ${dealIdStr},
+              updated_at = now()
+            where id = ${target.id}::uuid
+          `;
+        }
 
         await tx`
           insert into public.order_events (
@@ -1264,47 +1287,18 @@ Deno.serve(async (req) => {
             ${target.id}::uuid,
             'pipedrive_inbound_update',
             ${target.status},
-            ${target.status},
+            ${statusAfterUpdate},
             ${JSON.stringify({
               pipedriveDealId: dealId,
               eshopOrderNumber: eshopOrderNumber || null,
               replacedItems: lines.length,
               prevPaymentStatus: target.payment_status,
+              ...(isDistributor ? { distributorBaseExport: true } : {}),
             })}::jsonb,
             'pipedrive'
           )
         `;
       });
-
-      /**
-       * Distributorská objednávka (`source='distributor'`) se do Base.com ani iDokladu neexportuje —
-       * expedici i fakturaci řeší obchod mimo e‑shopovou frontu. Položky a částky z dealu už jsou
-       * přepsané výše, takže tady jen skončíme bez `export_queue`.
-       */
-      if (String(target.source || '') === 'distributor') {
-        logInbound('updated_distributor_no_export', {
-          dealId,
-          orderId: target.id,
-          orderNumber: target.order_number,
-          replacedItems: lines.length,
-        });
-        return jsonResponse(
-          req,
-          {
-            success: true,
-            mode: 'updated',
-            orderId: target.id,
-            orderNumber: target.order_number,
-            dealId,
-            eshopOrderNumber: eshopOrderNumber || null,
-            replacedItems: lines.length,
-            queuedServices: [],
-            skippedExport: 'distributor',
-          },
-          200,
-          inboundModeHeaders('updated', 'distributor_no_export'),
-        );
-      }
 
       const customerSnapshot = {
         email: email.trim(),
@@ -1444,6 +1438,7 @@ Deno.serve(async (req) => {
         queuedServices,
         hasBasecomOrderId: Boolean(savedBlOrderId),
         baseStatusIdResolved: pdInboundBaseStatusId,
+        ...(String(target.source || '') === 'distributor' ? { distributorBaseExport: true } : {}),
       });
 
       return jsonResponse(
