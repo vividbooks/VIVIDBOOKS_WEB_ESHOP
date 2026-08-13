@@ -15,6 +15,7 @@ import {
   GripVertical,
   BetweenVerticalStart,
   Bold, Italic, Underline, Strikethrough, Link2, Unlink, List, ListOrdered,
+  SpellCheck,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId } from '../../utils/supabase/info';
@@ -103,6 +104,13 @@ import {
 } from './emailBlocks';
 import { compileEmailBodyForSend } from './emailExport';
 import {
+  applyProofreadCorrections,
+  chunkProofreadSegments,
+  collectProofreadSegments,
+  promptLooksLikeWholeEmailProofread,
+  type ProofreadSegment,
+} from './emailProofread';
+import {
   isFirstGradeTagName,
   isWebinarTagName,
   MAILING_SOURCE_OPTIONS,
@@ -111,6 +119,7 @@ import {
   toggleId,
   type MailingAudienceFilter,
 } from '../../lib/mailingAudienceFilter';
+import { WEBINAR_AUDIENCE_DEFS } from '../../lib/webinarAudienceClassify';
 
 /** Přetahování typu bloku z knihovny do iframe náhledu (HTML5 DnD). */
 const VB_EMAIL_LIBRARY_DRAG_TYPE = 'application/x-vb-email-block-type';
@@ -405,13 +414,177 @@ function getPlainTextBeforeBlockId(doc: Document | null | undefined, blockId: st
   }
 }
 
-function getBlockOuterHtmlForAiByBlockId(doc: Document | null | undefined, blockId: string | null): string {
+function getBlockOuterHtmlForAiByBlockId(
+  doc: Document | null | undefined,
+  blockId: string | null,
+  opts?: { maxLen?: number },
+): string {
   if (!doc?.body || !blockId) return '';
   const el = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`);
   if (!el || !doc.body.contains(el)) return '';
   let html = (el as HTMLElement).outerHTML;
-  if (html.length > 3500) html = `${html.slice(0, 3500)}…`;
+  const maxLen = opts?.maxLen ?? 12000;
+  if (html.length > maxLen) html = `${html.slice(0, maxLen)}…`;
   return html;
+}
+
+/** Fragment bodyHtml → Document (pro chirurgickou výměnu jednoho bloku). */
+function parseEmailBodyHtmlDoc(html: string): Document {
+  return new DOMParser().parseFromString(
+    `<!DOCTYPE html><html><body>${html || ''}</body></html>`,
+    'text/html',
+  );
+}
+
+/** Najde outerHTML bloku podle data-vb-block-id v libovolném HTML (odpověď AI / draft). */
+function extractBlockOuterHtmlFromBodyHtml(html: string, blockId: string): string | null {
+  if (!html || !blockId) return null;
+  try {
+    const doc = parseEmailBodyHtmlDoc(html);
+    const el = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null;
+    return el?.outerHTML || null;
+  } catch {
+    return null;
+  }
+}
+
+function listImgSrcsInHtml(html: string): string[] {
+  try {
+    const doc = parseEmailBodyHtmlDoc(html || '');
+    return [...doc.querySelectorAll('img[src]')]
+      .map((img) => (img.getAttribute('src') || '').trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function imgSrcPresentInHtml(html: string, src: string): boolean {
+  const needles = listImgSrcsInHtml(html);
+  return needles.some((n) => imgAttributeSrcMatchesRef(n, src));
+}
+
+/** Uživatel výslovně chce smazat / přegenerovat včetně rizik ztráty fotek. */
+function promptAllowsDestructiveAssetChange(msg: string): boolean {
+  return /smaž|odstra[nň]|odeber|vymaž|bez\s+(foto|obr[aá]zk)|remove\s+(the\s+)?(image|photo|foto)|delete\s+(the\s+)?(image|photo)|p[rř]egeneruj\s+cel|cel[ýy]\s+mail\s+znovu|od\s+za[cč][aá]tku|kompletně\s+nov/i.test(
+    msg || '',
+  );
+}
+
+function promptWantsFullEmailRewrite(msg: string): boolean {
+  return /p[rř]egeneruj|cel[ýy]\s+(mail|e-?mail|newsletter)|od\s+za[cč][aá]tku|kompletně\s+nov|nov[ýy]\s+(cel[ýy]\s+)?(mail|e-?mail)|rewrite\s+(the\s+)?(whole|entire)/i.test(
+    msg || '',
+  );
+}
+
+function promptLooksLikeScopedBlockEdit(msg: string): boolean {
+  if (promptWantsFullEmailRewrite(msg)) return false;
+  if (/p[rř]idej|vlo[zž]|dopl[nň]|na konec|na za[cč][aá]tek|nov[ýy]\s+blok/i.test(msg || '')) return false;
+  // Krátké úpravy / stylizace — typicky na zvolený blok
+  return (
+    (msg || '').trim().length <= 280 ||
+    /uprav|zm[eě][nň]|p[rř]epi[sš]|zkra[tť]|roz[sš]i[rř]|oprav|ud[eě]lej|leh[cč]|form[aá]ln|neform|vtipn|jinak|p[rř]elo[zž]/i.test(
+      msg || '',
+    )
+  );
+}
+
+/**
+ * V původním bodyHtml nahradí právě jeden blok (podle id) HTML z AI.
+ * Ostatní bloky / subject / struktura zůstávají z originalHtml — model často přepíše celý mail.
+ */
+function mergeAiEditedBlockIntoBodyHtml(
+  originalHtml: string,
+  blockId: string,
+  aiBodyHtml: string,
+  opts?: { userMsg?: string },
+): { html: string; ok: true } | { html: string; ok: false; reason: string } {
+  if (!blockId) return { html: originalHtml, ok: false, reason: 'missing-block-id' };
+  const replacementRaw = extractBlockOuterHtmlFromBodyHtml(aiBodyHtml || '', blockId);
+  if (!replacementRaw) {
+    return { html: originalHtml, ok: false, reason: 'block-missing-in-ai-response' };
+  }
+  try {
+    const doc = parseEmailBodyHtmlDoc(originalHtml || '');
+    const target = doc.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null;
+    if (!target) return { html: originalHtml, ok: false, reason: 'block-missing-in-original' };
+
+    const tmp = doc.createElement('div');
+    tmp.innerHTML = replacementRaw;
+    let next =
+      (tmp.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null) ||
+      (tmp.firstElementChild as HTMLElement | null);
+    if (!next) return { html: originalHtml, ok: false, reason: 'invalid-replacement' };
+
+    const origImgs = [...target.querySelectorAll('img[src]')];
+    const nextImgs = [...next.querySelectorAll('img[src]')];
+    if (
+      origImgs.length > 0 &&
+      nextImgs.length < origImgs.length &&
+      !promptAllowsDestructiveAssetChange(opts?.userMsg || '')
+    ) {
+      return { html: originalHtml, ok: false, reason: 'would-drop-block-images' };
+    }
+
+    // Vždy zachovej původní id — AI ho občas přepíše.
+    next.setAttribute('data-vb-block-id', blockId);
+    if (!next.getAttribute('data-vb-block')) {
+      const prevType = target.getAttribute('data-vb-block');
+      if (prevType) next.setAttribute('data-vb-block', prevType);
+    }
+    target.replaceWith(next);
+    return { html: doc.body.innerHTML, ok: true };
+  } catch {
+    return { html: originalHtml, ok: false, reason: 'merge-failed' };
+  }
+}
+
+/**
+ * Když AI v plném přepisu zahodí obrázky / image bloky, vrať chybějící asset-bloky z originálu.
+ * Bez výslovného „smaž fotky“ / „přegeneruj celý mail“.
+ */
+function restoreMissingAssetBlocksFromOriginal(
+  originalHtml: string,
+  newHtml: string,
+  userMsg: string,
+): { html: string; restored: number; lostSrcs: string[] } {
+  if (promptAllowsDestructiveAssetChange(userMsg)) {
+    return { html: newHtml, restored: 0, lostSrcs: [] };
+  }
+  try {
+    const origDoc = parseEmailBodyHtmlDoc(originalHtml || '');
+    const newDoc = parseEmailBodyHtmlDoc(newHtml || '');
+    const lostSrcs = listImgSrcsInHtml(originalHtml).filter((src) => !imgSrcPresentInHtml(newHtml, src));
+    if (lostSrcs.length === 0) return { html: newHtml, restored: 0, lostSrcs: [] };
+
+    const lostSet = new Set(lostSrcs.map((s) => canonicalImageHrefForReplace(s)));
+    const candidates = [...origDoc.querySelectorAll('[data-vb-block-id]')].filter((el) => {
+      const imgs = [...el.querySelectorAll('img[src]')];
+      if (!imgs.length) return false;
+      return imgs.some((img) => {
+        const src = canonicalImageHrefForReplace(img.getAttribute('src') || '');
+        return src && [...lostSet].some((l) => l === src || imgAttributeSrcMatchesRef(l, src));
+      });
+    }) as HTMLElement[];
+
+    const outermost = candidates.filter(
+      (el) => !candidates.some((other) => other !== el && other.contains(el)),
+    );
+
+    const root =
+      (newDoc.querySelector('.vb-email-root') as HTMLElement | null) || newDoc.body;
+    let restored = 0;
+    for (const el of outermost) {
+      const id = el.getAttribute('data-vb-block-id') || '';
+      if (id && newDoc.querySelector(`[data-vb-block-id="${CSS.escape(id)}"]`)) continue;
+      // Ještě nějaký img z tohoto bloku v novém HTML? (částečný overlap) — stejně obnov celý blok.
+      root.appendChild(newDoc.importNode(el, true));
+      restored++;
+    }
+    return { html: newDoc.body.innerHTML, restored, lostSrcs };
+  } catch {
+    return { html: newHtml, restored: 0, lostSrcs: [] };
+  }
 }
 
 /** HTML bloku za který má AI něco vložit — bez data-vb-insert, omezená délka. */
@@ -610,6 +783,11 @@ body.vb-img-edit .vb-email-root>[data-vb-block="section"]{cursor:grab}`
 :root{--vb-preview-outer:${outer};--vb-preview-card:${card};}
 .vb-email-root .vb-dnd-dragging{opacity:0.45!important;outline:2px dashed #7C3AED!important;outline-offset:-2px!important;}
 html,body{margin:0;padding:0;-webkit-text-size-adjust:100%;}
+/* Desktop typografie nadpisů (barva zůstává z inline stylů AI/editoru) */
+.vb-email-root h1:not(:is([data-email-webinar="true"] *)){margin:0 0 14px 0!important;font-size:26px!important;font-weight:800!important;line-height:1.2!important;}
+.vb-email-root h2:not(:is([data-email-webinar="true"] *)){margin:0 0 12px 0!important;font-size:22px!important;font-weight:800!important;line-height:1.25!important;}
+.vb-email-root h3:not(:is([data-email-webinar="true"] *)){margin:0 0 10px 0!important;font-size:19px!important;font-weight:700!important;line-height:1.35!important;}
+.vb-email-root h4:not(:is([data-email-webinar="true"] *)){margin:0 0 8px 0!important;font-size:16px!important;font-weight:700!important;line-height:1.4!important;}
 /*
  * Iframe je vždy vysoký přesně jako obsah (viz syncHeight) a uvnitř se nikdy neroluje —
  * jinak by dokument v iframu sebral kolečko a plátno editoru by se nehýbalo.
@@ -822,7 +1000,7 @@ html.vb-island-layout .vb-email-root [data-vb-block="section"]>[data-vb-block="f
   border-bottom-right-radius:14px!important;
 }
 `;
-  return `<!DOCTYPE html><html${htmlClass}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light">${fontLinks}<style>
+  return `<!DOCTYPE html><html${htmlClass} style="color-scheme:light only;"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light">${fontLinks}<style>
 ${previewLayoutCss}
 ${fontLockCss}
 pre,code,kbd,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace !important;}
@@ -3353,7 +3531,7 @@ export default function EmailBuilder() {
   const [testMailRecipient, setTestMailRecipient] = useState<string>(EMAIL_TEST_RECIPIENTS[0]);
   /* Vlastní mailing (Resend) — dialog odeslání kampaně na Postgres audienci. */
   const [mailingDialogOpen, setMailingDialogOpen] = useState(false);
-  const [mailingTags, setMailingTags] = useState<{ id: string; name: string }[]>([]);
+  const [mailingTags, setMailingTags] = useState<{ id: string; name: string; slug?: string }[]>([]);
   const [mailingIncludeTagIds, setMailingIncludeTagIds] = useState<string[]>([]);
   const [mailingExcludeTagIds, setMailingExcludeTagIds] = useState<string[]>([]);
   const [mailingSources, setMailingSources] = useState<string[]>([]);
@@ -4534,6 +4712,7 @@ export default function EmailBuilder() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedBlockIds.length, selectedBlock]);
 
+  // Jen při změně draftu — NE při každém překreslení callbacků (jinak se žluté AI „ztratí“).
   useEffect(() => {
     cancelInsertLineHide();
     chromePointerInsideRef.current = false;
@@ -4545,7 +4724,8 @@ export default function EmailBuilder() {
     setSelectedBlockIds([]);
     setLassoRect(null);
     clearAiInsertIntent();
-  }, [selected?.id, cancelInsertLineHide, clearAiInsertIntent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- záměrně jen selected?.id
+  }, [selected?.id]);
 
   useEffect(() => {
     if (!showInboxChrome) return;
@@ -4555,8 +4735,9 @@ export default function EmailBuilder() {
     insertHoverBlockIdRef.current = null;
     setBlockChromeAddMenuOpen(false);
     setBlockActionChrome(null);
-    clearAiInsertIntent();
-  }, [showInboxChrome, cancelInsertLineHide, clearAiInsertIntent]);
+    // Náhled mailu — schovej chrome, ale NEzruš žluté AI (uživatel se často vrátí k úpravám).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- záměrně jen showInboxChrome
+  }, [showInboxChrome]);
 
   useEffect(() => {
     if (!blockChromeAddMenuOpen) return;
@@ -5379,7 +5560,22 @@ export default function EmailBuilder() {
 
     const insertAnchorId = aiInsertAfterAnchorId;
     const insertBeforeBlockId = aiInsertBeforeBlockId;
-    const editBlockId = aiEditBlockId;
+    // Žluté AI, nebo auto-scope na vybraný blok u krátké úpravy (ať se nepřepíše celý mail „omylem“).
+    let editBlockId = aiEditBlockId;
+    if (
+      !editBlockId &&
+      !insertAnchorId &&
+      !insertBeforeBlockId &&
+      selected?.bodyHtml &&
+      promptLooksLikeScopedBlockEdit(msg)
+    ) {
+      const selId = selectedBlock?.id || selectedBlockIds[0] || null;
+      if (selId) {
+        editBlockId = selId;
+        setAiEditBlockId(selId);
+        toast.message('Úprava jen vybraného bloku (zbytek mailu nechám).', { duration: 2200 });
+      }
+    }
     const selectionSlice =
       (!insertAnchorId &&
         !insertBeforeBlockId &&
@@ -5425,6 +5621,160 @@ export default function EmailBuilder() {
     }
 
     try {
+      // Pravopis v celém mailu — jen textové uzly (fotky / bloky / HTML struktura beze změny)
+      if (
+        selected?.bodyHtml &&
+        !usePlainSelectionPath &&
+        !insertAnchorId &&
+        !insertBeforeBlockId &&
+        !editBlockId &&
+        promptLooksLikeWholeEmailProofread(msg)
+      ) {
+        const docLive = previewIframeRef.current?.contentDocument;
+        const root =
+          (docLive?.body?.querySelector('.vb-email-root') as HTMLElement | null) ||
+          (docLive?.body as HTMLElement | null);
+        if (!docLive?.body || !root) {
+          throw new Error('Náhled není k dispozici — otevřete Design a zkuste znovu.');
+        }
+
+        const beforeHtml = docLive.body.innerHTML;
+        const beforeImgs = listImgSrcsInHtml(beforeHtml);
+        const beforeBlockIds = [...docLive.querySelectorAll('[data-vb-block-id]')]
+          .map((el) => el.getAttribute('data-vb-block-id') || '')
+          .filter(Boolean)
+          .sort();
+
+        const { segments, nodes } = collectProofreadSegments(root);
+        const metaSegs: ProofreadSegment[] = [];
+        if (selected.subject?.trim()) metaSegs.push({ id: 'm-subject', text: selected.subject });
+        if (selected.previewText?.trim()) metaSegs.push({ id: 'm-preview', text: selected.previewText });
+        if (selected.headline?.trim()) metaSegs.push({ id: 'm-headline', text: selected.headline });
+
+        const allSegs = [...segments, ...metaSegs];
+        if (!allSegs.length) {
+          const emptyMsg: ChatMsg = {
+            id: crypto.randomUUID(),
+            role: 'ai',
+            content: 'V mailu jsem nenašel text k opravě.',
+            timestamp: new Date().toISOString(),
+          };
+          setChatMsgs([...historyWithUser, emptyMsg]);
+          return;
+        }
+
+        const batches = chunkProofreadSegments(allSegs, 36);
+        const corrections: ProofreadSegment[] = [];
+        for (const batch of batches) {
+          const runBatch = async () => {
+            const response = await fetch(`${SERVER}/admin/mailchimp/proofread-email-segments`, {
+              method: 'POST',
+              headers: await authHeaders(),
+              body: JSON.stringify({ segments: batch, model: emailGenTier }),
+            });
+            const data = (await response.json()) as Record<string, unknown>;
+            return { response, data };
+          };
+          let { response, data } = await runBatch();
+          let errStr = typeof data.error === 'string' ? data.error : '';
+          if (
+            (!response.ok || data.error) &&
+            (geminiErrorLooksOverloaded(errStr) || response.status === 503 || response.status === 429)
+          ) {
+            toast.info('Gemini je dočasně přetížená — zkouším znovu…', { duration: 4000 });
+            await new Promise((r) => setTimeout(r, 6000));
+            ({ response, data } = await runBatch());
+            errStr = typeof data.error === 'string' ? data.error : '';
+          }
+          if (!response.ok || data.error) {
+            throw new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+          }
+          const got = Array.isArray(data.segments) ? (data.segments as ProofreadSegment[]) : [];
+          corrections.push(...got);
+        }
+
+        const bodyCorr = corrections.filter((c) => !String(c.id).startsWith('m-'));
+        const { changed: bodyChanged, skipped } = applyProofreadCorrections(nodes, segments, bodyCorr);
+
+        const metaById = new Map(corrections.map((c) => [c.id, c.text]));
+        let nextSubject = selected.subject || '';
+        let nextPreview = selected.previewText || '';
+        let nextHeadline = selected.headline || '';
+        let metaChanged = 0;
+        const takeMeta = (id: string, prev: string): string => {
+          const n = metaById.get(id);
+          if (n == null || n === prev) return prev;
+          if (n.length > Math.max(40, Math.ceil(prev.length * 1.35) + 12)) return prev;
+          metaChanged++;
+          return n;
+        };
+        nextSubject = takeMeta('m-subject', nextSubject);
+        nextPreview = takeMeta('m-preview', nextPreview);
+        nextHeadline = takeMeta('m-headline', nextHeadline);
+
+        const afterHtmlRaw = docLive.body.innerHTML;
+        const afterImgs = listImgSrcsInHtml(afterHtmlRaw);
+        const afterBlockIds = [...docLive.querySelectorAll('[data-vb-block-id]')]
+          .map((el) => el.getAttribute('data-vb-block-id') || '')
+          .filter(Boolean)
+          .sort();
+        const imgsOk =
+          beforeImgs.length === afterImgs.length &&
+          beforeImgs.every((src) => imgSrcPresentInHtml(afterHtmlRaw, src));
+        const blocksOk =
+          beforeBlockIds.length === afterBlockIds.length &&
+          beforeBlockIds.every((id, i) => id === afterBlockIds[i]);
+
+        if (!imgsOk || !blocksOk) {
+          docLive.body.innerHTML = beforeHtml;
+          throw new Error(
+            'Ověření selhalo (struktura/fotky by se mohly změnit) — mail jsem nechal beze změny.',
+          );
+        }
+
+        const now = new Date().toISOString();
+        const totalChanged = bodyChanged + metaChanged;
+        const aiMsg: ChatMsg = {
+          id: crypto.randomUUID(),
+          role: 'ai',
+          content:
+            totalChanged === 0
+              ? 'Prošel jsem celý mail — žádné pravopisné/gramatické chyby jsem nenašel. Fotky a struktura beze změny.'
+              : `✅ Opraveno ${totalChanged} textových úsek${totalChanged === 1 ? '' : totalChanged < 5 ? 'y' : 'ů'} (jen pravopis/gramatika). Fotky, bloky a HTML struktura zůstaly stejné.${skipped ? ` (${skipped} úseků jsem přeskočil jako rizikové.)` : ''}`,
+          timestamp: now,
+        };
+        const updatedHistory = [...historyWithUser, aiMsg];
+        setChatMsgs(updatedHistory);
+
+        if (totalChanged > 0) {
+          const normalizedBody = normalizeBodyForBuilder(docLive.body.innerHTML);
+          const updatedDraft = normalizeDraftForBuilder({
+            ...selected,
+            subject: nextSubject,
+            previewText: nextPreview,
+            headline: nextHeadline,
+            bodyHtml: normalizedBody,
+            updatedAt: now,
+            chatHistory: updatedHistory,
+          });
+          setSelected(updatedDraft);
+          setDrafts((prev) => prev.map((d) => (d.id === updatedDraft.id ? updatedDraft : d)));
+          bumpBodyEpoch();
+          await saveDraft(updatedDraft);
+          toast.success(`Pravopis: ${totalChanged} oprav`);
+        } else {
+          const updatedDraft = normalizeDraftForBuilder({
+            ...selected,
+            chatHistory: updatedHistory,
+            updatedAt: now,
+          });
+          setSelected(updatedDraft);
+          setDrafts((prev) => prev.map((d) => (d.id === updatedDraft.id ? updatedDraft : d)));
+          await saveDraft(updatedDraft);
+        }
+        return;
+      }
+
       // Rychlá oprava bez Gemini: „bloky webinářů“ / odstranění divného hero na aktuálním HTML
       const localFix =
         activeBuilderMode === 'block' &&
@@ -5600,21 +5950,24 @@ export default function EmailBuilder() {
         if (!editTargetStill) {
           toast.warning('Blok pro AI úpravu už v náhledu není — zvolte ho znovu žlutým AI u lišty.');
           clearAiInsertIntent();
-        } else {
-          const targetHtml = getBlockOuterHtmlForAiByBlockId(docLive, editBlockId);
-          if (targetHtml) {
-            insertCtx =
-              '\n\n[DŮLEŽITÉ — režim úpravy JEDNOHO bloku: Uživatel v Email Builderu zvolil konkrétní blok (žluté AI u lišty). ' +
-              `Jeho data-vb-block-id="${editBlockId}". ` +
-              'V poli bodyHtml vrať CELÉ HTML těla zprávy: tento jeden blok NAHRAĎ upravenou verzí podle pokynu v poslední zprávě; ' +
-              'zachovej stejné data-vb-block-id na obalu (data-vb-block můžeš změnit, pokud změna typu dává smysl). ' +
-              'Všechny ostatní bloky, sekce a struktura musí zůstat beze změny — nic jinde nepřepisuj ani neodstraňuj. ' +
-              `Blok k úpravě:\n"""${targetHtml}"""`;
-          } else {
-            toast.warning('Nepodařilo se přečíst blok pro AI úpravu — zkuste znovu.');
-            clearAiInsertIntent();
-          }
+          setGenerating(false);
+          return;
         }
+        const targetHtml = getBlockOuterHtmlForAiByBlockId(docLive, editBlockId, { maxLen: 20000 });
+        if (!targetHtml) {
+          toast.warning('Nepodařilo se přečíst blok pro AI úpravu — zkuste znovu.');
+          clearAiInsertIntent();
+          setGenerating(false);
+          return;
+        }
+        insertCtx =
+          '\n\n[DŮLEŽITÉ — režim úpravy JEDNOHO bloku · POVINNÉ]: Uživatel zvolil konkrétní blok (žluté AI u lišty). ' +
+          `data-vb-block-id="${editBlockId}" — toto id NIKDY neměň. ` +
+          'V bodyHtml vrať CELÉ HTML těla (kvůli kompatibilitě), ALE smíš změnit POUZE tento jeden blok. ' +
+          'Ostatní bloky zkopíruj byte-identicky z „Aktuální email“ (stejné tagy, atributy, text). ' +
+          'subject / headline / previewText / cta NECH beze změny (vrať stejné hodnoty jako v aktuálním emailu). ' +
+          'data-vb-block můžeš změnit jen pokud uživatel výslovně chce jiný typ bloku. ' +
+          `Blok k úpravě:\n"""${targetHtml}"""`;
       } else if (insertBeforeBlockId) {
         if (!beforeTargetStill) {
           toast.warning('Cílový blok v náhledu už není — zrušte režim vložení nebo zvolte blok znovu.');
@@ -5659,6 +6012,8 @@ export default function EmailBuilder() {
         model: emailGenTier,
         rag: emailGenRagEnabled,
         preferEmailBuilderBlocks: activeBuilderMode === 'block',
+        /** Server nesmí force-injectovat webináře / mazat hero při úpravě jednoho bloku. */
+        scopedBlockEdit: Boolean(editBlockId),
       };
       const { data } = await fetchGenerateEmailWithRetry(
         `${SERVER}/admin/mailchimp/generate-email`,
@@ -5672,11 +6027,84 @@ export default function EmailBuilder() {
       const e = data.email || {};
       const now = new Date().toISOString();
 
+      // Žluté AI u bloku: model často přepíše celý mail — do draftu sloučíme JEN ten blok.
+      let mergedBodyHtml = e.bodyHtml || selected?.bodyHtml || '';
+      let singleBlockEditApplied = false;
+      if (editBlockId) {
+        const originalBody =
+          (docLive?.body ? stripDataVbInsertFromHtml(docLive.body.innerHTML) : '') ||
+          selected?.bodyHtml ||
+          '';
+        const merged = mergeAiEditedBlockIntoBodyHtml(
+          originalBody,
+          editBlockId,
+          String(e.bodyHtml || ''),
+          { userMsg: msg },
+        );
+        if (!merged.ok) {
+          const why =
+            merged.reason === 'would-drop-block-images'
+              ? 'AI by z bloku odstranila obrázky — nepřepsal jsem nic. Napište výslovně „smaž fotky“, pokud to opravdu chcete.'
+              : 'AI nevrátila upravený blok se stejným id — mail jsem nepřepsal. Zkuste kratší pokyn nebo znovu žluté AI.';
+          toast.error(why);
+          const failMsg: ChatMsg = {
+            id: crypto.randomUUID(),
+            role: 'ai',
+            content: why,
+            ragDebug: data.ragDebug || null,
+            timestamp: now,
+          };
+          setChatMsgs([...historyWithUser, failMsg]);
+          clearAiInsertIntent();
+          setGenerating(false);
+          return;
+        }
+        mergedBodyHtml = merged.html;
+        singleBlockEditApplied = true;
+      } else if (selected?.bodyHtml && e.bodyHtml) {
+        // Plný přepis: když AI „ztratí“ fotky, vrať asset-bloky z originálu.
+        const rescued = restoreMissingAssetBlocksFromOriginal(
+          selected.bodyHtml,
+          String(e.bodyHtml),
+          msg,
+        );
+        mergedBodyHtml = rescued.html;
+        if (rescued.restored > 0) {
+          toast.warning(
+            `AI vyhodila ${rescued.lostSrcs.length} obrázků — vrátil jsem ${rescued.restored} blok(y) s fotkami zpět.`,
+            { duration: 5000 },
+          );
+        } else if (
+          rescued.lostSrcs.length > 0 &&
+          !promptAllowsDestructiveAssetChange(msg) &&
+          !promptWantsFullEmailRewrite(msg)
+        ) {
+          toast.error(
+            'AI by odstranila obrázky z mailu — nepřepsal jsem náhled. Pro úpravu jednoho bloku použijte žluté AI; pro kompletní přegenerování napište „přegeneruj celý mail“.',
+          );
+          const failMsg: ChatMsg = {
+            id: crypto.randomUUID(),
+            role: 'ai',
+            content:
+              'Odmítnuto: odpověď AI by zahodila existující fotky. Mail nechávám beze změny. Žluté AI u bloku = úprava jen toho bloku.',
+            ragDebug: data.ragDebug || null,
+            timestamp: now,
+          };
+          setChatMsgs([...historyWithUser, failMsg]);
+          setGenerating(false);
+          return;
+        }
+      }
+
       let aiText = '';
-      if (e.subject) aiText += `**Předmět:** ${e.subject}\n`;
-      if (e.headline) aiText += `**Nadpis:** ${e.headline}\n`;
-      if (e.previewText) aiText += `**Preview:** ${e.previewText}\n`;
-      aiText += '\nEmail byl aktualizován v náhledu.';
+      if (singleBlockEditApplied) {
+        aiText = 'Upraven jen zvolený blok — zbytek mailu beze změny.';
+      } else {
+        if (e.subject) aiText += `**Předmět:** ${e.subject}\n`;
+        if (e.headline) aiText += `**Nadpis:** ${e.headline}\n`;
+        if (e.previewText) aiText += `**Preview:** ${e.previewText}\n`;
+        aiText += '\nEmail byl aktualizován v náhledu.';
+      }
 
       const aiMsg: ChatMsg = {
         id: crypto.randomUUID(),
@@ -5691,30 +6119,44 @@ export default function EmailBuilder() {
 
       const updatedDraft: EmailDraft = {
         ...(selected || { ...EMPTY_DRAFT, id: crypto.randomUUID(), createdAt: now }),
-        subject: e.subject || selected?.subject || '',
-        previewText: e.previewText || selected?.previewText || '',
-        headline: e.headline || selected?.headline || '',
-        bodyHtml: e.bodyHtml || selected?.bodyHtml || '',
-        ctaText: e.ctaText || selected?.ctaText || 'Vyzkoušejte zdarma',
-        ctaUrl: e.ctaUrl || selected?.ctaUrl || previewCtaUrl(),
-        audience: e.audience || selected?.audience || 'newsletter',
-        fullHtml: e.fullHtml || '',
+        subject: singleBlockEditApplied ? selected?.subject || '' : e.subject || selected?.subject || '',
+        previewText: singleBlockEditApplied
+          ? selected?.previewText || ''
+          : e.previewText || selected?.previewText || '',
+        headline: singleBlockEditApplied
+          ? selected?.headline || ''
+          : e.headline || selected?.headline || '',
+        bodyHtml: mergedBodyHtml,
+        ctaText: singleBlockEditApplied
+          ? selected?.ctaText || 'Vyzkoušejte zdarma'
+          : e.ctaText || selected?.ctaText || 'Vyzkoušejte zdarma',
+        ctaUrl: singleBlockEditApplied
+          ? selected?.ctaUrl || previewCtaUrl()
+          : e.ctaUrl || selected?.ctaUrl || previewCtaUrl(),
+        audience: singleBlockEditApplied
+          ? selected?.audience || 'newsletter'
+          : e.audience || selected?.audience || 'newsletter',
+        fullHtml: singleBlockEditApplied ? selected?.fullHtml || '' : e.fullHtml || '',
         status: 'draft' as const,
         updatedAt: now,
         chatHistory: updatedHistory,
       };
 
-      // Napoj webináře/koláž na editovatelné bloky; odstraň divný duplicitní hero
+      // Napoj webináře/koláž — u scoped edit jen když AI vrátila placeholdery (žádný forceInject / strip hero).
       if (activeBuilderMode === 'block' && updatedDraft.bodyHtml) {
+        const hydrateScopeHtml = singleBlockEditApplied
+          ? extractBlockOuterHtmlFromBodyHtml(updatedDraft.bodyHtml, editBlockId!) || ''
+          : updatedDraft.bodyHtml;
         const wantsWebinarBlocks =
+          !singleBlockEditApplied &&
           /webin[aá]?[rř]|blok(y)?\s+webin|data-ai-webinar|dvpp|naživo/i.test(
             `${msg}\n${updatedDraft.bodyHtml}`,
           );
-        const needsHydrate =
-          wantsWebinarBlocks ||
-          /data-ai-webinar-slug|data-ai-product-ids|data-vb-block=["']hero["']|#00116[18]/i.test(
-            updatedDraft.bodyHtml,
-          );
+        const needsHydrate = singleBlockEditApplied
+          ? /data-ai-webinar-slug|data-ai-product-ids/i.test(hydrateScopeHtml)
+          : /data-ai-webinar-slug|data-ai-product-ids|data-vb-block=["']hero["']|#00116[18]/i.test(
+              hydrateScopeHtml,
+            ) || wantsWebinarBlocks;
         if (needsHydrate) {
           try {
             const headers = await authHeaders();
@@ -5738,12 +6180,38 @@ export default function EmailBuilder() {
                 : Array.isArray(prodJson)
                   ? prodJson
                   : [];
-            const hydrated = hydrateEmailAiEditorBlocks(updatedDraft.bodyHtml, webinars, products, {
+            const hydrateInput =
+              singleBlockEditApplied && hydrateScopeHtml
+                ? hydrateScopeHtml
+                : updatedDraft.bodyHtml;
+            const hydrated = hydrateEmailAiEditorBlocks(hydrateInput, webinars, products, {
               headline: updatedDraft.headline,
-              forceInjectWebinars: wantsWebinarBlocks,
+              // Nikdy neinjectovat webináře při scoped edit — jinak mizí okolní obsah/fotky.
+              forceInjectWebinars: wantsWebinarBlocks && !singleBlockEditApplied,
             });
-            if (hydrated.html !== updatedDraft.bodyHtml) {
-              updatedDraft.bodyHtml = hydrated.html;
+            if (hydrated.html !== hydrateInput) {
+              if (singleBlockEditApplied && editBlockId) {
+                const rem = mergeAiEditedBlockIntoBodyHtml(
+                  updatedDraft.bodyHtml,
+                  editBlockId,
+                  // Obal, ať extract najde stejné id i když hydrate vrátil jen vnitřek.
+                  /data-vb-block-id=/.test(hydrated.html)
+                    ? hydrated.html
+                    : `<div data-vb-block-id="${editBlockId}">${hydrated.html}</div>`,
+                  { userMsg: msg },
+                );
+                if (rem.ok) updatedDraft.bodyHtml = rem.html;
+              } else {
+                const rescued = restoreMissingAssetBlocksFromOriginal(
+                  selected?.bodyHtml || updatedDraft.bodyHtml,
+                  hydrated.html,
+                  msg,
+                );
+                updatedDraft.bodyHtml = rescued.html;
+                if (rescued.restored > 0) {
+                  toast.warning(`Po napojení bloků jsem vrátil ${rescued.restored} blok(y) s obrázky.`);
+                }
+              }
               updatedDraft.updatedAt = new Date().toISOString();
               if (hydrated.notes.length) {
                 const note: ChatMsg = {
@@ -5775,11 +6243,14 @@ export default function EmailBuilder() {
       });
       bumpBodyEpoch();
 
-      const productImages: string[] = e.productImages || data.email?.productImages || [];
+      const productImages: string[] = singleBlockEditApplied
+        ? []
+        : e.productImages || data.email?.productImages || [];
       const hasEncodedCollage = /data-vb-pc-encoded=/i.test(updatedDraft.bodyHtml || '');
       const hasAiCollageIds = /data-ai-product-ids=/i.test(updatedDraft.bodyHtml || '');
       // Legacy fallback: prázdný data-product-collage bez encoded payloadu
       if (
+        !singleBlockEditApplied &&
         !hasEncodedCollage &&
         !hasAiCollageIds &&
         productImages.length >= 2 &&
@@ -5960,19 +6431,35 @@ export default function EmailBuilder() {
     [mailingTags],
   );
 
+  const mailingWebTypeTags = useMemo(
+    () => mailingTags.filter((t) => (t.slug || '').startsWith('wb-') || t.name.trim().startsWith('Web ·')),
+    [mailingTags],
+  );
+
   const mailingWebinarTags = useMemo(
-    () => mailingTags.filter((t) => isWebinarTagName(t.name)),
+    () => mailingTags.filter((t) => isWebinarTagName(t.name) && !(t.slug || '').startsWith('wb-')),
     [mailingTags],
   );
 
   const mailingOtherTags = useMemo(() => {
     const q = mailingTagSearch.trim().toLowerCase();
     return mailingTags
-      .filter((t) => !isWebinarTagName(t.name))
+      .filter((t) => !(t.slug || '').startsWith('wb-') && !t.name.trim().startsWith('Web ·') && !isWebinarTagName(t.name))
       .filter((t) => !q || t.name.toLowerCase().includes(q));
   }, [mailingTags, mailingTagSearch]);
 
   const bumpMailingFilter = useCallback(() => setMailingRecipientCount(null), []);
+
+  const applyWebTypePreset = useCallback((slug: string) => {
+    bumpMailingFilter();
+    const tag = mailingTags.find((t) => t.slug === slug || t.name === WEBINAR_AUDIENCE_DEFS.find((d) => d.slug === slug)?.name);
+    setMailingSources([]);
+    setMailingSubjects([]);
+    setMailingIncludeTagIds(tag ? [tag.id] : []);
+    if (!tag) {
+      toast.message('Nejdřív v Audience spusť „Rozřadit podle webinářů“ — tag Web · … ještě není.');
+    }
+  }, [bumpMailingFilter, mailingTags]);
 
   const applyMailingPreset = useCallback((kind: 'all' | 'webinars' | 'first-grade' | 'newsletter' | 'eng-hot' | 'eng-warm') => {
     bumpMailingFilter();
@@ -5998,20 +6485,7 @@ export default function EmailBuilder() {
       return;
     }
     if (kind === 'webinars') {
-      /* Preferuj tag (pokrývá i staré MC importy); jinak source=webinar. Ne AND — jinak se množiny zbytečně zúží. */
-      const reg = mailingTags.find((t) => t.name.trim().toLowerCase() === 'webinar-registrace');
-      const anyWeb = mailingTags.filter((t) => isWebinarTagName(t.name)).map((t) => t.id);
-      setMailingSubjects([]);
-      if (reg) {
-        setMailingSources([]);
-        setMailingIncludeTagIds([reg.id]);
-      } else if (anyWeb.length > 0) {
-        setMailingSources([]);
-        setMailingIncludeTagIds(anyWeb);
-      } else {
-        setMailingSources(['webinar']);
-        setMailingIncludeTagIds([]);
-      }
+      applyWebTypePreset('wb-webinar');
       return;
     }
     if (kind === 'newsletter') {
@@ -6020,7 +6494,13 @@ export default function EmailBuilder() {
       setMailingIncludeTagIds([]);
       return;
     }
-    /* 1. stupeň: tag když existuje, jinak heuristika prvouka. */
+    const wbGrade = mailingTags.find((t) => t.slug === 'wb-1stupen');
+    if (wbGrade) {
+      setMailingSources([]);
+      setMailingSubjects([]);
+      setMailingIncludeTagIds([wbGrade.id]);
+      return;
+    }
     const gradeIds = mailingTags.filter((t) => isFirstGradeTagName(t.name)).map((t) => t.id);
     setMailingSources([]);
     if (gradeIds.length > 0) {
@@ -6030,7 +6510,7 @@ export default function EmailBuilder() {
       setMailingSubjects(['prvouka']);
       setMailingIncludeTagIds([]);
     }
-  }, [bumpMailingFilter, mailingTags]);
+  }, [applyWebTypePreset, bumpMailingFilter, mailingTags]);
 
   const openMailingSendDialog = async () => {
     const snap = selectedRef.current;
@@ -6045,9 +6525,9 @@ export default function EmailBuilder() {
     setMailingDialogOpen(true);
     try {
       const supabase = getSupabaseBrowser();
-      const { data, error } = await supabase.from('tags').select('id, name').order('name');
+      const { data, error } = await supabase.from('tags').select('id, name, slug').order('name');
       if (error) throw new Error(error.message);
-      setMailingTags((data || []) as { id: string; name: string }[]);
+      setMailingTags((data || []) as { id: string; name: string; slug?: string }[]);
     } catch (e) {
       console.error('Mailing tags load error:', e);
       toast.error('Nepodařilo se načíst tagy pro filtr příjemců.');
@@ -6727,10 +7207,41 @@ export default function EmailBuilder() {
                 </div>
               </div>
 
+              <div>
+                <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
+                  Typ z webináře
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {WEBINAR_AUDIENCE_DEFS.filter((d) => d.slug !== 'wb-webinar').map((d) => {
+                    const tag = mailingWebTypeTags.find((t) => t.slug === d.slug || t.name === d.name);
+                    const selected = tag ? mailingIncludeTagIds.includes(tag.id) : false;
+                    return (
+                      <button
+                        key={d.slug}
+                        type="button"
+                        onClick={() => applyWebTypePreset(d.slug)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-colors cursor-pointer ${
+                          selected
+                            ? 'bg-[#7C3AED] text-white'
+                            : 'bg-gray-100 text-[#001161]/60 hover:bg-[#7C3AED]/15 hover:text-[#7C3AED]'
+                        }`}
+                      >
+                        {d.name.replace(/^Web · /, '')}
+                      </button>
+                    );
+                  })}
+                </div>
+                {mailingWebTypeTags.length === 0 && (
+                  <p className="mt-1.5 text-[11px] text-[#001161]/40">
+                    Zatím bez tagů Web · … — v Audience spusť „Rozřadit podle webinářů“.
+                  </p>
+                )}
+              </div>
+
               {mailingWebinarTags.length > 0 && (
                 <div>
                   <label className="block text-[10px] font-bold text-[#001161]/40 uppercase tracking-wide mb-1.5">
-                    Webináře (tag) — OR
+                    Konkrétní akce (tag) — OR
                   </label>
                   <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                     {mailingWebinarTags.map((t) => (
@@ -7377,6 +7888,26 @@ export default function EmailBuilder() {
                       Přeměnit na infografiku
                     </button>
                   </div>
+                </div>
+              )}
+              {selected?.bodyHtml && !aiEditBlockId && !aiInsertAfterAnchorId && !aiInsertBeforeBlockId && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={generating}
+                    onClick={() => {
+                      void sendChatMessage(
+                        'Oprav pravopis a gramatiku v celém mailu. Hledej jen chyby, nic jiného nepřepisuj — zachovej formulace, strukturu i fotky.',
+                        { chatLabel: 'Opravit pravopis v celém mailu' },
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/80 text-[10px] font-bold text-emerald-900 hover:border-emerald-300 hover:bg-emerald-50 disabled:opacity-40 cursor-pointer transition-colors"
+                    style={F}
+                    title="Jen překlepy a gramatika — HTML, bloky a fotky zůstanou"
+                  >
+                    <SpellCheck className="w-3 h-3 shrink-0" strokeWidth={2.25} />
+                    Opravit pravopis
+                  </button>
                 </div>
               )}
               <div className="flex gap-2">

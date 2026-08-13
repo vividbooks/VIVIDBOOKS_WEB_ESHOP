@@ -34,6 +34,43 @@ export type EmailHighlightChrome = {
 export const EMAIL_HIGHLIGHT_DEFAULT_BG = '#F3F0FF';
 export const EMAIL_HIGHLIGHT_DEFAULT_RADIUS = 18;
 
+/** Styly toolbaru Nadpis 1–4 (Email Builder). */
+export const EMAIL_BUILDER_HEADING_STYLES: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
+  h1: 'margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;line-height:1.2;color:#001161;',
+  h2: 'margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#F06632;',
+  h3: 'margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;line-height:1.35;color:#001161;',
+  h4: 'margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;line-height:1.4;color:#001161;',
+};
+
+const EMAIL_BUILDER_HEADING_STYLES_ON_DARK: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
+  h1: 'margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;line-height:1.2;color:#ffffff;',
+  h2: 'margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#ffffff;',
+  h3: 'margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;line-height:1.35;color:#ffffff;',
+  h4: 'margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;line-height:1.4;color:#ffffff;',
+};
+
+function headingColorIsLight(color: string): boolean {
+  const c = (color || '').trim().toLowerCase();
+  return c === '#fff' || c === '#ffffff' || c === 'white' || /^rgba?\(\s*255/.test(c);
+}
+
+/** Sjednotí H1–H4 na styly editoru (webinář nechá být). */
+export function applyEmailBuilderHeadingStyles(root: ParentNode): void {
+  root.querySelectorAll('h1,h2,h3,h4').forEach((node) => {
+    const el = node as HTMLElement;
+    if (el.closest('[data-email-webinar="true"]')) return;
+    const tag = el.tagName.toLowerCase() as 'h1' | 'h2' | 'h3' | 'h4';
+    const prev = (el.getAttribute('style') || '').toLowerCase();
+    const light =
+      headingColorIsLight(el.style.color || '') ||
+      /color\s*:\s*(#fff(?:fff)?|white|rgba?\(\s*255)/i.test(prev);
+    el.setAttribute(
+      'style',
+      light ? EMAIL_BUILDER_HEADING_STYLES_ON_DARK[tag] : EMAIL_BUILDER_HEADING_STYLES[tag],
+    );
+  });
+}
+
 /** Padding webináře ve skupině s dalšími bloky (nahoře + po stranách). */
 export const EMAIL_WEBINAR_GROUP_PADDING = '18px 22px 12px 22px';
 
@@ -328,7 +365,7 @@ export function buildEmailBlockHtml(type: EmailBlockType): string {
       const hlBorder = highlightBorderFromBackground(EMAIL_HIGHLIGHT_DEFAULT_BG);
       return buildBlockShell(
         'highlight',
-        `<div data-vb-highlight-box="1" style="background:${EMAIL_HIGHLIGHT_DEFAULT_BG};border:${hlBorder};border-radius:${EMAIL_HIGHLIGHT_DEFAULT_RADIUS}px;padding:18px 22px 16px 22px;width:100%;box-shadow:none;box-sizing:border-box;"><h3 style="margin:0 0 10px 0;font-size:18px;line-height:1.35;color:#001161;">Co je dobré vědět</h3><p style="margin:0;font-size:13px;line-height:1.65;color:#334155;">Tento blok se hodí na shrnutí, tip nebo stručné vysvětlení.</p></div>`,
+        `<div data-vb-highlight-box="1" style="background:${EMAIL_HIGHLIGHT_DEFAULT_BG};border:${hlBorder};border-radius:${EMAIL_HIGHLIGHT_DEFAULT_RADIUS}px;padding:18px 22px 16px 22px;width:100%;box-shadow:none;box-sizing:border-box;"><h3 style="${EMAIL_BUILDER_HEADING_STYLES.h3}">Co je dobré vědět</h3><p style="margin:0;font-size:13px;line-height:1.65;color:#334155;">Tento blok se hodí na shrnutí, tip nebo stručné vysvětlení.</p></div>`,
         // Full-bleed výchozí — boční mezery jen ve skupině s dalšími bloky (viz applyHighlightChrome).
         `padding:0;background-color:transparent;`,
         {
@@ -740,6 +777,7 @@ export function normalizeEmailBodyHtml(html: string): string {
   repairEmptySections(root);
   dedupeDataVbBlockIds(root);
   stripCardChromeInsideSections(root);
+  applyEmailBuilderHeadingStyles(root);
   return root.outerHTML;
 }
 

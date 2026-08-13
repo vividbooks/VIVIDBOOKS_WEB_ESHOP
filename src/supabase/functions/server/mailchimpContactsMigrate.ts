@@ -56,6 +56,9 @@ type McMember = {
   tags?: { id?: number; name: string }[];
   timestamp_opt?: string;
   timestamp_signup?: string;
+  member_rating?: number;
+  last_changed?: string;
+  stats?: { avg_open_rate?: number; avg_click_rate?: number };
 };
 
 type McMembersPage = { members?: McMember[]; total_items?: number };
@@ -224,6 +227,16 @@ function memberToSubscriberRow(m: McMember, listIdMc: string) {
   const school = mergeStr(mf, 'SCHOOL') || mergeStr(mf, 'MMERGE5') || mergeStr(mf, 'SCHOOL_N');
   const ico = mergeStr(mf, 'ICO') || mergeStr(mf, 'MMERGE6') || mergeStr(mf, 'ICO_IC');
   const positionLabel = mergeStr(mf, 'SELECT');
+  const rating = typeof m.member_rating === 'number' && m.member_rating >= 1 && m.member_rating <= 5
+    ? Math.round(m.member_rating)
+    : null;
+  const mergeOut: Record<string, unknown> = {
+    ...(mf as Record<string, unknown>),
+    _mc_member_rating: rating,
+    _mc_avg_open_rate: m.stats?.avg_open_rate ?? null,
+    _mc_avg_click_rate: m.stats?.avg_click_rate ?? null,
+    _mc_last_changed: m.last_changed || null,
+  };
   return {
     email,
     first_name: mergeStr(mf, 'FNAME'),
@@ -235,7 +248,7 @@ function memberToSubscriberRow(m: McMember, listIdMc: string) {
     school_name: school,
     ico,
     status: mapMcStatus(m.status),
-    merge_fields: mf as Record<string, unknown>,
+    merge_fields: mergeOut,
     mc_member_id: m.id,
     mc_list_id: listIdMc,
     subscribed_at: m.timestamp_opt || m.timestamp_signup || null,

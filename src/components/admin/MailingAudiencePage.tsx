@@ -20,6 +20,7 @@ import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { getEdgeFunctionHeaders } from '../../lib/edgeFunctionHeaders';
 import { projectId } from '../../utils/supabase/info';
 import { MAILING_SOURCE_OPTIONS, type MailingAudienceFilter } from '../../lib/mailingAudienceFilter';
+import { WEBINAR_AUDIENCE_DEFS } from '../../lib/webinarAudienceClassify';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -183,6 +184,7 @@ export default function MailingAudiencePage() {
   const [eventsLoadingId, setEventsLoadingId] = useState<string | null>(null);
   const [subjectScoresBusy, setSubjectScoresBusy] = useState(false);
   const [engagementBusy, setEngagementBusy] = useState(false);
+  const [webinarBusy, setWebinarBusy] = useState(false);
 
   const [newGlobalTag, setNewGlobalTag] = useState('');
   const [tagMutationBusy, setTagMutationBusy] = useState(false);
@@ -656,21 +658,54 @@ export default function MailingAudiencePage() {
   const recomputeEngagementAudiences = async () => {
     if (
       !confirm(
-        'Rozřadit přihlášené kontakty podle aktivity (open/click)?\n\n' +
-          'Vzniknou tagy Eng · Aktivní / Teplý / Chladný / Bez aktivity / Nový.\n' +
-          'Každý kontakt dostane právě jeden. Bez AI — podle last_opened_at / last_clicked_at.\n' +
-          'Dávky po 1000, pokračuje automaticky.',
+        'Načíst engagement z Mailchimpu (member rating 1–5) a rozřadit kontakty?\n\n' +
+          '1) Sync ratingů z MC\n' +
+          '2) Tagy Eng · Aktivní / Teplý / Chladný / Bez aktivity / Nový\n\n' +
+          'V DB zatím nejsou open/click eventy — rating je stejný signál, který Mailchimp používá u hvězdiček.',
       )
     ) {
       return;
     }
     setEngagementBusy(true);
-    let offset = 0;
-    let batch = 0;
-    let totalProcessed = 0;
-    let totalTagUpdates = 0;
-    const totals = { 'eng-hot': 0, 'eng-warm': 0, 'eng-cold': 0, 'eng-never': 0, 'eng-new': 0 };
+    let mcOffset = 0;
+    let mcScanned = 0;
+    let mcUpdated = 0;
+    const hist = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, none: 0 };
     try {
+      toast.message('Stahuji member rating z Mailchimpu…');
+      for (;;) {
+        const res = await fetch(`${SERVER}/admin/mailing/sync-mailchimp-ratings`, {
+          method: 'POST',
+          headers: await getEdgeFunctionHeaders(true),
+          body: JSON.stringify({ offset: mcOffset, maxMembers: 2000 }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          toast.error(String(data.error || res.statusText));
+          return;
+        }
+        mcScanned += Number(data.scanned) || 0;
+        mcUpdated += Number(data.updated) || 0;
+        const h = data.ratingHistogram || {};
+        for (const k of Object.keys(hist) as (keyof typeof hist)[]) {
+          hist[k] += Number(h[k]) || 0;
+        }
+        if (!data.hasMore || data.nextOffset == null) break;
+        mcOffset = Number(data.nextOffset);
+        toast.message(`Mailchimp: ${mcScanned} načteno, ${mcUpdated} uloženo…`);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      toast.message(
+        `MC rating hotovo (${mcScanned}). ★5=${hist['5']} ★4=${hist['4']} ★3=${hist['3']} ★2=${hist['2']} ★1=${hist['1']}. Řadím tagy…`,
+      );
+
+      let offset = 0;
+      let batch = 0;
+      let totalProcessed = 0;
+      let totalTagUpdates = 0;
+      let withActivityTotal = 0;
+      let fromRatingTotal = 0;
+      const totals = { 'eng-hot': 0, 'eng-warm': 0, 'eng-cold': 0, 'eng-never': 0, 'eng-new': 0 };
       for (;;) {
         batch += 1;
         const res = await fetch(`${SERVER}/admin/mailing/recompute-engagement-audiences`, {
@@ -686,17 +721,18 @@ export default function MailingAudiencePage() {
         const proc = Number(data.processed) || 0;
         totalProcessed += proc;
         totalTagUpdates += Number(data.updatedTags) || 0;
+        withActivityTotal += Number(data.withActivity) || 0;
+        fromRatingTotal += Number(data.fromMailchimpRating) || 0;
         const c = data.counts || {};
         for (const k of Object.keys(totals) as (keyof typeof totals)[]) {
           totals[k] += Number(c[k]) || 0;
         }
         if (proc < 1000) break;
         offset += 1000;
-        toast.message(`Dávka ${batch}: ${proc} kontaktů. Pokračuji…`);
         await new Promise((r) => setTimeout(r, 300));
       }
       toast.success(
-        `Aktivita: ${totalProcessed} kontaktů · tagy změněny u ${totalTagUpdates}. ` +
+        `Hotovo: ${totalProcessed} kontaktů · z MC ratingu ${fromRatingTotal} · open/click ${withActivityTotal}. ` +
           `Aktivní ${totals['eng-hot']}, teplý ${totals['eng-warm']}, chladný ${totals['eng-cold']}, ` +
           `bez aktivity ${totals['eng-never']}, nový ${totals['eng-new']}.`,
       );
@@ -705,6 +741,61 @@ export default function MailingAudiencePage() {
       toast.error(e instanceof Error ? e.message : 'Přepočet aktivity selhal');
     } finally {
       setEngagementBusy(false);
+    }
+  };
+
+  const recomputeWebinarAudiences = async () => {
+    if (
+      !confirm(
+        'Rozřadit kontakty podle webinářových tagů z Mailchimpu?\n\n' +
+          'Vzniknou tagy Web · Matematika / Fyzika / Chemie / 1. stupeň / Ředitelé / …\n' +
+          'Kontakt může mít víc typů najednou (podle toho, na jakých akcích byl).',
+      )
+    ) {
+      return;
+    }
+    setWebinarBusy(true);
+    let offset = 0;
+    let totalProcessed = 0;
+    let totalTagUpdates = 0;
+    let withWebinar = 0;
+    const totals: Record<string, number> = {};
+    for (const d of WEBINAR_AUDIENCE_DEFS) totals[d.slug] = 0;
+    try {
+      for (;;) {
+        const res = await fetch(`${SERVER}/admin/mailing/recompute-webinar-audiences`, {
+          method: 'POST',
+          headers: await getEdgeFunctionHeaders(true),
+          body: JSON.stringify({ limit: 1000, offset }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          toast.error(String(data.error || res.statusText));
+          return;
+        }
+        const proc = Number(data.processed) || 0;
+        totalProcessed += proc;
+        totalTagUpdates += Number(data.updatedTags) || 0;
+        withWebinar += Number(data.withWebinar) || 0;
+        const c = data.counts || {};
+        for (const k of Object.keys(totals)) totals[k] += Number(c[k]) || 0;
+        if (proc < 1000) break;
+        offset += 1000;
+        toast.message(`Webináře: ${totalProcessed} kontaktů…`);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      const parts = WEBINAR_AUDIENCE_DEFS
+        .filter((d) => d.slug !== 'wb-webinar')
+        .map((d) => `${d.name.replace(/^Web · /, '')} ${totals[d.slug] || 0}`)
+        .join(', ');
+      toast.success(
+        `Hotovo: ${totalProcessed} kontaktů · na webináři ${withWebinar} · upraveno tagů ${totalTagUpdates}. ${parts}.`,
+      );
+      refreshAll();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Přepočet webinářů selhal');
+    } finally {
+      setWebinarBusy(false);
     }
   };
 
@@ -1056,7 +1147,7 @@ export default function MailingAudiencePage() {
             <button
               type="button"
               onClick={() => void recomputeSubjectInterests()}
-              disabled={loading || subjectScoresBusy || engagementBusy}
+              disabled={loading || subjectScoresBusy || engagementBusy || webinarBusy}
               className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-2 text-[13px] font-bold text-sky-900 transition-colors hover:bg-sky-100 disabled:opacity-50"
               style={FF}
               title="Dávky po 1000 kontaktech (updated_at desc), dokud nedojdou záznamy"
@@ -1067,13 +1158,24 @@ export default function MailingAudiencePage() {
             <button
               type="button"
               onClick={() => void recomputeEngagementAudiences()}
-              disabled={loading || engagementBusy || subjectScoresBusy}
+              disabled={loading || engagementBusy || subjectScoresBusy || webinarBusy}
               className="inline-flex items-center gap-2 rounded-xl border border-[#7C3AED]/30 bg-[#7C3AED]/8 px-4 py-2 text-[13px] font-bold text-[#5b21b6] transition-colors hover:bg-[#7C3AED]/15 disabled:opacity-50"
               style={FF}
               title="Tagy Eng · Aktivní / Teplý / Chladný / Bez aktivity / Nový — podle open/click"
             >
               {engagementBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
               {engagementBusy ? 'Řadím podle aktivity…' : 'Rozřadit podle aktivity'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void recomputeWebinarAudiences()}
+              disabled={loading || engagementBusy || subjectScoresBusy || webinarBusy}
+              className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-[13px] font-bold text-amber-950 transition-colors hover:bg-amber-100 disabled:opacity-50"
+              style={FF}
+              title="Tagy Web · Matematika / Fyzika / 1. stupeň / Ředitelé… podle MC webinářových tagů"
+            >
+              {webinarBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Tag className="h-4 w-4" />}
+              {webinarBusy ? 'Řadím podle webinářů…' : 'Rozřadit podle webinářů'}
             </button>
             <button
               type="button"

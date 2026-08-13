@@ -179,7 +179,7 @@ export function hydrateEmailAiEditorBlocks(
     heading.setAttribute('data-vb-block-id', randomBlockId());
     heading.setAttribute('style', 'padding:12px 22px 6px 22px;background:transparent;');
     heading.innerHTML =
-      '<h2 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:800;color:#F06632;">Ukážeme vám všechno naživo</h2>';
+      '<h2 style="margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#F06632;">Ukážeme vám všechno naživo</h2>';
     section.appendChild(heading);
 
     for (const w of matched) {

@@ -30,6 +30,31 @@ const EDITOR_CLASSES_TO_STRIP = ['vb-block-selected', 'vb-block-hover', 'vb-dnd-
  * Stejná sada patří i do šablony na serveru (`vividbooksEmailTemplate`).
  */
 export const EMAIL_BODY_MOBILE_CSS = `
+/* Velikosti H1–H4 (barvu necháváme na inline — bílá na tmavém hero vs. brand barvy). */
+.vb-email-root h1:not(:is([data-email-webinar="true"] *)) {
+  margin: 0 0 14px 0 !important;
+  font-size: 26px !important;
+  font-weight: 800 !important;
+  line-height: 1.2 !important;
+}
+.vb-email-root h2:not(:is([data-email-webinar="true"] *)) {
+  margin: 0 0 12px 0 !important;
+  font-size: 22px !important;
+  font-weight: 800 !important;
+  line-height: 1.25 !important;
+}
+.vb-email-root h3:not(:is([data-email-webinar="true"] *)) {
+  margin: 0 0 10px 0 !important;
+  font-size: 19px !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+}
+.vb-email-root h4:not(:is([data-email-webinar="true"] *)) {
+  margin: 0 0 8px 0 !important;
+  font-size: 16px !important;
+  font-weight: 700 !important;
+  line-height: 1.4 !important;
+}
 @media only screen and (max-width: 600px) {
   .vb-email-root p,
   .vb-email-root li { font-size: 15px !important; line-height: 1.65 !important; }

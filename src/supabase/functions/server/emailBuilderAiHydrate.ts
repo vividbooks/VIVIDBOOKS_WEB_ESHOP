@@ -38,6 +38,51 @@ function randomBlockId(): string {
   return `vb-block-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/** Kanonické styly nadpisů Email Builderu (stejné jako toolbar H1–H4). */
+export const EMAIL_BUILDER_HEADING_STYLES: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
+  h1: 'margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;line-height:1.2;color:#001161;',
+  h2: 'margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#F06632;',
+  h3: 'margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;line-height:1.35;color:#001161;',
+  h4: 'margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;line-height:1.4;color:#001161;',
+};
+
+const EMAIL_BUILDER_HEADING_STYLES_ON_DARK: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
+  h1: 'margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;line-height:1.2;color:#ffffff;',
+  h2: 'margin:0 0 12px 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;font-weight:800;line-height:1.25;color:#ffffff;',
+  h3: 'margin:0 0 10px 0;font-family:Arial,Helvetica,sans-serif;font-size:19px;font-weight:700;line-height:1.35;color:#ffffff;',
+  h4: 'margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;line-height:1.4;color:#ffffff;',
+};
+
+function headingLooksLightOnDark(attrs: string): boolean {
+  const s = String(attrs || '');
+  return /color\s*:\s*(#fff(?:fff)?|white|rgba?\(\s*255)/i.test(s);
+}
+
+/**
+ * Sjednotí `<h1>`–`<h4>` na styly editoru. Webinářové bloky nechává být
+ * (vnitřní nadpisy mají vlastní layout).
+ */
+export function normalizeEmailBuilderHeadings(html: string): string {
+  if (!html || !/<h[1-4]\b/i.test(html)) return html;
+  const parts = String(html).split(/(<div[^>]*data-email-webinar\s*=\s*["']true["'][^>]*>[\s\S]*?<\/div>)/gi);
+  return parts
+    .map((part) => {
+      if (/data-email-webinar\s*=\s*["']true["']/i.test(part)) return part;
+      return part.replace(/<(h[1-4])(\s[^>]*)?>/gi, (_full, tagRaw: string, attrs = '') => {
+        const tag = String(tagRaw).toLowerCase() as 'h1' | 'h2' | 'h3' | 'h4';
+        const style = headingLooksLightOnDark(attrs)
+          ? EMAIL_BUILDER_HEADING_STYLES_ON_DARK[tag]
+          : EMAIL_BUILDER_HEADING_STYLES[tag];
+        const rest = String(attrs || '')
+          .replace(/\s*style\s*=\s*"[^"]*"/gi, '')
+          .replace(/\s*style\s*=\s*'[^']*'/gi, '')
+          .trim();
+        return rest ? `<${tag} ${rest} style="${style}">` : `<${tag} style="${style}">`;
+      });
+    })
+    .join('');
+}
+
 function encodePayload(obj: unknown): string {
   const json = JSON.stringify(obj);
   try {
@@ -279,7 +324,7 @@ export function hydrateEmailBodyForBuilder(
     const section =
       `<div data-vb-block="section" data-vb-section-fill="plain" data-vb-block-id="${randomBlockId()}" style="padding:0;background:transparent;">` +
       `<div data-vb-block="text" data-vb-block-id="${randomBlockId()}" style="padding:10px 24px;background:transparent;">` +
-      `<h2 style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:20px;font-weight:800;color:#F06632;">Ukážeme vám všechno naživo</h2>` +
+      `<h2 style="${EMAIL_BUILDER_HEADING_STYLES.h2}">Ukážeme vám všechno naživo</h2>` +
       `</div>${blocks}</div>`;
 
     const listBlockRe =

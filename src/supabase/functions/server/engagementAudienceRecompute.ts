@@ -1,17 +1,19 @@
 /**
  * Rozřazení kontaktů do engagement audience (tagy) podle reálné aktivity.
  *
- * Záměrně bez LLM — open/click/recency je deterministické a levnější než AI.
- * Každý `subscribed` kontakt dostane právě jeden z tagů eng-* (mutually exclusive).
+ * Zdroj pravdy: email_events (Mailchimp import + Resend pixel/webhook) přes RPC
+ * mailing_subscriber_last_activity — NE jen sloupce last_opened_at na subscribers
+ * (ty po MC importu často zůstaly prázdné).
  *
- * Buckety:
- * - eng-hot   — open/click za posledních 30 dní
- * - eng-warm  — open/click za 31–90 dní
- * - eng-cold  — měl aktivitu někdy, ale > 90 dní
- * - eng-never — nikdy neotevřel / neklikl (nebo chybí data)
- * - eng-new   — přihlášen ≤ 14 dní a zatím bez aktivity (podmnožina „nových“)
+ * Buckety (mutually exclusive):
+ * - eng-hot   — open/click ≤ 30 dní
+ * - eng-warm  — 31–90 dní
+ * - eng-cold  — měl aktivitu, ale > 90 dní
+ * - eng-never — nikdy neotevřel / neklikl
+ * - eng-new   — přihlášen ≤ 14 dní a zatím bez aktivity
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { bucketFromMailchimpRating } from './mailchimpEngagementSync.ts';
 
 export const ENGAGEMENT_TAG_DEFS = [
   { slug: 'eng-hot', name: 'Eng · Aktivní (30 dní)' },
@@ -24,6 +26,7 @@ export const ENGAGEMENT_TAG_DEFS = [
 export type EngagementBucket = (typeof ENGAGEMENT_TAG_DEFS)[number]['slug'];
 
 const MS_DAY = 86_400_000;
+const ID_IN_CHUNK = 120;
 
 function latestActivityMs(lastOpened: string | null, lastClicked: string | null): number | null {
   const times = [lastOpened, lastClicked]
@@ -39,6 +42,8 @@ export function classifyEngagementBucket(input: {
   lastClickedAt: string | null;
   subscribedAt: string | null;
   createdAt: string | null;
+  /** Mailchimp member_rating 1–5 (z merge_fields._mc_member_rating) — fallback když chybí open/click. */
+  mailchimpRating?: unknown;
   nowMs?: number;
 }): EngagementBucket {
   const now = input.nowMs ?? Date.now();
@@ -49,17 +54,21 @@ export function classifyEngagementBucket(input: {
     if (ageDays <= 90) return 'eng-warm';
     return 'eng-cold';
   }
+  const fromRating = bucketFromMailchimpRating(input.mailchimpRating);
+  if (fromRating) return fromRating;
   const joinedRaw = input.subscribedAt || input.createdAt;
   const joined = joinedRaw ? Date.parse(joinedRaw) : NaN;
   if (Number.isFinite(joined) && (now - joined) / MS_DAY <= 14) return 'eng-new';
   return 'eng-never';
 }
 
-/** Heuristika skóre 0–100 z recency (doplní sloupec engagement_score). */
 export function scoreFromRecency(bucket: EngagementBucket, lastActivityMs: number | null, nowMs = Date.now()): number {
-  if (bucket === 'eng-hot' && lastActivityMs != null) {
-    const days = (nowMs - lastActivityMs) / MS_DAY;
-    return Math.max(55, Math.min(100, Math.round(100 - days * 1.5)));
+  if (bucket === 'eng-hot') {
+    if (lastActivityMs != null) {
+      const days = (nowMs - lastActivityMs) / MS_DAY;
+      return Math.max(55, Math.min(100, Math.round(100 - days * 1.5)));
+    }
+    return 70; /* Mailchimp rating 4–5 bez přesného data open */
   }
   if (bucket === 'eng-warm') return 35;
   if (bucket === 'eng-cold') return 10;
@@ -91,6 +100,62 @@ async function ensureEngagementTags(supabase: SupabaseClient): Promise<Map<Engag
   return map;
 }
 
+/** last open/click z email_events (+ fallback sloupce) — RPC; při chybě ruční agregace. */
+async function loadLastActivity(
+  supabase: SupabaseClient,
+  ids: string[],
+): Promise<Map<string, { lastOpenedAt: string | null; lastClickedAt: string | null }>> {
+  const out = new Map<string, { lastOpenedAt: string | null; lastClickedAt: string | null }>();
+  if (ids.length === 0) return out;
+
+  for (let i = 0; i < ids.length; i += ID_IN_CHUNK) {
+    const chunk = ids.slice(i, i + ID_IN_CHUNK);
+    const { data, error } = await supabase.rpc('mailing_subscriber_last_activity', {
+      p_ids: chunk,
+    });
+    if (!error && data) {
+      for (const r of data as {
+        subscriber_id: string;
+        last_opened_at: string | null;
+        last_clicked_at: string | null;
+      }[]) {
+        out.set(r.subscriber_id, {
+          lastOpenedAt: r.last_opened_at,
+          lastClickedAt: r.last_clicked_at,
+        });
+      }
+      continue;
+    }
+
+    /* Fallback bez RPC — max z email_events v JS. */
+    if (error) {
+      console.warn('[engagement] RPC mailing_subscriber_last_activity:', error.message);
+    }
+    const { data: evs, error: evErr } = await supabase
+      .from('email_events')
+      .select('subscriber_id, event_type, occurred_at')
+      .in('subscriber_id', chunk)
+      .in('event_type', ['open', 'click'])
+      .order('occurred_at', { ascending: false })
+      .limit(8000);
+    if (evErr) throw new Error(`email_events: ${evErr.message}`);
+    for (const id of chunk) {
+      if (!out.has(id)) out.set(id, { lastOpenedAt: null, lastClickedAt: null });
+    }
+    for (const e of evs || []) {
+      const sid = e.subscriber_id as string;
+      if (!sid) continue;
+      const cur = out.get(sid) || { lastOpenedAt: null, lastClickedAt: null };
+      const ts = (e.occurred_at as string) || null;
+      if (!ts) continue;
+      if (e.event_type === 'open' && !cur.lastOpenedAt) cur.lastOpenedAt = ts;
+      if (e.event_type === 'click' && !cur.lastClickedAt) cur.lastClickedAt = ts;
+      out.set(sid, cur);
+    }
+  }
+  return out;
+}
+
 export type EngagementRecomputeResult = {
   ok: true;
   limit: number;
@@ -98,6 +163,9 @@ export type EngagementRecomputeResult = {
   processed: number;
   updatedTags: number;
   updatedScores: number;
+  backfilledTimestamps: number;
+  withActivity: number;
+  fromMailchimpRating: number;
   counts: Record<EngagementBucket, number>;
 };
 
@@ -112,7 +180,7 @@ export async function runEngagementAudienceRecompute(
 
   const { data: rows, error } = await supabase
     .from('subscribers')
-    .select('id, last_opened_at, last_clicked_at, subscribed_at, created_at, engagement_score')
+    .select('id, last_opened_at, last_clicked_at, subscribed_at, created_at, engagement_score, merge_fields')
     .eq('status', 'subscribed')
     .order('updated_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -129,11 +197,14 @@ export async function runEngagementAudienceRecompute(
   const now = Date.now();
   let updatedTags = 0;
   let updatedScores = 0;
-  const ID_IN_CHUNK = 120; /* PostgREST GET .in() na 1000 UUID často → Bad Request */
+  let backfilledTimestamps = 0;
+  let withActivity = 0;
+  let fromMailchimpRating = 0;
 
-  /* Aktuální eng-* tagy u dávky — ať neměníme, když bucket sedí. */
   const ids = list.map((r) => r.id as string);
-  const currentEng = new Map<string, string>(); /* subscriber_id → tag_id */
+  const activityById = await loadLastActivity(supabase, ids);
+
+  const currentEng = new Map<string, string>();
   for (let i = 0; i < ids.length; i += ID_IN_CHUNK) {
     const chunk = ids.slice(i, i + ID_IN_CHUNK);
     const { data: st, error: stErr } = await supabase
@@ -149,22 +220,54 @@ export async function runEngagementAudienceRecompute(
 
   const toAdd: { subscriber_id: string; tag_id: string; source: 'system' }[] = [];
   const scoreUpdates: { id: string; engagement_score: number }[] = [];
+  const stampUpdates: { id: string; last_opened_at: string | null; last_clicked_at: string | null }[] = [];
 
   for (const row of list) {
     const id = row.id as string;
+    const fromEvents = activityById.get(id);
+    const lastOpenedAt =
+      fromEvents?.lastOpenedAt
+      ?? (row.last_opened_at as string | null)
+      ?? null;
+    const lastClickedAt =
+      fromEvents?.lastClickedAt
+      ?? (row.last_clicked_at as string | null)
+      ?? null;
+
+    if (lastOpenedAt || lastClickedAt) withActivity += 1;
+
+    /* Backfill sloupců, ať Audience UI i další filtry vidí stejnou pravdu. */
+    const colOpen = (row.last_opened_at as string | null) ?? null;
+    const colClick = (row.last_clicked_at as string | null) ?? null;
+    if (
+      (lastOpenedAt && lastOpenedAt !== colOpen)
+      || (lastClickedAt && lastClickedAt !== colClick)
+    ) {
+      stampUpdates.push({
+        id,
+        last_opened_at: lastOpenedAt || colOpen,
+        last_clicked_at: lastClickedAt || colClick,
+      });
+    }
+
+    const mf = (row.merge_fields && typeof row.merge_fields === 'object')
+      ? (row.merge_fields as Record<string, unknown>)
+      : {};
+    const mcRating = mf._mc_member_rating;
+    const hadOpenClick = Boolean(lastOpenedAt || lastClickedAt);
+    if (!hadOpenClick && bucketFromMailchimpRating(mcRating)) fromMailchimpRating += 1;
+
     const bucket = classifyEngagementBucket({
-      lastOpenedAt: (row.last_opened_at as string | null) ?? null,
-      lastClickedAt: (row.last_clicked_at as string | null) ?? null,
+      lastOpenedAt,
+      lastClickedAt,
       subscribedAt: (row.subscribed_at as string | null) ?? null,
       createdAt: (row.created_at as string | null) ?? null,
+      mailchimpRating: mcRating,
       nowMs: now,
     });
     counts[bucket] += 1;
     const wantTagId = tagByBucket.get(bucket)!;
-    const activityMs = latestActivityMs(
-      (row.last_opened_at as string | null) ?? null,
-      (row.last_clicked_at as string | null) ?? null,
-    );
+    const activityMs = latestActivityMs(lastOpenedAt, lastClickedAt);
     const score = scoreFromRecency(bucket, activityMs, now);
     if ((row.engagement_score as number) !== score) {
       scoreUpdates.push({ id, engagement_score: score });
@@ -175,7 +278,6 @@ export async function runEngagementAudienceRecompute(
     toAdd.push({ subscriber_id: id, tag_id: wantTagId, source: 'system' });
   }
 
-  /* Smazat staré eng-* u změněných kontaktů, pak přiřadit nový bucket. */
   const changedIds = [...new Set(toAdd.map((r) => r.subscriber_id))];
   for (let i = 0; i < changedIds.length; i += ID_IN_CHUNK) {
     const chunk = changedIds.slice(i, i + ID_IN_CHUNK);
@@ -197,6 +299,18 @@ export async function runEngagementAudienceRecompute(
     updatedTags += (inserted || []).length;
   }
 
+  for (const u of stampUpdates) {
+    const { error: upErr } = await supabase
+      .from('subscribers')
+      .update({
+        last_opened_at: u.last_opened_at,
+        last_clicked_at: u.last_clicked_at,
+      })
+      .eq('id', u.id);
+    if (upErr) throw new Error(`timestamp backfill: ${upErr.message}`);
+    backfilledTimestamps += 1;
+  }
+
   for (const u of scoreUpdates) {
     const { error: upErr } = await supabase
       .from('subscribers')
@@ -213,6 +327,9 @@ export async function runEngagementAudienceRecompute(
     processed: list.length,
     updatedTags,
     updatedScores,
+    backfilledTimestamps,
+    withActivity,
+    fromMailchimpRating,
     counts,
   };
 }

@@ -29,7 +29,19 @@ export const MAILING_SUBJECT_OPTIONS: { slug: string; label: string }[] = [
 
 export function isWebinarTagName(name: string): boolean {
   const n = name.trim().toLowerCase();
-  return n === 'webinar-registrace' || n.startsWith('webinar-') || n.includes('webinář') || n.includes('webinar');
+  if (n.startsWith('web ·') || n.startsWith('eng ·')) return false;
+  if (n === 'webinar-registrace' || n.startsWith('webinar-') || n.includes('webinář') || n.includes('webinar')) {
+    return true;
+  }
+  const fold = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const hasYear = /\b20[1-3]\d\b/.test(fold);
+  const hasDate =
+    /\d{1,2}\.\s*\d{1,2}\.\s*20[1-3]\d/.test(fold)
+    || /\d{1,2}\/\d{1,2}\/20[1-3]\d/.test(fold)
+    || /\bod\s+\d{1,2}[.:]\d{2}/.test(fold);
+  if (hasYear && hasDate) return true;
+  if (fold.startsWith('dvpp-video') || fold.startsWith('dvpp video')) return true;
+  return false;
 }
 
 export function isFirstGradeTagName(name: string): boolean {
