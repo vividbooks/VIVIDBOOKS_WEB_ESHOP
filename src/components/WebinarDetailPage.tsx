@@ -98,6 +98,8 @@ function matchDvppVideoForWebinarDetail(webinar: Webinar, dvppVideos: { id: stri
 }
 
 export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
+  const webinarPathSeg = String(webinar.slug || webinar.id || '').trim() || webinar.id;
+  const webinarPath = `/webinar/${webinarPathSeg}`;
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -377,11 +379,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const isDevPreview = devImminentId === webinar.id;
   const showDirectEntry = isDevPreview && !webinar.isPast;
 
-  const siteOrigin =
-    typeof window !== 'undefined'
-      ? window.location.origin
-      : (import.meta.env.VITE_PUBLIC_SITE_URL || 'http://localhost:3000').replace(/\/$/, '');
-  const liveUrl = `${siteOrigin}/webinar/${webinar.id}/live`;
+  const liveUrl = marketingUrl(`${webinarPath}/live`);
 
   const downloadIcsFromApi = () => {
     const b64 = postReg?.calendar?.icsBase64;
@@ -615,13 +613,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center bg-[#E8EBF4] px-6 py-16">
           <SEOHead
             title={`${webinar.title} — dotazník`}
-            path={`/webinar/${webinar.id}`}
+            path={webinarPath}
             description={`Dotazník po webináři: ${webinar.title}`}
             jsonLd={webinarJsonLd({
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: marketingUrl(`/webinar/${webinar.id}`),
+              url: marketingUrl(webinarPath),
             })}
           />
           <Loader2 className="h-10 w-10 animate-spin text-[#001161]" aria-hidden />
@@ -641,13 +639,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         >
           <SEOHead
             title={`${webinar.title} — dotazník`}
-            path={`/webinar/${webinar.id}`}
+            path={webinarPath}
             description={`Dotazník po webináři: ${webinar.title}`}
             jsonLd={webinarJsonLd({
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: marketingUrl(`/webinar/${webinar.id}`),
+              url: marketingUrl(webinarPath),
             })}
           />
           <div className="mx-auto flex w-full max-w-[560px] flex-1 flex-col justify-center gap-4 px-4 py-10 sm:px-6">
@@ -809,13 +807,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         >
           <SEOHead
             title={`${webinar.title} — registrace`}
-            path={`/webinar/${webinar.id}`}
+            path={webinarPath}
             description={`Registrace a dotazník po webináři: ${webinar.title}`}
             jsonLd={webinarJsonLd({
               name: webinar.title,
               description: webinar.title,
               startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-              url: marketingUrl(`/webinar/${webinar.id}`),
+              url: marketingUrl(webinarPath),
             })}
           />
           <div className="mx-auto grid w-full max-w-[560px] flex-1 content-start gap-4 px-4 py-8 sm:px-6">
@@ -927,13 +925,13 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
       >
         <SEOHead
           title={`${webinar.title} — dotazník`}
-          path={`/webinar/${webinar.id}`}
+          path={webinarPath}
           description={`Dotazník po webináři: ${webinar.title}`}
           jsonLd={webinarJsonLd({
             name: webinar.title,
             description: webinar.title,
             startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-            url: marketingUrl(`/webinar/${webinar.id}`),
+            url: marketingUrl(webinarPath),
           })}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -963,30 +961,24 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     >
       <SEOHead
         title={webinar.title}
-        path={`/webinar/${webinar.id}`}
+        path={webinarPath}
         description={`DVPP webin\u00e1\u0159: ${webinar.title} \u2014 ${webinar.day}. ${webinar.monthName} ${webinar.year} v ${webinar.time}. Online semin\u00e1\u0159 pro u\u010ditele zdarma s certifik\u00e1tem.`}
         jsonLd={webinarJsonLd({
           name: webinar.title,
           description: webinar.title,
           startDate: `${webinar.year}-${String(webinar.monthNum || 1).padStart(2, '0')}-${String(webinar.day || 1).padStart(2, '0')}T${webinar.time || '17:00'}:00`,
-          url: marketingUrl(`/webinar/${webinar.id}`),
+          url: marketingUrl(webinarPath),
         })}
       />
 
-      {/* Back link — na mobilu v toku stránky, na desktopu pod horní lištou */}
-      <div className="relative z-30 border-b border-[#001161]/6 bg-white md:sticky md:top-14 md:bg-white/90 md:backdrop-blur-md">
-        <div className="max-w-[900px] mx-auto px-6 h-14 flex items-center gap-2">
-          <button
-            onClick={() => navigate('/webinare')}
-            className="flex items-center gap-1.5 text-[#001161]/60 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] transition-colors cursor-pointer group"
-          >
-            <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-            {'Zobrazit v\u0161echny webin\u00e1\u0159e'}
-          </button>
-        </div>
-      </div>
-
-      <div className="max-w-[900px] mx-auto px-6 py-10">
+      <div className="max-w-[900px] mx-auto px-6 pt-6 pb-10 md:pt-8">
+        <button
+          onClick={() => navigate('/webinare')}
+          className="mb-6 flex items-center gap-1.5 text-[#001161]/60 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[13px] transition-colors cursor-pointer group"
+        >
+          <ChevronLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+          {'Zobrazit v\u0161echny webin\u00e1\u0159e'}
+        </button>
 
         {/* Live banner */}
         {showLiveButton && (
@@ -1009,7 +1001,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               </div>
             </div>
             <a
-              href={`/webinar/${webinar.id}/live`}
+              href={`${webinarPath}/live`}
               className="shrink-0 bg-white hover:bg-gray-100 text-red-600 font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-5 py-2.5 rounded-full transition-all hover:scale-105 no-underline"
             >
               {'Vstoupit na stream \u2192'}
@@ -1068,7 +1060,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   </a>
                   {(showDirectEntry || showLiveButton) && (
                     <button
-                      onClick={() => navigate(`/webinar/${webinar.id}/live`)}
+                      onClick={() => navigate(`${webinarPath}/live`)}
                       className="flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/85 text-white font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-6 py-3 rounded-full transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-[0_4px_16px_rgba(0,17,97,0.25)]"
                     >
                       <Radio className="w-3.5 h-3.5" />

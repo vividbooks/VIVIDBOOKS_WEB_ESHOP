@@ -304,6 +304,11 @@ export default function CatalogLayout() {
 
   const onOrder = () => navigate(schoolOrderCount > 0 ? '/objednat?step=2' : '/objednat');
 
+  /** Veřejná stránka webináře — bez fixed horní lišty, ať nepřekrývá cover 16:9. */
+  const isWebinarDetailPage =
+    /^\/webinar\/[^/]+$/.test(location.pathname)
+    && searchParams.get('dvppDotaznik') !== '1';
+
   /** Po webináři: `?dvppDotaznik=1` — jen DVPP/dotazník, bez katalogové navigace. */
   const isWebinarSurveyFullscreen =
     /^\/webinar\/[^/]+$/.test(location.pathname) && searchParams.get('dvppDotaznik') === '1';
@@ -364,8 +369,8 @@ export default function CatalogLayout() {
   return (
     <CatalogContext.Provider value={catalogContextValue}>
       <div className="bg-white min-h-screen">
-        {/* Fixed top navbar — desktop only (checkout je bez horní lišty) */}
-        {!isCheckoutLikeSidebar && <TopNav onOrder={onOrder} />}
+        {/* Fixed top navbar — desktop only (checkout a detail webináře jsou bez horní lišty) */}
+        {!isCheckoutLikeSidebar && !isWebinarDetailPage && <TopNav onOrder={onOrder} />}
 
         <div className="flex flex-col md:flex-row">
           {/* ── Mobile sidebar backdrop ───────────────────────── */}
@@ -832,7 +837,7 @@ export default function CatalogLayout() {
           {/* ── Main content area ───────────────────────────────── */}
           <main
             className={`md:ml-[245px] md:w-[calc(100vw-245px)] min-h-screen pb-20 overflow-x-hidden ${
-              isCheckoutLikeSidebar ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
+              isCheckoutLikeSidebar || isWebinarDetailPage ? 'md:pt-0 md:relative md:z-[41]' : 'md:pt-14'
             }`}
        
           >
