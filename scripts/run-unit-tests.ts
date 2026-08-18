@@ -22,6 +22,10 @@ import {
 } from '../supabase/functions/_shared/czech-address-enrichment.ts';
 import { orgAddressLine, personPostalLine } from '../supabase/functions/_shared/pipedrive-address.ts';
 import {
+  distributorContactPersonName,
+  looksLikeLegalEntityName,
+} from '../supabase/functions/_shared/pipedrive-distributor-person.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -606,6 +610,35 @@ registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adres
       { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
     );
   });
+});
+
+registerTest('distributorContactPersonName: s.r.o. nepoužije jako jméno osoby', () => {
+  assert.equal(looksLikeLegalEntityName('Baar Group s.r.o.'), true);
+  assert.equal(looksLikeLegalEntityName('EUROMEDIA GROUP, a.s.'), true);
+  assert.equal(looksLikeLegalEntityName('ALBRA, spol. s r.o.'), true);
+  assert.equal(looksLikeLegalEntityName('Jana Hrabačková'), false);
+  assert.equal(looksLikeLegalEntityName('Petr Ježek'), false);
+
+  assert.equal(
+    distributorContactPersonName('Baar Group s.r.o.', 'peterek@baargroup.cz'),
+    'Peterek',
+  );
+  assert.equal(
+    distributorContactPersonName('EUROMEDIA GROUP, a.s.', 'polscakova.jaroslava@euromedia.cz'),
+    'Polscakova Jaroslava',
+  );
+  assert.equal(
+    distributorContactPersonName('Jana Hrabačková', 'jana.hrabackova@email.cz'),
+    'Jana Hrabačková',
+  );
+  assert.equal(
+    distributorContactPersonName('Petr Ježek', 'knihyjezek01@seznam.cz'),
+    'Petr Ježek',
+  );
+  assert.equal(
+    distributorContactPersonName('', 'ucebnice@ansa.cz'),
+    'Ucebnice',
+  );
 });
 
 await run();
