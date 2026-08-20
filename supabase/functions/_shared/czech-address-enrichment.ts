@@ -29,6 +29,22 @@ function normalizeForCompare(value: string | undefined | null): string {
 }
 
 /**
+ * „Zlín 4-Louky" je pořád Zlín — ARES vrací obec bez městské části. „Znojmo" vs. „Suchohrdly"
+ * (stejné PSČ 66902) jsou různá místa.
+ */
+export function citiesLikelySame(
+  a: string | undefined | null,
+  b: string | undefined | null,
+): boolean {
+  const na = normalizeForCompare(a);
+  const nb = normalizeForCompare(b);
+  if (!na || !nb || na === nb) return true;
+  const prefix = (x: string, y: string) =>
+    x.startsWith(`${y} `) || x.startsWith(`${y}-`);
+  return prefix(na, nb) || prefix(nb, na);
+}
+
+/**
  * PD (a Google) plní `street_number` jen u adres s číslem orientačním. České adresy, které mají
  * pouze číslo popisné, mají číslo v komponentě `premise`, kterou Pipedrive ve strukturovaných
  * podpolích nevede — `route` + `street_number` pak dá „Pod Šternberkem" místo „Pod Šternberkem 306“,
@@ -369,12 +385,13 @@ export async function enrichCzechAddressParts(
        * Sídlo z ARES je adresa **objednatele**, ne nutně doručovací adresa z dealu (u dealů přes
        * distributora se liší). Použijeme ho jen tam, kde si s už známou lokalitou neodporuje —
        * jinak bychom zásilku pro školu poslali na adresu zprostředkovatele.
+       *
+       * Stejné PSČ nestačí — 66902 je Znojmo i Suchohrdly. Když známe město a ARES má jiné,
+       * sídlo z rejstříku není doručovací adresa (deal 26680: Znojmo vs. Pod Skalou / Suchohrdly).
        */
-      const sameLocation = parts.zip && fromAres.zip
-        ? parts.zip === fromAres.zip
-        : parts.city && fromAres.city
-        ? normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city)
-        : true;
+      const zipOk = !parts.zip || !fromAres.zip || parts.zip === fromAres.zip;
+      const cityOk = citiesLikelySame(parts.city, fromAres.city);
+      const sameLocation = zipOk && cityOk;
 
       if (!sameLocation) {
         options?.log?.('address_ares_location_mismatch', {
