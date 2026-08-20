@@ -49,6 +49,13 @@ import {
   TRIAL_PIPEDRIVE_LABEL_NAME,
 } from '../supabase/functions/_shared/trial-pipedrive-note.ts';
 import {
+  mapSchoolInquiryToPipedriveOrderItems,
+  parseSchoolBundleLineQuantity,
+  schoolInquiryPickupPointName,
+  schoolInquiryShippingMethod,
+  schoolInquiryShippingPriceHaler,
+} from '../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -1807,6 +1814,137 @@ registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí 
       Reflect.set(globalThis, 'fetch', originalFetch);
     }
   }
+});
+
+registerTest('parseSchoolBundleLineQuantity reads n× from name or explicit quantity', () => {
+  assert.equal(parseSchoolBundleLineQuantity({ name: '2× Fyzika PS' }), 2);
+  assert.equal(parseSchoolBundleLineQuantity({ name: '10x Chemie' }), 10);
+  assert.equal(parseSchoolBundleLineQuantity({ name: 'Fyzika PS' }), 1);
+  assert.equal(parseSchoolBundleLineQuantity({ name: '3× Matematika', quantity: 5 }), 5);
+  assert.equal(parseSchoolBundleLineQuantity({}), 1);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems maps catalog products and skips empty', () => {
+  const catalog = new Map<string, unknown>([
+    ['prod-fyzika', { id: 'prod-fyzika', price: '199,-' }],
+    ['prod-chemie', { id: 'prod-chemie', priceAmount: 149 }],
+  ]);
+
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(null, catalog),
+    [],
+  );
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems({ workbooks: { items: [] } }, catalog),
+    [],
+  );
+
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'prod-fyzika', name: 'Fyzika PS', price: '199,-', quantity: 3 },
+          { id: 'prod-chemie', name: 'Chemie PS', quantity: 1 },
+          { id: 'prod-fyzika', name: 'skip', quantity: 0 },
+          { name: 'bez id', quantity: 2 },
+        ],
+      },
+    },
+    catalog,
+  );
+  assert.deepEqual(lines, [
+    { product_id: 'prod-fyzika', quantity: 3, unit_price: 19900 },
+    { product_id: 'prod-chemie', quantity: 1, unit_price: 14900 },
+  ]);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems expands bundle lines with set qty × inner qty', () => {
+  const catalog = {
+    'prod-fyzika': { id: 'prod-fyzika', price: '120,-' },
+    'prod-chemie': { id: 'prod-chemie', price: '80,-' },
+  };
+
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'bundle:pack-10plus1', name: 'Balíček 10+1', price: '1000,-', quantity: 2, bundleId: 'pack-10plus1' },
+        ],
+        bundles: [
+          {
+            bundleId: 'pack-10plus1',
+            quantity: 2,
+            lines: [
+              { id: 'prod-fyzika', name: '11× Fyzika PS' },
+              { id: 'prod-chemie', name: 'Chemie PS' },
+              { id: 'subject:Fyzika', name: 'Fyzika' },
+            ],
+          },
+        ],
+      },
+    },
+    catalog,
+  );
+
+  assert.deepEqual(lines, [
+    { product_id: 'prod-fyzika', quantity: 22, unit_price: 12000 },
+    { product_id: 'prod-chemie', quantity: 2, unit_price: 8000 },
+  ]);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems keeps catalog item next to expanded bundle', () => {
+  const catalog = new Map<string, unknown>([
+    ['solo', { id: 'solo', price: '50,-' }],
+    ['in-pack', { id: 'in-pack', price: '90,-' }],
+  ]);
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'solo', name: 'Samostatný sešit', price: '50,-', quantity: 4 },
+          { id: 'bundle:abc', name: 'Sada', quantity: 1 },
+        ],
+        bundles: [
+          {
+            bundleId: 'abc',
+            lines: [{ id: 'in-pack', name: 'Sešit v sadě' }],
+          },
+        ],
+      },
+      shipping: { method: 'ppl', price: 9900, pickupPointName: 'Z-Point Praha' },
+    },
+    catalog,
+  );
+  assert.deepEqual(lines, [
+    { product_id: 'solo', quantity: 4, unit_price: 5000 },
+    { product_id: 'in-pack', quantity: 1, unit_price: 9000 },
+  ]);
+  assert.equal(schoolInquiryShippingMethod({ shipping: { method: 'ppl', price: 9900 } }), 'ppl');
+  assert.equal(schoolInquiryShippingPriceHaler({ shipping: { method: 'ppl', price: 9900 } }), 9900);
+  assert.equal(
+    schoolInquiryPickupPointName({ shipping: { method: 'zasilkovna', pickupPointName: 'Z-Point Praha' } }),
+    'Z-Point Praha',
+  );
+  assert.equal(schoolInquiryShippingMethod({}), '');
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí cenu z formuláře', () => {
+  const catalog = new Map<string, unknown>([['ps-mat-6-1', { id: 'ps-mat-6-1', price: '125,-' }]]);
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(
+      { workbooks: { items: [{ id: 'ps-mat-6-1', name: 'MAT 6 – 1. díl', price: '1,-', quantity: 58 }] } },
+      catalog,
+    ),
+    [{ product_id: 'ps-mat-6-1', quantity: 58, unit_price: 12500 }],
+  );
+  // Položka mimo katalog spadne zpět na cenu z formuláře.
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(
+      { workbooks: { items: [{ id: 'mimo-katalog', name: 'Neznámý', price: '90 Kč', quantity: 2 }] } },
+      catalog,
+    ),
+    [{ product_id: 'mimo-katalog', quantity: 2, unit_price: 9000 }],
+  );
 });
 
 await run();
