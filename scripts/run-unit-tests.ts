@@ -38,6 +38,13 @@ import {
   parseSellableWarehouseQuantity,
   resolveStockLookupSku,
 } from '../supabase/functions/_shared/stock-quantity.ts';
+import {
+  buildFulfilmentRequestHeaders,
+  parseFulfilmentStock,
+  parseStockQuantityValue,
+  parseUnitsPerPackValue,
+  readFulfilmentStockConfig,
+} from '../supabase/functions/_shared/fulfilment-stock.ts';
 import { sanitizeMerchVariantSkus } from '../src/utils/stockSku.ts';
 
 type UnitTest = {
@@ -726,6 +733,87 @@ registerTest('resolveStockLookupSku přeskočí Shoptet placeholder new a vezme 
   }, variantMaps);
   assert.equal(variants[0].sku, 'ZK1000-C10');
   assert.equal(variants[0].warehouseQuantities.bl_132291, 12);
+});
+
+registerTest('fulfilment: „37/37“ a „karton (10ks)“ se přečtou jako kusy a velikost balení', () => {
+  assert.equal(parseStockQuantityValue('37/37'), 37);
+  assert.equal(parseStockQuantityValue('267 / 267'), 267);
+  assert.equal(parseStockQuantityValue('1 250'), 1250);
+  assert.equal(parseStockQuantityValue(0), 0);
+  assert.equal(parseStockQuantityValue(''), null);
+  assert.equal(parseStockQuantityValue('skladem'), null);
+
+  assert.equal(parseUnitsPerPackValue('karton (10ks)'), 10);
+  assert.equal(parseUnitsPerPackValue('kus'), null);
+  assert.equal(parseUnitsPerPackValue(10), 10);
+  assert.equal(parseUnitsPerPackValue(1), null);
+});
+
+registerTest('fulfilment: JSON řádky s dvojím kódem dají kusy i kartony pro ZK1000', () => {
+  const rows = parseFulfilmentStock(JSON.stringify({
+    products: [
+      { code: 'DS36066094, ZK1000', quantity: '37/37', unit: 'kus' },
+      { code: 'DS36066094-C10, ZK1000-C10', quantity: '267/267', unit: 'karton (10ks)' },
+    ],
+  }));
+
+  const bySku = new Map(rows.map((row) => [row.sku, row.quantity]));
+  assert.equal(bySku.get('ZK1000'), 37);
+  assert.equal(bySku.get('DS36066094'), 37);
+  assert.equal(bySku.get('ZK1000-C10'), 267);
+
+  /** Sklad Base.com a fulfilmentu se u téhož SKU slučují do jedné mapy skladů. */
+  const mergedLooseQuantity = parseSellableWarehouseQuantity(
+    { stock: { bl_132291: -23, fulfillment_ff: bySku.get('ZK1000')! } },
+    'bl_132291',
+  );
+  assert.equal(mergedLooseQuantity, 37);
+
+  const effective = computeEffectiveStockQuantity('ZK1000', [
+    { sku: 'ZK1000', productId: '572787922', quantity: mergedLooseQuantity },
+    { sku: 'ZK1000-C10', productId: 'fulfilment:ZK1000-C10', quantity: bySku.get('ZK1000-C10')! },
+  ]);
+  assert.equal(effective.quantity, 2707);
+  assert.equal(effective.packContributions[0].unitQuantity, 2670);
+});
+
+registerTest('fulfilment: bez suffixu -C10 se z velikosti balení dopočítá kartonové SKU', () => {
+  const rows = parseFulfilmentStock(JSON.stringify([
+    { sku: 'PM2400', quantity: 12, pack_size: 10 },
+  ]));
+
+  assert.deepEqual(rows, [{ sku: 'PM2400-C10', quantity: 12, unitsPerPack: 10 }]);
+});
+
+registerTest('fulfilment: XML i CSV export se přečtou stejně jako JSON', () => {
+  const xml = parseFulfilmentStock(`<?xml version="1.0"?><stocks>
+    <item><CODE>ZK1000</CODE><STOCK>37</STOCK></item>
+    <item><CODE>ZK1000-C10</CODE><STOCK>267</STOCK></item>
+  </stocks>`);
+  assert.deepEqual(xml.map((row) => [row.sku, row.quantity]), [['ZK1000', 37], ['ZK1000-C10', 267]]);
+
+  const csv = parseFulfilmentStock('kód;množství\nZK1000;37/37\nZK1000-C10;267/267');
+  assert.deepEqual(csv.map((row) => [row.sku, row.quantity]), [['ZK1000', 37], ['ZK1000-C10', 267]]);
+
+  assert.deepEqual(parseFulfilmentStock(''), []);
+  assert.deepEqual(parseFulfilmentStock('{nevalidni json'), []);
+});
+
+registerTest('fulfilment: bez FULFILMENT_STOCK_URL se zdroj nezapne', () => {
+  const env: Record<string, string> = {};
+  assert.equal(readFulfilmentStockConfig((name) => env[name]), null);
+
+  env.FULFILMENT_STOCK_URL = 'https://ff.example.com/stock';
+  env.FULFILMENT_STOCK_TOKEN = 'secret-token';
+  const config = readFulfilmentStockConfig((name) => env[name]);
+  assert.equal(config?.url, 'https://ff.example.com/stock');
+  assert.equal(config?.warehouseKey, 'fulfillment_ff');
+  assert.equal(buildFulfilmentRequestHeaders(config!).Authorization, 'Bearer secret-token');
+
+  env.FULFILMENT_STOCK_TOKEN_HEADER = 'X-Api-Key';
+  const custom = readFulfilmentStockConfig((name) => env[name])!;
+  assert.equal(buildFulfilmentRequestHeaders(custom)['X-Api-Key'], 'secret-token');
+  assert.equal(buildFulfilmentRequestHeaders(custom).Authorization, undefined);
 });
 
 registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000', () => {

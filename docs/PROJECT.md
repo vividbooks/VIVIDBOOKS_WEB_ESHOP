@@ -127,8 +127,34 @@ Asistent / scrape synchronizace blogu a webinářů nově bere veřejný host z 
 | `BASECOM_API_TOKEN`, `BASECOM_ORDER_STATUS_ID`, `BASECOM_CUSTOM_SOURCE_ID`, `BASECOM_CANCELLED_ORDER_STATUS_ID`, `BASECOM_INVENTORY_FEED_URL` | Base.com, sklad, export |
 | `IDOKLAD_CLIENT_ID`, `IDOKLAD_CLIENT_SECRET`, číselníky `IDOKLAD_*` | Faktury po platbě (`process-export-queue`) |
 | `PIPEDRIVE_INBOUND_WEBHOOK_SECRET`, `PIPEDRIVE_INBOUND_PIPELINE_IDS`, `PIPEDRIVE_INBOUND_SHIPPING_METHOD` (default `ppl`), `PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER`, `PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD` | `pipedrive-inbound-deal` |
+| `FULFILMENT_STOCK_URL` a další `FULFILMENT_STOCK_*` | Zásoby z fulfilmentu (`product-stock-status`) — viz níže |
 
 Kompletní Stripe/Basecom/iDoklad tabulky: [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+### Zásoby z fulfilmentu (`FULFILMENT_STOCK_*`)
+
+Base.com drží u některých titulů jen odpisy z objednávek (např. `ZK1000` = záporný stav), zatímco fyzické kusy a kartony jsou ve fulfilmentu. Bez tohoto zdroje web ukazuje **Čeká na naskladnění** i u naskladněného titulu.
+
+Zdroj se zapíná **jen** vyplněním `FULFILMENT_STOCK_URL` v Supabase Edge Secrets. Bez ní se nic nevolá a chování zůstává jako dřív.
+
+| Proměnná | Účel |
+|----------|------|
+| `FULFILMENT_STOCK_URL` | **Povinná pro zapnutí.** Feed nebo REST endpoint se stavem skladu. Formát se detekuje sám: JSON, XML nebo CSV. |
+| `FULFILMENT_STOCK_TOKEN` | Volitelné. Posílá se jako `Authorization: Bearer …`. |
+| `FULFILMENT_STOCK_TOKEN_HEADER` | Volitelné — jiná hlavička pro token (např. `X-Api-Key`). |
+| `FULFILMENT_STOCK_SKU_FIELDS` | Volitelné, čárkou oddělené názvy polí s kódem. Default zkouší `sku`, `code`, `kód`, `ean`, … |
+| `FULFILMENT_STOCK_QUANTITY_FIELDS` | Volitelné, pole s počtem. Default `quantity`, `stock`, `množství`, … |
+| `FULFILMENT_STOCK_PACK_FIELDS` | Volitelné, pole s velikostí balení (`units_per_pack`, `mastercase`, …). |
+| `FULFILMENT_STOCK_WAREHOUSE_KEY` | Volitelné, klíč skladu v odpovědi API. Default `fulfillment_ff`. |
+
+Chování parseru (`supabase/functions/_shared/fulfilment-stock.ts`):
+
+- **`37/37` → 37** — portály fulfilmentu často píšou „dostupné/celkem“; bere se první číslo.
+- **Víc kódů v jednom poli** (`DS36066094, ZK1000`) se rozdělí a zaregistrují se všechny, takže párování funguje na distributorský i náš kód.
+- **Kartony**: `ZK1000-C10` se počítá jako 10 ks. Když kód suffix nemá, ale řádek udává velikost balení (`karton (10ks)`), doplní se `-C10` automaticky.
+- **Záporný Base.com stav neschová fulfilment** — sčítají se kladné fyzické sklady, takže `bl_132291 = -23` + `fulfillment_ff = 37` dá 37 ks.
+
+Diagnostika: odpověď `product-stock-status` má v `inventory.fulfilment` pole `configured`, `rowCount` a `error`.
 
 ### Stavy objednávky — `incomplete` vs `pending_payment`
 
