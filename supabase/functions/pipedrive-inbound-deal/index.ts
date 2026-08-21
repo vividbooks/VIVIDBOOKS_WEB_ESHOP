@@ -1237,17 +1237,26 @@ Deno.serve(async (req) => {
          *     teprve dorazí). Skutečný `payment_status='paid'` nastavuje až bankovní integrace
          *     nebo admin ručně. U Stripe objednávek je `paid_at` už uložené z `stripe-webhook`.
          */
-        const existingShippingRows = await tx<{ shipping_price: number | null; shipping_method: string | null }[]>`
+        const existingShippingRows = await tx<{
+          shipping_price: number | null;
+          shipping_method: string | null;
+        }[]>`
           select shipping_price, shipping_method from public.orders where id = ${target.id}::uuid limit 1
         `;
         const existingShippingPrice = Number(existingShippingRows[0]?.shipping_price ?? 0);
         const updateTotal = subtotal + (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+        const zipToStore = normalizeCzechZip(zip);
+        const streetToStore = street.trim();
+        const cityToStore = city.trim();
 
         await tx`
           update public.orders set
             subtotal = ${subtotal},
             total = ${updateTotal},
             pipedrive_deal_id = ${dealIdStr},
+            street = case when ${streetToStore} <> '' then ${streetToStore} else street end,
+            city = case when ${cityToStore} <> '' then ${cityToStore} else city end,
+            zip = case when ${zipToStore} <> '' then ${zipToStore} else zip end,
             updated_at = now()
           where id = ${target.id}::uuid
         `;
@@ -1314,7 +1323,7 @@ Deno.serve(async (req) => {
         ico: hasIco ? ico : null,
         street: street.trim() || '—',
         city: city.trim() || '—',
-        zip: zip.trim() || '—',
+        zip: normalizeCzechZip(zip),
       };
       const baseMetaRows = await sql<{
         basecom_order_id: string | null;
@@ -1402,6 +1411,14 @@ Deno.serve(async (req) => {
                 pipedriveInboundSetStatus: true,
                 baseLinkerOrderId: savedBlOrderId,
                 basecomOrderStatusId: statusIdForSet,
+                ...(normalizeCzechZip(zip)
+                  ? {
+                      deliveryPostcode: normalizeCzechZip(zip),
+                      invoicePostcode: normalizeCzechZip(zip),
+                    }
+                  : {}),
+                ...(street.trim() ? { deliveryAddress: street.trim() } : {}),
+                ...(city.trim() ? { deliveryCity: city.trim() } : {}),
               })}::jsonb
             )
           `;
@@ -1521,7 +1538,7 @@ Deno.serve(async (req) => {
         ${hasIco ? ico : null},
         ${street.trim() || '—'},
         ${city.trim() || '—'},
-        ${zip.trim() || '—'},
+        ${normalizeCzechZip(zip)},
         'CZ',
         ${shipMethod},
         ${shippingPrice},
@@ -1602,7 +1619,7 @@ Deno.serve(async (req) => {
         ${hasIco ? ico : null},
         ${street.trim() || '—'},
         ${city.trim() || '—'},
-        ${zip.trim() || '—'},
+        ${normalizeCzechZip(zip)},
         'CZ',
         ${shipMethod},
         ${shippingPrice},
@@ -1663,7 +1680,7 @@ Deno.serve(async (req) => {
       ico: hasIco ? ico : null,
       street: street.trim() || '—',
       city: city.trim() || '—',
-      zip: zip.trim() || '—',
+      zip: normalizeCzechZip(zip),
     };
     const shippingSnapshotA = { method: shipMethod, price: shippingPrice };
 

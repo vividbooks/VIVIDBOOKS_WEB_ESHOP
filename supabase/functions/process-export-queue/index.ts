@@ -1,5 +1,7 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
+import { callBasecomSetOrderFields } from '../_shared/basecom-set-order-fields.ts';
+import { normalizeCzechZip } from '../_shared/czech-address-enrichment.ts';
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
@@ -683,6 +685,32 @@ async function handleBasecomPipedriveInboundSetStatus(
   if (!Number.isInteger(blNum) || blNum <= 0) {
     throw new Error(`Invalid baseLinkerOrderId: ${String(rawBlId)}`);
   }
+
+  const deliveryPostcode = typeof payload.deliveryPostcode === 'string'
+    ? normalizeCzechZip(payload.deliveryPostcode)
+    : '';
+  const invoicePostcode = typeof payload.invoicePostcode === 'string'
+    ? normalizeCzechZip(payload.invoicePostcode)
+    : deliveryPostcode;
+  const deliveryAddress = typeof payload.deliveryAddress === 'string' ? payload.deliveryAddress.trim() : '';
+  const deliveryCity = typeof payload.deliveryCity === 'string' ? payload.deliveryCity.trim() : '';
+  const addressFields: Record<string, string> = {};
+  if (deliveryPostcode) {
+    addressFields.delivery_postcode = deliveryPostcode;
+    addressFields.invoice_postcode = invoicePostcode || deliveryPostcode;
+  }
+  if (deliveryAddress) {
+    addressFields.delivery_address = deliveryAddress;
+    addressFields.invoice_address = deliveryAddress;
+  }
+  if (deliveryCity) {
+    addressFields.delivery_city = deliveryCity;
+    addressFields.invoice_city = deliveryCity;
+  }
+  /** Nejdřív adresa (PSČ), teprve potom stav — jinak FF/PPL vidí ještě `delivery_postcode = "—"`. */
+  if (Object.keys(addressFields).length > 0) {
+    await callBasecomSetOrderFields(apiToken, blNum, addressFields);
+  }
   await callBasecomSetOrderStatus(apiToken, blNum, statusId);
 
   const rows = await sql<{ status: string }[]>`
@@ -833,7 +861,7 @@ async function handleBasecomExport(
     delivery_company: trimCompanyNameForBase(order.school_name) || '',
     delivery_address: order.street || '',
     delivery_city: order.city || '',
-    delivery_postcode: order.zip || '',
+    delivery_postcode: normalizeCzechZip(order.zip),
     delivery_country_code: 'CZ',
     invoice_fullname: order.customer_name,
     /** `invoice_company` má limit varchar(500), ale posíláme stejnou oříznutou hodnotu. */
@@ -841,7 +869,7 @@ async function handleBasecomExport(
     invoice_nip: order.ico || '',
     invoice_address: order.street || '',
     invoice_city: order.city || '',
-    invoice_postcode: order.zip || '',
+    invoice_postcode: normalizeCzechZip(order.zip),
     invoice_country_code: 'CZ',
     /** Doplňkové pole 1 v Base — číslo objednávky z e‑shopu (`orders.order_number`), max 50 znaků (limit API). */
     extra_field_1: String(order.order_number || '').trim().slice(0, 50),
@@ -1064,7 +1092,7 @@ async function createIdokladPartnerContact(
     CountryId: idok.countryIdCz,
     Street: String(order.street || '').slice(0, 100),
     City: String(order.city || '').slice(0, 50),
-    PostalCode: String(order.zip || '').slice(0, 11),
+    PostalCode: normalizeCzechZip(order.zip).slice(0, 11),
     Email: order.customer_email,
   };
   if (order.customer_phone?.trim()) {

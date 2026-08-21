@@ -19,6 +19,8 @@ import {
   parseFreeFormAddress,
   preferStreetWithHouseNumber,
   streetHasHouseNumber,
+  citiesReferToSamePlace,
+  streetsReferToSameBuilding,
 } from '../supabase/functions/_shared/czech-address-enrichment.ts';
 import { orgAddressLine, personPostalLine } from '../supabase/functions/_shared/pipedrive-address.ts';
 import {
@@ -416,6 +418,17 @@ registerTest('parseFreeFormAddress rozloží české adresy včetně názvu zem�
     city: 'Zlín 4-Louky',
     zip: '76302',
   });
+  /** ARES textovaAdresa: městská část před PSČ, obec za ním. */
+  assert.deepEqual(parseFreeFormAddress('Rašelinová 2433/11, Líšeň, 62800 Brno'), {
+    street: 'Rašelinová 2433/11',
+    city: 'Brno',
+    zip: '62800',
+  });
+  assert.deepEqual(parseFreeFormAddress('Bezručova 418, Staré Město, 73961 Třinec'), {
+    street: 'Bezručova 418',
+    city: 'Třinec',
+    zip: '73961',
+  });
 
   for (const country of ['Česko', 'ČR', 'Česká republika', 'Czechia', 'Czech Republic', 'Slovensko']) {
     const parsed = parseFreeFormAddress(`Hradská 506, 747 64 Velká Polom, ${country}`);
@@ -608,6 +621,67 @@ registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adres
         { geocodeDisabled: true, ico: '27670899' },
       ),
       { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
+    );
+  });
+});
+
+registerTest('ARES doplní PSČ, když PD má obec a ARES městskou část stejné budovy', async () => {
+  assert.equal(citiesReferToSamePlace('Brno', 'Líšeň'), false);
+  assert.equal(citiesReferToSamePlace('Brno', 'Brno-Líšeň'), true);
+  assert.equal(citiesReferToSamePlace('Třinec', 'Třinec - Staré Město'), true);
+  assert.equal(streetsReferToSameBuilding('Rašelinová 2433/11', 'Rašelinová 2433 / 11'), true);
+
+  const aresAkademia = {
+    sidlo: {
+      nazevUlice: 'Rašelinová',
+      cisloDomovni: 2433,
+      cisloOrientacni: 11,
+      nazevObce: 'Brno',
+      nazevCastiObce: 'Líšeň',
+      psc: 62800,
+      textovaAdresa: 'Rašelinová 2433/11, Líšeň, 62800 Brno',
+    },
+  };
+
+  await withStubbedRuntime({}, () => aresAkademia, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Rašelinová 2433/11', city: 'Brno', zip: '' },
+        { geocodeDisabled: true, ico: '44991665' },
+      ),
+      { street: 'Rašelinová 2433/11', city: 'Brno', zip: '62800' },
+    );
+  });
+
+  const aresTrinec = {
+    sidlo: {
+      nazevUlice: 'Bezručova',
+      cisloDomovni: 418,
+      nazevObce: 'Třinec',
+      nazevCastiObce: 'Staré Město',
+      psc: 73961,
+      textovaAdresa: 'Bezručova 418, Staré Město, 73961 Třinec',
+    },
+  };
+
+  await withStubbedRuntime({}, () => aresTrinec, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Bezručova 418', city: 'Třinec', zip: '' },
+        { geocodeDisabled: true, ico: '00847097' },
+      ),
+      { street: 'Bezručova 418', city: 'Třinec', zip: '73961' },
+    );
+  });
+
+  /** Distributor: jiná ulice i město — ARES sídlo se nesmí použít. */
+  await withStubbedRuntime({}, () => aresAkademia, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
+        { geocodeDisabled: true, ico: '44991665' },
+      ),
+      { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
     );
   });
 });
