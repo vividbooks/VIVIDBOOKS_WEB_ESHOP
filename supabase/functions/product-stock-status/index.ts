@@ -307,7 +307,8 @@ async function loadInventoryProducts() {
 
   const fulfillmentStorages = externalStorages.filter((storage) => (
     storage.id.startsWith('warehouse_')
-    || /fulfil|fulfill|3pl|skladon|ppl/i.test(`${storage.id} ${storage.name}`)
+    || storage.id.startsWith('shop_')
+    || /fulfil|fulfill|3pl|skladon|ppl|sync/i.test(`${storage.id} ${storage.name}`)
   ));
 
   for (const storage of fulfillmentStorages) {
@@ -548,6 +549,7 @@ Deno.serve(async (req) => {
         warehouseId: inventory.warehouseId,
         warehouses: inventory.warehouses,
         warehouseMeta: inventory.warehouseMeta,
+        externalStorages: inventory.externalStorages,
         inventories: inventory.inventories,
       },
       items,
