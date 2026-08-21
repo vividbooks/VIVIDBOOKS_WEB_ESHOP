@@ -1,5 +1,9 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import {
+  fetchFulfilmentStock,
+  readFulfilmentStockConfig,
+} from '../_shared/fulfilment-stock.ts';
+import {
   computeEffectiveStockQuantity,
   extractVariantStockMaps,
   extractWarehouseStockMap,
@@ -567,6 +571,32 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
     }));
   }
 
+  const fulfilmentConfig = readFulfilmentStockConfig((name) => Deno.env.get(name));
+  const fulfilment = fulfilmentConfig
+    ? await fetchFulfilmentStock(fulfilmentConfig)
+    : null;
+
+  for (const row of fulfilment?.rows || []) {
+    const sku = row.sku.trim();
+    if (!sku) continue;
+    const existing = productsByKey.get(`sku:${sku.toLowerCase()}`);
+    const warehouseQuantities = mergeWarehouseMaps(
+      existing?.warehouseQuantities || {},
+      { [fulfilment!.warehouseKey]: row.quantity },
+    );
+    upsertInventoryProduct({
+      productId: existing?.productId || `fulfilment:${sku}`,
+      name: existing?.name || '',
+      sku: existing?.sku || sku,
+      ean: existing?.ean || '',
+      warehouseQuantities,
+      quantity: parseSellableWarehouseQuantity(
+        { stock: warehouseQuantities },
+        primaryInventory.defaultWarehouse,
+      ),
+    });
+  }
+
   const products = Array.from(productsByKey.values());
 
   return {
@@ -575,6 +605,12 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
     warehouseId: primaryInventory.defaultWarehouse,
     warehouses: primaryInventory.warehouses,
     warehouseMeta,
+    fulfilment: {
+      configured: Boolean(fulfilmentConfig),
+      warehouseKey: fulfilment?.warehouseKey || null,
+      rowCount: fulfilment?.rows.length ?? 0,
+      error: fulfilment?.error || null,
+    },
     externalStorages,
     externalStorageErrors,
     packSkuCount: products.filter((item) => Boolean(parsePackSku(item.sku))).length,
@@ -757,6 +793,7 @@ Deno.serve(async (req) => {
         warehouseId: inventory.warehouseId,
         warehouses: inventory.warehouses,
         warehouseMeta: inventory.warehouseMeta,
+        fulfilment: inventory.fulfilment,
         externalStorages: inventory.externalStorages,
         externalStorageErrors: inventory.externalStorageErrors,
         packSkuCount: inventory.packSkuCount,
