@@ -279,6 +279,37 @@ function mergeWarehouseMaps(...maps: Array<Record<string, number>>) {
   return out;
 }
 
+async function inspectBasecomSku(apiToken: string, inventoryId: string | number, sku: string) {
+  const id = Number.isNaN(Number(inventoryId)) ? inventoryId : Number(inventoryId);
+  const [listBySku, stockBySku, listByName] = await Promise.all([
+    callBasecomApi(apiToken, 'getInventoryProductsList', { inventory_id: id, filter_sku: sku }).catch((error) => ({ error: String(error) })),
+    callBasecomApi(apiToken, 'getInventoryProductsStock', { inventory_id: id, filter_sku: sku }).catch((error) => ({ error: String(error) })),
+    callBasecomApi(apiToken, 'getInventoryProductsList', { inventory_id: id, filter_name: sku }).catch((error) => ({ error: String(error) })),
+  ]);
+
+  const listProducts = listBySku && typeof listBySku === 'object' && 'products' in listBySku
+    ? (listBySku as { products?: Record<string, unknown> }).products || {}
+    : {};
+  const productIds = Object.keys(listProducts).slice(0, 5).map((value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : value;
+  });
+  const productData = productIds.length
+    ? await callBasecomApi(apiToken, 'getInventoryProductsData', {
+        inventory_id: id,
+        products: productIds,
+      }).catch((error) => ({ error: String(error) }))
+    : { products: {} };
+
+  return {
+    sku,
+    listBySku,
+    stockBySku,
+    listByName,
+    productData,
+  };
+}
+
 async function loadCatalogProducts(requestUrl: string) {
   const baseUrl = getFunctionBaseUrl(requestUrl);
   if (!baseUrl) {
@@ -375,7 +406,15 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
       ...Object.keys(stockProducts),
     ])];
 
-    const productData = await fetchInventoryProductsData(apiToken, inventoryId, allProductIds);
+    const productIdsWithVariants = allProductIds.filter((productId) => {
+      const stockRecord = stockProducts[productId] || {};
+      const value = listProducts[productId] || {};
+      return Object.keys({
+        ...extractVariantStockMaps(stockRecord),
+        ...extractVariantStockMaps(value),
+      }).length > 0;
+    });
+    const productData = await fetchInventoryProductsData(apiToken, inventoryId, productIdsWithVariants);
 
     for (const productId of allProductIds) {
       const value = listProducts[productId] || {};
@@ -512,28 +551,17 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
     upsertInventoryProduct(feedProduct);
   }
 
-  const waitingParentSkus = [...productsByKey.values()]
-    .filter((item) => item.sku && !parsePackSku(item.sku) && (item.quantity == null || item.quantity <= 0))
-    .map((item) => item.sku)
-    .sort((left, right) => {
-      const rank = (sku: string) => (/^(ZK|DS|PM|PP|PC|PF)/i.test(sku) ? 0 : 1);
-      return rank(left) - rank(right);
-    });
-
-  const extraPackSkus = [...new Set([
-    ...extraLookupSkus.flatMap((value) => {
-      const sku = String(value || '').trim();
-      if (!sku) return [] as string[];
-      return parsePackSku(sku) ? [sku] : [sku, `${sku}-C10`];
-    }),
-    ...waitingParentSkus.map((sku) => `${sku}-C10`),
-  ])].filter((sku) => !productsByKey.has(`sku:${sku.toLowerCase()}`));
+  const extraPackSkus = [...new Set(extraLookupSkus.flatMap((value) => {
+    const sku = String(value || '').trim();
+    if (!sku) return [] as string[];
+    return parsePackSku(sku) ? [sku] : [sku, `${sku}-C10`];
+  }))].filter((sku) => !productsByKey.has(`sku:${sku.toLowerCase()}`));
 
   const extraInventoryId = Number.isNaN(Number(primaryInventory.id))
     ? primaryInventory.id
     : Number(primaryInventory.id);
 
-  const packLookups = extraPackSkus.slice(0, 24);
+  const packLookups = extraPackSkus.slice(0, 8);
   for (let i = 0; i < packLookups.length; i += 4) {
     const chunk = packLookups.slice(i, i + 4);
     await Promise.all(chunk.map(async (packSku) => {
@@ -698,9 +726,6 @@ Deno.serve(async (req) => {
       ...catalogProducts
         .map((item) => String(item.shoptetId || item.basecomSku || ''))
         .filter((sku) => /^(ZK|DS)/i.test(sku)),
-      ...catalogProducts
-        .map((item) => String(item.shoptetId || item.basecomSku || ''))
-        .filter((sku) => /^(PM|PP|PC|PF)/i.test(sku)),
     );
 
     const inventory = await loadInventoryProducts(extraLookupSkus);
@@ -770,8 +795,72 @@ Deno.serve(async (req) => {
         externalStorages: inventory.externalStorages,
         externalStorageErrors: inventory.externalStorageErrors,
         packSkuCount: inventory.packSkuCount,
+        inventoryProductCount: inventory.products.length,
         inventories: inventory.inventories,
       };
+    }
+
+    const debug = url.searchParams.get('debug') === '1';
+    let debugInspect: unknown = null;
+    if (debug) {
+      const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
+      const inspectSkus = [...new Set([
+        shoptetSkuOverride,
+        'ZK1000',
+        'ZK1000-C10',
+        'DS36066094',
+        'DS36066094-C10',
+      ].filter(Boolean))];
+      debugInspect = {
+        inventorySkus: inventory.products.map((item) => ({
+          sku: item.sku,
+          productId: item.productId,
+          name: item.name,
+          quantity: item.quantity,
+          warehouseQuantities: item.warehouseQuantities,
+        })),
+        interesting: inventory.products.filter((item) => (
+          /zk1000|ds360|c10|karton|zakovsk|žákovsk|36066/i.test(`${item.sku} ${item.name} ${item.ean}`)
+        )),
+        inspect: apiToken
+          ? await Promise.all(inspectSkus.map((sku) => inspectBasecomSku(apiToken, inventory.inventoryId, sku)))
+          : 'missing token',
+      };
+
+      if (apiToken) {
+        const storageId = inventory.externalStorages[0]?.id;
+        if (storageId) {
+          try {
+            const allRows: Array<Record<string, unknown>> = [];
+            for (let page = 0; page <= 5; page++) {
+              const listResponse = await callBasecomApi(apiToken, 'getExternalStorageProductsList', {
+                storage_id: storageId,
+                page,
+              });
+              const rows = Array.isArray(listResponse.products)
+                ? listResponse.products
+                : listResponse.products && typeof listResponse.products === 'object'
+                  ? Object.values(listResponse.products as Record<string, unknown>)
+                  : [];
+              const typedRows = rows as Array<Record<string, unknown>>;
+              if (!typedRows.length) {
+                if (page === 0) continue;
+                break;
+              }
+              allRows.push(...typedRows);
+              if (typedRows.length < 100) break;
+            }
+            (debugInspect as Record<string, unknown>).externalSample = allRows.slice(0, 5);
+            (debugInspect as Record<string, unknown>).externalHits = allRows.filter((row) => (
+              /zk1000|ds360|c10|zakovsk|žákovsk|36066|397/i.test(JSON.stringify(row))
+            )).slice(0, 20);
+            (debugInspect as Record<string, unknown>).externalCount = allRows.length;
+            (debugInspect as Record<string, unknown>).externalKeys = allRows[0] ? Object.keys(allRows[0]) : [];
+          } catch (error) {
+            (debugInspect as Record<string, unknown>).externalError = error instanceof Error ? error.message : String(error);
+          }
+        }
+      }
     }
 
     if (productId) {
@@ -784,6 +873,7 @@ Deno.serve(async (req) => {
       return jsonResponse(req, {
         item,
         inventory: inventoryMeta(),
+        ...(debug ? { debug: debugInspect } : {}),
       });
     }
 
@@ -800,6 +890,7 @@ Deno.serve(async (req) => {
       return jsonResponse(req, {
         item: buildItem(catalogProduct, shoptetSkuOverride),
         inventory: inventoryMeta(),
+        ...(debug ? { debug: debugInspect } : {}),
       });
     }
 
@@ -808,6 +899,7 @@ Deno.serve(async (req) => {
     return jsonResponse(req, {
       inventory: inventoryMeta(),
       items,
+      ...(debug ? { debug: debugInspect } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to load product stock status.';
