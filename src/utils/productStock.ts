@@ -29,6 +29,8 @@ export interface ProductStockItem {
   matchType?: string | null;
   matchedProductId?: string | null;
   matchedSku?: string | null;
+  lookupSku?: string | null;
+  warehouseQuantities?: Record<string, number>;
   inventoryId?: string | null;
   inventoryName?: string | null;
   warehouseId?: string | null;

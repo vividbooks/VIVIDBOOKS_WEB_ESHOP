@@ -6,6 +6,27 @@ export type StockInventoryItem = {
   quantity: number | null;
 };
 
+const PLACEHOLDER_STOCK_SKUS = new Set(['', 'new', 'null', 'undefined', '-', 'none', 'n/a']);
+
+const STOCK_META_KEYS = new Set([
+  'product_id',
+  'sku',
+  'ean',
+  'name',
+  'quantity',
+  'stock',
+  'available',
+  'reservations',
+  'variants',
+  'variant_reservations',
+  'prices',
+  'tax_rate',
+]);
+
+export function isPlaceholderStockSku(value?: string | null) {
+  return PLACEHOLDER_STOCK_SKUS.has(String(value || '').trim().toLowerCase());
+}
+
 export type StockPackContribution = {
   packSku: string;
   unitsPerPack: number;
@@ -61,6 +82,110 @@ function findInventoryQuantity(sku: string, inventoryProducts: StockInventoryIte
   return match?.quantity ?? null;
 }
 
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function warehouseMapFromObject(record: Record<string, unknown>) {
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (STOCK_META_KEYS.has(key)) continue;
+    const parsed = toFiniteNumber(value);
+    if (parsed === null) continue;
+    out[key] = parsed;
+  }
+  return out;
+}
+
+/**
+ * Base.com `getInventoryProductsStock` vrací u produktu mapu skladů:
+ * `{ product_id, stock: { bl_132291: -23, bl_xxxxx: 150 } }`.
+ */
+export function extractWarehouseStockMap(raw: unknown): Record<string, number> {
+  if (raw === null || raw === undefined || raw === '') return {};
+  const direct = toFiniteNumber(raw);
+  if (direct !== null) return { _: direct };
+  if (typeof raw !== 'object') return {};
+
+  const record = raw as Record<string, unknown>;
+  if (record.stock && typeof record.stock === 'object' && !Array.isArray(record.stock)) {
+    const nested = warehouseMapFromObject(record.stock as Record<string, unknown>);
+    if (Object.keys(nested).length) return nested;
+  }
+
+  for (const key of ['quantity', 'available'] as const) {
+    const nestedRaw = record[key];
+    if (nestedRaw && typeof nestedRaw === 'object' && !Array.isArray(nestedRaw)) {
+      const nested = warehouseMapFromObject(nestedRaw as Record<string, unknown>);
+      if (Object.keys(nested).length) return nested;
+    }
+  }
+
+  const siblingMap = warehouseMapFromObject(record);
+  if (Object.keys(siblingMap).length) return siblingMap;
+
+  const single = toFiniteNumber(record.quantity ?? record.available ?? record.stock);
+  if (single !== null) return { _: single };
+  return {};
+}
+
+/**
+ * Prodejné kusy pro e-shop: sečte sklady s kladným stavem, aby záporný
+ * výchozí sklad (přeobjednávky) neschoval fyzické kusy na fulfilmentu.
+ * Když nic kladného není, vrátí preferovaný sklad nebo součet (0 / záporné).
+ */
+export function parseSellableWarehouseQuantity(
+  raw: unknown,
+  preferredWarehouse?: string | null,
+): number | null {
+  const map = extractWarehouseStockMap(raw);
+  const values = Object.values(map);
+  if (!values.length) return null;
+
+  const positives = values.filter((quantity) => quantity > 0);
+  if (positives.length) return positives.reduce((sum, quantity) => sum + quantity, 0);
+
+  if (preferredWarehouse && Object.prototype.hasOwnProperty.call(map, preferredWarehouse)) {
+    return map[preferredWarehouse];
+  }
+
+  return values.reduce((sum, quantity) => sum + quantity, 0);
+}
+
+export function inventoryHasSku(sku: string, inventoryProducts: StockInventoryItem[]) {
+  const trimmed = String(sku || '').trim();
+  if (!trimmed || isPlaceholderStockSku(trimmed)) return false;
+
+  return inventoryProducts.some((item) => {
+    const inventorySku = resolveInventorySku(item);
+    if (isSameStockSku(inventorySku, trimmed)) return true;
+    const pack = parsePackSku(inventorySku);
+    return Boolean(pack && isSameStockSku(pack.baseSku, trimmed));
+  });
+}
+
+/** První SKU z kandidátů, které existuje ve skladu (přeskočí Shoptet „new“). */
+export function resolveStockLookupSku(
+  candidates: Array<string | null | undefined>,
+  inventoryProducts: StockInventoryItem[],
+): string | null {
+  const cleaned = candidates
+    .map((value) => String(value || '').trim())
+    .filter((value) => value && !isPlaceholderStockSku(value));
+
+  for (const sku of cleaned) {
+    const effective = computeEffectiveStockQuantity(sku, inventoryProducts);
+    if (effective.quantity !== null || inventoryHasSku(sku, inventoryProducts)) return sku;
+  }
+
+  return cleaned[0] || null;
+}
+
 /**
  * Vrátí efektivní počet kusů pro e-shop produkt.
  * Zohlední volné kusy (PC1000) i balíky (PC1000-C10 → ×10).
@@ -70,7 +195,7 @@ export function computeEffectiveStockQuantity(
   inventoryProducts: StockInventoryItem[],
 ): EffectiveStockQuantity {
   const sku = String(lookupSku || '').trim();
-  if (!sku) {
+  if (!sku || isPlaceholderStockSku(sku)) {
     return { quantity: null, baseQuantity: null, packContributions: [] };
   }
 

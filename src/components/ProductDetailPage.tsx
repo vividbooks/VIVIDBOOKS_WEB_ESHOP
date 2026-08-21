@@ -12,6 +12,7 @@ import { marketingUrl } from '../config/marketingSite';
 import { useCart } from '../contexts/CartContext';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchProductStockItem, type ProductStockItem } from '../utils/productStock';
+import { resolveProductStockSku } from '../utils/stockSku';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
@@ -878,12 +879,12 @@ export function ProductDetailPage({
     if (product.type === 'merch' && selectedMerchVariant) {
       const s = selectedMerchVariant.shopifyVariantId?.trim();
       if (s) return s;
-      const sku = selectedMerchVariant.shoptetId?.trim();
+      const sku = resolveProductStockSku(product, selectedMerchVariant);
       if (sku) return sku;
       return selectedMerchVariant.id?.trim() || '';
     }
     return String(product.shopifyVariantId ?? '').trim();
-  }, [product.type, product.shopifyVariantId, selectedMerchVariant]);
+  }, [product.type, product.shopifyVariantId, selectedMerchVariant, product.shoptetId, product.basecomSku]);
 
   useEffect(() => {
     const itemId = String(product.item_id || product.itemId || product.id || '');
@@ -920,10 +921,9 @@ export function ProductDetailPage({
     }
 
     setStockLoading(true);
-    const shoptetSku =
-      product.type === 'merch' && selectedMerchVariant?.shoptetId
-        ? selectedMerchVariant.shoptetId
-        : undefined;
+    const shoptetSku = product.type === 'merch'
+      ? resolveProductStockSku(product, selectedMerchVariant)
+      : undefined;
     fetchProductStockItem(product.id, shoptetSku)
       .then((data) => {
         if (!cancelled) {
@@ -950,6 +950,8 @@ export function ProductDetailPage({
     product.availabilityDisplay,
     isPosterMerchHero,
     selectedMerchVariant?.shoptetId,
+    product.shoptetId,
+    product.basecomSku,
   ]);
 
   useEffect(() => {
@@ -1762,7 +1764,7 @@ export function ProductDetailPage({
                         product.type === 'merch' && selectedMerchVariant
                           ? {
                               shopifyVariantId: selectedMerchVariant.shopifyVariantId,
-                              shoptetSku: selectedMerchVariant.shoptetId,
+                              shoptetSku: resolveProductStockSku(product, selectedMerchVariant) || selectedMerchVariant.shoptetId,
                               unitPriceHaler: getMerchVariantUnitPriceInHaler(selectedMerchVariant),
                               productDisplayName: `${product.name} – ${selectedMerchVariant.label}`,
                               variantLabel: selectedMerchVariant.label,

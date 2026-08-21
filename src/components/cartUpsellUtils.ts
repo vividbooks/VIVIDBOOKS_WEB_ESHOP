@@ -4,6 +4,7 @@ export type CartUpsellLine = {
 };
 
 export { getProductUnitPriceInHaler } from '../utils/productPrice';
+import { isPlaceholderStockSku } from '../utils/stockSku';
 
 const KNOWN_SUBJECTS = ['Fyzika', 'Chemie', 'Přírodopis', 'Matematika', 'Anglický jazyk', 'Český jazyk', 'Prvouka'];
 
@@ -103,7 +104,7 @@ export function getProductVariantId(product: any): string | undefined {
   if (String(product.type || '').toLowerCase() === 'merch' && Array.isArray(merch) && merch.length > 0) {
     for (const v of merch) {
       const sku = typeof v?.shoptetId === 'string' ? v.shoptetId.trim() : '';
-      if (sku) return sku;
+      if (sku && !isPlaceholderStockSku(sku)) return sku;
     }
     for (const v of merch) {
       const metaVid = v?.metadata?.shoptetVariantId;

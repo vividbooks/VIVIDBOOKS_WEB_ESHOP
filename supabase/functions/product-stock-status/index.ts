@@ -1,5 +1,10 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
-import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
+import {
+  computeEffectiveStockQuantity,
+  extractWarehouseStockMap,
+  parseSellableWarehouseQuantity,
+  resolveStockLookupSku,
+} from '../_shared/stock-quantity.ts';
 type CatalogProduct = {
   id: string;
   name?: string | null;
@@ -23,6 +28,7 @@ type InventoryProduct = {
   sku: string;
   ean: string;
   quantity: number | null;
+  warehouseQuantities: Record<string, number>;
 };
 
 const corsHeaders = (origin: string | null) => ({
@@ -48,24 +54,6 @@ function normalizeLoose(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '')
     .trim();
-}
-
-function parseWarehouseQuantity(rawQuantity: unknown, defaultWarehouse: string | null) {
-  if (rawQuantity === null || rawQuantity === undefined || rawQuantity === '') return null;
-  if (typeof rawQuantity === 'number') return Number.isFinite(rawQuantity) ? rawQuantity : null;
-  if (typeof rawQuantity === 'string') {
-    const parsed = Number(rawQuantity);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (typeof rawQuantity === 'object') {
-    const quantityMap = rawQuantity as Record<string, unknown>;
-    const preferred = defaultWarehouse ? quantityMap[defaultWarehouse] : undefined;
-    const fallback = preferred ?? Object.values(quantityMap)[0];
-    if (fallback === null || fallback === undefined || fallback === '') return null;
-    const parsed = Number(fallback);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function getFunctionBaseUrl(fallbackRequestUrl?: string) {
@@ -234,10 +222,8 @@ async function loadInventoryProducts() {
       name: String(value?.name || stockRecord?.name || ''),
       sku: String(value?.sku || stockRecord?.sku || productId || ''),
       ean: String(value?.ean || stockRecord?.ean || ''),
-      quantity: parseWarehouseQuantity(
-        stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
-        firstInventory.defaultWarehouse,
-      ),
+      quantity: parseSellableWarehouseQuantity(stockRecord, firstInventory.defaultWarehouse),
+      warehouseQuantities: extractWarehouseStockMap(stockRecord),
     };
   });
 
@@ -358,11 +344,12 @@ Deno.serve(async (req) => {
         ? { ...product, shoptetId: overrideShoptetSku }
         : product;
       const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
-      const lookupSku = overrideShoptetSku
-        || product.shoptetId
-        || product.basecomSku
-        || matched?.sku
-        || null;
+      const lookupSku = resolveStockLookupSku([
+        overrideShoptetSku,
+        product.shoptetId,
+        product.basecomSku,
+        matched?.sku,
+      ], inventory.products);
       const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventory.products);
       const quantity = effectiveStock.quantity;
       const stockStatus = getStockStatus(quantity);
@@ -387,6 +374,10 @@ Deno.serve(async (req) => {
         matchType,
         matchedProductId: matched?.productId || null,
         matchedSku: matched?.sku || null,
+        lookupSku,
+        warehouseQuantities: matched
+          ? inventory.products.find((item) => item.productId === matched.productId)?.warehouseQuantities || {}
+          : {},
         inventoryId: inventory.inventoryId,
         inventoryName: inventory.inventoryName,
         warehouseId: inventory.warehouseId,
