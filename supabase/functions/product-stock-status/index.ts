@@ -1,7 +1,10 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import {
   computeEffectiveStockQuantity,
+  extractVariantStockMaps,
   extractWarehouseStockMap,
+  listProductVariants,
+  parsePackSku,
   parseSellableWarehouseQuantity,
   resolveStockLookupSku,
 } from '../_shared/stock-quantity.ts';
@@ -164,12 +167,14 @@ async function fetchPagedProducts(
   apiToken: string,
   method: 'getInventoryProductsStock' | 'getInventoryProductsList',
   inventoryId: string | number,
+  extraParameters: Record<string, unknown> = {},
 ) {
   const merged: Record<string, Record<string, unknown>> = {};
   for (let page = 1; page <= 20; page++) {
     const response = await callBasecomApi(apiToken, method, {
       inventory_id: inventoryId,
       page,
+      ...extraParameters,
     });
     const products = response.products && typeof response.products === 'object'
       ? response.products as Record<string, Record<string, unknown>>
@@ -180,6 +185,87 @@ async function fetchPagedProducts(
     if (keys.length < 1000) break;
   }
   return merged;
+}
+
+async function fetchInventoryProductsData(
+  apiToken: string,
+  inventoryId: string | number,
+  productIds: string[],
+) {
+  const merged: Record<string, Record<string, unknown>> = {};
+  const uniqueIds = [...new Set(productIds.map((id) => String(id || '').trim()).filter(Boolean))];
+
+  for (let i = 0; i < uniqueIds.length; i += 50) {
+    const chunk = uniqueIds.slice(i, i + 50).map((id) => {
+      const numeric = Number(id);
+      return Number.isFinite(numeric) ? numeric : id;
+    });
+    try {
+      const response = await callBasecomApi(apiToken, 'getInventoryProductsData', {
+        inventory_id: inventoryId,
+        products: chunk,
+      });
+      const products = response.products && typeof response.products === 'object'
+        ? response.products as Record<string, Record<string, unknown>>
+        : {};
+      Object.assign(merged, products);
+    } catch {
+      // Detail variant nesmí shodit celý stav skladu.
+    }
+  }
+
+  return merged;
+}
+
+function extractXmlValue(block: string, tag: string) {
+  const match = block.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+  if (!match) return '';
+  return match[1]
+    .replace(/^<!\[CDATA\[/, '')
+    .replace(/\]\]>$/, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .trim();
+}
+
+async function loadFeedPackProducts() {
+  const feedUrl = (Deno.env.get('BASECOM_INVENTORY_FEED_URL') || '').trim();
+  if (!feedUrl) return [] as InventoryProduct[];
+
+  try {
+    const response = await fetch(feedUrl);
+    const rawText = await response.text();
+    if (!response.ok) return [];
+
+    const itemRegex = /<SHOPITEM\b[^>]*>([\s\S]*?)<\/SHOPITEM>/gi;
+    const products: InventoryProduct[] = [];
+    let match: RegExpExecArray | null = null;
+    while ((match = itemRegex.exec(rawText)) !== null) {
+      const block = match[1];
+      const sku = extractXmlValue(block, 'CODE');
+      if (!sku || !parsePackSku(sku)) continue;
+      const quantity = Number(
+        extractXmlValue(block, 'STOCK')
+        || extractXmlValue(block, 'QUANTITY')
+        || extractXmlValue(block, 'AMOUNT'),
+      );
+      if (!Number.isFinite(quantity)) continue;
+      products.push({
+        productId: sku,
+        name: extractXmlValue(block, 'NAME'),
+        sku,
+        ean: extractXmlValue(block, 'EAN'),
+        quantity,
+        warehouseQuantities: { feed: quantity },
+      });
+    }
+    return products;
+  } catch {
+    return [];
+  }
 }
 
 function mergeWarehouseMaps(...maps: Array<Record<string, number>>) {
@@ -213,7 +299,7 @@ async function loadCatalogProducts(requestUrl: string) {
   return Array.isArray(data?.products) ? data.products as CatalogProduct[] : [];
 }
 
-async function loadInventoryProducts() {
+async function loadInventoryProducts(extraLookupSkus: string[] = []) {
   const apiToken = (Deno.env.get('BASECOM_API_TOKEN') || '').trim();
   if (!apiToken) {
     throw new Error('Missing BASECOM_API_TOKEN.');
@@ -252,6 +338,31 @@ async function loadInventoryProducts() {
 
   const productsByKey = new Map<string, InventoryProduct>();
 
+  const upsertInventoryProduct = (next: InventoryProduct) => {
+    const skuKey = next.sku ? `sku:${next.sku.toLowerCase()}` : '';
+    const idKey = next.productId ? `id:${next.productId}` : '';
+    if (!skuKey && !idKey) return;
+    const existing = (skuKey ? productsByKey.get(skuKey) : undefined)
+      || (idKey ? productsByKey.get(idKey) : undefined);
+    if (!existing) {
+      if (skuKey) productsByKey.set(skuKey, next);
+      else productsByKey.set(idKey, next);
+      return;
+    }
+    const warehouseQuantities = mergeWarehouseMaps(existing.warehouseQuantities, next.warehouseQuantities);
+    const merged: InventoryProduct = {
+      ...existing,
+      name: existing.name || next.name,
+      sku: existing.sku || next.sku,
+      ean: existing.ean || next.ean,
+      productId: existing.productId || next.productId,
+      warehouseQuantities,
+      quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, primaryInventory.defaultWarehouse),
+    };
+    const mergedSkuKey = merged.sku ? `sku:${merged.sku.toLowerCase()}` : idKey;
+    productsByKey.set(mergedSkuKey, merged);
+  };
+
   for (const inventory of parsedInventories) {
     const inventoryId = Number.isNaN(Number(inventory.id)) ? inventory.id : Number(inventory.id);
     const [stockProducts, listProducts] = await Promise.all([
@@ -259,41 +370,77 @@ async function loadInventoryProducts() {
       fetchPagedProducts(apiToken, 'getInventoryProductsList', inventoryId),
     ]);
 
-    const allProductIds = new Set([
+    const allProductIds = [...new Set([
       ...Object.keys(listProducts),
       ...Object.keys(stockProducts),
-    ]);
+    ])];
+
+    const productData = await fetchInventoryProductsData(apiToken, inventoryId, allProductIds);
 
     for (const productId of allProductIds) {
       const value = listProducts[productId] || {};
       const stockRecord = stockProducts[productId] || {};
+      const dataRecord = productData[productId]
+        || Object.values(productData).find((row) => String(row.id || row.product_id || '') === productId)
+        || {};
       const warehouseQuantities = mergeWarehouseMaps(
         extractWarehouseStockMap(value),
         extractWarehouseStockMap(stockRecord),
+        extractWarehouseStockMap(
+          dataRecord.stock != null ? { stock: dataRecord.stock } : {},
+        ),
       );
-      const next: InventoryProduct = {
+      upsertInventoryProduct({
         productId,
-        name: String(value?.name || stockRecord?.name || ''),
-        sku: String(value?.sku || stockRecord?.sku || productId || ''),
-        ean: String(value?.ean || stockRecord?.ean || ''),
+        name: String(value?.name || dataRecord?.name || stockRecord?.name || ''),
+        sku: String(value?.sku || dataRecord?.sku || stockRecord?.sku || productId || ''),
+        ean: String(value?.ean || dataRecord?.ean || stockRecord?.ean || ''),
         quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, inventory.defaultWarehouse),
         warehouseQuantities,
-      };
-      const mergeKey = next.sku ? `sku:${next.sku.toLowerCase()}` : `id:${productId}`;
-      const existing = productsByKey.get(mergeKey) || productsByKey.get(`id:${productId}`);
-      if (!existing) {
-        productsByKey.set(mergeKey, next);
-        continue;
-      }
-      const mergedWarehouses = mergeWarehouseMaps(existing.warehouseQuantities, next.warehouseQuantities);
-      productsByKey.set(mergeKey, {
-        ...existing,
-        name: existing.name || next.name,
-        sku: existing.sku || next.sku,
-        ean: existing.ean || next.ean,
-        warehouseQuantities: mergedWarehouses,
-        quantity: parseSellableWarehouseQuantity({ stock: mergedWarehouses }, primaryInventory.defaultWarehouse),
       });
+
+      const variantStockMaps = {
+        ...extractVariantStockMaps(stockRecord),
+        ...extractVariantStockMaps(value),
+      };
+      const variants = listProductVariants(dataRecord, variantStockMaps);
+      const fallbackVariants = variants.length
+        ? variants
+        : Object.entries(variantStockMaps).map(([variantId, map]) => ({
+            variantId,
+            sku: '',
+            ean: '',
+            name: '',
+            warehouseQuantities: map,
+          }));
+
+      for (const variant of fallbackVariants) {
+        if (variant.sku) {
+          upsertInventoryProduct({
+            productId: variant.variantId || `${productId}:${variant.sku}`,
+            name: variant.name || String(value?.name || ''),
+            sku: variant.sku,
+            ean: variant.ean,
+            warehouseQuantities: variant.warehouseQuantities,
+            quantity: parseSellableWarehouseQuantity(
+              { stock: variant.warehouseQuantities },
+              inventory.defaultWarehouse,
+            ),
+          });
+          continue;
+        }
+        if (!Object.keys(variant.warehouseQuantities).length) continue;
+        const parentSku = String(value?.sku || dataRecord?.sku || '').trim();
+        const parent = (parentSku ? productsByKey.get(`sku:${parentSku.toLowerCase()}`) : undefined)
+          || productsByKey.get(`id:${productId}`);
+        if (!parent) continue;
+        const warehouseQuantities = mergeWarehouseMaps(parent.warehouseQuantities, variant.warehouseQuantities);
+        upsertInventoryProduct({
+          ...parent,
+          warehouseQuantities,
+          quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, inventory.defaultWarehouse),
+        });
+      }
     }
   }
 
@@ -332,7 +479,9 @@ async function loadInventoryProducts() {
         for (const row of rows) {
           const sku = String(row.sku || row.product_id || '').trim();
           if (!sku) continue;
-          const quantity = Number(row.quantity);
+          const quantity = Number(
+            row.quantity ?? row.stock ?? row.qty ?? row.amount ?? row.available,
+          );
           if (!Number.isFinite(quantity)) continue;
           const warehouseKey = storage.id;
           const existing = productsByKey.get(`sku:${sku.toLowerCase()}`);
@@ -359,6 +508,70 @@ async function loadInventoryProducts() {
     }
   }
 
+  for (const feedProduct of await loadFeedPackProducts()) {
+    upsertInventoryProduct(feedProduct);
+  }
+
+  const waitingParentSkus = [...productsByKey.values()]
+    .filter((item) => item.sku && !parsePackSku(item.sku) && (item.quantity == null || item.quantity <= 0))
+    .map((item) => item.sku)
+    .sort((left, right) => {
+      const rank = (sku: string) => (/^(ZK|DS|PM|PP|PC|PF)/i.test(sku) ? 0 : 1);
+      return rank(left) - rank(right);
+    });
+
+  const extraPackSkus = [...new Set([
+    ...extraLookupSkus.flatMap((value) => {
+      const sku = String(value || '').trim();
+      if (!sku) return [] as string[];
+      return parsePackSku(sku) ? [sku] : [sku, `${sku}-C10`];
+    }),
+    ...waitingParentSkus.map((sku) => `${sku}-C10`),
+  ])].filter((sku) => !productsByKey.has(`sku:${sku.toLowerCase()}`));
+
+  const extraInventoryId = Number.isNaN(Number(primaryInventory.id))
+    ? primaryInventory.id
+    : Number(primaryInventory.id);
+
+  const packLookups = extraPackSkus.slice(0, 24);
+  for (let i = 0; i < packLookups.length; i += 4) {
+    const chunk = packLookups.slice(i, i + 4);
+    await Promise.all(chunk.map(async (packSku) => {
+      try {
+        const [extraList, extraStock] = await Promise.all([
+          fetchPagedProducts(apiToken, 'getInventoryProductsList', extraInventoryId, { filter_sku: packSku }),
+          fetchPagedProducts(apiToken, 'getInventoryProductsStock', extraInventoryId, { filter_sku: packSku }),
+        ]);
+        const extraIds = [...new Set([...Object.keys(extraList), ...Object.keys(extraStock)])];
+        for (const extraId of extraIds) {
+          const value = extraList[extraId] || {};
+          const stockRecord = extraStock[extraId] || {};
+          const sku = String(value?.sku || stockRecord?.sku || packSku).trim();
+          const warehouseQuantities = mergeWarehouseMaps(
+            extractWarehouseStockMap(value),
+            extractWarehouseStockMap(stockRecord),
+          );
+          if (!sku) continue;
+          upsertInventoryProduct({
+            productId: extraId,
+            name: String(value?.name || stockRecord?.name || ''),
+            sku,
+            ean: String(value?.ean || stockRecord?.ean || ''),
+            warehouseQuantities,
+            quantity: parseSellableWarehouseQuantity(
+              { stock: warehouseQuantities },
+              primaryInventory.defaultWarehouse,
+            ),
+          });
+        }
+      } catch {
+        // Doplňkové filter_sku nesmí shodit stav skladu.
+      }
+    }));
+  }
+
+  const products = Array.from(productsByKey.values());
+
   return {
     inventoryId: primaryInventory.id,
     inventoryName: primaryInventory.name,
@@ -367,6 +580,7 @@ async function loadInventoryProducts() {
     warehouseMeta,
     externalStorages,
     externalStorageErrors,
+    packSkuCount: products.filter((item) => Boolean(parsePackSku(item.sku))).length,
     inventories: parsedInventories.map((item) => ({
       id: item.id,
       name: item.name,
@@ -374,7 +588,7 @@ async function loadInventoryProducts() {
       warehouses: item.warehouses,
       isDefault: item.isDefault,
     })),
-    products: Array.from(productsByKey.values()),
+    products,
   };
 }
 
@@ -473,10 +687,23 @@ Deno.serve(async (req) => {
     const shoptetSkuOverride = (url.searchParams.get('shoptetSku') || '').trim();
     const onlyPhysical = url.searchParams.get('physicalOnly') !== 'false';
 
-    const [catalogProducts, inventory] = await Promise.all([
-      loadCatalogProducts(req.url),
-      loadInventoryProducts(),
-    ]);
+    const catalogProducts = await loadCatalogProducts(req.url);
+    const extraLookupSkus = [shoptetSkuOverride];
+    if (productId) {
+      const preview = catalogProducts.find((item) => item.id === productId);
+      extraLookupSkus.push(String(preview?.shoptetId || ''), String(preview?.basecomSku || ''));
+    }
+    extraLookupSkus.push(
+      'DS36066094',
+      ...catalogProducts
+        .map((item) => String(item.shoptetId || item.basecomSku || ''))
+        .filter((sku) => /^(ZK|DS)/i.test(sku)),
+      ...catalogProducts
+        .map((item) => String(item.shoptetId || item.basecomSku || ''))
+        .filter((sku) => /^(PM|PP|PC|PF)/i.test(sku)),
+    );
+
+    const inventory = await loadInventoryProducts(extraLookupSkus);
 
     const filteredCatalog = catalogProducts.filter((product) => (
       !onlyPhysical || (product.type !== 'online' && product.type !== 'license')
@@ -518,12 +745,32 @@ Deno.serve(async (req) => {
         matchedProductId: matched?.productId || null,
         matchedSku: matched?.sku || null,
         lookupSku,
-        warehouseQuantities: matched
-          ? inventory.products.find((item) => item.productId === matched.productId)?.warehouseQuantities || {}
-          : {},
+        warehouseQuantities: (() => {
+          const fromMatch = matched
+            ? inventory.products.find((item) => item.productId === matched.productId)?.warehouseQuantities || {}
+            : {};
+          const fromLookup = lookupSku
+            ? inventory.products.find((item) => item.sku.toLowerCase() === lookupSku.toLowerCase())?.warehouseQuantities || {}
+            : {};
+          return mergeWarehouseMaps(fromMatch, fromLookup);
+        })(),
         inventoryId: inventory.inventoryId,
         inventoryName: inventory.inventoryName,
         warehouseId: inventory.warehouseId,
+      };
+    }
+
+    function inventoryMeta() {
+      return {
+        inventoryId: inventory.inventoryId,
+        inventoryName: inventory.inventoryName,
+        warehouseId: inventory.warehouseId,
+        warehouses: inventory.warehouses,
+        warehouseMeta: inventory.warehouseMeta,
+        externalStorages: inventory.externalStorages,
+        externalStorageErrors: inventory.externalStorageErrors,
+        packSkuCount: inventory.packSkuCount,
+        inventories: inventory.inventories,
       };
     }
 
@@ -536,32 +783,30 @@ Deno.serve(async (req) => {
       const item = buildItem(catalogProduct, shoptetSkuOverride || undefined);
       return jsonResponse(req, {
         item,
-        inventory: {
-          inventoryId: inventory.inventoryId,
-          inventoryName: inventory.inventoryName,
-          warehouseId: inventory.warehouseId,
-          warehouses: inventory.warehouses,
-          warehouseMeta: inventory.warehouseMeta,
-          externalStorages: inventory.externalStorages,
-          externalStorageErrors: inventory.externalStorageErrors,
-          inventories: inventory.inventories,
-        },
+        inventory: inventoryMeta(),
+      });
+    }
+
+    if (shoptetSkuOverride) {
+      const catalogProduct = filteredCatalog.find((product) => (
+        normalizeLoose(product.shoptetId) === normalizeLoose(shoptetSkuOverride)
+        || normalizeLoose(product.basecomSku) === normalizeLoose(shoptetSkuOverride)
+      )) || {
+        id: shoptetSkuOverride,
+        name: shoptetSkuOverride,
+        shoptetId: shoptetSkuOverride,
+        basecomSku: shoptetSkuOverride,
+      };
+      return jsonResponse(req, {
+        item: buildItem(catalogProduct, shoptetSkuOverride),
+        inventory: inventoryMeta(),
       });
     }
 
     const items = filteredCatalog.map((product) => buildItem(product));
 
     return jsonResponse(req, {
-      inventory: {
-        inventoryId: inventory.inventoryId,
-        inventoryName: inventory.inventoryName,
-        warehouseId: inventory.warehouseId,
-        warehouses: inventory.warehouses,
-        warehouseMeta: inventory.warehouseMeta,
-        externalStorages: inventory.externalStorages,
-        externalStorageErrors: inventory.externalStorageErrors,
-        inventories: inventory.inventories,
-      },
+      inventory: inventoryMeta(),
       items,
     });
   } catch (error) {

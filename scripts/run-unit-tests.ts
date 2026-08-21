@@ -33,6 +33,8 @@ import {
 } from '../src/utils/bundlePricing.ts';
 import {
   computeEffectiveStockQuantity,
+  extractVariantStockMaps,
+  listProductVariants,
   parseSellableWarehouseQuantity,
   resolveStockLookupSku,
 } from '../supabase/functions/_shared/stock-quantity.ts';
@@ -700,6 +702,30 @@ registerTest('resolveStockLookupSku přeskočí Shoptet placeholder new a vezme 
   assert.equal(packs.baseQuantity, 3);
   assert.equal(packs.packContributions.length, 1);
   assert.equal(packs.packContributions[0].unitQuantity, 20);
+
+  const cartonOverSoldLoose = computeEffectiveStockQuantity('ZK1000', [
+    { sku: 'ZK1000', productId: '572787922', quantity: -23 },
+    { sku: 'ZK1000-C10', productId: '1', quantity: 12 },
+  ]);
+  assert.equal(cartonOverSoldLoose.quantity, 120);
+  assert.equal(cartonOverSoldLoose.baseQuantity, -23);
+  assert.equal(cartonOverSoldLoose.packContributions[0].packSku, 'ZK1000-C10');
+
+  const variantMaps = extractVariantStockMaps({
+    product_id: 1,
+    stock: { bl_132291: -23 },
+    variants: { '99': { bl_132291: 12 } },
+  });
+  assert.equal(variantMaps['99'].bl_132291, 12);
+
+  const variants = listProductVariants({
+    sku: 'ZK1000',
+    variants: {
+      '99': { sku: 'ZK1000-C10', ean: '', name: 'karton', stock: { bl_132291: 12 } },
+    },
+  }, variantMaps);
+  assert.equal(variants[0].sku, 'ZK1000-C10');
+  assert.equal(variants[0].warehouseQuantities.bl_132291, 12);
 });
 
 registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000', () => {
