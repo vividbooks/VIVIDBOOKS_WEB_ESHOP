@@ -310,11 +310,12 @@ async function loadInventoryProducts() {
     || storage.id.startsWith('shop_')
     || /fulfil|fulfill|3pl|skladon|ppl|sync/i.test(`${storage.id} ${storage.name}`)
   ));
+  const externalStorageErrors: Array<{ id: string; error: string }> = [];
 
   for (const storage of fulfillmentStorages) {
     if (storage.methods.length && !storage.methods.includes('getExternalStorageProductsList')) continue;
     try {
-      for (let page = 1; page <= 20; page++) {
+      for (let page = 0; page <= 20; page++) {
         const listResponse = await callBasecomApi(apiToken, 'getExternalStorageProductsList', {
           storage_id: storage.id,
           page,
@@ -324,7 +325,10 @@ async function loadInventoryProducts() {
           : listResponse.products && typeof listResponse.products === 'object'
             ? Object.values(listResponse.products as Record<string, Record<string, unknown>>)
             : [];
-        if (!rows.length) break;
+        if (!rows.length) {
+          if (page === 0) continue;
+          break;
+        }
         for (const row of rows) {
           const sku = String(row.sku || row.product_id || '').trim();
           if (!sku) continue;
@@ -345,10 +349,13 @@ async function loadInventoryProducts() {
             quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, primaryInventory.defaultWarehouse),
           });
         }
-        if (rows.length < 1000) break;
+        if (rows.length < 100) break;
       }
-    } catch {
-      // Externí sklad nemusí metodu podporovat — inventura Base.com dál stačí.
+    } catch (error) {
+      externalStorageErrors.push({
+        id: storage.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -359,6 +366,7 @@ async function loadInventoryProducts() {
     warehouses: primaryInventory.warehouses,
     warehouseMeta,
     externalStorages,
+    externalStorageErrors,
     inventories: parsedInventories.map((item) => ({
       id: item.id,
       name: item.name,
@@ -535,6 +543,7 @@ Deno.serve(async (req) => {
           warehouses: inventory.warehouses,
           warehouseMeta: inventory.warehouseMeta,
           externalStorages: inventory.externalStorages,
+          externalStorageErrors: inventory.externalStorageErrors,
           inventories: inventory.inventories,
         },
       });
@@ -550,6 +559,7 @@ Deno.serve(async (req) => {
         warehouses: inventory.warehouses,
         warehouseMeta: inventory.warehouseMeta,
         externalStorages: inventory.externalStorages,
+        externalStorageErrors: inventory.externalStorageErrors,
         inventories: inventory.inventories,
       },
       items,
