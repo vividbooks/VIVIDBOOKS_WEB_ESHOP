@@ -219,9 +219,10 @@ async function loadInventoryProducts() {
     throw new Error('Missing BASECOM_API_TOKEN.');
   }
 
-  const [inventoriesResponse, warehousesResponse] = await Promise.all([
+  const [inventoriesResponse, warehousesResponse, storagesResponse] = await Promise.all([
     callBasecomApi(apiToken, 'getInventories', {}),
     callBasecomApi(apiToken, 'getInventoryWarehouses', {}),
+    callBasecomApi(apiToken, 'getExternalStoragesList', {}).catch(() => ({ storages: [] })),
   ]);
   const inventories = normalizeInventories(inventoriesResponse);
   const parsedInventories = inventories
@@ -296,12 +297,67 @@ async function loadInventoryProducts() {
     }
   }
 
+  const externalStorages = Array.isArray(storagesResponse.storages)
+    ? (storagesResponse.storages as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.storage_id || ''),
+        name: typeof row.name === 'string' ? row.name : '',
+        methods: Array.isArray(row.methods) ? row.methods.map((value) => String(value)) : [],
+      })).filter((row) => row.id)
+    : [];
+
+  const fulfillmentStorages = externalStorages.filter((storage) => (
+    storage.id.startsWith('warehouse_')
+    || /fulfil|fulfill|3pl|skladon|ppl/i.test(`${storage.id} ${storage.name}`)
+  ));
+
+  for (const storage of fulfillmentStorages) {
+    if (storage.methods.length && !storage.methods.includes('getExternalStorageProductsList')) continue;
+    try {
+      for (let page = 1; page <= 20; page++) {
+        const listResponse = await callBasecomApi(apiToken, 'getExternalStorageProductsList', {
+          storage_id: storage.id,
+          page,
+        });
+        const rows = Array.isArray(listResponse.products)
+          ? listResponse.products as Array<Record<string, unknown>>
+          : listResponse.products && typeof listResponse.products === 'object'
+            ? Object.values(listResponse.products as Record<string, Record<string, unknown>>)
+            : [];
+        if (!rows.length) break;
+        for (const row of rows) {
+          const sku = String(row.sku || row.product_id || '').trim();
+          if (!sku) continue;
+          const quantity = Number(row.quantity);
+          if (!Number.isFinite(quantity)) continue;
+          const warehouseKey = storage.id;
+          const existing = productsByKey.get(`sku:${sku.toLowerCase()}`);
+          const warehouseQuantities = mergeWarehouseMaps(
+            existing?.warehouseQuantities || {},
+            { [warehouseKey]: quantity },
+          );
+          productsByKey.set(`sku:${sku.toLowerCase()}`, {
+            productId: existing?.productId || String(row.product_id || sku),
+            name: existing?.name || String(row.name || ''),
+            sku: existing?.sku || sku,
+            ean: existing?.ean || String(row.ean || ''),
+            warehouseQuantities,
+            quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, primaryInventory.defaultWarehouse),
+          });
+        }
+        if (rows.length < 1000) break;
+      }
+    } catch {
+      // Externí sklad nemusí metodu podporovat — inventura Base.com dál stačí.
+    }
+  }
+
   return {
     inventoryId: primaryInventory.id,
     inventoryName: primaryInventory.name,
     warehouseId: primaryInventory.defaultWarehouse,
     warehouses: primaryInventory.warehouses,
     warehouseMeta,
+    externalStorages,
     inventories: parsedInventories.map((item) => ({
       id: item.id,
       name: item.name,
@@ -477,6 +533,7 @@ Deno.serve(async (req) => {
           warehouseId: inventory.warehouseId,
           warehouses: inventory.warehouses,
           warehouseMeta: inventory.warehouseMeta,
+          externalStorages: inventory.externalStorages,
           inventories: inventory.inventories,
         },
       });
