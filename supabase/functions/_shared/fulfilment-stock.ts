@@ -65,6 +65,27 @@ const DEFAULT_UNITS_PER_PACK_FIELDS = [
 
 export const DEFAULT_FULFILMENT_WAREHOUSE_KEY = 'fulfillment_ff';
 
+/**
+ * Provider se píše „Fulfillment.cz“ (dvě L), britské „fulfilment“ má jedno.
+ * Aby secret fungoval v obojím zápisu, hledáme obě varianty názvu.
+ */
+export function spellingAliases(name: string): string[] {
+  const single = name.replace(/FULFILLMENT/g, 'FULFILMENT');
+  const double = name.replace(/FULFILMENT/g, 'FULFILLMENT');
+  return [...new Set([name, double, single])];
+}
+
+export function readEnvWithAliases(
+  getEnv: (name: string) => string | undefined,
+  name: string,
+): string {
+  for (const alias of spellingAliases(name)) {
+    const value = (getEnv(alias) || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
 function normalizeFieldName(value: string) {
   return value
     .toLowerCase()
@@ -302,22 +323,22 @@ export function parseFulfilmentStock(
 export function readFulfilmentStockConfig(
   getEnv: (name: string) => string | undefined,
 ): FulfilmentStockConfig | null {
-  const url = (getEnv('FULFILMENT_STOCK_URL') || '').trim();
+  const url = readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_URL');
   if (!url) return null;
 
-  const splitList = (value: string | undefined) => (value || '')
+  const splitList = (value: string) => value
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean);
 
   return {
     url,
-    token: (getEnv('FULFILMENT_STOCK_TOKEN') || '').trim() || null,
-    tokenHeader: (getEnv('FULFILMENT_STOCK_TOKEN_HEADER') || '').trim() || null,
-    skuFields: splitList(getEnv('FULFILMENT_STOCK_SKU_FIELDS')),
-    quantityFields: splitList(getEnv('FULFILMENT_STOCK_QUANTITY_FIELDS')),
-    unitsPerPackFields: splitList(getEnv('FULFILMENT_STOCK_PACK_FIELDS')),
-    warehouseKey: (getEnv('FULFILMENT_STOCK_WAREHOUSE_KEY') || '').trim() || DEFAULT_FULFILMENT_WAREHOUSE_KEY,
+    token: readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_TOKEN') || null,
+    tokenHeader: readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_TOKEN_HEADER') || null,
+    skuFields: splitList(readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_SKU_FIELDS')),
+    quantityFields: splitList(readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_QUANTITY_FIELDS')),
+    unitsPerPackFields: splitList(readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_PACK_FIELDS')),
+    warehouseKey: readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_WAREHOUSE_KEY') || DEFAULT_FULFILMENT_WAREHOUSE_KEY,
   };
 }
 

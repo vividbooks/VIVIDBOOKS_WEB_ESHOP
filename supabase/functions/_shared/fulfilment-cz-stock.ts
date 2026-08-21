@@ -8,9 +8,9 @@
  * (`ZK1000`). Registrujeme oba, aby párování fungovalo z obou stran.
  */
 
-import { isPlaceholderStockSku, parsePackSku } from './stock-quantity.ts';
+import { isPlaceholderStockSku, normalizeStockSku, parsePackSku } from './stock-quantity.ts';
 import type { FulfilmentStockRow } from './fulfilment-stock.ts';
-import { DEFAULT_FULFILMENT_WAREHOUSE_KEY } from './fulfilment-stock.ts';
+import { DEFAULT_FULFILMENT_WAREHOUSE_KEY, readEnvWithAliases } from './fulfilment-stock.ts';
 
 export const FULFILMENT_CZ_DEFAULT_URL = 'https://client.api.fulfillment.cz/v2/fulfillment/warehouse-variants';
 
@@ -120,22 +120,85 @@ export function parseFulfilmentCzWarehouseVariants(payload: unknown): {
   }
 
   return {
-    rows,
+    rows: dropDoubleCountedPackRows(rows),
     totalCount: toFiniteNumber(envelope.totalCount),
     error: null,
   };
 }
 
+/**
+ * Kartonová varianta (`ZK1000-C10`) je stejná zásoba jako `mastercase_*` u kusové
+ * varianty, jen vyjádřená v kartonech. Kusová varianta ji už obsahuje v kusech,
+ * takže kartonový řádek zahodíme — jinak by se stav počítal dvakrát.
+ *
+ * Když kartonové SKU přijde samo (bez kusové varianty), necháme ho a na kusy
+ * ho přepočítá `computeEffectiveStockQuantity`.
+ */
+function dropDoubleCountedPackRows(rows: FulfilmentStockRow[]): FulfilmentStockRow[] {
+  const looseSkus = new Set(
+    rows.filter((row) => !parsePackSku(row.sku)).map((row) => normalizeStockSku(row.sku)),
+  );
+
+  return rows.filter((row) => {
+    const pack = parsePackSku(row.sku);
+    if (!pack) return true;
+    return !looseSkus.has(normalizeStockSku(pack.baseSku));
+  });
+}
+
+/** Token se hledá i pod dalšími rozumnými názvy, ne jen pod jedním přesným. */
+const TOKEN_ENV_NAMES = [
+  'FULFILLMENT_CZ_API_TOKEN',
+  'FULFILLMENT_CZ_TOKEN',
+  'FULFILLMENT_CZ_API_KEY',
+  'FULFILLMENT_API_TOKEN',
+];
+
+/** Secret uložený pod jiným názvem než čekáme (`…_API_TOKEN`, `…_KEY`, …). */
+function findTokenByScan(listEnvNames?: () => string[]): string | null {
+  if (!listEnvNames) return null;
+  try {
+    const match = listEnvNames().find((name) => {
+      const upper = name.toUpperCase();
+      if (!/^FULF[A-Z]*MENT/.test(upper)) return false;
+      if (upper.includes('URL') || upper.includes('STOCK')) return false;
+      return upper.endsWith('TOKEN') || upper.endsWith('KEY');
+    });
+    return match || null;
+  } catch {
+    return null;
+  }
+}
+
 export function readFulfilmentCzConfig(
   getEnv: (name: string) => string | undefined,
+  listEnvNames?: () => string[],
 ): FulfilmentCzConfig | null {
-  const token = (getEnv('FULFILMENT_CZ_API_TOKEN') || '').trim();
+  let token = '';
+  for (const name of TOKEN_ENV_NAMES) {
+    token = readEnvWithAliases(getEnv, name);
+    if (token) break;
+  }
+
+  /**
+   * `FULFILMENT_STOCK_TOKEN` bez `FULFILMENT_STOCK_URL` obecný adaptér nezapne,
+   * takže jde o token pro Fulfillment.cz — ten svou URL zná.
+   */
+  if (!token && !readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_URL')) {
+    token = readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_TOKEN');
+  }
+
+  if (!token) {
+    const scanned = findTokenByScan(listEnvNames);
+    if (scanned) token = (getEnv(scanned) || '').trim();
+  }
+
   if (!token) return null;
 
   return {
     token,
-    url: (getEnv('FULFILMENT_CZ_API_URL') || '').trim() || FULFILMENT_CZ_DEFAULT_URL,
-    warehouseKey: (getEnv('FULFILMENT_STOCK_WAREHOUSE_KEY') || '').trim() || DEFAULT_FULFILMENT_WAREHOUSE_KEY,
+    url: readEnvWithAliases(getEnv, 'FULFILLMENT_CZ_API_URL') || FULFILMENT_CZ_DEFAULT_URL,
+    warehouseKey: readEnvWithAliases(getEnv, 'FULFILMENT_STOCK_WAREHOUSE_KEY') || DEFAULT_FULFILMENT_WAREHOUSE_KEY,
   };
 }
 
