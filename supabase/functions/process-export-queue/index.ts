@@ -654,7 +654,33 @@ function resolveBasecomOrderStatusId(order: OrderRow): number {
   return Number.isInteger(schoolId) ? schoolId : defaultId;
 }
 
-/** Volitelný přepis `order_status_id` v Base z payloadu fronty (např. webhook `pipedrive-inbound-deal`). */
+function readQueuePayload(raw: unknown): Record<string, unknown> | null {
+  if (raw == null) return null;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  return null;
+}
+
+function isTruthyPayloadFlag(value: unknown): boolean {
+  return value === true || value === 1 || value === 'true' || value === '1' || value === 't';
+}
+
+function defaultBasecomOrderStatusId(): number | null {
+  const inbound = Number.parseInt((Deno.env.get('BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND') || '').trim(), 10);
+  if (Number.isInteger(inbound) && inbound > 0) return inbound;
+  const fallback = Number.parseInt((Deno.env.get('BASECOM_ORDER_STATUS_ID') || '').trim(), 10);
+  return Number.isInteger(fallback) && fallback > 0 ? fallback : null;
+}
+
 function resolvePayloadBasecomOrderStatusId(payload: Record<string, unknown> | null | undefined): number | null {
   if (!payload || typeof payload !== 'object') return null;
   const raw = payload.basecomOrderStatusId;
@@ -670,8 +696,8 @@ async function handleBasecomPipedriveInboundSetStatus(
   sql: postgres.Sql,
   queueItem: ExportQueueRow,
 ): Promise<{ sourceOrderStatus: string }> {
-  const payload = queueItem.payload as Record<string, unknown> | null;
-  if (!payload || payload.pipedriveInboundSetStatus !== true) {
+  const payload = readQueuePayload(queueItem.payload);
+  if (!payload || !isTruthyPayloadFlag(payload.pipedriveInboundSetStatus)) {
     throw new Error('Invalid pipedrive inbound Base set-status payload.');
   }
   const statusId = resolvePayloadBasecomOrderStatusId(payload);
@@ -686,24 +712,38 @@ async function handleBasecomPipedriveInboundSetStatus(
     throw new Error(`Invalid baseLinkerOrderId: ${String(rawBlId)}`);
   }
 
-  const deliveryPostcode = typeof payload.deliveryPostcode === 'string'
-    ? normalizeCzechZip(payload.deliveryPostcode)
-    : '';
+  const orderAddrRows = await sql<{
+    street: string | null;
+    city: string | null;
+    zip: string | null;
+  }[]>`
+    select street, city, zip from public.orders where id = ${queueItem.order_id}::uuid limit 1
+  `;
+  const orderAddr = orderAddrRows[0];
+
+  const deliveryPostcode = normalizeCzechZip(
+    typeof payload.deliveryPostcode === 'string' ? payload.deliveryPostcode : orderAddr?.zip,
+  );
   const invoicePostcode = typeof payload.invoicePostcode === 'string'
     ? normalizeCzechZip(payload.invoicePostcode)
     : deliveryPostcode;
-  const deliveryAddress = typeof payload.deliveryAddress === 'string' ? payload.deliveryAddress.trim() : '';
-  const deliveryCity = typeof payload.deliveryCity === 'string' ? payload.deliveryCity.trim() : '';
+  const skipAddress = isTruthyPayloadFlag(payload.skipAddressUpdate);
+  const deliveryAddress = skipAddress
+    ? ''
+    : (typeof payload.deliveryAddress === 'string' ? payload.deliveryAddress.trim() : String(orderAddr?.street || '').trim());
+  const deliveryCity = skipAddress
+    ? ''
+    : (typeof payload.deliveryCity === 'string' ? payload.deliveryCity.trim() : String(orderAddr?.city || '').trim());
   const addressFields: Record<string, string> = {};
-  if (deliveryPostcode) {
+  if (!skipAddress && deliveryPostcode) {
     addressFields.delivery_postcode = deliveryPostcode;
     addressFields.invoice_postcode = invoicePostcode || deliveryPostcode;
   }
-  if (deliveryAddress) {
+  if (!skipAddress && deliveryAddress && deliveryAddress !== '—') {
     addressFields.delivery_address = deliveryAddress;
     addressFields.invoice_address = deliveryAddress;
   }
-  if (deliveryCity) {
+  if (!skipAddress && deliveryCity && deliveryCity !== '—') {
     addressFields.delivery_city = deliveryCity;
     addressFields.invoice_city = deliveryCity;
   }
@@ -1509,11 +1549,28 @@ Deno.serve(async (req) => {
         }
 
         if (queueItem.service === 'basecom') {
-          const bcPayload = queueItem.payload as Record<string, unknown> | null | undefined;
-
-          if (bcPayload?.pipedriveInboundSetStatus === true) {
-            const result = await handleBasecomPipedriveInboundSetStatus(sql, queueItem);
-            const rawBlId = bcPayload.baseLinkerOrderId;
+          const bcPayload = readQueuePayload(queueItem.payload);
+          const existingBlRows = await sql<{ basecom_order_id: string | null }[]>`
+            select basecom_order_id from public.orders where id = ${queueItem.order_id}::uuid limit 1
+          `;
+          const existingBlId = String(existingBlRows[0]?.basecom_order_id || '').trim();
+          const wantSetStatus = isTruthyPayloadFlag(bcPayload?.pipedriveInboundSetStatus);
+          /**
+           * Když už Base objednávka existuje, nikdy znovu `addOrder` — vznikly by duplicity
+           * (re-run webhooku / špatně naparsovaný JSONB payload). Místo toho opravíme adresu
+           * a nastavíme stav na existujícím Base ID.
+           */
+          if (wantSetStatus || existingBlId) {
+            const mergedPayload: Record<string, unknown> = {
+              ...(bcPayload || {}),
+              pipedriveInboundSetStatus: true,
+              baseLinkerOrderId: bcPayload?.baseLinkerOrderId || existingBlId,
+              basecomOrderStatusId: resolvePayloadBasecomOrderStatusId(bcPayload)
+                ?? defaultBasecomOrderStatusId(),
+            };
+            const syntheticItem: ExportQueueRow = { ...queueItem, payload: mergedPayload as ExportQueueRow['payload'] };
+            const result = await handleBasecomPipedriveInboundSetStatus(sql, syntheticItem);
+            const rawBlId = mergedPayload.baseLinkerOrderId;
             const blIdStr = typeof rawBlId === 'number' ? String(rawBlId) : String(rawBlId ?? '').trim();
 
             await sql.begin(async (tx) => {
@@ -1544,7 +1601,7 @@ Deno.serve(async (req) => {
                     queueItemId: queueItem.id,
                     pipedriveInboundSetStatus: true,
                     baseLinkerOrderId: blIdStr,
-                    basecomOrderStatusId: resolvePayloadBasecomOrderStatusId(bcPayload),
+                    basecomOrderStatusId: resolvePayloadBasecomOrderStatusId(mergedPayload),
                   })}::jsonb,
                   'system'
                 )
@@ -1785,8 +1842,8 @@ Deno.serve(async (req) => {
           `;
 
           if (queueItem.service === 'basecom') {
-            const failPl = queueItem.payload as Record<string, unknown> | null | undefined;
-            const isPipedriveSetStatusOnly = failPl?.pipedriveInboundSetStatus === true;
+            const failPl = readQueuePayload(queueItem.payload);
+            const isPipedriveSetStatusOnly = isTruthyPayloadFlag(failPl?.pipedriveInboundSetStatus);
             if (!isPipedriveSetStatusOnly) {
               await tx`
                 update public.orders
