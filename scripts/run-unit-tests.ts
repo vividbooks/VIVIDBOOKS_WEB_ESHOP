@@ -673,6 +673,13 @@ registerTest('parseSellableWarehouseQuantity nesmí schovat fulfilment za zápor
     15,
   );
 
+  assert.equal(
+    parseSellableWarehouseQuantity({
+      stock: { bl_132291: -23, fulfillment_88: 180, shop_1: 180 },
+    }, 'bl_132291'),
+    180,
+  );
+
   assert.equal(parseSellableWarehouseQuantity(null, 'bl_132291'), null);
 });
 

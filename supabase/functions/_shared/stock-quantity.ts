@@ -135,26 +135,34 @@ export function extractWarehouseStockMap(raw: unknown): Record<string, number> {
 }
 
 /**
- * Prodejné kusy pro e-shop: sečte sklady s kladným stavem, aby záporný
- * výchozí sklad (přeobjednávky) neschoval fyzické kusy na fulfilmentu.
- * Když nic kladného není, vrátí preferovaný sklad nebo součet (0 / záporné).
+ * Prodejné kusy pro e-shop: sečte kladné stavy fyzických skladů (bl / warehouse /
+ * fulfillment), aby záporný výchozí sklad neschoval kusy na fulfilmentu.
+ * Shop sklady (zrcadlo e-shopu) se berou jen když fyzický sklad nic kladného nemá.
  */
 export function parseSellableWarehouseQuantity(
   raw: unknown,
   preferredWarehouse?: string | null,
 ): number | null {
   const map = extractWarehouseStockMap(raw);
-  const values = Object.values(map);
-  if (!values.length) return null;
+  const entries = Object.entries(map);
+  if (!entries.length) return null;
 
-  const positives = values.filter((quantity) => quantity > 0);
-  if (positives.length) return positives.reduce((sum, quantity) => sum + quantity, 0);
+  const physical = entries.filter(([key]) => /^(bl|warehouse|fulfillment)_/i.test(key) || key === '_');
+  const physicalPositives = physical.filter(([, quantity]) => quantity > 0);
+  if (physicalPositives.length) {
+    return physicalPositives.reduce((sum, [, quantity]) => sum + quantity, 0);
+  }
+
+  const allPositives = entries.filter(([, quantity]) => quantity > 0);
+  if (allPositives.length) {
+    return allPositives.reduce((sum, [, quantity]) => sum + quantity, 0);
+  }
 
   if (preferredWarehouse && Object.prototype.hasOwnProperty.call(map, preferredWarehouse)) {
     return map[preferredWarehouse];
   }
 
-  return values.reduce((sum, quantity) => sum + quantity, 0);
+  return entries.reduce((sum, [, quantity]) => sum + quantity, 0);
 }
 
 export function inventoryHasSku(sku: string, inventoryProducts: StockInventoryItem[]) {
