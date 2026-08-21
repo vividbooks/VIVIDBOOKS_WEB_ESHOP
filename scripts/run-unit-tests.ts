@@ -822,8 +822,11 @@ registerTest('fulfilment: bez FULFILMENT_STOCK_URL se zdroj nezapne', () => {
   assert.equal(buildFulfilmentRequestHeaders(custom).Authorization, undefined);
 });
 
-registerTest('fulfillment.cz: warehouse-variants dá kusy i kartony pro ZK1000', () => {
-  /** Tvar odpovědi podle https://client.api.fulfillment.cz/ */
+registerTest('fulfillment.cz: kartonová varianta se nepočítá dvakrát', () => {
+  /**
+   * Reálná odpověď produkce: kusová varianta má kartony už v `mastercase_*`
+   * (37 + 2670 = 2707 ks) a `ZK1000-C10` je stejná zásoba v kartonech.
+   */
   const { rows, totalCount, error } = parseFulfilmentCzWarehouseVariants({
     code: 200,
     message: '',
@@ -835,11 +838,9 @@ registerTest('fulfillment.cz: warehouse-variants dá kusy i kartony pro ZK1000',
         ext_code: 'ZK1000',
         quantity: 40,
         available_quantity: 37,
-        damaged_quantity: 0,
         reserved_quantity: 3,
-        requested_quantity: 0,
-        mastercase_quantity: 0,
-        mastercase_available_quantity: 0,
+        mastercase_quantity: 2670,
+        mastercase_available_quantity: 2670,
       },
       {
         variant_id: 1887275,
@@ -847,8 +848,6 @@ registerTest('fulfillment.cz: warehouse-variants dá kusy i kartony pro ZK1000',
         ext_code: 'ZK1000-C10',
         quantity: 267,
         available_quantity: 267,
-        mastercase_quantity: 0,
-        mastercase_available_quantity: 0,
       },
     ],
   });
@@ -857,16 +856,27 @@ registerTest('fulfillment.cz: warehouse-variants dá kusy i kartony pro ZK1000',
   assert.equal(totalCount, 2);
 
   const bySku = new Map(rows.map((row) => [row.sku, row.quantity]));
-  assert.equal(bySku.get('ZK1000'), 37);
-  assert.equal(bySku.get('DS36066094'), 37);
-  assert.equal(bySku.get('ZK1000-C10'), 267);
-  assert.equal(bySku.get('DS36066094-C10'), 267);
+  assert.equal(bySku.get('ZK1000'), 2707);
+  assert.equal(bySku.get('DS36066094'), 2707);
+  assert.equal(bySku.has('ZK1000-C10'), false, 'kartonový řádek se zahodí');
+  assert.equal(bySku.has('DS36066094-C10'), false);
 
   const effective = computeEffectiveStockQuantity('ZK1000', [
     { sku: 'ZK1000', productId: 'ff', quantity: bySku.get('ZK1000')! },
-    { sku: 'ZK1000-C10', productId: 'ff', quantity: bySku.get('ZK1000-C10')! },
   ]);
   assert.equal(effective.quantity, 2707);
+
+  /** Kartonové SKU bez kusové varianty se naopak přepočte na kusy. */
+  const packOnly = parseFulfilmentCzWarehouseVariants({
+    data: [{ ext_code: 'PP2100-C10', available_quantity: 5 }],
+  });
+  assert.equal(packOnly.rows[0].sku, 'PP2100-C10');
+  assert.equal(
+    computeEffectiveStockQuantity('PP2100', [
+      { sku: 'PP2100-C10', productId: 'ff', quantity: 5 },
+    ]).quantity,
+    50,
+  );
 });
 
 registerTest('fulfillment.cz: kusy v kartonech se přičtou, rezervace se odečtou', () => {
@@ -905,7 +915,7 @@ registerTest('fulfillment.cz: chybová odpověď a stránkování', () => {
 
   assert.deepEqual(parseFulfilmentCzWarehouseVariants(null).rows, []);
 
-  const env: Record<string, string> = { FULFILMENT_CZ_API_TOKEN: 'ff-token' };
+  const env: Record<string, string> = { FULFILLMENT_CZ_API_TOKEN: 'ff-token' };
   const config = readFulfilmentCzConfig((name) => env[name])!;
   assert.equal(config.warehouseKey, 'fulfillment_ff');
   assert.equal(
@@ -916,6 +926,44 @@ registerTest('fulfillment.cz: chybová odpověď a stránkování', () => {
   /** Token jde do Authorization bez „Bearer“, jak vyžaduje Fulfillment.cz. */
   assert.equal(buildFulfilmentCzHeaders(config).Authorization, 'ff-token');
   assert.equal(readFulfilmentCzConfig(() => undefined), null);
+});
+
+registerTest('fulfillment.cz: token se najde v obou zápisech i pod jiným názvem', () => {
+  /** Brand je „Fulfillment.cz“ (dvě L), britské „fulfilment“ má jedno. */
+  const single = { FULFILMENT_CZ_API_TOKEN: 'a' };
+  assert.equal(readFulfilmentCzConfig((name) => (single as Record<string, string>)[name])?.token, 'a');
+
+  const double = { FULFILLMENT_CZ_API_TOKEN: 'b' };
+  assert.equal(readFulfilmentCzConfig((name) => (double as Record<string, string>)[name])?.token, 'b');
+
+  const shortName = { FULFILLMENT_CZ_TOKEN: 'c' };
+  assert.equal(readFulfilmentCzConfig((name) => (shortName as Record<string, string>)[name])?.token, 'c');
+
+  /** Neznámý název se dohledá skenem prostředí. */
+  const odd = { FULFILLMENTCZ_APIKEY: 'd' };
+  assert.equal(
+    readFulfilmentCzConfig((name) => (odd as Record<string, string>)[name], () => Object.keys(odd))?.token,
+    'd',
+  );
+
+  /** S vlastní URL patří token obecnému adaptéru, ne klientovi Fulfillment.cz. */
+  const generic = { FULFILMENT_STOCK_TOKEN: 'e', FULFILMENT_STOCK_URL: 'https://x' };
+  assert.equal(
+    readFulfilmentCzConfig((name) => (generic as Record<string, string>)[name], () => Object.keys(generic)),
+    null,
+  );
+
+  /** Bez URL obecný adaptér nejde zapnout, takže token patří Fulfillment.cz. */
+  const tokenOnly = { FULFILMENT_STOCK_TOKEN: 'g' };
+  const fromStockToken = readFulfilmentCzConfig((name) => (tokenOnly as Record<string, string>)[name]);
+  assert.equal(fromStockToken?.token, 'g');
+  assert.equal(fromStockToken?.url, 'https://client.api.fulfillment.cz/v2/fulfillment/warehouse-variants');
+
+  /** Obecný adaptér zvládne dvojité L stejně jako jedno. */
+  const genericDouble = { FULFILLMENT_STOCK_URL: 'https://feed.example/stock', FULFILLMENT_STOCK_TOKEN: 'f' };
+  const genericConfig = readFulfilmentStockConfig((name) => (genericDouble as Record<string, string>)[name]);
+  assert.equal(genericConfig?.url, 'https://feed.example/stock');
+  assert.equal(genericConfig?.token, 'f');
 });
 
 registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000', () => {

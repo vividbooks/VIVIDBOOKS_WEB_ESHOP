@@ -576,7 +576,14 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
   }
 
   const readEnv = (name: string) => Deno.env.get(name);
-  const fulfilmentCzConfig = readFulfilmentCzConfig(readEnv);
+  const listEnvNames = () => {
+    try {
+      return Object.keys(Deno.env.toObject());
+    } catch {
+      return [];
+    }
+  };
+  const fulfilmentCzConfig = readFulfilmentCzConfig(readEnv, listEnvNames);
   const genericFulfilmentConfig = fulfilmentCzConfig ? null : readFulfilmentStockConfig(readEnv);
 
   const fulfilment = fulfilmentCzConfig
