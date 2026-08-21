@@ -135,6 +135,67 @@ export function extractWarehouseStockMap(raw: unknown): Record<string, number> {
 }
 
 /**
+ * Base.com `getInventoryProductsStock` vrací u produktu s variantami:
+ * `{ variants: { "123": { bl_132291: 40 } } }` nebo `{ variants: { "123": { stock: { … } } } }`.
+ */
+export function extractVariantStockMaps(raw: unknown): Record<string, Record<string, number>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const variants = (raw as Record<string, unknown>).variants;
+  if (!variants || typeof variants !== 'object' || Array.isArray(variants)) return {};
+
+  const out: Record<string, Record<string, number>> = {};
+  for (const [variantId, value] of Object.entries(variants as Record<string, unknown>)) {
+    const id = String(variantId || '').trim();
+    if (!id) continue;
+    const map = extractWarehouseStockMap(value);
+    if (Object.keys(map).length) out[id] = map;
+  }
+  return out;
+}
+
+export type InventoryVariantRecord = {
+  variantId: string;
+  sku: string;
+  ean: string;
+  name: string;
+  warehouseQuantities: Record<string, number>;
+};
+
+/** Variantní SKU a sklady z `getInventoryProductsData` (případně ze stock mapy). */
+export function listProductVariants(
+  raw: unknown,
+  stockMaps?: Record<string, Record<string, number>>,
+): InventoryVariantRecord[] {
+  if (!raw || typeof raw !== 'object') return [];
+  const variants = (raw as Record<string, unknown>).variants;
+  if (!variants || typeof variants !== 'object') return [];
+
+  const entries = Array.isArray(variants)
+    ? variants.map((value, index) => [String(index), value] as const)
+    : Object.entries(variants as Record<string, unknown>);
+
+  const out: InventoryVariantRecord[] = [];
+  for (const [variantId, value] of entries) {
+    const record = value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+    const sku = String(record.sku || record.ean || '').trim();
+    const fromData = extractWarehouseStockMap(record);
+    const fromStock = stockMaps?.[variantId] || {};
+    const warehouseQuantities = { ...fromStock, ...fromData };
+    if (!sku && !Object.keys(warehouseQuantities).length) continue;
+    out.push({
+      variantId: String(variantId),
+      sku,
+      ean: String(record.ean || ''),
+      name: String(record.name || ''),
+      warehouseQuantities,
+    });
+  }
+  return out;
+}
+
+/**
  * Prodejné kusy pro e-shop: sečte kladné stavy fyzických skladů (bl / warehouse /
  * fulfillment), aby záporný výchozí sklad neschoval kusy na fulfilmentu.
  * Shop sklady (zrcadlo e-shopu) se berou jen když fyzický sklad nic kladného nemá.
@@ -233,7 +294,7 @@ export function computeEffectiveStockQuantity(
     const inventorySku = resolveInventorySku(item);
     const pack = parsePackSku(inventorySku);
     if (!pack || !isSameStockSku(pack.baseSku, sku)) continue;
-    if (item.quantity === null) continue;
+    if (item.quantity === null || item.quantity <= 0) continue;
 
     packContributions.push({
       packSku: inventorySku,
@@ -251,9 +312,19 @@ export function computeEffectiveStockQuantity(
   }
 
   const packUnits = packContributions.reduce((sum, entry) => sum + entry.unitQuantity, 0);
+  if (!hasPackQuantity) {
+    return {
+      quantity: baseQuantity,
+      baseQuantity,
+      packContributions: [],
+    };
+  }
+
+  // Záporný kusový sklad (přeprodej) nesmí schovat kladné kartony -C10.
+  const sellableLoose = Math.max(0, baseQuantity ?? 0);
 
   return {
-    quantity: (baseQuantity ?? 0) + packUnits,
+    quantity: sellableLoose + packUnits,
     baseQuantity: hasBaseQuantity ? baseQuantity : 0,
     packContributions,
   };
