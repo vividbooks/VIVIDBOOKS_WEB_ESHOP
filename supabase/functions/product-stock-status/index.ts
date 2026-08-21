@@ -1,5 +1,9 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import {
+  fetchFulfilmentCzStock,
+  readFulfilmentCzConfig,
+} from '../_shared/fulfilment-cz-stock.ts';
+import {
   fetchFulfilmentStock,
   readFulfilmentStockConfig,
 } from '../_shared/fulfilment-stock.ts';
@@ -571,10 +575,20 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
     }));
   }
 
-  const fulfilmentConfig = readFulfilmentStockConfig((name) => Deno.env.get(name));
-  const fulfilment = fulfilmentConfig
-    ? await fetchFulfilmentStock(fulfilmentConfig)
-    : null;
+  const readEnv = (name: string) => Deno.env.get(name);
+  const fulfilmentCzConfig = readFulfilmentCzConfig(readEnv);
+  const genericFulfilmentConfig = fulfilmentCzConfig ? null : readFulfilmentStockConfig(readEnv);
+
+  const fulfilment = fulfilmentCzConfig
+    ? await fetchFulfilmentCzStock(fulfilmentCzConfig)
+    : genericFulfilmentConfig
+      ? await fetchFulfilmentStock(genericFulfilmentConfig)
+      : null;
+  const fulfilmentSource = fulfilmentCzConfig
+    ? 'fulfillment.cz'
+    : genericFulfilmentConfig
+      ? 'generic'
+      : null;
 
   for (const row of fulfilment?.rows || []) {
     const sku = row.sku.trim();
@@ -606,7 +620,8 @@ async function loadInventoryProducts(extraLookupSkus: string[] = []) {
     warehouses: primaryInventory.warehouses,
     warehouseMeta,
     fulfilment: {
-      configured: Boolean(fulfilmentConfig),
+      configured: Boolean(fulfilmentSource),
+      source: fulfilmentSource,
       warehouseKey: fulfilment?.warehouseKey || null,
       rowCount: fulfilment?.rows.length ?? 0,
       error: fulfilment?.error || null,

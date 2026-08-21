@@ -45,6 +45,12 @@ import {
   parseUnitsPerPackValue,
   readFulfilmentStockConfig,
 } from '../supabase/functions/_shared/fulfilment-stock.ts';
+import {
+  buildFulfilmentCzHeaders,
+  buildFulfilmentCzPageUrl,
+  parseFulfilmentCzWarehouseVariants,
+  readFulfilmentCzConfig,
+} from '../supabase/functions/_shared/fulfilment-cz-stock.ts';
 import { sanitizeMerchVariantSkus } from '../src/utils/stockSku.ts';
 
 type UnitTest = {
@@ -814,6 +820,102 @@ registerTest('fulfilment: bez FULFILMENT_STOCK_URL se zdroj nezapne', () => {
   const custom = readFulfilmentStockConfig((name) => env[name])!;
   assert.equal(buildFulfilmentRequestHeaders(custom)['X-Api-Key'], 'secret-token');
   assert.equal(buildFulfilmentRequestHeaders(custom).Authorization, undefined);
+});
+
+registerTest('fulfillment.cz: warehouse-variants dá kusy i kartony pro ZK1000', () => {
+  /** Tvar odpovědi podle https://client.api.fulfillment.cz/ */
+  const { rows, totalCount, error } = parseFulfilmentCzWarehouseVariants({
+    code: 200,
+    message: '',
+    totalCount: 2,
+    data: [
+      {
+        variant_id: 1887274,
+        code: 'DS36066094',
+        ext_code: 'ZK1000',
+        quantity: 40,
+        available_quantity: 37,
+        damaged_quantity: 0,
+        reserved_quantity: 3,
+        requested_quantity: 0,
+        mastercase_quantity: 0,
+        mastercase_available_quantity: 0,
+      },
+      {
+        variant_id: 1887275,
+        code: 'DS36066094-C10',
+        ext_code: 'ZK1000-C10',
+        quantity: 267,
+        available_quantity: 267,
+        mastercase_quantity: 0,
+        mastercase_available_quantity: 0,
+      },
+    ],
+  });
+
+  assert.equal(error, null);
+  assert.equal(totalCount, 2);
+
+  const bySku = new Map(rows.map((row) => [row.sku, row.quantity]));
+  assert.equal(bySku.get('ZK1000'), 37);
+  assert.equal(bySku.get('DS36066094'), 37);
+  assert.equal(bySku.get('ZK1000-C10'), 267);
+  assert.equal(bySku.get('DS36066094-C10'), 267);
+
+  const effective = computeEffectiveStockQuantity('ZK1000', [
+    { sku: 'ZK1000', productId: 'ff', quantity: bySku.get('ZK1000')! },
+    { sku: 'ZK1000-C10', productId: 'ff', quantity: bySku.get('ZK1000-C10')! },
+  ]);
+  assert.equal(effective.quantity, 2707);
+});
+
+registerTest('fulfillment.cz: kusy v kartonech se přičtou, rezervace se odečtou', () => {
+  /** `mastercase_*` podle dokumentace kusové SKU nezahrnuje, takže se sčítá. */
+  const { rows } = parseFulfilmentCzWarehouseVariants({
+    code: 200,
+    data: [{
+      code: 'DS62202039',
+      ext_code: 'PM2400',
+      quantity: 3,
+      available_quantity: 2,
+      reserved_quantity: 1,
+      mastercase_quantity: 303,
+      mastercase_available_quantity: 302,
+    }],
+  });
+  assert.equal(rows.find((row) => row.sku === 'PM2400')?.quantity, 304);
+
+  /** Bez `available_quantity` se dostupnost dopočítá z hrubého stavu. */
+  const fallback = parseFulfilmentCzWarehouseVariants({
+    data: [{ ext_code: 'PP2100', quantity: 10, reserved_quantity: 4, requested_quantity: 1 }],
+  });
+  assert.equal(fallback.rows[0].quantity, 5);
+
+  /** Přeprodaná varianta zůstane záporná, ať badge nelže. */
+  const oversold = parseFulfilmentCzWarehouseVariants({
+    data: [{ ext_code: 'ZK1000', available_quantity: -5 }],
+  });
+  assert.equal(oversold.rows[0].quantity, -5);
+});
+
+registerTest('fulfillment.cz: chybová odpověď a stránkování', () => {
+  const failed = parseFulfilmentCzWarehouseVariants({ code: 401, message: 'Unauthorized', data: [] });
+  assert.equal(failed.error, 'Unauthorized');
+  assert.deepEqual(failed.rows, []);
+
+  assert.deepEqual(parseFulfilmentCzWarehouseVariants(null).rows, []);
+
+  const env: Record<string, string> = { FULFILMENT_CZ_API_TOKEN: 'ff-token' };
+  const config = readFulfilmentCzConfig((name) => env[name])!;
+  assert.equal(config.warehouseKey, 'fulfillment_ff');
+  assert.equal(
+    buildFulfilmentCzPageUrl(config, 1000),
+    'https://client.api.fulfillment.cz/v2/fulfillment/warehouse-variants?limit=1000&offset=1000',
+  );
+
+  /** Token jde do Authorization bez „Bearer“, jak vyžaduje Fulfillment.cz. */
+  assert.equal(buildFulfilmentCzHeaders(config).Authorization, 'ff-token');
+  assert.equal(readFulfilmentCzConfig(() => undefined), null);
 });
 
 registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000', () => {
