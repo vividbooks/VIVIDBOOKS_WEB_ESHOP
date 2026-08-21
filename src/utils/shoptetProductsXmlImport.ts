@@ -7,6 +7,7 @@
  */
 
 import type { MerchVariantOption } from '../types/merchVariants';
+import { isPlaceholderStockSku } from './stockSku';
 import {
   SHOPTET_IMPORT_ALLOWED_ROOTS,
   mergeShoptetAllowedRoots,
@@ -273,14 +274,18 @@ function parseShopItem(block: string, shoptetProductId: string): ShoptetMerchMer
 
   const variantRe = /<VARIANT\s+id="(\d+)">([\s\S]*?)<\/VARIANT>/gi;
   const variantRows: MerchVariantOption[] = [];
+  const itemLevel = parseItemLevelCodeAndPrice(block, shoptetProductId);
   let vm: RegExpExecArray | null;
   while ((vm = variantRe.exec(block))) {
     const vid = vm[1];
     const vb = vm[2];
-    const code = decodeXmlText(firstMatch(/<CODE>([\s\S]*?)<\/CODE>/i, vb, 1)).trim();
+    let code = decodeXmlText(firstMatch(/<CODE>([\s\S]*?)<\/CODE>/i, vb, 1)).trim();
+    if (isPlaceholderStockSku(code) && itemLevel?.code && !isPlaceholderStockSku(itemLevel.code)) {
+      code = itemLevel.code;
+    }
     const priceVatRaw = firstMatch(/<PRICE_VAT>([\s\S]*?)<\/PRICE_VAT>/i, vb, 1).trim();
     const priceAmount = Number(priceVatRaw.replace(/\s/g, '').replace(',', '.'));
-    if (!code || !Number.isFinite(priceAmount)) continue;
+    if (!code || isPlaceholderStockSku(code) || !Number.isFinite(priceAmount)) continue;
 
     const params = parseVariantParams(vb);
     const sizeLabel = params['Velikost'] || params['velikost'] || '';

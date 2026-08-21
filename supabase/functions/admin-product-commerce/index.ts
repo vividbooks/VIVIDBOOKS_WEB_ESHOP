@@ -1,7 +1,7 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
 import { requireAdminJwt } from '../_shared/admin-auth.ts';
-import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
+import { computeEffectiveStockQuantity, parseSellableWarehouseQuantity } from '../_shared/stock-quantity.ts';
 
 type ProductSalesSummaryRow = {
   total_units_sold: number;
@@ -139,24 +139,6 @@ function pickFirstInventory(inventories: unknown[]) {
   };
 }
 
-function parseWarehouseQuantity(rawQuantity: unknown, defaultWarehouse: string | null) {
-  if (rawQuantity === null || rawQuantity === undefined || rawQuantity === '') return null;
-  if (typeof rawQuantity === 'number') return Number.isFinite(rawQuantity) ? rawQuantity : null;
-  if (typeof rawQuantity === 'string') {
-    const parsed = Number(rawQuantity);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (typeof rawQuantity === 'object') {
-    const quantityMap = rawQuantity as Record<string, unknown>;
-    const preferred = defaultWarehouse ? quantityMap[defaultWarehouse] : undefined;
-    const fallback = preferred ?? Object.values(quantityMap)[0];
-    if (fallback === null || fallback === undefined || fallback === '') return null;
-    const parsed = Number(fallback);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
 async function fetchStockSnapshot(params: {
   stockLookupId: string | null;
   productName: string | null;
@@ -259,10 +241,7 @@ async function fetchStockSnapshot(params: {
         sku: String(item.sku ?? stockRecord?.sku ?? productId ?? ''),
         productId,
         quantity: stockRecord
-          ? parseWarehouseQuantity(
-              stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
-              firstInventory.defaultWarehouse,
-            )
+          ? parseSellableWarehouseQuantity(stockRecord, firstInventory.defaultWarehouse)
           : null,
       };
     });

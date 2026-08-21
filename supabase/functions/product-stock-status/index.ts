@@ -1,5 +1,10 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
-import { computeEffectiveStockQuantity } from '../_shared/stock-quantity.ts';
+import {
+  computeEffectiveStockQuantity,
+  extractWarehouseStockMap,
+  parseSellableWarehouseQuantity,
+  resolveStockLookupSku,
+} from '../_shared/stock-quantity.ts';
 type CatalogProduct = {
   id: string;
   name?: string | null;
@@ -23,6 +28,7 @@ type InventoryProduct = {
   sku: string;
   ean: string;
   quantity: number | null;
+  warehouseQuantities: Record<string, number>;
 };
 
 const corsHeaders = (origin: string | null) => ({
@@ -48,24 +54,6 @@ function normalizeLoose(value: string | null | undefined) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '')
     .trim();
-}
-
-function parseWarehouseQuantity(rawQuantity: unknown, defaultWarehouse: string | null) {
-  if (rawQuantity === null || rawQuantity === undefined || rawQuantity === '') return null;
-  if (typeof rawQuantity === 'number') return Number.isFinite(rawQuantity) ? rawQuantity : null;
-  if (typeof rawQuantity === 'string') {
-    const parsed = Number(rawQuantity);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  if (typeof rawQuantity === 'object') {
-    const quantityMap = rawQuantity as Record<string, unknown>;
-    const preferred = defaultWarehouse ? quantityMap[defaultWarehouse] : undefined;
-    const fallback = preferred ?? Object.values(quantityMap)[0];
-    if (fallback === null || fallback === undefined || fallback === '') return null;
-    const parsed = Number(fallback);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
 }
 
 function getFunctionBaseUrl(fallbackRequestUrl?: string) {
@@ -154,22 +142,55 @@ function normalizeInventories(data: Record<string, unknown>) {
   return [];
 }
 
-function pickFirstInventory(inventories: unknown[]) {
-  const first = inventories[0];
-  if (!first || typeof first !== 'object') return null;
-  const record = first as Record<string, unknown>;
+function parseInventoryRecord(record: Record<string, unknown>) {
   const inventoryId = record.inventory_id ?? record.id;
   if (inventoryId === undefined || inventoryId === null || String(inventoryId).trim() === '') return null;
+  const warehouses = Array.isArray(record.warehouses)
+    ? record.warehouses.map((value) => String(value)).filter(Boolean)
+    : [];
   const defaultWarehouse = typeof record.default_warehouse === 'string'
     ? record.default_warehouse
-    : Array.isArray(record.warehouses) && typeof record.warehouses[0] === 'string'
-      ? record.warehouses[0]
-      : null;
+    : warehouses[0] || null;
   return {
     id: String(inventoryId),
     name: typeof record.name === 'string' ? record.name : typeof record.title === 'string' ? record.title : null,
     defaultWarehouse,
+    warehouses,
+    isDefault: record.is_default === true || record.is_default === 1 || record.is_default === 'true',
   };
+}
+
+async function fetchPagedProducts(
+  apiToken: string,
+  method: 'getInventoryProductsStock' | 'getInventoryProductsList',
+  inventoryId: string | number,
+) {
+  const merged: Record<string, Record<string, unknown>> = {};
+  for (let page = 1; page <= 20; page++) {
+    const response = await callBasecomApi(apiToken, method, {
+      inventory_id: inventoryId,
+      page,
+    });
+    const products = response.products && typeof response.products === 'object'
+      ? response.products as Record<string, Record<string, unknown>>
+      : {};
+    const keys = Object.keys(products);
+    if (!keys.length) break;
+    Object.assign(merged, products);
+    if (keys.length < 1000) break;
+  }
+  return merged;
+}
+
+function mergeWarehouseMaps(...maps: Array<Record<string, number>>) {
+  const out: Record<string, number> = {};
+  for (const map of maps) {
+    for (const [key, value] of Object.entries(map)) {
+      const prev = out[key];
+      out[key] = prev == null ? value : Math.max(prev, value);
+    }
+  }
+  return out;
 }
 
 async function loadCatalogProducts(requestUrl: string) {
@@ -198,54 +219,162 @@ async function loadInventoryProducts() {
     throw new Error('Missing BASECOM_API_TOKEN.');
   }
 
-  const inventoriesResponse = await callBasecomApi(apiToken, 'getInventories', {});
+  const [inventoriesResponse, warehousesResponse, storagesResponse] = await Promise.all([
+    callBasecomApi(apiToken, 'getInventories', {}),
+    callBasecomApi(apiToken, 'getInventoryWarehouses', {}),
+    callBasecomApi(apiToken, 'getExternalStoragesList', {}).catch(() => ({ storages: [] })),
+  ]);
   const inventories = normalizeInventories(inventoriesResponse);
-  const firstInventory = pickFirstInventory(inventories);
-  if (!firstInventory) {
+  const parsedInventories = inventories
+    .map((item) => (item && typeof item === 'object' ? parseInventoryRecord(item as Record<string, unknown>) : null))
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const primaryInventory = parsedInventories.find((item) => item.isDefault) || parsedInventories[0] || null;
+  if (!primaryInventory) {
     throw new Error('No inventory_id found in Base.com response.');
   }
 
-  const [stockResponse, listResponse] = await Promise.all([
-    callBasecomApi(apiToken, 'getInventoryProductsStock', {
-      inventory_id: Number.isNaN(Number(firstInventory.id)) ? firstInventory.id : Number(firstInventory.id),
-    }),
-    callBasecomApi(apiToken, 'getInventoryProductsList', {
-      inventory_id: Number.isNaN(Number(firstInventory.id)) ? firstInventory.id : Number(firstInventory.id),
-    }),
-  ]);
+  const warehouseMeta = Array.isArray(warehousesResponse.warehouses)
+    ? (warehousesResponse.warehouses as Array<Record<string, unknown>>).map((row) => {
+        const warehouseType = String(row.warehouse_type || 'bl');
+        const warehouseId = row.warehouse_id ?? row.id;
+        const key = warehouseId === undefined || warehouseId === null
+          ? ''
+          : `${warehouseType}_${warehouseId}`;
+        return {
+          key,
+          type: warehouseType,
+          id: warehouseId == null ? null : String(warehouseId),
+          name: typeof row.name === 'string' ? row.name : null,
+          isDefault: row.is_default === true || row.is_default === 1,
+        };
+      }).filter((row) => row.key)
+    : [];
 
-  const stockProducts = stockResponse.products && typeof stockResponse.products === 'object'
-    ? stockResponse.products as Record<string, Record<string, unknown>>
-    : {};
-  const listProducts = listResponse.products && typeof listResponse.products === 'object'
-    ? listResponse.products as Record<string, Record<string, unknown>>
-    : {};
+  const productsByKey = new Map<string, InventoryProduct>();
 
-  const allProductIds = new Set([
-    ...Object.keys(listProducts),
-    ...Object.keys(stockProducts),
-  ]);
+  for (const inventory of parsedInventories) {
+    const inventoryId = Number.isNaN(Number(inventory.id)) ? inventory.id : Number(inventory.id);
+    const [stockProducts, listProducts] = await Promise.all([
+      fetchPagedProducts(apiToken, 'getInventoryProductsStock', inventoryId),
+      fetchPagedProducts(apiToken, 'getInventoryProductsList', inventoryId),
+    ]);
 
-  const products: InventoryProduct[] = Array.from(allProductIds).map((productId) => {
-    const value = listProducts[productId] || {};
-    const stockRecord = stockProducts[productId] || {};
-    return {
-      productId,
-      name: String(value?.name || stockRecord?.name || ''),
-      sku: String(value?.sku || stockRecord?.sku || productId || ''),
-      ean: String(value?.ean || stockRecord?.ean || ''),
-      quantity: parseWarehouseQuantity(
-        stockRecord.quantity ?? stockRecord.stock ?? stockRecord.available ?? null,
-        firstInventory.defaultWarehouse,
-      ),
-    };
-  });
+    const allProductIds = new Set([
+      ...Object.keys(listProducts),
+      ...Object.keys(stockProducts),
+    ]);
+
+    for (const productId of allProductIds) {
+      const value = listProducts[productId] || {};
+      const stockRecord = stockProducts[productId] || {};
+      const warehouseQuantities = mergeWarehouseMaps(
+        extractWarehouseStockMap(value),
+        extractWarehouseStockMap(stockRecord),
+      );
+      const next: InventoryProduct = {
+        productId,
+        name: String(value?.name || stockRecord?.name || ''),
+        sku: String(value?.sku || stockRecord?.sku || productId || ''),
+        ean: String(value?.ean || stockRecord?.ean || ''),
+        quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, inventory.defaultWarehouse),
+        warehouseQuantities,
+      };
+      const mergeKey = next.sku ? `sku:${next.sku.toLowerCase()}` : `id:${productId}`;
+      const existing = productsByKey.get(mergeKey) || productsByKey.get(`id:${productId}`);
+      if (!existing) {
+        productsByKey.set(mergeKey, next);
+        continue;
+      }
+      const mergedWarehouses = mergeWarehouseMaps(existing.warehouseQuantities, next.warehouseQuantities);
+      productsByKey.set(mergeKey, {
+        ...existing,
+        name: existing.name || next.name,
+        sku: existing.sku || next.sku,
+        ean: existing.ean || next.ean,
+        warehouseQuantities: mergedWarehouses,
+        quantity: parseSellableWarehouseQuantity({ stock: mergedWarehouses }, primaryInventory.defaultWarehouse),
+      });
+    }
+  }
+
+  const externalStorages = Array.isArray(storagesResponse.storages)
+    ? (storagesResponse.storages as Array<Record<string, unknown>>).map((row) => ({
+        id: String(row.storage_id || ''),
+        name: typeof row.name === 'string' ? row.name : '',
+        methods: Array.isArray(row.methods) ? row.methods.map((value) => String(value)) : [],
+      })).filter((row) => row.id)
+    : [];
+
+  const fulfillmentStorages = externalStorages.filter((storage) => (
+    storage.id.startsWith('warehouse_')
+    || storage.id.startsWith('shop_')
+    || /fulfil|fulfill|3pl|skladon|ppl|sync/i.test(`${storage.id} ${storage.name}`)
+  ));
+  const externalStorageErrors: Array<{ id: string; error: string }> = [];
+
+  for (const storage of fulfillmentStorages) {
+    if (storage.methods.length && !storage.methods.includes('getExternalStorageProductsList')) continue;
+    try {
+      for (let page = 0; page <= 20; page++) {
+        const listResponse = await callBasecomApi(apiToken, 'getExternalStorageProductsList', {
+          storage_id: storage.id,
+          page,
+        });
+        const rows = Array.isArray(listResponse.products)
+          ? listResponse.products as Array<Record<string, unknown>>
+          : listResponse.products && typeof listResponse.products === 'object'
+            ? Object.values(listResponse.products as Record<string, Record<string, unknown>>)
+            : [];
+        if (!rows.length) {
+          if (page === 0) continue;
+          break;
+        }
+        for (const row of rows) {
+          const sku = String(row.sku || row.product_id || '').trim();
+          if (!sku) continue;
+          const quantity = Number(row.quantity);
+          if (!Number.isFinite(quantity)) continue;
+          const warehouseKey = storage.id;
+          const existing = productsByKey.get(`sku:${sku.toLowerCase()}`);
+          const warehouseQuantities = mergeWarehouseMaps(
+            existing?.warehouseQuantities || {},
+            { [warehouseKey]: quantity },
+          );
+          productsByKey.set(`sku:${sku.toLowerCase()}`, {
+            productId: existing?.productId || String(row.product_id || sku),
+            name: existing?.name || String(row.name || ''),
+            sku: existing?.sku || sku,
+            ean: existing?.ean || String(row.ean || ''),
+            warehouseQuantities,
+            quantity: parseSellableWarehouseQuantity({ stock: warehouseQuantities }, primaryInventory.defaultWarehouse),
+          });
+        }
+        if (rows.length < 100) break;
+      }
+    } catch (error) {
+      externalStorageErrors.push({
+        id: storage.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   return {
-    inventoryId: firstInventory.id,
-    inventoryName: firstInventory.name,
-    warehouseId: firstInventory.defaultWarehouse,
-    products,
+    inventoryId: primaryInventory.id,
+    inventoryName: primaryInventory.name,
+    warehouseId: primaryInventory.defaultWarehouse,
+    warehouses: primaryInventory.warehouses,
+    warehouseMeta,
+    externalStorages,
+    externalStorageErrors,
+    inventories: parsedInventories.map((item) => ({
+      id: item.id,
+      name: item.name,
+      defaultWarehouse: item.defaultWarehouse,
+      warehouses: item.warehouses,
+      isDefault: item.isDefault,
+    })),
+    products: Array.from(productsByKey.values()),
   };
 }
 
@@ -358,11 +487,12 @@ Deno.serve(async (req) => {
         ? { ...product, shoptetId: overrideShoptetSku }
         : product;
       const { matched, matchType } = matchInventoryProduct(forMatch, inventory.products);
-      const lookupSku = overrideShoptetSku
-        || product.shoptetId
-        || product.basecomSku
-        || matched?.sku
-        || null;
+      const lookupSku = resolveStockLookupSku([
+        overrideShoptetSku,
+        product.shoptetId,
+        product.basecomSku,
+        matched?.sku,
+      ], inventory.products);
       const effectiveStock = computeEffectiveStockQuantity(lookupSku, inventory.products);
       const quantity = effectiveStock.quantity;
       const stockStatus = getStockStatus(quantity);
@@ -387,6 +517,10 @@ Deno.serve(async (req) => {
         matchType,
         matchedProductId: matched?.productId || null,
         matchedSku: matched?.sku || null,
+        lookupSku,
+        warehouseQuantities: matched
+          ? inventory.products.find((item) => item.productId === matched.productId)?.warehouseQuantities || {}
+          : {},
         inventoryId: inventory.inventoryId,
         inventoryName: inventory.inventoryName,
         warehouseId: inventory.warehouseId,
@@ -402,6 +536,16 @@ Deno.serve(async (req) => {
       const item = buildItem(catalogProduct, shoptetSkuOverride || undefined);
       return jsonResponse(req, {
         item,
+        inventory: {
+          inventoryId: inventory.inventoryId,
+          inventoryName: inventory.inventoryName,
+          warehouseId: inventory.warehouseId,
+          warehouses: inventory.warehouses,
+          warehouseMeta: inventory.warehouseMeta,
+          externalStorages: inventory.externalStorages,
+          externalStorageErrors: inventory.externalStorageErrors,
+          inventories: inventory.inventories,
+        },
       });
     }
 
@@ -412,6 +556,11 @@ Deno.serve(async (req) => {
         inventoryId: inventory.inventoryId,
         inventoryName: inventory.inventoryName,
         warehouseId: inventory.warehouseId,
+        warehouses: inventory.warehouses,
+        warehouseMeta: inventory.warehouseMeta,
+        externalStorages: inventory.externalStorages,
+        externalStorageErrors: inventory.externalStorageErrors,
+        inventories: inventory.inventories,
       },
       items,
     });

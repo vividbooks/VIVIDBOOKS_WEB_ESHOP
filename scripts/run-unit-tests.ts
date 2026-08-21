@@ -31,6 +31,12 @@ import {
   subjectBundleSelectionPaidListSumHaler,
   type ProductBundleRecord,
 } from '../src/utils/bundlePricing.ts';
+import {
+  computeEffectiveStockQuantity,
+  parseSellableWarehouseQuantity,
+  resolveStockLookupSku,
+} from '../supabase/functions/_shared/stock-quantity.ts';
+import { sanitizeMerchVariantSkus } from '../src/utils/stockSku.ts';
 
 type UnitTest = {
   name: string;
@@ -639,6 +645,72 @@ registerTest('distributorContactPersonName: s.r.o. nepoužije jako jméno osoby'
     distributorContactPersonName('', 'ucebnice@ansa.cz'),
     'Ucebnice',
   );
+});
+
+registerTest('parseSellableWarehouseQuantity nesmí schovat fulfilment za záporný výchozí sklad', () => {
+  const zk1000Stock = {
+    product_id: 572787922,
+    stock: {
+      bl_132291: -23,
+      bl_999001: 150,
+    },
+  };
+
+  assert.equal(parseSellableWarehouseQuantity(zk1000Stock, 'bl_132291'), 150);
+
+  assert.equal(
+    parseSellableWarehouseQuantity({ stock: { bl_132291: 42 } }, 'bl_132291'),
+    42,
+  );
+
+  assert.equal(
+    parseSellableWarehouseQuantity({ stock: { bl_132291: -23 } }, 'bl_132291'),
+    -23,
+  );
+
+  assert.equal(
+    parseSellableWarehouseQuantity({ stock: { bl_1: 10, bl_2: 5 } }, 'bl_1'),
+    15,
+  );
+
+  assert.equal(
+    parseSellableWarehouseQuantity({
+      stock: { bl_132291: -23, fulfillment_88: 180, shop_1: 180 },
+    }, 'bl_132291'),
+    180,
+  );
+
+  assert.equal(parseSellableWarehouseQuantity(null, 'bl_132291'), null);
+});
+
+registerTest('resolveStockLookupSku přeskočí Shoptet placeholder new a vezme ZK1000', () => {
+  const inventory = [
+    { sku: 'ZK1000', productId: '572787922', quantity: 150 },
+    { sku: 'PC1000-C10', productId: '1', quantity: 2 },
+    { sku: 'PC1000', productId: '2', quantity: 3 },
+  ];
+
+  assert.equal(
+    resolveStockLookupSku(['new', 'ZK1000'], inventory),
+    'ZK1000',
+  );
+
+  const packs = computeEffectiveStockQuantity('PC1000', inventory);
+  assert.equal(packs.quantity, 23);
+  assert.equal(packs.baseQuantity, 3);
+  assert.equal(packs.packContributions.length, 1);
+  assert.equal(packs.packContributions[0].unitQuantity, 20);
+});
+
+registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000', () => {
+  const sanitized = sanitizeMerchVariantSkus({
+    type: 'merch',
+    shoptetId: 'ZK1000',
+    basecomSku: 'ZK1000',
+    merchVariants: [{ shoptetId: 'new', label: 'Základní' }],
+  });
+
+  assert.equal(sanitized.merchVariants?.[0]?.shoptetId, 'ZK1000');
 });
 
 await run();

@@ -1,4 +1,5 @@
 import { getProductUnitPriceInHaler, parsePriceTextToKc } from './product-price.ts';
+import { isPlaceholderStockSku } from './stock-quantity.ts';
 
 /**
  * Ověření cen košíku oproti katalogu (make-server /products + /product-bundles).
@@ -92,7 +93,7 @@ function getProductVariantId(product: any): string | undefined {
   if (String(product.type || '').toLowerCase() === 'merch' && Array.isArray(merch) && merch.length > 0) {
     for (const v of merch) {
       const sku = typeof v?.shoptetId === 'string' ? v.shoptetId.trim() : '';
-      if (sku) return sku;
+      if (sku && !isPlaceholderStockSku(sku)) return sku;
     }
     for (const v of merch) {
       const metaVid = v?.metadata?.shoptetVariantId;

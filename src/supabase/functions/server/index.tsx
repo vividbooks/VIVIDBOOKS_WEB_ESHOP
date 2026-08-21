@@ -43,6 +43,7 @@ import { domainAcceptsMailForForms } from '../../../../supabase/functions/_share
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
 import { distributorContactPersonName } from '../../../../supabase/functions/_shared/pipedrive-distributor-person.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
+import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
 import {
   applyAllDigitalBundleStripe,
@@ -1411,7 +1412,7 @@ app.post('/make-server-93a20b6f/products', async (c) => {
 app.get('/make-server-93a20b6f/products', async (c) => {
   const products = await getAllProducts();
   const normalized = products.map((p: any) => {
-    let next = syncProductPriceAmount(p);
+    let next = sanitizeMerchVariantSkus(syncProductPriceAmount(p));
     if (!next.category) return applyAllDigitalBundleStripe(next);
     let cat: string = String(next.category).trim();
     if (/^[Mm]atematika[\s\-]+2$/.test(cat)) cat = 'Matematika 2. stupeň';
@@ -1427,8 +1428,11 @@ app.get('/make-server-93a20b6f/products', async (c) => {
     || p.priceMonthly !== products[i]?.priceMonthly
     || p.priceYearly !== products[i]?.priceYearly
   ));
+  const needsMerchSkuPersist = normalized.some((p: any, i: number) => (
+    JSON.stringify(p.merchVariants || null) !== JSON.stringify(products[i]?.merchVariants || null)
+  ));
   let updatedAt = (await kv.get(KV_KEY))?.updatedAt;
-  if (needsPricePersist || needsCategoryPersist || needsStripePersist) {
+  if (needsPricePersist || needsCategoryPersist || needsStripePersist || needsMerchSkuPersist) {
     const data = await saveAllProducts(normalized);
     updatedAt = data.updatedAt;
   }
