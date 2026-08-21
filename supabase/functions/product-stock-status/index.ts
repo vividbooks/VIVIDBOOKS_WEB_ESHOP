@@ -160,7 +160,7 @@ function parseInventoryRecord(record: Record<string, unknown>) {
   };
 }
 
-function parseInventoryRecord(record: Record<string, unknown>) {
+async function fetchPagedProducts(
   apiToken: string,
   method: 'getInventoryProductsStock' | 'getInventoryProductsList',
   inventoryId: string | number,
