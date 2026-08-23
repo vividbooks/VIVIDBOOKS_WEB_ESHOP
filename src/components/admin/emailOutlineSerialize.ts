@@ -59,7 +59,8 @@ function serializeNode(el: HTMLElement, lines: string[]): void {
   }
 
   if (type === 'hero') {
-    lines.push(`HERO${idSuf}: ${cleanText(el.textContent || '').slice(0, 160)}`);
+    const heroBg = el.getAttribute('data-vb-chrome-bg') || '';
+    lines.push(`HERO${idSuf}${heroBg ? ` ${heroBg}` : ''}: ${cleanText(el.textContent || '').slice(0, 160)}`);
     return;
   }
 

@@ -34,6 +34,23 @@ export type EmailHighlightChrome = {
 export const EMAIL_HIGHLIGHT_DEFAULT_BG = '#F3F0FF';
 export const EMAIL_HIGHLIGHT_DEFAULT_RADIUS = 18;
 
+export type EmailHeroChrome = {
+  background: string;
+  radius: number;
+};
+
+export const EMAIL_HERO_DEFAULT_BG = '#001161';
+export const EMAIL_HERO_DEFAULT_RADIUS = 22;
+export const EMAIL_HERO_PRESET_COLORS = [
+  '#001161',
+  '#FEF3C7',
+  '#FFF7ED',
+  '#F3F0FF',
+  '#EFF6FF',
+  '#F06632',
+  '#ffffff',
+] as const;
+
 /** Styly toolbaru Nadpis 1–4 (Email Builder). */
 export const EMAIL_BUILDER_HEADING_STYLES: Record<'h1' | 'h2' | 'h3' | 'h4', string> = {
   h1: 'margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;font-size:26px;font-weight:800;line-height:1.2;color:#001161;',
@@ -140,8 +157,6 @@ export interface EmailBlockPreset {
   category: 'Content' | 'Media' | 'Layout' | 'Commerce' | 'Brand';
 }
 
-const CTA_URL = previewCtaUrl();
-
 export const EMAIL_BLOCK_PRESETS: EmailBlockPreset[] = [
   { type: 'text', label: 'Text', description: 'Odstavce nebo krátká sekce', category: 'Content' },
   { type: 'highlight', label: 'Zvýrazněný box', description: 'Barevný box pro důležité sdělení', category: 'Content' },
@@ -207,7 +222,7 @@ export function buildEmailColumnContentHtml(kind: EmailColumnContentKind): strin
     case 'image':
       return '<img src="https://images.unsplash.com/photo-1513258496099-48168024aec0?auto=format&fit=crop&w=800&q=80" alt="Obrázek" style="display:block;width:100%;max-width:100%;height:auto;border-radius:16px;" />';
     case 'button':
-      return `<div style="text-align:center;"><a class="vb-preview-cta" href="${CTA_URL}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;padding:12px 28px;border-radius:999px;text-decoration:none;">Vyzkoušet zdarma</a></div>`;
+      return `<div style="text-align:center;"><a class="vb-preview-cta" href="${previewCtaUrl()}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;padding:12px 28px;border-radius:999px;text-decoration:none;">Vyzkoušet zdarma</a></div>`;
     case 'text':
     default:
       return '<p style="margin:0;font-size:13px;line-height:1.65;color:#334155;">Sem napište text sloupce.</p>';
@@ -338,7 +353,7 @@ export function buildEmailBlockHtml(type: EmailBlockType): string {
     case 'button':
       return buildBlockShell(
         'button',
-        `<div style="text-align:center;"><a class="vb-preview-cta" href="${CTA_URL}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">Vyzkoušet zdarma</a></div>`,
+        `<div style="text-align:center;"><a class="vb-preview-cta" href="${previewCtaUrl()}" style="display:inline-block;background-color:#7C3AED;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:700;padding:14px 36px;border-radius:999px;text-decoration:none;">Vyzkoušet zdarma</a></div>`,
         'padding:16px 24px 28px 24px;background-color:transparent;',
       );
     case 'divider':
@@ -392,8 +407,12 @@ export function buildEmailBlockHtml(type: EmailBlockType): string {
     case 'hero':
       return buildBlockShell(
         'hero',
-        '<div style="background:#001161;border-radius:22px;padding:28px 22px;text-align:center;"><div style="display:inline-block;margin:0 0 10px 0;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,0.12);font-size:11px;font-weight:700;letter-spacing:0.06em;color:#ffffff;text-transform:uppercase;">Vividbooks</div><h2 style="margin:0 0 10px 0;font-size:28px;line-height:1.2;color:#ffffff;">Sem napište hlavní claim</h2><p style="margin:0;font-size:13px;line-height:1.65;color:rgba(255,255,255,0.82);">Krátké vysvětlení, proč má čtenář pokračovat dál.</p></div>',
+        `<div data-vb-hero-box="1" style="background:${EMAIL_HERO_DEFAULT_BG};border-radius:${EMAIL_HERO_DEFAULT_RADIUS}px;padding:28px 22px;text-align:center;"><div style="display:inline-block;margin:0 0 10px 0;padding:5px 10px;border-radius:999px;background:rgba(255,255,255,0.12);font-size:11px;font-weight:700;letter-spacing:0.06em;color:#ffffff;text-transform:uppercase;">Vividbooks</div><h2 style="margin:0 0 10px 0;font-size:28px;line-height:1.2;color:#ffffff;">Sem napište hlavní claim</h2><p style="margin:0;font-size:13px;line-height:1.65;color:rgba(255,255,255,0.82);">Krátké vysvětlení, proč má čtenář pokračovat dál.</p></div>`,
         'padding:18px 22px;background-color:transparent;',
+        {
+          'data-vb-chrome-bg': EMAIL_HERO_DEFAULT_BG,
+          'data-vb-chrome-radius': String(EMAIL_HERO_DEFAULT_RADIUS),
+        },
       );
     case 'product-collage':
       return buildProductCollageBlockHtml('grid', [], randomBlockId());
@@ -1144,6 +1163,100 @@ export function applyHighlightChrome(block: HTMLElement, patch?: Partial<EmailHi
     next.shadow ? `box-shadow:${EMAIL_BLOCK_SHADOW}` : 'box-shadow:none',
   ];
   box.setAttribute('style', `${parts.join(';')};`);
+  return next;
+}
+
+function isDarkHeroBackground(color: string): boolean {
+  const rgb = parseCssColorToRgb(color);
+  if (!rgb) return /#00116|#03036|#1d1d/i.test(color);
+  return (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255 < 0.58;
+}
+
+export function ensureHeroBox(block: HTMLElement): HTMLElement {
+  const existing = block.querySelector(':scope > [data-vb-hero-box]') as HTMLElement | null;
+  if (existing) return existing;
+  const kids = [...block.children].filter(
+    (c) => c.nodeType === 1 && !/^(STYLE|SCRIPT)$/i.test((c as HTMLElement).tagName),
+  ) as HTMLElement[];
+  if (kids.length === 1 && !kids[0].hasAttribute('data-vb-block') && !kids[0].hasAttribute('data-vb-block-id')) {
+    kids[0].setAttribute('data-vb-hero-box', '1');
+    return kids[0];
+  }
+  const box = (block.ownerDocument || document).createElement('div');
+  box.setAttribute('data-vb-hero-box', '1');
+  while (block.firstChild) box.appendChild(block.firstChild);
+  block.appendChild(box);
+  return box;
+}
+
+export function readHeroChrome(block: HTMLElement): EmailHeroChrome {
+  const box = block.querySelector(':scope > [data-vb-hero-box]') as HTMLElement | null;
+  const bgAttr = (block.getAttribute('data-vb-chrome-bg') || '').trim();
+  const fromBox = box ? readElementBackground(box) : '';
+  const nested = !fromBox
+    ? readElementBackground(
+        (block.querySelector(':scope > div') as HTMLElement | null) || block,
+      )
+    : '';
+  const radiusRaw = Number.parseInt(block.getAttribute('data-vb-chrome-radius') || '', 10);
+  return {
+    background: bgAttr || fromBox || nested || EMAIL_HERO_DEFAULT_BG,
+    radius: Number.isFinite(radiusRaw)
+      ? Math.max(0, Math.min(48, radiusRaw))
+      : EMAIL_HERO_DEFAULT_RADIUS,
+  };
+}
+
+/** Barva vnitřního hero boxu (ne skupiny). Tmavá → bílý text, světlá → navy. */
+export function applyHeroChrome(block: HTMLElement, patch?: Partial<EmailHeroChrome>) {
+  const cur = readHeroChrome(block);
+  const next: EmailHeroChrome = {
+    background: (patch?.background !== undefined ? patch.background : cur.background).trim() || EMAIL_HERO_DEFAULT_BG,
+    radius: patch?.radius ?? cur.radius,
+  };
+  const dark = isDarkHeroBackground(next.background);
+  block.setAttribute('data-vb-block', 'hero');
+  block.setAttribute('data-vb-chrome-bg', next.background);
+  block.setAttribute('data-vb-chrome-radius', String(next.radius));
+
+  let shell = block.getAttribute('style') || '';
+  shell = setInlineStyleValue(shell, 'background', 'transparent');
+  shell = setInlineStyleValue(shell, 'background-color', 'transparent');
+  block.setAttribute('style', shell.endsWith(';') ? shell : `${shell};`);
+
+  const box = ensureHeroBox(block);
+  let boxStyle = box.getAttribute('style') || '';
+  boxStyle = setInlineStyleValue(boxStyle, 'background', next.background);
+  boxStyle = setInlineStyleValue(boxStyle, 'background-color', next.background);
+  boxStyle = setInlineStyleValue(boxStyle, 'border-radius', `${next.radius}px`);
+  if (!/padding\s*:/i.test(boxStyle)) {
+    boxStyle = setInlineStyleValue(boxStyle, 'padding', '28px 22px');
+  }
+  if (!/text-align\s*:/i.test(boxStyle)) {
+    boxStyle = setInlineStyleValue(boxStyle, 'text-align', 'center');
+  }
+  box.setAttribute('style', boxStyle.endsWith(';') ? boxStyle : `${boxStyle};`);
+
+  const title = dark ? '#ffffff' : '#001161';
+  const body = dark ? 'rgba(255,255,255,0.82)' : 'rgba(0,17,97,0.72)';
+  const pillBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,17,97,0.08)';
+  const pillFg = dark ? '#ffffff' : '#001161';
+  box.querySelectorAll('h1,h2,h3,h4').forEach((node) => {
+    const el = node as HTMLElement;
+    let st = el.getAttribute('style') || '';
+    st = setInlineStyleValue(st, 'color', title);
+    el.setAttribute('style', st.endsWith(';') ? st : `${st};`);
+  });
+  box.querySelectorAll('p,li,span,div').forEach((node) => {
+    const el = node as HTMLElement;
+    if (el === box || el.hasAttribute('data-vb-hero-box')) return;
+    if (/^(H1|H2|H3|H4)$/i.test(el.tagName)) return;
+    let st = el.getAttribute('style') || '';
+    const isPill = /border-radius\s*:\s*999px/i.test(st) || /text-transform\s*:\s*uppercase/i.test(st);
+    st = setInlineStyleValue(st, 'color', isPill ? pillFg : body);
+    if (isPill) st = setInlineStyleValue(st, 'background', pillBg);
+    el.setAttribute('style', st.endsWith(';') ? st : `${st};`);
+  });
   return next;
 }
 
