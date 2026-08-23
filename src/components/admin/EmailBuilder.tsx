@@ -91,14 +91,18 @@ import {
   type EmailColumnContentKind,
   type EmailSectionChrome,
   type EmailHighlightChrome,
+  type EmailHeroChrome,
+  EMAIL_HERO_PRESET_COLORS,
   normalizeEmailBodyHtml,
   randomBlockId,
   readElementBackground,
   readElementPadding,
   readEmailBlockGroupState,
   readHighlightChrome,
+  readHeroChrome,
   applySectionChrome,
   applyHighlightChrome,
+  applyHeroChrome,
   setInlineStyleValue,
   wrapRootBlockInSection,
 } from './emailBlocks';
@@ -5437,6 +5441,16 @@ export default function EmailBuilder() {
     });
   }, [applyStructuredBodyMutation]);
 
+  const updateSelectedHeroChrome = useCallback((patch: Partial<EmailHeroChrome>) => {
+    applyStructuredBodyMutation((block) => {
+      if (block.getAttribute('data-vb-block') !== 'hero') {
+        toast.info('Barva platí jen u Hero bloku.');
+        return;
+      }
+      applyHeroChrome(block, patch);
+    });
+  }, [applyStructuredBodyMutation]);
+
   const groupSelectedBlocksIntoSection = useCallback(() => {
     const ids = selectedBlockIds.length >= 2
       ? selectedBlockIds
@@ -7334,6 +7348,15 @@ export default function EmailBuilder() {
     return readHighlightChrome(el);
   }, [selectedBlock?.id, selectedBlock?.type, bodyEditEpoch, selected?.bodyHtml]);
 
+  const selectedHeroChrome = useMemo<EmailHeroChrome | null>(() => {
+    if (selectedBlock?.type !== 'hero') return null;
+    const doc = previewIframeRef.current?.contentDocument;
+    if (!doc?.body) return null;
+    const el = findEmailBlockById(getEmailDndRoot(doc), selectedBlock.id);
+    if (!el) return null;
+    return readHeroChrome(el);
+  }, [selectedBlock?.id, selectedBlock?.type, bodyEditEpoch, selected?.bodyHtml]);
+
   const blockPositionOptions = useMemo(() => {
     const id = selectedBlock?.id;
     const doc = previewIframeRef.current?.contentDocument;
@@ -9069,6 +9092,80 @@ export default function EmailBuilder() {
                       }}
                       onLiveUpdate={handleWebinarLive}
                     />
+                  )}
+
+                  {selectedBlock.type === 'hero' && selectedHeroChrome && (
+                    <div className="rounded-xl border border-gray-200 bg-[#fafbfd] px-3 py-2.5 space-y-2.5">
+                      <p style={F} className="text-[10px] font-bold uppercase tracking-[0.08em] text-[#001161]/45">
+                        Hero
+                      </p>
+                      <div>
+                        <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35 mb-1">
+                          Barva hero
+                        </label>
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                          {EMAIL_HERO_PRESET_COLORS.map((color) => (
+                            <button
+                              key={color}
+                              type="button"
+                              title={color}
+                              aria-label={`Barva hero ${color}`}
+                              onClick={() => updateSelectedHeroChrome({ background: color })}
+                              className={`h-7 w-7 rounded-md border shadow-sm cursor-pointer ${
+                                selectedHeroChrome.background.toLowerCase() === color.toLowerCase()
+                                  ? 'border-[#7C3AED] ring-2 ring-[#7C3AED]/25'
+                                  : 'border-black/10 hover:border-[#7C3AED]/40'
+                              }`}
+                              style={{ backgroundColor: color }}
+                            />
+                          ))}
+                        </div>
+                        <VividbooksColorButton
+                          key={`hero-bg:${selectedBlock.id}:${selectedHeroChrome.background}`}
+                          title="Barva hero boxu"
+                          palette="brand"
+                          onSelect={(color) => {
+                            if (color === 'transparent') return;
+                            updateSelectedHeroChrome({ background: color });
+                          }}
+                          buttonClassName="flex h-10 w-full cursor-pointer items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 text-left text-[11px] font-medium text-[#001161]/65 hover:border-[#5139ED]/35 hover:bg-gray-50"
+                        >
+                          <span
+                            className="h-5 w-5 shrink-0 rounded-md border border-black/10 shadow-sm"
+                            style={{ backgroundColor: selectedHeroChrome.background }}
+                          />
+                          Vybrat barvu
+                          <ChevronDown className="ml-auto h-3.5 w-3.5 text-[#001161]/35" />
+                        </VividbooksColorButton>
+                        <p style={F} className="mt-1 text-[10px] leading-snug text-[#001161]/40">
+                          Týká se žlutého / tmavého boxu v hero, ne pozadí skupiny. Na tmavé barvě zůstane bílý text, na světlé navy.
+                        </p>
+                      </div>
+                      <div>
+                        <div className="flex items-center justify-between gap-2 mb-1">
+                          <label style={F} className="text-[10px] font-bold uppercase tracking-[0.1em] text-[#001161]/35">
+                            Zakulacení
+                          </label>
+                          <span style={F} className="text-[11px] tabular-nums text-[#001161]/55">
+                            {selectedHeroChrome.radius} px
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={40}
+                          step={1}
+                          value={selectedHeroChrome.radius}
+                          onChange={(e) =>
+                            updateSelectedHeroChrome({
+                              radius: Number(e.target.value) || 0,
+                            })
+                          }
+                          className="w-full accent-[#7C3AED]"
+                          aria-label="Zakulacení rohů hero"
+                        />
+                      </div>
+                    </div>
                   )}
 
                   {selectedBlock.type === 'highlight' && selectedHighlightChrome && (

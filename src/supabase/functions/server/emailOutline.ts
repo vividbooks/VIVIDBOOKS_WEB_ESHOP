@@ -289,7 +289,12 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
       continue;
     }
     if (kind === 'hero') {
-      push({ type: 'hero', id, text: meta.rest });
+      push({
+        type: 'hero',
+        id,
+        text: stripOutlineMarkersFromText(meta.rest),
+        color: mapOutlineColor(`${pair.label} ${meta.rest}`) || undefined,
+      });
       continue;
     }
     push({
@@ -429,9 +434,9 @@ function compileOne(block: OutlineBlock): string {
     case 'hero':
       return shell(
         'hero',
-        `<div style="background:#001161;border-radius:22px;padding:28px 22px;text-align:center;"><h2 style="margin:0;font-size:26px;line-height:1.2;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-weight:800;">${escapeHtml(block.text || '')}</h2></div>`,
+        `<div data-vb-hero-box="1" style="background:${escapeHtml(block.color || '#001161')};border-radius:22px;padding:28px 22px;text-align:center;"><h2 style="margin:0;font-size:26px;line-height:1.2;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-weight:800;">${escapeHtml(block.text || '')}</h2></div>`,
         'padding:18px 22px;background:transparent;',
-        '',
+        ` data-vb-chrome-bg="${escapeHtml(block.color || '#001161')}" data-vb-chrome-radius="22"`,
         id,
       );
     default:
