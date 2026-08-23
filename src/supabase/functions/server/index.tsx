@@ -22333,7 +22333,9 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
 
     (ragDebug as any).webinarCount = webinarCount;
 
-    const convStr = String(conversationContext || '');
+    const convStr = String(conversationContext || '')
+      .replace(/Raw:\s*\{[\s\S]*?(?=\n(?:Uživatel|AI):|$)/gi, '[předchozí useknutá odpověď vynechána]')
+      .replace(/"bodyHtml"\s*:\s*"[\s\S]*$/gi, '');
     const promptStr = String(prompt || '');
     const combinedDetect = `${convStr}\n${promptStr}`;
     const wantsAplikaceAssets = promptWantsAplikaceWebAssets(combinedDetect);
@@ -22566,7 +22568,10 @@ Pravidla:
               const text = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
               if (text) {
                 const extracted = extractFirstJsonObject(text);
-                return { ok: true, text: extracted.ok ? JSON.stringify(extracted.value) : text };
+                if (extracted.ok) return { ok: true, text: JSON.stringify(extracted.value) };
+                const repaired = tryRepairTruncatedJsonObject(text);
+                if (repaired.ok) return { ok: true, text: JSON.stringify(repaired.value) };
+                return { ok: true, text };
               }
             }
             const errT = await res.text().catch(() => '');
@@ -22642,8 +22647,16 @@ Pravidla:
         console.log(`[MC Gen] outline path OK: ${outlineOut.blocks} blocks`);
         return c.json({ success: true, email: { ...emailData, fullHtml, productImages: [] }, ragDebug });
       }
-      console.log(`[MC Gen] outline path failed: ${outlineOut.error} — fallback na HTML compose`);
+      console.log(`[MC Gen] outline path failed: ${outlineOut.error} — bez HTML fallbacku`);
       (ragDebug as any).outlineFailed = outlineOut.error;
+      return c.json(
+        {
+          error: `Email se nepodařilo složit z textových bloků (${outlineOut.error}). Zkuste kratší pokyn.`,
+          raw: outlineOut.raw || '',
+          ragDebug,
+        },
+        500,
+      );
     }
 
     const sysPrompt = `Jsi SENIOR e-mail marketingovy specialista a designer pro Vividbooks — ceske ucebni materialy, pracovni sesity a tiskoviny s online podporou.
