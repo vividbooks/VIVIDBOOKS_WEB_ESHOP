@@ -29,13 +29,13 @@ function serializeNode(el: HTMLElement, lines: string[]): void {
     const slug = el.getAttribute('data-ai-webinar-slug') || el.getAttribute('data-vb-wb-slug') || '';
     const layout = el.getAttribute('data-ai-webinar-layout') || el.getAttribute('data-vb-wb-layout') || 'compact';
     const title = cleanText(el.textContent || '').slice(0, 80);
-    lines.push(`WEBINÁŘ: ${title || 'webinář'} | slug=${slug} | layout=${layout}${idSuf}`);
+    lines.push(`WEBINÁŘ${idSuf}: ${title || 'webinář'} | slug=${slug} | layout=${layout}`);
     return;
   }
 
   if (type === 'product-collage') {
     const ids = el.getAttribute('data-ai-product-ids') || '';
-    lines.push(`PRODUKTY: ${ids}${idSuf}`);
+    lines.push(`PRODUKTY${idSuf}: ${ids}`);
     return;
   }
 
@@ -43,23 +43,23 @@ function serializeNode(el: HTMLElement, lines: string[]): void {
     const a = el.querySelector('a');
     const label = cleanText(a?.textContent || el.textContent || '');
     const href = a?.getAttribute('href') || '';
-    lines.push(`TLAČÍTKO: ${label}${href ? ` | ${href}` : ''}${idSuf}`);
+    lines.push(`TLAČÍTKO${idSuf}: ${label}${href ? ` | ${href}` : ''}`);
     return;
   }
 
   if (type === 'image') {
     const img = el.querySelector('img');
-    lines.push(`OBRÁZEK: ${img?.getAttribute('src') || ''}${img?.getAttribute('alt') ? ` | ${img.getAttribute('alt')}` : ''}${idSuf}`);
+    lines.push(`OBRÁZEK${idSuf}: ${img?.getAttribute('src') || ''}${img?.getAttribute('alt') ? ` | ${img.getAttribute('alt')}` : ''}`);
     return;
   }
 
   if (type === 'divider') {
-    lines.push(`ODDĚLOVAČ${idSuf}`);
+    lines.push(`ODDĚLOVAČ${idSuf}:`);
     return;
   }
 
   if (type === 'hero') {
-    lines.push(`HERO: ${cleanText(el.textContent || '').slice(0, 160)}${idSuf}`);
+    lines.push(`HERO${idSuf}: ${cleanText(el.textContent || '').slice(0, 160)}`);
     return;
   }
 
@@ -69,8 +69,8 @@ function serializeNode(el: HTMLElement, lines: string[]): void {
     const rest = cleanText(el.textContent || '');
     const head = h ? cleanText(h.textContent || '') : '';
     const body = head && rest.startsWith(head) ? rest.slice(head.length).trim() : rest;
-    if (head) lines.push(`NADPIS: ${head}${idSuf}`);
-    lines.push(`ZVYRAZNĚNÍ${color ? ` ${color}` : ''}: ${body || rest}${idSuf}`);
+    if (head) lines.push(`NADPIS${idSuf}: ${head}`);
+    lines.push(`ZVYRAZNĚNÍ${color ? ` ${color}` : ''}${idSuf}: ${body || rest}`);
     return;
   }
 
@@ -79,17 +79,17 @@ function serializeNode(el: HTMLElement, lines: string[]): void {
     const paras = [...el.querySelectorAll('p,li')] as HTMLElement[];
     if (heads.length === 0 && paras.length === 0) {
       const t = cleanText(el.textContent || '');
-      if (t) lines.push(`ODSTAVEC: ${t}${idSuf}`);
+      if (t) lines.push(`ODSTAVEC${idSuf}: ${t}`);
       return;
     }
     for (const h of heads) {
       const tag = h.tagName.toLowerCase();
       const label = tag === 'h3' ? 'NADPIS h3' : tag === 'h1' ? 'NADPIS h1' : 'NADPIS';
-      lines.push(`${label}: ${cleanText(h.textContent || '')}${idSuf}`);
+      lines.push(`${label}${idSuf}: ${cleanText(h.textContent || '')}`);
     }
     for (const p of paras) {
       const t = cleanText(p.textContent || '');
-      if (t) lines.push(`ODSTAVEC: ${t}${idSuf}`);
+      if (t) lines.push(`ODSTAVEC${idSuf}: ${t}`);
     }
   }
 }

@@ -78,10 +78,41 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+const OUTLINE_LABEL_SPLIT =
+  /(?=(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI](?:\s+[^\s:]{1,20})?|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|HERO|ODD[ĚE]LOVA[ČC])(?:\s+id\s*=\s*vb-block-[\w-]+)?\s*:)/i;
+
+/** Vyhodí značky outline z čtenářského textu (když je model napíše dovnitř věty). */
+export function stripOutlineMarkersFromText(raw: string): string {
+  return String(raw || '')
+    .replace(
+      /\b(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI]|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|ODD[ĚE]LOVA[ČC]|HERO|SKUPINA)\s*:/gi,
+      ' ',
+    )
+    .replace(/\bid\s*=\s*vb-block-[\w-]+/gi, ' ')
+    .replace(/\s*[|]\s*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function takeId(raw: string): { id?: string; rest: string } {
-  const m = String(raw || '').match(/\bid\s*=\s*(vb-block-[\w-]+)/i);
-  if (!m) return { rest: raw };
-  return { id: m[1], rest: raw.replace(m[0], '').replace(/\s{2,}/g, ' ').trim() };
+  let rest = String(raw || '');
+  let id: string | undefined;
+  rest = rest.replace(/\bid\s*=\s*(vb-block-[\w-]+)/gi, (_, found: string) => {
+    if (!id) id = found;
+    return ' ';
+  });
+  rest = rest.replace(/\s{2,}/g, ' ').trim();
+  return id ? { id, rest } : { rest };
+}
+
+function expandOutlineLine(line: string): string[] {
+  const trimmed = String(line || '').trim();
+  if (!trimmed || /^={2,}/.test(trimmed)) return [trimmed];
+  const parts = trimmed
+    .split(OUTLINE_LABEL_SPLIT)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return parts.length ? parts : [trimmed];
 }
 
 function takeMeta(raw: string): { rest: string; slug?: string; layout?: OutlineBlock['layout']; href?: string } {
@@ -140,7 +171,7 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
     }
   };
 
-  const lines = text.split('\n');
+  const lines = text.split('\n').flatMap(expandOutlineLine);
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#') || /^meta\b/i.test(line)) continue;
@@ -162,14 +193,17 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
 
     const pair = splitLabelValue(line);
     if (!pair) {
-      if (line.length >= 8) push({ type: 'paragraph', text: line });
+      const loose = stripOutlineMarkersFromText(line);
+      if (loose.length >= 8) push({ type: 'paragraph', text: loose });
       continue;
     }
 
-    const kind = classifyOutlineLabel(pair.label);
+    const fromLabel = takeId(pair.label);
+    const kind = classifyOutlineLabel(fromLabel.rest || pair.label);
     if (!kind) continue;
-    const { id, rest: afterId } = takeId(pair.value);
-    const meta = takeMeta(afterId);
+    const fromValue = takeId(pair.value);
+    const id = fromValue.id || fromLabel.id;
+    const meta = takeMeta(fromValue.rest);
 
     if (kind === 'section') {
       currentSection = {
@@ -187,7 +221,7 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
       push({
         type: 'heading',
         id,
-        text: meta.rest,
+        text: stripOutlineMarkersFromText(meta.rest),
         level,
         color: mapOutlineColor(pair.label) || undefined,
       });
@@ -197,8 +231,8 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
       push({
         type: 'highlight',
         id,
-        text: meta.rest,
-        heading: /nadpis/i.test(pair.label) ? meta.rest : undefined,
+        text: stripOutlineMarkersFromText(meta.rest),
+        heading: /nadpis/i.test(pair.label) ? stripOutlineMarkersFromText(meta.rest) : undefined,
         color: mapOutlineColor(pair.label) || '#F3F0FF',
       });
       continue;
@@ -248,7 +282,11 @@ export function parseOutlineText(raw: string): OutlineBlock[] {
       push({ type: 'hero', id, text: meta.rest });
       continue;
     }
-    push({ type: 'paragraph', id, text: meta.rest || pair.value });
+    push({
+      type: 'paragraph',
+      id,
+      text: stripOutlineMarkersFromText(meta.rest || pair.value),
+    });
   }
 
   return roots;
@@ -304,7 +342,7 @@ function compileOne(block: OutlineBlock): string {
     case 'heading':
       return shell(
         'text',
-        headingHtml(block.level || 2, block.text || block.heading || ''),
+        headingHtml(block.level || 2, stripOutlineMarkersFromText(block.text || block.heading || '')),
         'padding:10px 24px;background:transparent;',
         '',
         id,
@@ -312,7 +350,7 @@ function compileOne(block: OutlineBlock): string {
     case 'paragraph': {
       const paras = String(block.text || '')
         .split(/\n{2,}/)
-        .map((p) => p.trim())
+        .map((p) => stripOutlineMarkersFromText(p))
         .filter(Boolean)
         .map((p) => `<p style="${pStyle()}">${escapeHtml(p)}</p>`)
         .join('');
@@ -324,7 +362,7 @@ function compileOne(block: OutlineBlock): string {
         ? headingHtml(3, block.heading)
         : '';
       const body = block.text && block.text !== block.heading
-        ? `<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.65;color:#334155;">${escapeHtml(block.text)}</p>`
+        ? `<p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.65;color:#334155;">${escapeHtml(stripOutlineMarkersFromText(block.text))}</p>`
         : '';
       return shell(
         'highlight',
@@ -419,6 +457,46 @@ export function compileOutlineToHtml(blocks: OutlineBlock[], opts?: { fragment?:
   return `${MOBILE_STYLE}<div class="vb-email-root" style="width:600px;max-width:100%;margin-left:auto;margin-right:auto;">${inner}</div>`;
 }
 
+function flattenOutlineBlocks(blocks: OutlineBlock[]): OutlineBlock[] {
+  const out: OutlineBlock[] = [];
+  for (const b of blocks) {
+    if (b.type === 'section' && b.items?.length) out.push(...flattenOutlineBlocks(b.items));
+    else if (b.type !== 'section') out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Úprava jednoho bloku v editoru: jeden [data-vb-block] se stejným id,
+ * odstavce zůstanou <p> uvnitř — ne nová karta a ne štítky outline.
+ */
+export function compileOutlineToEditedBlockHtml(blocks: OutlineBlock[]): string {
+  const flat = flattenOutlineBlocks(blocks);
+  const textish = flat.filter((b) =>
+    b.type === 'paragraph' || b.type === 'heading' || b.type === 'highlight' || b.type === 'gap',
+  );
+  if (textish.length && textish.length === flat.length) {
+    const id = textish.find((b) => b.id)?.id;
+    if (textish.length === 1 && textish[0].type === 'highlight') {
+      return compileOne({ ...textish[0], id: id || textish[0].id });
+    }
+    const inner = textish
+      .map((b) => {
+        const t = stripOutlineMarkersFromText(b.text || b.heading || '');
+        if (b.type === 'heading') return headingHtml(b.level || 2, t);
+        return t
+          .split(/\n{2,}/)
+          .map((p) => p.trim())
+          .filter(Boolean)
+          .map((p) => `<p style="${pStyle()}">${escapeHtml(p)}</p>`)
+          .join('');
+      })
+      .join('');
+    return shell('text', inner || `<p style="${pStyle()}"></p>`, 'padding:10px 24px;background:transparent;', '', id);
+  }
+  return compileOutlineToHtml(blocks, { fragment: true });
+}
+
 export const OUTLINE_FORMAT_SPEC = `Formát (jeden řádek = jeden kus, ŽÁDNÉ HTML):
 === SKUPINA karta ===
 NADPIS: text nadpisu
@@ -431,7 +509,8 @@ PRODUKTY: id1, id2
 ODDĚLOVAČ
 
 Barvy skupiny/boxu: žlutá, fialová, oranžová, modrá, zelená.
-U úpravy existujícího mailu zachovej id=vb-block-xxxx u řádků, které neměníš.`;
+id piš JEN vlevo u značky, NIKDY do věty: ODSTAVEC id=vb-block-xxxx: text
+Do textu po dvojtečce NEPATŘÍ slova ODSTAVEC / NADPIS / id=.`;
 
 export type OutlineComposeMeta = {
   subject: string;
@@ -473,7 +552,7 @@ Pravidla:
 - Úvod = 2–4 ODSTAVEC řádky, pak další sekce.
 - Webinář jen se slugem z dat. Produkty jen s id z katalogu.
 - Při „Aktuální email jako textové bloky“ UPRAV ten text, nepřepisuj ho od nuly, pokud uživatel nechce nový mail.
-- Režim jednoho bloku: vrať jen řádky toho bloku, zachovej id=.`;
+- Režim jednoho bloku: vrať jen řádky toho bloku. id= jen u značky (ODSTAVEC id=vb-block-xxx:), nikdy uvnitř věty.`;
 
 const LAYOUT_SYS = `Jsi layoutista e-mailu. Dostaneš volný popis bloků. Roztřiď ho do PŘESNÉHO formátu, nic si nevymýšlej.
 Vrať JSON { "outline": "..." } kde outline používá JEN tyto značky:
@@ -488,7 +567,8 @@ PRODUKTY: id1, id2
 ODDĚLOVAČ
 HERO:
 
-Zachovej id=vb-block-… z vstupu. Žádné HTML. Žádné volné věty mimo značky.`;
+Zachovej id=vb-block-… JEN u značky vlevo. Žádné HTML. Žádné volné věty mimo značky.
+NIKDY nepiš ODSTAVEC: ani id= do čtenářského textu za dvojtečkou.`;
 
 export async function composeEmailViaOutlineAgents(opts: {
   callGeminiJson: GeminiJsonFn;
@@ -601,9 +681,9 @@ export async function composeEmailViaOutlineAgents(opts: {
     return { ok: false, error: 'Layout agent neroztřídil žádné bloky', raw: layoutOutline.slice(0, 400) };
   }
 
-  const bodyHtml = compileOutlineToHtml(blocks, {
-    fragment: opts.fragmentOnly || opts.editBlockOnly,
-  });
+  const bodyHtml = opts.editBlockOnly
+    ? compileOutlineToEditedBlockHtml(blocks)
+    : compileOutlineToHtml(blocks, { fragment: opts.fragmentOnly });
   meta.outline = layoutOutline;
   return { ok: true, meta, bodyHtml, blocks: countOutlineBlocks(blocks), debug };
 }

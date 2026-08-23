@@ -693,6 +693,22 @@ function mergeAdditiveAiBlocksIntoOriginal(
  * V původním bodyHtml nahradí právě jeden blok (podle id) HTML z AI.
  * Ostatní bloky / subject / struktura zůstávají z originalHtml — model často přepíše celý mail.
  */
+function stripLeakedOutlineMarkersFromElement(root: HTMLElement): void {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+  for (const n of nodes) {
+    const cleaned = String(n.nodeValue || '')
+      .replace(
+        /\b(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI]|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|ODD[ĚE]LOVA[ČC]|HERO|SKUPINA)\s*:/gi,
+        ' ',
+      )
+      .replace(/\bid\s*=\s*vb-block-[\w-]+/gi, ' ')
+      .replace(/\s{2,}/g, ' ');
+    if (cleaned !== n.nodeValue) n.nodeValue = cleaned;
+  }
+}
+
 function mergeAiEditedBlockIntoBodyHtml(
   originalHtml: string,
   blockId: string,
@@ -704,7 +720,9 @@ function mergeAiEditedBlockIntoBodyHtml(
   if (!replacementRaw) {
     const trimmed = String(aiBodyHtml || '').trim();
     const looksLikeWholeMail = /class=["'][^"']*vb-email-root|data-vb-block=["']hero["']/i.test(trimmed);
-    if (trimmed && !looksLikeWholeMail && trimmed.length < 40_000) {
+    const looksLikeOutlineDump =
+      /(?:NADPIS|ODSTAVEC|ZVYRAZN)\s*:/i.test(trimmed) && !/data-vb-block/i.test(trimmed);
+    if (trimmed && !looksLikeWholeMail && !looksLikeOutlineDump && trimmed.length < 40_000) {
       replacementRaw = trimmed;
     }
   }
@@ -722,6 +740,16 @@ function mergeAiEditedBlockIntoBodyHtml(
       (tmp.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null) ||
       (tmp.firstElementChild as HTMLElement | null);
     if (!next) return { html: originalHtml, ok: false, reason: 'invalid-replacement' };
+    if (
+      next.getAttribute('data-vb-block') === 'section' &&
+      target.getAttribute('data-vb-block') !== 'section'
+    ) {
+      const inner =
+        (next.querySelector(`[data-vb-block-id="${CSS.escape(blockId)}"]`) as HTMLElement | null) ||
+        (next.querySelector('[data-vb-block="text"], [data-vb-block="highlight"]') as HTMLElement | null);
+      if (inner) next = inner;
+    }
+    stripLeakedOutlineMarkersFromElement(next);
 
     const origImgs = [...target.querySelectorAll('img[src]')];
     const nextImgs = [...next.querySelectorAll('img[src]')];
@@ -6240,7 +6268,10 @@ export default function EmailBuilder() {
         insertCtx =
           '\n\n[DŮLEŽITÉ — režim úpravy JEDNOHO bloku · POVINNÉ]: Uživatel zvolil konkrétní blok (žluté AI u lišty). ' +
           `id=${editBlockId} — toto id NIKDY neměň. ` +
-          'V outline vrať POUZE text tohoto jednoho bloku (NADPIS/ODSTAVEC/…). Žádné HTML. ' +
+          'V outline vrať POUZE text tohoto jednoho bloku. ' +
+          'Značka vlevo, čistý text vpravo: ODSTAVEC id=' +
+          editBlockId +
+          ': věta. Do věty NEPATŘÍ slova ODSTAVEC / NADPIS / id=. Žádné HTML. ' +
           'subject / headline / previewText / cta NECH beze změny. ' +
           `Blok k úpravě jako text:\n"""${serializeEmailBodyToOutline(targetHtml) || targetHtml}"""`;
       } else if (insertBeforeBlockId) {
