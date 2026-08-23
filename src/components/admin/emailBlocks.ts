@@ -826,6 +826,8 @@ function normalizeEmailBlockContainer(container: HTMLElement) {
       normalizeEmailBlockContainer(el);
     } else if (t === 'highlight') {
       applyHighlightChrome(el);
+    } else if (t === 'hero') {
+      applyHeroChrome(el);
     } else if (t === 'webinar') {
       applyWebinarGroupInset(el);
     } else if (t === 'columns-2' || t === 'columns-3') {
@@ -1172,15 +1174,91 @@ function isDarkHeroBackground(color: string): boolean {
   return (0.2126 * rgb.r + 0.7152 * rgb.g + 0.0722 * rgb.b) / 255 < 0.58;
 }
 
+function isTransparentHeroBg(bg: string): boolean {
+  const n = (bg || '').toLowerCase().replace(/\s+/g, '');
+  return (
+    !n ||
+    n === 'transparent' ||
+    n === 'none' ||
+    n === 'inherit' ||
+    n === 'initial' ||
+    /^rgba?\(0,0,0,0(?:\.0+)?\)$/.test(n)
+  );
+}
+
+function readPaintedBackground(el: HTMLElement): string {
+  const style = el.getAttribute('style') || '';
+  const colorMatch = style.match(/background-color\s*:\s*([^;]+)/i);
+  const color = (colorMatch?.[1] || '').trim();
+  if (color && !isTransparentHeroBg(color)) return color;
+  const bgMatch = style.match(/(?:^|;)\s*background\s*:\s*([^;]+)/i);
+  const bg = (bgMatch?.[1] || '').trim();
+  if (bg && !isTransparentHeroBg(bg) && !/^url\(/i.test(bg)) return bg;
+  const attr = (el.getAttribute('bgcolor') || '').trim();
+  return attr && !isTransparentHeroBg(attr) ? attr : '';
+}
+
+function isHeroChromeExempt(el: HTMLElement): boolean {
+  if (el.closest('.vb-preview-cta, a.vb-webinar-cta, [data-vb-col-chooser], [data-email-webinar="true"]')) {
+    return true;
+  }
+  if (/^(IMG|SVG|BUTTON|A|HR)$/i.test(el.tagName)) return true;
+  const st = el.getAttribute('style') || '';
+  return /border-radius\s*:\s*999px/i.test(st);
+}
+
+/** Viditelné výplně v hero — AI často maluje `td` / vnořený div, ne obal. */
+function heroFillTargets(block: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  block.querySelectorAll<HTMLElement>('div,td,th,table,section').forEach((el) => {
+    if (el === block) return;
+    if (isHeroChromeExempt(el)) return;
+    if (!readPaintedBackground(el)) return;
+    out.push(el);
+  });
+  return out;
+}
+
+function pickPrimaryHeroFill(block: HTMLElement, fills: HTMLElement[]): HTMLElement | null {
+  if (!fills.length) return null;
+  const outer = fills.filter((f) => !fills.some((o) => o !== f && o.contains(f)));
+  outer.sort((a, b) => (b.textContent || '').length - (a.textContent || '').length);
+  return outer[0] || fills[0];
+}
+
+function paintHeroSurface(el: HTMLElement, color: string, radiusPx?: number) {
+  let st = el.getAttribute('style') || '';
+  st = setInlineStyleValue(st, 'background', color);
+  st = setInlineStyleValue(st, 'background-color', color);
+  if (radiusPx !== undefined) {
+    st = setInlineStyleValue(st, 'border-radius', `${radiusPx}px`);
+  }
+  el.setAttribute('style', st.endsWith(';') ? st : `${st};`);
+  if (/^(TD|TH|TABLE)$/i.test(el.tagName)) {
+    el.setAttribute('bgcolor', color);
+  }
+}
+
 export function ensureHeroBox(block: HTMLElement): HTMLElement {
-  const existing = block.querySelector(':scope > [data-vb-hero-box]') as HTMLElement | null;
+  const existing = block.querySelector('[data-vb-hero-box]') as HTMLElement | null;
   if (existing) return existing;
+  const painted = pickPrimaryHeroFill(block, heroFillTargets(block));
+  if (painted) {
+    painted.setAttribute('data-vb-hero-box', '1');
+    return painted;
+  }
   const kids = [...block.children].filter(
     (c) => c.nodeType === 1 && !/^(STYLE|SCRIPT)$/i.test((c as HTMLElement).tagName),
   ) as HTMLElement[];
-  if (kids.length === 1 && !kids[0].hasAttribute('data-vb-block') && !kids[0].hasAttribute('data-vb-block-id')) {
-    kids[0].setAttribute('data-vb-hero-box', '1');
-    return kids[0];
+  const only = kids.length === 1 ? kids[0] : null;
+  const onlyIsWrapper =
+    !!only &&
+    !only.hasAttribute('data-vb-block') &&
+    !only.hasAttribute('data-vb-block-id') &&
+    /^(DIV|TABLE|TD|TH|SECTION)$/i.test(only.tagName);
+  if (onlyIsWrapper) {
+    only.setAttribute('data-vb-hero-box', '1');
+    return only;
   }
   const box = (block.ownerDocument || document).createElement('div');
   box.setAttribute('data-vb-hero-box', '1');
@@ -1190,17 +1268,17 @@ export function ensureHeroBox(block: HTMLElement): HTMLElement {
 }
 
 export function readHeroChrome(block: HTMLElement): EmailHeroChrome {
-  const box = block.querySelector(':scope > [data-vb-hero-box]') as HTMLElement | null;
   const bgAttr = (block.getAttribute('data-vb-chrome-bg') || '').trim();
-  const fromBox = box ? readElementBackground(box) : '';
-  const nested = !fromBox
-    ? readElementBackground(
-        (block.querySelector(':scope > div') as HTMLElement | null) || block,
-      )
-    : '';
+  const box = block.querySelector('[data-vb-hero-box]') as HTMLElement | null;
+  const fromBox = box ? readPaintedBackground(box) : '';
+  const fromFill = !fromBox ? (() => {
+    const fill = pickPrimaryHeroFill(block, heroFillTargets(block));
+    return fill ? readPaintedBackground(fill) : '';
+  })() : '';
+  const fromRoot = !fromBox && !fromFill ? readPaintedBackground(block) : '';
   const radiusRaw = Number.parseInt(block.getAttribute('data-vb-chrome-radius') || '', 10);
   return {
-    background: bgAttr || fromBox || nested || EMAIL_HERO_DEFAULT_BG,
+    background: bgAttr || fromBox || fromFill || fromRoot || EMAIL_HERO_DEFAULT_BG,
     radius: Number.isFinite(radiusRaw)
       ? Math.max(0, Math.min(48, radiusRaw))
       : EMAIL_HERO_DEFAULT_RADIUS,
@@ -1215,41 +1293,54 @@ export function applyHeroChrome(block: HTMLElement, patch?: Partial<EmailHeroChr
     radius: patch?.radius ?? cur.radius,
   };
   const dark = isDarkHeroBackground(next.background);
-  block.setAttribute('data-vb-block', 'hero');
-  block.setAttribute('data-vb-chrome-bg', next.background);
-  block.setAttribute('data-vb-chrome-radius', String(next.radius));
-
-  let shell = block.getAttribute('style') || '';
-  shell = setInlineStyleValue(shell, 'background', 'transparent');
-  shell = setInlineStyleValue(shell, 'background-color', 'transparent');
-  block.setAttribute('style', shell.endsWith(';') ? shell : `${shell};`);
-
-  const box = ensureHeroBox(block);
-  let boxStyle = box.getAttribute('style') || '';
-  boxStyle = setInlineStyleValue(boxStyle, 'background', next.background);
-  boxStyle = setInlineStyleValue(boxStyle, 'background-color', next.background);
-  boxStyle = setInlineStyleValue(boxStyle, 'border-radius', `${next.radius}px`);
-  if (!/padding\s*:/i.test(boxStyle)) {
-    boxStyle = setInlineStyleValue(boxStyle, 'padding', '28px 22px');
-  }
-  if (!/text-align\s*:/i.test(boxStyle)) {
-    boxStyle = setInlineStyleValue(boxStyle, 'text-align', 'center');
-  }
-  box.setAttribute('style', boxStyle.endsWith(';') ? boxStyle : `${boxStyle};`);
-
   const title = dark ? '#ffffff' : '#001161';
   const body = dark ? 'rgba(255,255,255,0.82)' : 'rgba(0,17,97,0.72)';
   const pillBg = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,17,97,0.08)';
   const pillFg = dark ? '#ffffff' : '#001161';
+  block.setAttribute('data-vb-block', 'hero');
+  block.setAttribute('data-vb-chrome-bg', next.background);
+  block.setAttribute('data-vb-chrome-radius', String(next.radius));
+
+  // Nejdřív najdi skutečné výplně — až potom sundej barvu ze shellu.
+  const fills = heroFillTargets(block);
+  const box = ensureHeroBox(block);
+
+  let shell = block.getAttribute('style') || '';
+  shell = setInlineStyleValue(shell, 'background', 'transparent');
+  shell = setInlineStyleValue(shell, 'background-color', 'transparent');
+  shell = setInlineStyleValue(shell, 'box-shadow', '');
+  shell = setInlineStyleValue(shell, 'border', 'none');
+  block.setAttribute('style', shell.endsWith(';') ? shell : `${shell};`);
+  block.removeAttribute('bgcolor');
+
+  const targets = new Set<HTMLElement>([box, ...fills]);
+  targets.delete(block);
+  for (const el of targets) {
+    const outermost = !fills.some((o) => o !== el && o.contains(el));
+    const applyRadius = el === box || el.hasAttribute('data-vb-hero-box') || outermost;
+    paintHeroSurface(el, next.background, applyRadius ? next.radius : undefined);
+    let inherit = el.getAttribute('style') || '';
+    inherit = setInlineStyleValue(inherit, 'color', title);
+    el.setAttribute('style', inherit.endsWith(';') ? inherit : `${inherit};`);
+  }
+  if (!/padding\s*:/i.test(box.getAttribute('style') || '')) {
+    let boxStyle = box.getAttribute('style') || '';
+    boxStyle = setInlineStyleValue(boxStyle, 'padding', '28px 22px');
+    if (!/text-align\s*:/i.test(boxStyle)) {
+      boxStyle = setInlineStyleValue(boxStyle, 'text-align', 'center');
+    }
+    box.setAttribute('style', boxStyle.endsWith(';') ? boxStyle : `${boxStyle};`);
+  }
+
   box.querySelectorAll('h1,h2,h3,h4').forEach((node) => {
     const el = node as HTMLElement;
     let st = el.getAttribute('style') || '';
     st = setInlineStyleValue(st, 'color', title);
     el.setAttribute('style', st.endsWith(';') ? st : `${st};`);
   });
-  box.querySelectorAll('p,li,span,div').forEach((node) => {
+  box.querySelectorAll('p,li,span,div,td,th').forEach((node) => {
     const el = node as HTMLElement;
-    if (el === box || el.hasAttribute('data-vb-hero-box')) return;
+    if (el === box || el.hasAttribute('data-vb-hero-box') || targets.has(el)) return;
     if (/^(H1|H2|H3|H4)$/i.test(el.tagName)) return;
     let st = el.getAttribute('style') || '';
     const isPill = /border-radius\s*:\s*999px/i.test(st) || /text-transform\s*:\s*uppercase/i.test(st);
@@ -1270,6 +1361,11 @@ export type StripCardChromeOptions = {
  * jinak vypadá jako karta v kartě. Panel stín jde zapnout znovu (`data-vb-has-shadow`).
  */
 export function stripSectionCardChromeFromBlock(el: HTMLElement, opts?: StripCardChromeOptions) {
+  const blockType = el.getAttribute('data-vb-block') || '';
+  // Hero má vlastní výplň (často vnořený td/div) — nestrhávej ji jako kartový chrome.
+  if (blockType === 'hero') {
+    return;
+  }
   const full = opts?.full !== false;
   const scrub = (node: HTMLElement) => {
     // Manuálně zapnutý stín z panelu — nesahej na box-shadow.
@@ -1337,7 +1433,6 @@ export function stripSectionCardChromeFromBlock(el: HTMLElement, opts?: StripCar
 
   scrub(el);
   // Highlight / webinář / collage mají vlastní vnitřní obsah — nesahej na něj.
-  const blockType = el.getAttribute('data-vb-block') || '';
   if (blockType === 'webinar') {
     applyWebinarGroupInset(el);
     return;
@@ -1382,10 +1477,13 @@ export function stripCardChromeInsideSections(root: HTMLElement) {
       ) {
         promoteShadow = true;
       }
+      const unitType = unit.getAttribute('data-vb-block');
       const bgMatch = style.match(/background(?:-color)?\s*:\s*([^;]+)/i);
       const bg = (bgMatch?.[1] || '').trim();
       const bgNorm = bg.toLowerCase().replace(/\s+/g, '');
       if (
+        unitType !== 'hero' &&
+        unitType !== 'highlight' &&
         bg &&
         bgNorm !== 'transparent' &&
         bgNorm !== 'rgba(0,0,0,0)' &&
@@ -1398,10 +1496,13 @@ export function stripCardChromeInsideSections(root: HTMLElement) {
       }
       stripSectionCardChromeFromBlock(unit, { full: true });
       unit.removeAttribute('data-vb-has-shadow');
-      if (unit.getAttribute('data-vb-block') === 'highlight') {
+      if (unitType === 'highlight') {
         applyHighlightChrome(unit);
       }
-      if (unit.getAttribute('data-vb-block') === 'webinar') {
+      if (unitType === 'hero') {
+        applyHeroChrome(unit);
+      }
+      if (unitType === 'webinar') {
         applyWebinarGroupInset(unit);
       }
     }
@@ -1861,6 +1962,7 @@ export function groupEmailBlocksIntoSection(
     stripSectionCardChromeFromBlock(unit, { full: true });
     if (unit.getAttribute('data-vb-block') === 'webinar') applyWebinarGroupInset(unit);
     if (unit.getAttribute('data-vb-block') === 'highlight') applyHighlightChrome(unit);
+    if (unit.getAttribute('data-vb-block') === 'hero') applyHeroChrome(unit);
   }
   applySectionChrome(wrap, { fill: 'card', border: false, shadow: false });
 
