@@ -81,10 +81,12 @@ export function applyEmailBuilderHeadingStyles(root: ParentNode): void {
     const light =
       headingColorIsLight(el.style.color || '') ||
       /color\s*:\s*(#fff(?:fff)?|white|rgba?\(\s*255)/i.test(prev);
+    const existingSize = (el.style.fontSize || (prev.match(/font-size\s*:\s*([^;]+)/i)?.[1] || '')).trim();
     el.setAttribute(
       'style',
       light ? EMAIL_BUILDER_HEADING_STYLES_ON_DARK[tag] : EMAIL_BUILDER_HEADING_STYLES[tag],
     );
+    if (existingSize) el.style.setProperty('font-size', existingSize);
   });
 }
 

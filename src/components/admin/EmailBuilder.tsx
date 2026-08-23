@@ -1102,11 +1102,11 @@ body.vb-img-edit .vb-email-root>[data-vb-block="section"]{cursor:grab}`
 :root{--vb-preview-outer:${outer};--vb-preview-card:${card};}
 .vb-email-root .vb-dnd-dragging{opacity:0.45!important;outline:2px dashed #7C3AED!important;outline-offset:-2px!important;}
 html,body{margin:0;padding:0;-webkit-text-size-adjust:100%;}
-/* Desktop typografie nadpisů (barva zůstává z inline stylů AI/editoru) */
-.vb-email-root h1:not(:is([data-email-webinar="true"] *)){margin:0 0 14px 0!important;font-size:26px!important;font-weight:800!important;line-height:1.2!important;}
-.vb-email-root h2:not(:is([data-email-webinar="true"] *)){margin:0 0 12px 0!important;font-size:22px!important;font-weight:800!important;line-height:1.25!important;}
-.vb-email-root h3:not(:is([data-email-webinar="true"] *)){margin:0 0 10px 0!important;font-size:19px!important;font-weight:700!important;line-height:1.35!important;}
-.vb-email-root h4:not(:is([data-email-webinar="true"] *)){margin:0 0 8px 0!important;font-size:16px!important;font-weight:700!important;line-height:1.4!important;}
+/* Desktop typografie nadpisů — bez font-size !important, ať lišta „Velikost“ platí. */
+.vb-email-root h1:not(:is([data-email-webinar="true"] *)){margin:0 0 14px 0!important;font-weight:800!important;line-height:1.2!important;}
+.vb-email-root h2:not(:is([data-email-webinar="true"] *)){margin:0 0 12px 0!important;font-weight:800!important;line-height:1.25!important;}
+.vb-email-root h3:not(:is([data-email-webinar="true"] *)){margin:0 0 10px 0!important;font-weight:700!important;line-height:1.35!important;}
+.vb-email-root h4:not(:is([data-email-webinar="true"] *)){margin:0 0 8px 0!important;font-weight:700!important;line-height:1.4!important;}
 /*
  * Iframe je vždy vysoký přesně jako obsah (viz syncHeight) a uvnitř se nikdy neroluje —
  * jinak by dokument v iframu sebral kolečko a plátno editoru by se nehýbalo.
@@ -1326,7 +1326,10 @@ pre,code,kbd,samp{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,
 a{color:#7C3AED;}
 img{max-width:100%;height:auto;}
 ${imgEditCss}
-@media only screen and (max-width:600px){
+${
+    imageEditMode
+      ? ''
+      : `@media only screen and (max-width:600px){
   body{font-size:15px!important;line-height:1.65!important;}
   body p:not(:is([data-email-webinar="true"] *)),
   body li:not(:is([data-email-webinar="true"] *)){font-size:15px!important;line-height:1.65!important;}
@@ -1334,7 +1337,8 @@ ${imgEditCss}
   body h2:not(:is([data-email-webinar="true"] *)){font-size:22px!important;line-height:1.25!important;}
   body h3:not(:is([data-email-webinar="true"] *)){font-size:19px!important;}
   a.vb-preview-cta{font-size:15px!important;padding:16px 28px!important;line-height:1.2!important;}
-}
+}`
+  }
 </style></head><body${bodyClass}>${inner}</body></html>`;
 }
 
@@ -1914,20 +1918,85 @@ function wrapSelectionInStyledSpan(doc: Document, styleKey: string, styleValue: 
   const range = sel.getRangeAt(0);
   if (range.collapsed) return;
   const span = doc.createElement('span');
-  span.setAttribute('style', `${styleKey}: ${styleValue}`);
+  span.style.setProperty(styleKey, styleValue);
   try {
     range.surroundContents(span);
   } catch {
+    const extracted = range.cloneContents();
+    if (extracted.querySelector('p,h1,h2,h3,h4,h5,h6,li,table,ul,ol')) {
+      return;
+    }
     try {
       const frag = range.extractContents();
       span.appendChild(frag);
       range.insertNode(span);
     } catch { /* ignore */ }
   }
+  if (!span.isConnected) return;
   sel.removeAllRanges();
   const nr = doc.createRange();
   nr.selectNodeContents(span);
   sel.addRange(nr);
+}
+
+const EMAIL_TEXT_HOST_SEL = 'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,address,pre';
+
+function setEmailFontSizePx(el: HTMLElement, px: string) {
+  el.style.setProperty('font-size', `${px}px`);
+  el.querySelectorAll<HTMLElement>('[style*="font-size"]').forEach((child) => {
+    if (child === el) return;
+    child.style.removeProperty('font-size');
+  });
+}
+
+function rangeCoversElementContents(range: Range, el: HTMLElement): boolean {
+  try {
+    const er = el.ownerDocument.createRange();
+    er.selectNodeContents(el);
+    return (
+      range.compareBoundaryPoints(0, er) <= 0 &&
+      range.compareBoundaryPoints(2, er) >= 0
+    );
+  } catch {
+    return false;
+  }
+}
+
+function applyFontSizeToSelection(doc: Document, block: HTMLElement, px: string) {
+  const sel = doc.getSelection();
+  const range =
+    sel && sel.rangeCount > 0 && !sel.isCollapsed ? sel.getRangeAt(0) : null;
+  if (!range) {
+    applyFontSizeToWholeBlock(block, px);
+    return;
+  }
+
+  const hosts = [...block.querySelectorAll(EMAIL_TEXT_HOST_SEL)] as HTMLElement[];
+  if (hosts.length === 0) {
+    setEmailFontSizePx(block, px);
+    return;
+  }
+  const hits = hosts.filter((h) => {
+    try {
+      return range.intersectsNode(h);
+    } catch {
+      return false;
+    }
+  });
+  if (hits.length === 0) {
+    applyFontSizeToWholeBlock(block, px);
+    return;
+  }
+  if (hits.length > 1 || hits.some((h) => rangeCoversElementContents(range, h))) {
+    for (const h of hits) setEmailFontSizePx(h, px);
+    return;
+  }
+
+  wrapSelectionInStyledSpan(doc, 'font-size', `${px}px`);
+  const host = hits[0];
+  if (host && !host.querySelector('span[style*="font-size"]')) {
+    setEmailFontSizePx(host, px);
+  }
 }
 
 const HIGHLIGHT_STYLE_KEYS = ['background-color', 'background', 'background-image'] as const;
@@ -2015,15 +2084,13 @@ function rangeBelongsToBlock(range: Range, block: HTMLElement): boolean {
 
 function applyFontSizeToWholeBlock(block: HTMLElement, px: string) {
   const textHosts = [
-    ...block.querySelectorAll(
-      'p,h1,h2,h3,h4,h5,h6,li,blockquote,figcaption,dt,dd,address,pre,a,button',
-    ),
+    ...block.querySelectorAll(EMAIL_TEXT_HOST_SEL),
   ] as HTMLElement[];
   if (textHosts.length === 0) {
-    block.style.fontSize = `${px}px`;
+    setEmailFontSizePx(block, px);
     return;
   }
-  for (const el of textHosts) el.style.fontSize = `${px}px`;
+  for (const el of textHosts) setEmailFontSizePx(el, px);
 }
 
 /** Horní lišta formátování (Mailchimp styl) — příkazy vůči `designMode` dokumentu v iframe. */
@@ -2052,13 +2119,26 @@ function EmailRichTextToolbar({
     const root = d ? getEmailDndRoot(d) : null;
     const block = root && selectedBlockId ? findEmailBlockById(root, selectedBlockId) : null;
     const sel = d?.getSelection();
-    if (!block || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
-      savedTextRangeRef.current = null;
-      return;
-    }
+    // Při kliknutí na lištu iframe výběr zkolabuje — poslední neprázdný range si nech.
+    if (!block || !sel || sel.rangeCount === 0 || sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
-    savedTextRangeRef.current = rangeBelongsToBlock(range, block) ? range.cloneRange() : null;
+    if (rangeBelongsToBlock(range, block)) {
+      savedTextRangeRef.current = range.cloneRange();
+    }
   };
+
+  useEffect(() => {
+    const d = iframeRef.current?.contentDocument;
+    const win = iframeRef.current?.contentWindow;
+    if (!d) return;
+    const save = () => rememberTextSelection();
+    d.addEventListener('selectionchange', save);
+    win?.addEventListener('blur', save);
+    return () => {
+      d.removeEventListener('selectionchange', save);
+      win?.removeEventListener('blur', save);
+    };
+  }, [selectedBlockId, refreshEpoch]);
 
   /**
    * Nezkolabovaný výběr v označeném bloku = jen vybraný text.
@@ -2092,7 +2172,11 @@ function EmailRichTextToolbar({
     const nextSel = d.getSelection();
     nextSel?.removeAllRanges();
     if (current) {
-      nextSel?.addRange(current);
+      try {
+        nextSel?.addRange(current);
+      } catch {
+        return { doc: d, win: w, block, textSelection: false };
+      }
       return { doc: d, win: w, block, textSelection: true };
     }
 
@@ -2222,8 +2306,7 @@ function EmailRichTextToolbar({
           if (!px) return;
           const target = prepareToolbarTarget();
           if (!target) return;
-          if (target.textSelection) wrapSelectionInStyledSpan(target.doc, 'font-size', `${px}px`);
-          else applyFontSizeToWholeBlock(target.block, px);
+          applyFontSizeToSelection(target.doc, target.block, px);
           emitToolbarInput(target.doc, target.textSelection);
           e.target.selectedIndex = 0;
         }}
