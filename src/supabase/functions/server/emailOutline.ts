@@ -81,16 +81,26 @@ function escapeHtml(value: string): string {
 const OUTLINE_LABEL_SPLIT =
   /(?=(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI](?:\s+[^\s:]{1,20})?|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|HERO|ODD[ĚE]LOVA[ČC])(?:\s+id\s*=\s*vb-block-[\w-]+)?\s*:)/i;
 
+/** Model často napíše doslovné `\\n` místo zalomení. */
+export function unescapeOutlineEscapes(raw: string): string {
+  return String(raw || '')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '')
+    .replace(/\\t/g, ' ')
+    .replace(/\\"/g, '"');
+}
+
 /** Vyhodí značky outline z čtenářského textu (když je model napíše dovnitř věty). */
 export function stripOutlineMarkersFromText(raw: string): string {
-  return String(raw || '')
+  return unescapeOutlineEscapes(raw)
     .replace(
       /\b(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI]|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|ODD[ĚE]LOVA[ČC]|HERO|SKUPINA)\s*:/gi,
       ' ',
     )
     .replace(/\bid\s*=\s*vb-block-[\w-]+/gi, ' ')
-    .replace(/\s*[|]\s*/g, ' ')
-    .replace(/\s{2,}/g, ' ')
+    .replace(/[ \t]*\|[ \t]*/g, ' ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]*\n[ \t]*/g, '\n')
     .trim();
 }
 
@@ -156,7 +166,7 @@ function splitLabelValue(line: string): { label: string; value: string } | null 
 
 /** Volný / přísný text bloků → strom. */
 export function parseOutlineText(raw: string): OutlineBlock[] {
-  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  const text = unescapeOutlineEscapes(String(raw || '')).replace(/\r\n/g, '\n').trim();
   if (!text) return [];
 
   const roots: OutlineBlock[] = [];
@@ -349,7 +359,7 @@ function compileOne(block: OutlineBlock): string {
       );
     case 'paragraph': {
       const paras = String(block.text || '')
-        .split(/\n{2,}/)
+        .split(/\n+/)
         .map((p) => stripOutlineMarkersFromText(p))
         .filter(Boolean)
         .map((p) => `<p style="${pStyle()}">${escapeHtml(p)}</p>`)
@@ -485,7 +495,7 @@ export function compileOutlineToEditedBlockHtml(blocks: OutlineBlock[]): string 
         const t = stripOutlineMarkersFromText(b.text || b.heading || '');
         if (b.type === 'heading') return headingHtml(b.level || 2, t);
         return t
-          .split(/\n{2,}/)
+          .split(/\n+/)
           .map((p) => p.trim())
           .filter(Boolean)
           .map((p) => `<p style="${pStyle()}">${escapeHtml(p)}</p>`)
@@ -521,6 +531,51 @@ export type OutlineComposeMeta = {
   outline: string;
 };
 
+function looksLikeOutlineText(s: string): boolean {
+  return /(?:NADPIS|ODSTAVEC|ZVYRAZN|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|=== SKUPINA)\s*:/i.test(s);
+}
+
+function parseLooseJsonObject(text: string): Record<string, unknown> | null {
+  const cleaned = String(text || '').replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
+  try {
+    const v = JSON.parse(cleaned);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>;
+  } catch {
+    /* truncated / fence */
+  }
+  const m = cleaned.match(/"outline"\s*:\s*"((?:\\.|[^"\\])*)"?/);
+  if (m) {
+    try {
+      return { outline: JSON.parse(`"${m[1]}"`) };
+    } catch {
+      return { outline: unescapeOutlineEscapes(m[1]) };
+    }
+  }
+  return null;
+}
+
+/** Vytáhne outline i z useknutého JSON nebo z omylem vráceného bodyHtml. */
+export function salvageOutlineText(raw: string, parsed?: Record<string, unknown> | null): string {
+  const obj = parsed || parseLooseJsonObject(raw);
+  if (obj) {
+    const direct = unescapeOutlineEscapes(String(obj.outline || obj.contentBrief || '').trim());
+    if (direct && looksLikeOutlineText(direct)) return direct;
+    if (direct && !/<div[\s>]/i.test(direct) && direct.length > 8) return direct;
+    const bh = unescapeOutlineEscapes(String(obj.bodyHtml || '').trim());
+    if (bh && looksLikeOutlineText(bh) && !/<div[\s>]/i.test(bh)) return bh;
+  }
+  const un = unescapeOutlineEscapes(String(raw || ''));
+  const idx = un.search(/(?:=== SKUPINA|NADPIS(?:\s+h[1-3])?|ODSTAVEC)\s*:/i);
+  if (idx >= 0) {
+    return un
+      .slice(idx)
+      .replace(/"\s*,\s*"[a-zA-Z]+"\s*:[\s\S]*$/, '')
+      .replace(/"\s*\}\s*$/, '')
+      .trim();
+  }
+  return '';
+}
+
 export function extractOutlineMeta(value: Record<string, unknown>): OutlineComposeMeta {
   return {
     subject: String(value.subject || '').trim(),
@@ -528,7 +583,7 @@ export function extractOutlineMeta(value: Record<string, unknown>): OutlineCompo
     headline: String(value.headline || '').trim(),
     ctaText: String(value.ctaText || '').trim(),
     ctaUrl: String(value.ctaUrl || '').trim(),
-    outline: String(value.outline || value.contentBrief || '').trim(),
+    outline: salvageOutlineText('', value),
   };
 }
 
@@ -542,6 +597,8 @@ type GeminiJsonFn = (opts: {
 const COPYWRITER_SYS = `Jsi copywriter Vividbooks (pracovní sešity, tiskoviny, online podpora pro učitele ZŠ).
 Nepiš HTML ani CSS. Vrať POUZE JSON s poli:
 subject, previewText, headline, ctaText, ctaUrl, outline.
+NIKDY nevracej pole bodyHtml — HTML skládá kód, ne ty.
+V outline používej skutečné zalomení řádku, ne znaky \\n.
 
 outline je prostý označený text bloků e-mailu — to, co čtenář uvidí, plus typ bloku.
 ${OUTLINE_FORMAT_SPEC}
@@ -617,7 +674,7 @@ export async function composeEmailViaOutlineAgents(opts: {
   const copyRes = await opts.callGeminiJson({
     system: COPYWRITER_SYS,
     user: user1,
-    maxTokens: 8192,
+    maxTokens: 16_384,
     schema: copySchema,
   });
   if (!copyRes.ok || !copyRes.text.trim()) {
@@ -625,21 +682,25 @@ export async function composeEmailViaOutlineAgents(opts: {
   }
 
   let meta = extractOutlineMeta({});
-  try {
-    const parsed = JSON.parse(copyRes.text.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim());
-    meta = extractOutlineMeta(parsed);
-  } catch {
-    meta.outline = copyRes.text.trim();
+  const copyParsed = parseLooseJsonObject(copyRes.text);
+  if (copyParsed) meta = extractOutlineMeta(copyParsed);
+  if (!meta.outline.trim()) {
+    meta.outline = salvageOutlineText(copyRes.text, copyParsed);
   }
   debug.copyOutlineChars = meta.outline.length;
   if (!meta.outline.trim()) {
     return { ok: false, error: 'Copywriter agent nevrátil outline', raw: copyRes.text.slice(0, 400) };
   }
 
-  const layoutRes = await opts.callGeminiJson({
+  const skipLayout = opts.editBlockOnly || opts.fragmentOnly;
+  if (skipLayout) debug.skippedLayout = true;
+
+  const layoutRes = skipLayout
+    ? { ok: false, text: '' }
+    : await opts.callGeminiJson({
     system: LAYOUT_SYS,
     user: `Roztřiď tento popis do přesného formátu značek:\n\n${meta.outline}`,
-    maxTokens: 8192,
+    maxTokens: 12_288,
     schema: {
       type: 'OBJECT',
       properties: { outline: { type: 'STRING' } },

@@ -699,6 +699,7 @@ function stripLeakedOutlineMarkersFromElement(root: HTMLElement): void {
   while (walker.nextNode()) nodes.push(walker.currentNode as Text);
   for (const n of nodes) {
     const cleaned = String(n.nodeValue || '')
+      .replace(/\\n/g, ' ')
       .replace(
         /\b(?:NADPIS(?:\s+h[1-3])?|ODSTAVEC|ZVYRAZN[ĚE]N[ÍI]|WEBIN[ÁA][ŘR]|TLA[ČC][ÍI]TKO|OBR[ÁA]ZEK|PRODUKTY|ODD[ĚE]LOVA[ČC]|HERO|SKUPINA)\s*:/gi,
         ' ',
@@ -706,6 +707,16 @@ function stripLeakedOutlineMarkersFromElement(root: HTMLElement): void {
       .replace(/\bid\s*=\s*vb-block-[\w-]+/gi, ' ')
       .replace(/\s{2,}/g, ' ');
     if (cleaned !== n.nodeValue) n.nodeValue = cleaned;
+  }
+}
+
+function stripLeakedOutlineMarkersFromHtml(html: string): string {
+  try {
+    const doc = parseEmailBodyHtmlDoc(html || '');
+    stripLeakedOutlineMarkersFromElement(doc.body);
+    return doc.body.innerHTML;
+  } catch {
+    return html;
   }
 }
 
@@ -6214,7 +6225,17 @@ export default function EmailBuilder() {
         return;
       }
 
-      const convCtx = historyWithUser.map(m => `${m.role === 'user' ? 'Uživatel' : 'AI'}: ${m.content}`).join('\n');
+      const convCtx = historyWithUser
+        .map((m) => {
+          const role = m.role === 'user' ? 'Uživatel' : 'AI';
+          const content = String(m.content || '')
+            .replace(/Raw:\s*\{[\s\S]*$/gi, '')
+            .replace(/"bodyHtml"\s*:\s*"[\s\S]*$/gi, '')
+            .trim();
+          return content ? `${role}: ${content}` : '';
+        })
+        .filter(Boolean)
+        .join('\n');
 
       const docLive = previewIframeRef.current?.contentDocument;
       const anchorStill =
@@ -6581,6 +6602,8 @@ export default function EmailBuilder() {
           }
         }
       }
+
+      mergedBodyHtml = stripLeakedOutlineMarkersFromHtml(mergedBodyHtml);
 
       let aiText = '';
       if (singleBlockEditApplied) {
