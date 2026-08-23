@@ -9,23 +9,9 @@ import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
 import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
-import {
-  upsertIdentity,
-  scheduleIdentityUpsert,
-  scheduleIdentityUpsertFromEnv,
-  identityUpsertAuthorized,
-  identityLookupByEmail,
-  recordIdentifiedWebEvent,
-} from './identityUpsert.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
-import {
-  createResendNonOpenersCampaign,
-  prepareCampaignRecipients,
-  previewNonOpeners,
-  runCampaignSendBatches,
-  scheduleSendContinuation,
-} from './campaignSendEngine.ts';
+import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
 import {
   isAudienceFilterEmpty,
   normalizeAudienceFilter,
@@ -1337,7 +1323,6 @@ const corsOptions = {
     'x-client-info',
     'x-user-access-token',
     'x-distributor-token',
-    'x-identity-secret',
   ],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 };
@@ -3720,18 +3705,6 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] Webinar upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
-        scheduleIdentityUpsert(sbMailing, {
-          email: cleanEmail,
-          first_name: nameParts[0] || null,
-          last_name: nameParts.slice(1).join(' ') || null,
-          phone: phone?.trim() || null,
-          position_label: String(position || '').trim() || null,
-          school_name: schoolName || null,
-          ico: icoDigits || null,
-          subscriber_id: up.ok ? up.subscriberId : null,
-          email_source: 'webinar',
-          membership_source: 'webinar',
-        });
       }
     } catch (subErr) {
       console.warn('[Subscribers] Webinar upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -3779,20 +3752,6 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         pipedriveSync = pdResult.ok
           ? { ok: true, skipped: false, leadId: pdResult.leadId }
           : { ok: false, skipped: false, detail: pdResult.detail || 'Pipedrive sync selhal.' };
-        if (pdResult.ok && pdResult.personId) {
-          scheduleIdentityUpsertFromEnv({
-            email: cleanEmail,
-            pd_person_id: pdResult.personId,
-            first_name: name.trim().split(' ')[0] || null,
-            last_name: name.trim().split(' ').slice(1).join(' ') || null,
-            phone: phone?.trim() || null,
-            position_label: String(position || '').trim() || null,
-            school_name: schoolName || null,
-            ico: icoDigits || null,
-            email_source: 'webinar',
-            membership_source: 'webinar',
-          });
-        }
       } catch (pdErr: any) {
         const msg = pdErr?.message || String(pdErr);
         pipedriveSync = { ok: false, skipped: false, detail: msg.slice(0, 400) };
@@ -4096,16 +4055,6 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     };
     await kv.set(key, merged);
     console.log(`[Webinar] DVPP cert profil ulozen: ${cleanEmail} webinar=${webinarId}`);
-    const certNameParts = participantName.split(/\s+/).filter(Boolean);
-    scheduleIdentityUpsertFromEnv({
-      email: cleanEmail,
-      first_name: certNameParts[0] || null,
-      last_name: certNameParts.slice(1).join(' ') || null,
-      school_name: schoolNameOpt || null,
-      ico: schoolIcoOpt || null,
-      email_source: 'webinar',
-      membership_source: 'webinar',
-    });
 
     const reg = merged as Record<string, unknown>;
 
@@ -4321,16 +4270,6 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] DVPP upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
-        scheduleIdentityUpsert(sbMailing, {
-          email: cleanEmail,
-          first_name: nameParts[0] || null,
-          last_name: nameParts.slice(1).join(' ') || null,
-          phone: phone?.trim() || null,
-          position_label: String(resolvedPosition || '').trim() || null,
-          subscriber_id: up.ok ? up.subscriberId : null,
-          email_source: 'webinar',
-          membership_source: 'webinar',
-        });
       }
     } catch (subErr) {
       console.warn('[Subscribers] DVPP upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -4463,14 +4402,6 @@ app.get('/make-server-93a20b6f/verify-token/:token', async (c) => {
           });
           if (!up.ok) console.warn(`[Subscribers] Trial upsert selhal (neblokuje): ${up.error}`);
           if (up.ok) await enrollInFlows(sbMailing, { type: 'trial_activated' }, up.subscriberId);
-          scheduleIdentityUpsert(sbMailing, {
-            email: String(data.email || ''),
-            first_name: nameParts[0] || null,
-            last_name: nameParts.slice(1).join(' ') || null,
-            subscriber_id: up.ok ? up.subscriberId : null,
-            email_source: 'trial',
-            membership_source: 'trial',
-          });
         }
       } catch (subErr) {
         console.warn('[Subscribers] Trial upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -8603,17 +8534,6 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
     };
     await kv.set(trialKey, trialRecord);
     console.log(`[Trial] Ulozen zaznam trial zadosti: ${cleanEmail}`);
-    const trialNameParts = String(name || '').trim().split(' ');
-    scheduleIdentityUpsertFromEnv({
-      email: cleanEmail,
-      first_name: trialNameParts[0] || null,
-      last_name: trialNameParts.slice(1).join(' ') || null,
-      position_label: String(position || '').trim() || null,
-      school_name: String(body.schoolName || '').trim() || null,
-      ico: String(body.ico || '').trim() || null,
-      email_source: 'trial',
-      membership_source: 'trial',
-    });
 
     return c.json({ success: true });
   } catch (err: any) {
@@ -9241,108 +9161,6 @@ app.post('/make-server-93a20b6f/admin/mailing/subscribers/:subscriberId/tags', a
 });
 
 /**
- * Identity upsert (app handoff / interní zápis). Secret, ne anon.
- * POST /make-server-93a20b6f/identity/upsert
- */
-app.post('/make-server-93a20b6f/identity/upsert', async (c) => {
-  try {
-    if (!identityUpsertAuthorized(c.req.raw)) {
-      return c.json({ ok: false, error: 'Unauthorized' }, 401);
-    }
-    const body = await c.req.json().catch(() => ({}));
-    const env = getServiceRoleEnv();
-    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
-    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
-    const result = await upsertIdentity(supabase, body);
-    if (!result.ok) return c.json(result, 400);
-    return c.json(result);
-  } catch (e: any) {
-    return c.json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-});
-
-/**
- * Identifikovaný pageview (cookie vb_id s e-mailem). Veřejné, bez subscribe.
- * POST /make-server-93a20b6f/identity/web-event
- */
-app.post('/make-server-93a20b6f/identity/web-event', async (c) => {
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    const env = getServiceRoleEnv();
-    if (!env) return c.json({ ok: true, skipped: true });
-    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
-    const result = await recordIdentifiedWebEvent(supabase, {
-      email: body?.email,
-      name: body?.name,
-      path: body?.path,
-    });
-    if (!result.ok) return c.json({ ok: true, skipped: true });
-    return c.json(result);
-  } catch (e: any) {
-    console.warn('[identity] web-event:', e?.message || e);
-    return c.json({ ok: true, skipped: true });
-  }
-});
-
-/** Admin: bezpečný backfill 1 subscriber = 1 osoba. Idempotentní, po dávkách. */
-app.post('/make-server-93a20b6f/admin/identity/backfill', async (c) => {
-  try {
-    const gate = await requireAdminJwt(c.req.raw);
-    if (gate instanceof Response) return gate;
-    const env = getServiceRoleEnv();
-    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
-    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
-    const batches: unknown[] = [];
-    for (let i = 0; i < 40; i += 1) {
-      const { data, error } = await supabase.rpc('identity_backfill_subscribers_batch', { p_limit: 2000 });
-      if (error) return c.json({ ok: false, error: error.message, batches }, 500);
-      batches.push(data);
-      const people = Number((data as any)?.people_inserted || 0);
-      const emails = Number((data as any)?.emails_inserted || 0);
-      if (people === 0 && emails === 0) break;
-    }
-    const { data: subOrgs, error: subOrgsErr } = await supabase.rpc('identity_backfill_subscriber_orgs');
-    if (subOrgsErr) return c.json({ ok: false, error: subOrgsErr.message, batches }, 500);
-    const { data: orders, error: ordersErr } = await supabase.rpc('identity_backfill_from_orders');
-    if (ordersErr) return c.json({ ok: false, error: ordersErr.message, batches }, 500);
-    const { data: kv, error: kvErr } = await supabase.rpc('identity_backfill_from_kv');
-    if (kvErr) return c.json({ ok: false, error: kvErr.message, batches, orders }, 500);
-    const [{ count: people }, { count: emails }, { count: orgs }, { count: memberships }] = await Promise.all([
-      supabase.from('identity_people').select('id', { count: 'exact', head: true }),
-      supabase.from('identity_emails').select('email', { count: 'exact', head: true }),
-      supabase.from('identity_orgs').select('id', { count: 'exact', head: true }),
-      supabase.from('identity_memberships').select('id', { count: 'exact', head: true }),
-    ]);
-    return c.json({
-      ok: true,
-      batches,
-      subscriber_orgs: subOrgs,
-      orders,
-      kv,
-      totals: { people, emails, orgs, memberships },
-    });
-  } catch (e: any) {
-    return c.json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-});
-
-/** Admin: lookup osoby podle e-mailu. */
-app.get('/make-server-93a20b6f/admin/identity/lookup', async (c) => {
-  try {
-    const gate = await requireAdminJwt(c.req.raw);
-    if (gate instanceof Response) return gate;
-    const env = getServiceRoleEnv();
-    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
-    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
-    const result = await identityLookupByEmail(supabase, String(c.req.query('email') || ''));
-    if (!result.ok) return c.json(result, 400);
-    return c.json(result);
-  } catch (e: any) {
-    return c.json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-});
-
-/**
  * Admin: přepočti subject_interest_scores pro dávku kontaktů (tagy + pozice + merge_fields).
  * Body: `{ "limit": 1000, "offset": 0 }` — default limit 1000, řazeno podle updated_at desc.
  */
@@ -9833,47 +9651,6 @@ app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/cancel', async (c) =
     if (cur.status === 'sent') return c.json({ ok: false, error: 'Kampaň už byla odeslána.' }, 409);
     await supabase.from('campaigns').update({ status: 'cancelled' }).eq('id', campaignId);
     return c.json({ ok: true });
-  } catch (e: any) {
-    return c.json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-});
-
-/** Admin: náhled segmentu neotevíračů (Mailchimp-like Resend to non-openers). */
-app.get('/make-server-93a20b6f/admin/mailing/campaigns/:id/non-openers-preview', async (c) => {
-  try {
-    const campaignId = c.req.param('id')?.trim();
-    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
-    const supabase = mailingServiceClient();
-    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
-    const result = await previewNonOpeners(supabase, campaignId);
-    if (!result.ok) return c.json(result, 400);
-    return c.json({ ok: true, ...result.preview });
-  } catch (e: any) {
-    return c.json({ ok: false, error: e?.message || String(e) }, 500);
-  }
-});
-
-/**
- * Admin: založ follow-up kampaň jen pro neotevírače rodiče.
- * Body: { subjectLine?, scheduledAt?, sendNow?, engagedOnly?, allowMultiple? }
- */
-app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/resend-non-openers', async (c) => {
-  try {
-    const campaignId = c.req.param('id')?.trim();
-    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
-    const body = await c.req.json().catch(() => ({}));
-    const supabase = mailingServiceClient();
-    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
-
-    const result = await createResendNonOpenersCampaign(supabase, campaignId, {
-      subjectLine: typeof body?.subjectLine === 'string' ? body.subjectLine : undefined,
-      scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null,
-      sendNow: body?.sendNow === true,
-      engagedOnly: body?.engagedOnly === false ? false : true,
-      allowMultiple: body?.allowMultiple === true,
-    });
-    if (!result.ok) return c.json(result, result.status || 400);
-    return c.json(result);
   } catch (e: any) {
     return c.json({ ok: false, error: e?.message || String(e) }, 500);
   }
@@ -13030,15 +12807,6 @@ app.post('/make-server-93a20b6f/newsletter/subscribe', async (c) => {
         });
         if (up.ok) pgStatus = up.status;
         else console.warn(`[newsletter] Postgres upsert selhal (neblokuje): ${up.error}`);
-        scheduleIdentityUpsert(sbMailing, {
-          email,
-          first_name: profile.firstName,
-          last_name: profile.lastName,
-          school_name: profile.schoolName,
-          position_label: profile.positionLabel,
-          subscriber_id: up.ok ? up.subscriberId : null,
-          email_source: subscriberSource === 'newsletter' ? 'newsletter' : 'app',
-        });
       }
     } catch (subErr) {
       console.warn('[newsletter] Postgres upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -13171,11 +12939,6 @@ app.get('/make-server-93a20b6f/newsletter/confirm', async (c) => {
 
     /* Automatizace: newsletter welcome flow (trigger subscriber_created + source newsletter). */
     await enrollInFlows(sbMailing, { type: 'subscriber_created', source: 'newsletter' }, up.subscriberId).catch(() => {});
-    scheduleIdentityUpsert(sbMailing, {
-      email: verified.email,
-      subscriber_id: up.subscriberId,
-      email_source: 'newsletter',
-    });
 
     /* Uvítací e-mail po potvrzení (stejný jako dřívější poděkování). */
     void sendMandrillHtmlResult({
@@ -13835,7 +13598,6 @@ type PipedriveSchoolLookup = {
   matchedBy: 'ico' | 'name' | null;
   org?: any | null;
   deals?: any[];
-  persons?: any[];
   ownerUserId?: number | null;
   /**
    * Jen při `lookupSchoolInPipedrive(..., { includePipedriveRaw: true })` —
@@ -14681,7 +14443,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: 'yes' | 'no';
-}): Promise<{ ok: boolean; detail?: string; leadId?: string; personId?: number | null }> {
+}): Promise<{ ok: boolean; detail?: string; leadId?: string }> {
   const apiToken = params.apiToken;
   let organizationId: number | null = null;
 
@@ -14792,7 +14554,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
   });
   await createPipedriveNote(apiToken, { content: noteHtml, leadId });
 
-  return { ok: true, leadId, personId };
+  return { ok: true, leadId };
 }
 
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
@@ -15400,7 +15162,6 @@ async function lookupSchoolInPipedrive(
     org,
     dealLabelIdToName,
   });
-  result.persons = persons;
   if (includePipedriveRaw) {
     result.pipedriveApi = {
       deals,
@@ -16512,42 +16273,6 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
 /** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
 const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 4;
 
-/** Fire-and-forget: IČO + PD org/osoby do identity grafu. Neposílá persons v HTTP odpovědi. */
-function persistPipedriveSchoolIdentity(result: PipedriveSchoolLookup, rawIco: string): void {
-  const ico = String(rawIco || '').replace(/\D/g, '');
-  const icoOk = ico.length === 8;
-  const pdOrgId = result.orgId;
-  const pdOwner = result.owner?.name || result.owner?.email || null;
-  if (icoOk || pdOrgId != null) {
-    scheduleIdentityUpsertFromEnv({
-      ico: icoOk ? ico : null,
-      school_name: result.orgName,
-      pd_org_id: pdOrgId,
-      pd_owner: pdOwner,
-    });
-  }
-  const persons = Array.isArray(result.persons) ? result.persons : [];
-  for (const person of persons) {
-    const emails = readPipedrivePersonEmails(person);
-    if (!emails.length) continue;
-    const [primary, ...extra] = emails;
-    const nameParts = String(person?.name || '').trim().split(/\s+/).filter(Boolean);
-    scheduleIdentityUpsertFromEnv({
-      email: primary,
-      extra_emails: extra,
-      pd_person_id: parsePipedriveNumericId(person?.id),
-      first_name: nameParts[0] || null,
-      last_name: nameParts.slice(1).join(' ') || null,
-      ico: icoOk ? ico : null,
-      school_name: result.orgName,
-      pd_org_id: pdOrgId,
-      pd_owner: pdOwner,
-      email_source: 'pipedrive',
-      membership_source: 'pipedrive',
-    });
-  }
-}
-
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   const ico = String(c.req.query('ico') || '').trim();
@@ -16570,7 +16295,6 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
       c.req.query('includePipedriveRaw') === '1' || c.req.query('pipedriveRaw') === '1';
     const result = await lookupSchoolInPipedrive(apiToken, { ico, name, includePipedriveRaw });
     console.log(`[Pipedrive] School lookup ico=${ico || '-'} name="${name || '-'}" orgId=${result.orgId ?? 'null'} status=${result.status}`);
-    persistPipedriveSchoolIdentity(result, ico);
     return c.json({
       status: result.status,
       message: result.message,
@@ -16748,22 +16472,6 @@ async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof a
       console.log(`[Pipedrive trial person-fields] osoba nenalezena po ${attempts} pokusech (email="${email}") — nic nezakládám.`);
       return c.json({ success: true, orgId: orgLookup.orgId, personId: null, enriched: false, attempts });
     }
-
-    scheduleIdentityUpsertFromEnv({
-      email,
-      pd_person_id: personId,
-      pd_org_id: orgLookup.orgId,
-      first_name: contactName.split(' ')[0] || null,
-      last_name: contactName.split(' ').slice(1).join(' ') || null,
-      phone,
-      position_label: position,
-      school_name: schoolName,
-      ico: icoRaw,
-      subjects,
-      school_stages: schoolStages,
-      email_source: 'trial',
-      membership_source: 'trial',
-    });
 
     return c.json({
       success: true,
@@ -21070,14 +20778,6 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       to_status: 'pending_payment',
       details: { source: 'distributor', ico, items: lines.length },
       actor: 'distributor',
-    });
-    scheduleIdentityUpsert(sb, {
-      email,
-      phone,
-      school_name: companyName || null,
-      ico,
-      email_source: 'checkout',
-      membership_source: 'checkout',
     });
 
     let pipedrive: Record<string, unknown> | null = null;
@@ -27155,7 +26855,6 @@ Deno.serve((incoming) => {
   const fnRoot = `/${fn}`;
   const needsFnPrefix =
     p.startsWith('/admin/') ||
-    p.startsWith('/identity/') ||
     p.startsWith('/public/') ||
     p.startsWith('/webhooks/') ||
     p.startsWith('/newsletter/') ||

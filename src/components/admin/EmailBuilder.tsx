@@ -47,7 +47,7 @@ import {
   geminiErrorLooksOverloaded,
   getStoredEmailAiTier,
 } from '../../utils/emailAiTier';
-import { previewCtaUrl, productsUrl, publicSiteUrl, rewriteLocalDevUrl } from '../../utils/publicSiteUrl';
+import { previewCtaUrl, productsUrl, publicSiteUrl } from '../../utils/publicSiteUrl';
 import {
   EMAIL_BLOCK_PRESETS,
   type EmailBlockPreset,
@@ -257,8 +257,8 @@ interface BlockInspectorState {
 function normalizeDraftForBuilder(draft: EmailDraft): EmailDraft {
   const legacy = draft as EmailDraft & { previewIslandLayout?: boolean };
   const { previewIslandLayout: _legacyIsland, ...rest } = legacy;
-  const bodyHtml = rewriteLocalDevUrl(normalizeEmailBodyHtml(draft.bodyHtml || ''));
-  const ctaUrl = rewriteLocalDevUrl(draft.ctaUrl || '') || previewCtaUrl();
+  const bodyHtml = normalizeEmailBodyHtml(draft.bodyHtml || '');
+  const ctaUrl = draft.ctaUrl || previewCtaUrl();
   return {
     ...rest,
     bodyHtml,
@@ -6888,7 +6888,7 @@ export default function EmailBuilder() {
           bodyContent,
           outerBackground: normalizeHexColor(saved.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG),
           ctaText: saved.ctaText,
-          ctaUrl: rewriteLocalDevUrl(saved.ctaUrl || previewCtaUrl()),
+          ctaUrl: saved.ctaUrl || previewCtaUrl(),
           audience: saved.audience || 'newsletter',
           /** Aktualizuj tutéž MC kampaň místo zakládání nové (starý odkaz = starý obrázek). */
           campaignId: saved.mailchimpCampaignId || undefined,
@@ -7208,7 +7208,7 @@ export default function EmailBuilder() {
           bodyContent: compileEmailBodyForSend(saved.bodyHtml),
           outerBackground: normalizeHexColor(saved.previewOuterBg, DEFAULT_PREVIEW_OUTER_BG),
           ctaText: saved.ctaText,
-          ctaUrl: rewriteLocalDevUrl(saved.ctaUrl || previewCtaUrl()),
+          ctaUrl: saved.ctaUrl || previewCtaUrl(),
           audience: saved.audience,
         }),
       });
