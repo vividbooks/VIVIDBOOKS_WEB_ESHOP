@@ -52,6 +52,11 @@ import {
   readFulfilmentCzConfig,
 } from '../supabase/functions/_shared/fulfilment-cz-stock.ts';
 import { sanitizeMerchVariantSkus } from '../src/utils/stockSku.ts';
+import {
+  classifyOutlineLabel,
+  compileOutlineToHtml,
+  parseOutlineText,
+} from '../src/supabase/functions/server/emailOutline.ts';
 
 type UnitTest = {
   name: string;
@@ -975,6 +980,37 @@ registerTest('sanitizeMerchVariantSkus nahradí CODE=new produktovým SKU ZK1000
   });
 
   assert.equal(sanitized.merchVariants?.[0]?.shoptetId, 'ZK1000');
+});
+
+registerTest('email outline roztřídí české popisky bloků', () => {
+  assert.equal(classifyOutlineLabel('Blok s nadpisem a žlutou barvou'), 'heading');
+  assert.equal(classifyOutlineLabel('Odstavec'), 'paragraph');
+  assert.equal(classifyOutlineLabel('Webinář'), 'webinar');
+  assert.equal(classifyOutlineLabel('Zvýraznění žlutá'), 'highlight');
+  assert.equal(classifyOutlineLabel('Tlačítko'), 'button');
+
+  const blocks = parseOutlineText(
+    [
+      '=== SKUPINA karta ===',
+      'NADPIS: Matematika je priorita',
+      'ODSTAVEC: Bla bla bla',
+      'WEBINÁŘ: Pozvánka na webinář | slug=matematika-jaro | layout=hero',
+      'ZVYRAZNĚNÍ žlutá: Každý jedenáctý sešit zdarma',
+    ].join('\n'),
+  );
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].type, 'section');
+  assert.equal(blocks[0].items?.length, 4);
+  assert.equal(blocks[0].items?.[0].type, 'heading');
+  assert.equal(blocks[0].items?.[0].text, 'Matematika je priorita');
+  assert.equal(blocks[0].items?.[2].type, 'webinar');
+  assert.equal(blocks[0].items?.[2].slug, 'matematika-jaro');
+
+  const html = compileOutlineToHtml(blocks);
+  assert.match(html, /data-vb-block="section"/);
+  assert.match(html, /Matematika je priorita/);
+  assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
+  assert.match(html, /data-vb-block="highlight"/);
 });
 
 await run();

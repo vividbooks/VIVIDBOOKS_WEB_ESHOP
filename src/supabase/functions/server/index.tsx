@@ -9,9 +9,23 @@ import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
 import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
+import {
+  upsertIdentity,
+  scheduleIdentityUpsert,
+  scheduleIdentityUpsertFromEnv,
+  identityUpsertAuthorized,
+  identityLookupByEmail,
+  recordIdentifiedWebEvent,
+} from './identityUpsert.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
-import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
+import {
+  createResendNonOpenersCampaign,
+  prepareCampaignRecipients,
+  previewNonOpeners,
+  runCampaignSendBatches,
+  scheduleSendContinuation,
+} from './campaignSendEngine.ts';
 import {
   isAudienceFilterEmpty,
   normalizeAudienceFilter,
@@ -65,6 +79,7 @@ import {
   hydrateEmailBodyForBuilder,
   normalizeEmailBuilderHeadings,
 } from './emailBuilderAiHydrate.ts';
+import { composeEmailViaOutlineAgents } from './emailOutline.ts';
 import { compileEmailBodyForSend, EMAIL_BODY_MOBILE_CSS } from './emailExport.ts';
 
 const app = new Hono();
@@ -1322,6 +1337,7 @@ const corsOptions = {
     'x-client-info',
     'x-user-access-token',
     'x-distributor-token',
+    'x-identity-secret',
   ],
   allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 };
@@ -2187,6 +2203,88 @@ function extractFirstJsonObject(raw: string): { ok: true; value: unknown } | { o
     }
   }
   return { ok: false, reason: 'Neúplný JSON objekt (nezavřená závorka)' };
+}
+
+/**
+ * Gemini často usekne JSON uprostřed `bodyHtml` (MAX_TOKENS / thinking žere výstup).
+ * Uzavře otevřený string a chybějící `}`, aby šlo pole aspoň přečíst — volající ověří použitelnost HTML.
+ */
+function tryRepairTruncatedJsonObject(raw: string): { ok: true; value: unknown } | { ok: false; reason: string } {
+  const strippedBom = raw.replace(/\uFEFF/g, '').trim();
+  const fence = strippedBom.match(/```(?:json)?\s*([\s\S]*)$/i);
+  let candidate = (fence ? fence[1].replace(/```\s*$/i, '') : strippedBom).trim();
+  for (let s = 0; s < 8; s++) {
+    const m = candidate.match(/^(true|false|null)\b\s*(?:,\s*)?/i);
+    if (!m) break;
+    candidate = candidate.slice(m[0].length).trim();
+  }
+
+  const start = candidate.indexOf('{');
+  if (start === -1) return { ok: false, reason: 'Žádný objekt { … } v odpovědi' };
+
+  let depth = 0;
+  let inStr = false;
+  for (let i = start; i < candidate.length; i++) {
+    const ch = candidate[i];
+    if (inStr) {
+      if (ch === '\\') {
+        const next = i + 1;
+        if (next >= candidate.length) break;
+        const e = candidate[next];
+        if (e === 'u') {
+          const hex = candidate.slice(next + 1, next + 5);
+          if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+            i = next + 4;
+            continue;
+          }
+        }
+        i = next;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = false;
+        continue;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return { ok: true, value: JSON.parse(candidate.slice(start, i + 1)) };
+        } catch (err: any) {
+          return { ok: false, reason: err?.message || 'JSON.parse selhal' };
+        }
+      }
+    }
+  }
+
+  let repaired = candidate.slice(start);
+  if (inStr) repaired += '"';
+  while (depth > 0) {
+    repaired += '}';
+    depth--;
+  }
+  try {
+    const v = JSON.parse(repaired);
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      return { ok: true, value: v };
+    }
+  } catch {
+    /* useknutí nejde bezpečně uzavřít */
+  }
+  return { ok: false, reason: 'Neúplný JSON objekt (nezavřená závorka)' };
+}
+
+function thinkingConfigForEmailModel(modelId: string): Record<string, unknown> | undefined {
+  if (/gemini-3/i.test(modelId)) return { thinkingLevel: 'LOW' };
+  if (/gemini-2\.5/i.test(modelId)) return { thinkingBudget: 1024 };
+  return undefined;
 }
 
 /* POST /admin/hero-slide-ai-draft — Gemini navrhne text slidů; neukládá do DB */
@@ -3622,6 +3720,18 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] Webinar upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        scheduleIdentityUpsert(sbMailing, {
+          email: cleanEmail,
+          first_name: nameParts[0] || null,
+          last_name: nameParts.slice(1).join(' ') || null,
+          phone: phone?.trim() || null,
+          position_label: String(position || '').trim() || null,
+          school_name: schoolName || null,
+          ico: icoDigits || null,
+          subscriber_id: up.ok ? up.subscriberId : null,
+          email_source: 'webinar',
+          membership_source: 'webinar',
+        });
       }
     } catch (subErr) {
       console.warn('[Subscribers] Webinar upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -3669,6 +3779,20 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         pipedriveSync = pdResult.ok
           ? { ok: true, skipped: false, leadId: pdResult.leadId }
           : { ok: false, skipped: false, detail: pdResult.detail || 'Pipedrive sync selhal.' };
+        if (pdResult.ok && pdResult.personId) {
+          scheduleIdentityUpsertFromEnv({
+            email: cleanEmail,
+            pd_person_id: pdResult.personId,
+            first_name: name.trim().split(' ')[0] || null,
+            last_name: name.trim().split(' ').slice(1).join(' ') || null,
+            phone: phone?.trim() || null,
+            position_label: String(position || '').trim() || null,
+            school_name: schoolName || null,
+            ico: icoDigits || null,
+            email_source: 'webinar',
+            membership_source: 'webinar',
+          });
+        }
       } catch (pdErr: any) {
         const msg = pdErr?.message || String(pdErr);
         pipedriveSync = { ok: false, skipped: false, detail: msg.slice(0, 400) };
@@ -3972,6 +4096,16 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     };
     await kv.set(key, merged);
     console.log(`[Webinar] DVPP cert profil ulozen: ${cleanEmail} webinar=${webinarId}`);
+    const certNameParts = participantName.split(/\s+/).filter(Boolean);
+    scheduleIdentityUpsertFromEnv({
+      email: cleanEmail,
+      first_name: certNameParts[0] || null,
+      last_name: certNameParts.slice(1).join(' ') || null,
+      school_name: schoolNameOpt || null,
+      ico: schoolIcoOpt || null,
+      email_source: 'webinar',
+      membership_source: 'webinar',
+    });
 
     const reg = merged as Record<string, unknown>;
 
@@ -4187,6 +4321,16 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] DVPP upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        scheduleIdentityUpsert(sbMailing, {
+          email: cleanEmail,
+          first_name: nameParts[0] || null,
+          last_name: nameParts.slice(1).join(' ') || null,
+          phone: phone?.trim() || null,
+          position_label: String(resolvedPosition || '').trim() || null,
+          subscriber_id: up.ok ? up.subscriberId : null,
+          email_source: 'webinar',
+          membership_source: 'webinar',
+        });
       }
     } catch (subErr) {
       console.warn('[Subscribers] DVPP upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -4319,6 +4463,14 @@ app.get('/make-server-93a20b6f/verify-token/:token', async (c) => {
           });
           if (!up.ok) console.warn(`[Subscribers] Trial upsert selhal (neblokuje): ${up.error}`);
           if (up.ok) await enrollInFlows(sbMailing, { type: 'trial_activated' }, up.subscriberId);
+          scheduleIdentityUpsert(sbMailing, {
+            email: String(data.email || ''),
+            first_name: nameParts[0] || null,
+            last_name: nameParts.slice(1).join(' ') || null,
+            subscriber_id: up.ok ? up.subscriberId : null,
+            email_source: 'trial',
+            membership_source: 'trial',
+          });
         }
       } catch (subErr) {
         console.warn('[Subscribers] Trial upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -8451,6 +8603,17 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
     };
     await kv.set(trialKey, trialRecord);
     console.log(`[Trial] Ulozen zaznam trial zadosti: ${cleanEmail}`);
+    const trialNameParts = String(name || '').trim().split(' ');
+    scheduleIdentityUpsertFromEnv({
+      email: cleanEmail,
+      first_name: trialNameParts[0] || null,
+      last_name: trialNameParts.slice(1).join(' ') || null,
+      position_label: String(position || '').trim() || null,
+      school_name: String(body.schoolName || '').trim() || null,
+      ico: String(body.ico || '').trim() || null,
+      email_source: 'trial',
+      membership_source: 'trial',
+    });
 
     return c.json({ success: true });
   } catch (err: any) {
@@ -9078,6 +9241,108 @@ app.post('/make-server-93a20b6f/admin/mailing/subscribers/:subscriberId/tags', a
 });
 
 /**
+ * Identity upsert (app handoff / interní zápis). Secret, ne anon.
+ * POST /make-server-93a20b6f/identity/upsert
+ */
+app.post('/make-server-93a20b6f/identity/upsert', async (c) => {
+  try {
+    if (!identityUpsertAuthorized(c.req.raw)) {
+      return c.json({ ok: false, error: 'Unauthorized' }, 401);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    const env = getServiceRoleEnv();
+    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+    const result = await upsertIdentity(supabase, body);
+    if (!result.ok) return c.json(result, 400);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Identifikovaný pageview (cookie vb_id s e-mailem). Veřejné, bez subscribe.
+ * POST /make-server-93a20b6f/identity/web-event
+ */
+app.post('/make-server-93a20b6f/identity/web-event', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const env = getServiceRoleEnv();
+    if (!env) return c.json({ ok: true, skipped: true });
+    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+    const result = await recordIdentifiedWebEvent(supabase, {
+      email: body?.email,
+      name: body?.name,
+      path: body?.path,
+    });
+    if (!result.ok) return c.json({ ok: true, skipped: true });
+    return c.json(result);
+  } catch (e: any) {
+    console.warn('[identity] web-event:', e?.message || e);
+    return c.json({ ok: true, skipped: true });
+  }
+});
+
+/** Admin: bezpečný backfill 1 subscriber = 1 osoba. Idempotentní, po dávkách. */
+app.post('/make-server-93a20b6f/admin/identity/backfill', async (c) => {
+  try {
+    const gate = await requireAdminJwt(c.req.raw);
+    if (gate instanceof Response) return gate;
+    const env = getServiceRoleEnv();
+    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+    const batches: unknown[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      const { data, error } = await supabase.rpc('identity_backfill_subscribers_batch', { p_limit: 2000 });
+      if (error) return c.json({ ok: false, error: error.message, batches }, 500);
+      batches.push(data);
+      const people = Number((data as any)?.people_inserted || 0);
+      const emails = Number((data as any)?.emails_inserted || 0);
+      if (people === 0 && emails === 0) break;
+    }
+    const { data: subOrgs, error: subOrgsErr } = await supabase.rpc('identity_backfill_subscriber_orgs');
+    if (subOrgsErr) return c.json({ ok: false, error: subOrgsErr.message, batches }, 500);
+    const { data: orders, error: ordersErr } = await supabase.rpc('identity_backfill_from_orders');
+    if (ordersErr) return c.json({ ok: false, error: ordersErr.message, batches }, 500);
+    const { data: kv, error: kvErr } = await supabase.rpc('identity_backfill_from_kv');
+    if (kvErr) return c.json({ ok: false, error: kvErr.message, batches, orders }, 500);
+    const [{ count: people }, { count: emails }, { count: orgs }, { count: memberships }] = await Promise.all([
+      supabase.from('identity_people').select('id', { count: 'exact', head: true }),
+      supabase.from('identity_emails').select('email', { count: 'exact', head: true }),
+      supabase.from('identity_orgs').select('id', { count: 'exact', head: true }),
+      supabase.from('identity_memberships').select('id', { count: 'exact', head: true }),
+    ]);
+    return c.json({
+      ok: true,
+      batches,
+      subscriber_orgs: subOrgs,
+      orders,
+      kv,
+      totals: { people, emails, orgs, memberships },
+    });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: lookup osoby podle e-mailu. */
+app.get('/make-server-93a20b6f/admin/identity/lookup', async (c) => {
+  try {
+    const gate = await requireAdminJwt(c.req.raw);
+    if (gate instanceof Response) return gate;
+    const env = getServiceRoleEnv();
+    if (!env) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const supabase = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+    const result = await identityLookupByEmail(supabase, String(c.req.query('email') || ''));
+    if (!result.ok) return c.json(result, 400);
+    return c.json(result);
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
  * Admin: přepočti subject_interest_scores pro dávku kontaktů (tagy + pozice + merge_fields).
  * Body: `{ "limit": 1000, "offset": 0 }` — default limit 1000, řazeno podle updated_at desc.
  */
@@ -9568,6 +9833,47 @@ app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/cancel', async (c) =
     if (cur.status === 'sent') return c.json({ ok: false, error: 'Kampaň už byla odeslána.' }, 409);
     await supabase.from('campaigns').update({ status: 'cancelled' }).eq('id', campaignId);
     return c.json({ ok: true });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/** Admin: náhled segmentu neotevíračů (Mailchimp-like Resend to non-openers). */
+app.get('/make-server-93a20b6f/admin/mailing/campaigns/:id/non-openers-preview', async (c) => {
+  try {
+    const campaignId = c.req.param('id')?.trim();
+    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+    const result = await previewNonOpeners(supabase, campaignId);
+    if (!result.ok) return c.json(result, 400);
+    return c.json({ ok: true, ...result.preview });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 500);
+  }
+});
+
+/**
+ * Admin: založ follow-up kampaň jen pro neotevírače rodiče.
+ * Body: { subjectLine?, scheduledAt?, sendNow?, engagedOnly?, allowMultiple? }
+ */
+app.post('/make-server-93a20b6f/admin/mailing/campaigns/:id/resend-non-openers', async (c) => {
+  try {
+    const campaignId = c.req.param('id')?.trim();
+    if (!campaignId) return c.json({ ok: false, error: 'Chybí id kampaně.' }, 400);
+    const body = await c.req.json().catch(() => ({}));
+    const supabase = mailingServiceClient();
+    if (!supabase) return c.json({ ok: false, error: 'Chybí SUPABASE_URL nebo SUPABASE_SERVICE_ROLE_KEY.' }, 500);
+
+    const result = await createResendNonOpenersCampaign(supabase, campaignId, {
+      subjectLine: typeof body?.subjectLine === 'string' ? body.subjectLine : undefined,
+      scheduledAt: typeof body?.scheduledAt === 'string' ? body.scheduledAt : null,
+      sendNow: body?.sendNow === true,
+      engagedOnly: body?.engagedOnly === false ? false : true,
+      allowMultiple: body?.allowMultiple === true,
+    });
+    if (!result.ok) return c.json(result, result.status || 400);
+    return c.json(result);
   } catch (e: any) {
     return c.json({ ok: false, error: e?.message || String(e) }, 500);
   }
@@ -12724,6 +13030,15 @@ app.post('/make-server-93a20b6f/newsletter/subscribe', async (c) => {
         });
         if (up.ok) pgStatus = up.status;
         else console.warn(`[newsletter] Postgres upsert selhal (neblokuje): ${up.error}`);
+        scheduleIdentityUpsert(sbMailing, {
+          email,
+          first_name: profile.firstName,
+          last_name: profile.lastName,
+          school_name: profile.schoolName,
+          position_label: profile.positionLabel,
+          subscriber_id: up.ok ? up.subscriberId : null,
+          email_source: subscriberSource === 'newsletter' ? 'newsletter' : 'app',
+        });
       }
     } catch (subErr) {
       console.warn('[newsletter] Postgres upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -12856,6 +13171,11 @@ app.get('/make-server-93a20b6f/newsletter/confirm', async (c) => {
 
     /* Automatizace: newsletter welcome flow (trigger subscriber_created + source newsletter). */
     await enrollInFlows(sbMailing, { type: 'subscriber_created', source: 'newsletter' }, up.subscriberId).catch(() => {});
+    scheduleIdentityUpsert(sbMailing, {
+      email: verified.email,
+      subscriber_id: up.subscriberId,
+      email_source: 'newsletter',
+    });
 
     /* Uvítací e-mail po potvrzení (stejný jako dřívější poděkování). */
     void sendMandrillHtmlResult({
@@ -13515,6 +13835,7 @@ type PipedriveSchoolLookup = {
   matchedBy: 'ico' | 'name' | null;
   org?: any | null;
   deals?: any[];
+  persons?: any[];
   ownerUserId?: number | null;
   /**
    * Jen při `lookupSchoolInPipedrive(..., { includePipedriveRaw: true })` —
@@ -14360,7 +14681,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: 'yes' | 'no';
-}): Promise<{ ok: boolean; detail?: string; leadId?: string }> {
+}): Promise<{ ok: boolean; detail?: string; leadId?: string; personId?: number | null }> {
   const apiToken = params.apiToken;
   let organizationId: number | null = null;
 
@@ -14471,7 +14792,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
   });
   await createPipedriveNote(apiToken, { content: noteHtml, leadId });
 
-  return { ok: true, leadId };
+  return { ok: true, leadId, personId };
 }
 
 async function loadPipedriveOrganizationFieldsMetaById(apiToken: string): Promise<Map<number, { key: string; fieldType: string }>> {
@@ -15079,6 +15400,7 @@ async function lookupSchoolInPipedrive(
     org,
     dealLabelIdToName,
   });
+  result.persons = persons;
   if (includePipedriveRaw) {
     result.pipedriveApi = {
       deals,
@@ -16190,6 +16512,42 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
 /** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
 const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 4;
 
+/** Fire-and-forget: IČO + PD org/osoby do identity grafu. Neposílá persons v HTTP odpovědi. */
+function persistPipedriveSchoolIdentity(result: PipedriveSchoolLookup, rawIco: string): void {
+  const ico = String(rawIco || '').replace(/\D/g, '');
+  const icoOk = ico.length === 8;
+  const pdOrgId = result.orgId;
+  const pdOwner = result.owner?.name || result.owner?.email || null;
+  if (icoOk || pdOrgId != null) {
+    scheduleIdentityUpsertFromEnv({
+      ico: icoOk ? ico : null,
+      school_name: result.orgName,
+      pd_org_id: pdOrgId,
+      pd_owner: pdOwner,
+    });
+  }
+  const persons = Array.isArray(result.persons) ? result.persons : [];
+  for (const person of persons) {
+    const emails = readPipedrivePersonEmails(person);
+    if (!emails.length) continue;
+    const [primary, ...extra] = emails;
+    const nameParts = String(person?.name || '').trim().split(/\s+/).filter(Boolean);
+    scheduleIdentityUpsertFromEnv({
+      email: primary,
+      extra_emails: extra,
+      pd_person_id: parsePipedriveNumericId(person?.id),
+      first_name: nameParts[0] || null,
+      last_name: nameParts.slice(1).join(' ') || null,
+      ico: icoOk ? ico : null,
+      school_name: result.orgName,
+      pd_org_id: pdOrgId,
+      pd_owner: pdOwner,
+      email_source: 'pipedrive',
+      membership_source: 'pipedrive',
+    });
+  }
+}
+
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   const ico = String(c.req.query('ico') || '').trim();
@@ -16212,6 +16570,7 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
       c.req.query('includePipedriveRaw') === '1' || c.req.query('pipedriveRaw') === '1';
     const result = await lookupSchoolInPipedrive(apiToken, { ico, name, includePipedriveRaw });
     console.log(`[Pipedrive] School lookup ico=${ico || '-'} name="${name || '-'}" orgId=${result.orgId ?? 'null'} status=${result.status}`);
+    persistPipedriveSchoolIdentity(result, ico);
     return c.json({
       status: result.status,
       message: result.message,
@@ -16389,6 +16748,22 @@ async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof a
       console.log(`[Pipedrive trial person-fields] osoba nenalezena po ${attempts} pokusech (email="${email}") — nic nezakládám.`);
       return c.json({ success: true, orgId: orgLookup.orgId, personId: null, enriched: false, attempts });
     }
+
+    scheduleIdentityUpsertFromEnv({
+      email,
+      pd_person_id: personId,
+      pd_org_id: orgLookup.orgId,
+      first_name: contactName.split(' ')[0] || null,
+      last_name: contactName.split(' ').slice(1).join(' ') || null,
+      phone,
+      position_label: position,
+      school_name: schoolName,
+      ico: icoRaw,
+      subjects,
+      school_stages: schoolStages,
+      email_source: 'trial',
+      membership_source: 'trial',
+    });
 
     return c.json({
       success: true,
@@ -20696,6 +21071,14 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       details: { source: 'distributor', ico, items: lines.length },
       actor: 'distributor',
     });
+    scheduleIdentityUpsert(sb, {
+      email,
+      phone,
+      school_name: companyName || null,
+      ico,
+      email_source: 'checkout',
+      membership_source: 'checkout',
+    });
 
     let pipedrive: Record<string, unknown> | null = null;
     try {
@@ -21556,12 +21939,25 @@ function vividbooksEmailTestMatchEditorTemplate(params: {
   preheader?: string;
   /** Barva plátna z editoru (`previewOuterBg`), default jako v EmailBuilderu. */
   outerBackground?: string;
+  /** <title> — předmět kampaně / test. */
+  title?: string;
 }): string {
   const { body, preheader } = params;
   const cleanBody = compileEmailBodyForSend(body);
   const rawCanvas = String(params.outerBackground || '').trim();
   const vbCanvas = /^#[0-9a-fA-F]{3,8}$/.test(rawCanvas) ? rawCanvas : '#f3f4f6';
+  const title = String(params.title || 'Vividbooks').replace(/[<>&"]/g, '').slice(0, 180) || 'Vividbooks';
+  /* Island layout z Email Builderu — karty mají inline styly; tady jen pojistka mezer / typografie. */
+  const islandCss = `
+.vb-email-root { width:100%; max-width:600px; margin:0 auto; background:transparent; }
+.vb-email-root > [data-vb-block="section"] { margin-bottom:32px; }
+.vb-email-root > [data-vb-block="section"]:last-child { margin-bottom:0; }
+.vb-email-root > [data-vb-block="section"][data-vb-section-fill="card"] {
+  background-color:#ffffff !important;
+}
+`;
   const mcResponsiveStyle = `<style type="text/css">
+${islandCss}
 @media only screen and (max-width: 600px) {
   .vb-shell-pad { padding: 12px 8px !important; }
   .vb-bodycell { font-size: 15px !important; line-height: 1.65 !important; }
@@ -21574,7 +21970,7 @@ ${EMAIL_BODY_MOBILE_CSS}
   const pre = preheader
     ? `<span style="display:none;font-size:1px;color:#ffffff;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">${preheader}</span>`
     : '';
-  return `<!DOCTYPE html><html lang="cs" style="color-scheme:light only;"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${EMAIL_FORCE_LIGHT_HEAD}${mcResponsiveStyle}<title>Test</title>${pre}</head><body class="vb-force-light" style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;color-scheme:light only;"><table role="presentation" class="vb-shell vb-force-light" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 12px 28px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-bodycell" style="padding:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#333333;background-color:transparent;">${cleanBody}</td></tr><tr><td class="vb-foot vb-force-light-muted" style="background-color:${vbCanvas};padding:24px 12px 8px 12px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
+  return `<!DOCTYPE html><html lang="cs" style="color-scheme:light only;"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="format-detection" content="telephone=no"/>${EMAIL_FORCE_LIGHT_HEAD}${mcResponsiveStyle}<title>${title}</title>${pre}</head><body class="vb-force-light" style="margin:0;padding:0;background-color:${vbCanvas};font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%;color-scheme:light only;"><table role="presentation" class="vb-shell vb-force-light" width="100%" cellpadding="0" cellspacing="0" style="background-color:${vbCanvas};"><tr><td align="center" class="vb-shell-pad" style="padding:20px 12px 28px 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;background-color:transparent;"><tr><td class="vb-bodycell" style="padding:0;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:#333333;background-color:transparent;">${cleanBody}</td></tr><tr><td class="vb-foot vb-force-light-muted" style="background-color:${vbCanvas};padding:24px 12px 8px 12px;text-align:center;"><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#4b5563;">Vividbooks</p><p style="margin:0 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;"><a href="${getPublicSiteOrigin()}" style="color:#F06632;text-decoration:underline;">${new URL(getPublicSiteOrigin()).host}</a> &middot; <a href="${marketingSitePath('/vyzkousejte')}" style="color:#F06632;text-decoration:underline;">Vyzkoušejte zdarma</a></p><p style="margin:0;font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#9ca3af;"><a href="*|UNSUB|*" style="color:#6b7280;text-decoration:underline;">Odhlasit se z odberu</a></p></td></tr></table></td></tr></table></body></html>`;
 }
 
 /* GET /admin/mailchimp/campaigns */
@@ -21685,12 +22081,12 @@ app.post('/make-server-93a20b6f/admin/mailchimp/sync', async (c) => {
   }
 });
 
-/* POST /admin/mailchimp/create-draft */
+/* POST /admin/mailchimp/create-draft — vytvoř nebo aktualizuj existující MC draft */
 app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
   try {
     const { mcBase, mcAuth } = getMailchimpAuth();
     const body = await c.req.json();
-    const { subject, previewText, headline, htmlBody, bodyContent, ctaText, ctaUrl, audience, fromName } = body;
+    const { subject, previewText, htmlBody, bodyContent, audience, fromName } = body;
     if (!subject) return c.json({ error: 'Chybi subject' }, 400);
 
     const newsletterAud = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
@@ -21698,48 +22094,154 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
     const listId = audience === 'no-newsletter' ? noNewsletterAud : newsletterAud;
     if (!listId) return c.json({ error: `Audience ID pro "${audience}" neni nastaven` }, 500);
 
-    console.log(`[MC Draft] Creating: "${subject}" -> ${audience}`);
-    const createRes = await fetch(`${mcBase}/campaigns`, {
-      method: 'POST',
-      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'regular', recipients: { list_id: listId }, settings: { subject_line: subject, preview_text: previewText || '', from_name: fromName || 'Vividbooks', reply_to: 'hello@vividbooks.com', title: `[Draft] ${subject}` } }),
-    });
-    if (!createRes.ok) { const t = await createRes.text(); throw new Error(`MC create ${createRes.status}: ${t.slice(0, 300)}`); }
-
-    const campaign = await createRes.json();
-    const campaignId = campaign.id;
-    const webId = campaign.web_id;
-
-    /* Preferuj bodyContent + aktuální šablonu (mobilní CSS + compile). hotové htmlBody jen jako fallback. */
-    let finalHtml = bodyContent
-      ? vividbooksEmailTemplate({
-          headline: headline || subject,
+    /*
+     * Stejný obal jako náhled v Email Builderu / test send:
+     * šedé plátno + section karty — BEZ navy hero, textového loga a auto-CTA.
+     */
+    const finalHtml = bodyContent
+      ? vividbooksEmailTestMatchEditorTemplate({
           body: String(bodyContent),
-          ctaText: ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
           preheader: previewText,
+          outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+          title: subject,
         })
-      : (htmlBody || vividbooksEmailTemplate({
-          headline: headline || subject,
-          body: '<p>Obsah emailu</p>',
-          ctaText: ctaText || 'Vyzkoušejte zdarma',
-          ctaUrl: ctaUrl || marketingSitePath('/vyzkousejte'),
-          preheader: previewText,
-        }));
-    if (!bodyContent && htmlBody) {
-      finalHtml = injectEmailBodyMobileCss(String(htmlBody));
+      : (htmlBody
+          ? injectEmailBodyMobileCss(String(htmlBody))
+          : vividbooksEmailTestMatchEditorTemplate({
+              body: '<p>Obsah emailu</p>',
+              preheader: previewText,
+              outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+              title: subject,
+            }));
+
+    const settings = {
+      subject_line: subject,
+      preview_text: previewText || '',
+      from_name: fromName || 'Vividbooks',
+      reply_to: 'hello@vividbooks.com',
+      title: `[Draft] ${subject}`.slice(0, 100),
+    };
+
+    let campaignId = typeof body.campaignId === 'string' ? body.campaignId.trim() : '';
+    let webId: number | string | undefined;
+    let updatedExisting = false;
+
+    /* Aktualizuj stávající draft (pokud ještě není odeslaný). */
+    if (campaignId) {
+      const getRes = await fetch(`${mcBase}/campaigns/${campaignId}`, {
+        headers: { Authorization: `Basic ${mcAuth}` },
+      });
+      if (getRes.ok) {
+        const existing = await getRes.json();
+        const status = String(existing?.status || '');
+        if (status === 'save' || status === 'paused' || status === 'schedule') {
+          const patchRes = await fetch(`${mcBase}/campaigns/${campaignId}`, {
+            method: 'PATCH',
+            headers: { Authorization: `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              recipients: { list_id: listId },
+              settings,
+            }),
+          });
+          if (!patchRes.ok) {
+            const t = await patchRes.text();
+            console.log(`[MC Draft] PATCH settings fail ${patchRes.status}: ${t.slice(0, 200)}`);
+          }
+          webId = existing.web_id;
+          updatedExisting = true;
+        } else {
+          console.log(`[MC Draft] Kampaň ${campaignId} status=${status} — zakládám novou`);
+          campaignId = '';
+        }
+      } else {
+        console.log(`[MC Draft] Kampaň ${campaignId} nenalezena — zakládám novou`);
+        campaignId = '';
+      }
     }
 
-    await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
+    if (!campaignId) {
+      console.log(`[MC Draft] Creating: "${subject}" -> ${audience} (šablona = island / Email Builder)`);
+      const createRes = await fetch(`${mcBase}/campaigns`, {
+        method: 'POST',
+        headers: { Authorization: `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'regular',
+          recipients: { list_id: listId },
+          settings,
+        }),
+      });
+      if (!createRes.ok) {
+        const t = await createRes.text();
+        throw new Error(`MC create ${createRes.status}: ${t.slice(0, 300)}`);
+      }
+      const campaign = await createRes.json();
+      campaignId = campaign.id;
+      webId = campaign.web_id;
+    }
+
+    let putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
       method: 'PUT',
-      headers: { 'Authorization': `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ html: finalHtml }),
     });
+    /* Update selhal (smazaná / odeslaná kampaň) → založ novou a zkus znovu. */
+    if (!putRes.ok && updatedExisting) {
+      const t = await putRes.text();
+      console.log(`[MC Draft] content update fail ${putRes.status}: ${t.slice(0, 200)} — create new`);
+      updatedExisting = false;
+      const createRes = await fetch(`${mcBase}/campaigns`, {
+        method: 'POST',
+        headers: { Authorization: `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'regular',
+          recipients: { list_id: listId },
+          settings,
+        }),
+      });
+      if (!createRes.ok) {
+        const ct = await createRes.text();
+        throw new Error(`MC create ${createRes.status}: ${ct.slice(0, 300)}`);
+      }
+      const campaign = await createRes.json();
+      campaignId = campaign.id;
+      webId = campaign.web_id;
+      putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
+        method: 'PUT',
+        headers: { Authorization: `Basic ${mcAuth}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: finalHtml }),
+      });
+    }
+    if (!putRes.ok) {
+      const t = await putRes.text();
+      throw new Error(`MC content ${putRes.status}: ${t.slice(0, 300)}`);
+    }
+
+    if (webId == null) {
+      const getRes = await fetch(`${mcBase}/campaigns/${campaignId}`, {
+        headers: { Authorization: `Basic ${mcAuth}` },
+      });
+      if (getRes.ok) {
+        const camp = await getRes.json();
+        webId = camp.web_id;
+      }
+    }
 
     const dc = (Deno.env.get('MAILCHIMP_API_KEY') || '').split('-').pop() || 'us19';
     const mailchimpUrl = `https://${dc}.admin.mailchimp.com/campaigns/edit?id=${webId}`;
-    console.log(`[MC Draft] OK: ${mailchimpUrl}`);
-    return c.json({ success: true, campaignId, webId, mailchimpUrl, message: `Draft "${subject}" vytvoren!` });
+    console.log(`[MC Draft] OK (${updatedExisting ? 'updated' : 'created'}): ${mailchimpUrl}`);
+    return c.json({
+      success: true,
+      campaignId,
+      webId,
+      mailchimpUrl,
+      updated: updatedExisting,
+      /* aliasy — klient dřív četl archiveUrl/webUrl a odkaz se neaktualizoval */
+      archiveUrl: mailchimpUrl,
+      webUrl: mailchimpUrl,
+      message: updatedExisting
+        ? `Draft "${subject}" aktualizován v Mailchimpu.`
+        : `Draft "${subject}" vytvořen v Mailchimpu.`,
+    });
   } catch (e: any) {
     console.log(`[MC Draft] Error: ${e.message}`);
     return c.json({ error: `MC draft: ${e.message}` }, 500);
@@ -21799,6 +22301,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/send-test-email', async (c) => {
         body: bodyContent || '<p>Obsah emailu</p>',
         preheader: previewText,
         outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+        title: subjectRaw,
       });
 
     const putRes = await fetch(`${mcBase}/campaigns/${campaignId}/content`, {
@@ -21859,12 +22362,23 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
     const { prompt, conversationContext } = body;
     if (!prompt) return c.json({ error: 'Chybi prompt' }, 400);
     const preferEmailBuilderBlocks = body.preferEmailBuilderBlocks === true;
-    /** Email Builder: úprava jednoho bloku — nesmíme force-injectovat webináře ani agresivně přepisovat tělo. */
+    const detectCtx = `${String(body.conversationContext || '')}\n${String(body.prompt || '')}`;
+    /** Email Builder: vrátit jen nový fragment sekce(í), ne celý mail. */
+    const insertFragmentOnly =
+      body.insertFragmentOnly === true ||
+      /režim VLOŽENÍ JEDNOHO\/VÍCE NOVÝCH BLOKŮ|režim VLOŽENÍ JEDNOHO\/VÍCE NOVÝCH BLOKŮ \(fragment\)/i.test(
+        detectCtx,
+      );
+    /** Email Builder: úprava jednoho existujícího bloku — v bodyHtml jen ten blok, ne celý mail. */
+    const returnEditedBlockOnly =
+      body.returnEditedBlockOnly === true ||
+      /vrať POUZE outer HTML tohoto jednoho bloku|režim úpravy JEDNOHO bloku/i.test(detectCtx);
+    /** Email Builder: úprava jednoho bloku / fragment — nesmíme force-injectovat webináře ani agresivně přepisovat tělo. */
     const scopedBlockEdit =
       body.scopedBlockEdit === true ||
-      /režim úpravy JEDNOHO bloku/i.test(
-        `${String(body.conversationContext || '')}\n${String(body.prompt || '')}`,
-      );
+      insertFragmentOnly ||
+      returnEditedBlockOnly ||
+      /režim úpravy JEDNOHO bloku/i.test(detectCtx);
 
     const EMAIL_GEN_MODELS: Record<'lite' | 'pro', string> = {
       lite: 'gemini-3.1-flash-lite-preview',
@@ -22179,8 +22693,9 @@ app.post('/make-server-93a20b6f/admin/mailchimp/generate-email', async (c) => {
     /** Druhá fáze (HTML) sama — stejně jako dřív u úprav existujícího mailu nebo výběru v náhledu. */
     const iterationLike =
       body.skipBriefPhase === true ||
+      insertFragmentOnly ||
       /Úprava EXISTUJÍCÍHO|Úprava EXISTUJICIHO|Aktuální email:|Aktualni email:|bodyHtml:/i.test(combinedDetect) ||
-      /režim výběru v náhledu|režim vložení u znaku|DŮLEŽITÉ — režim výběru|DŮLEŽITÉ — režim vložení/i.test(
+      /režim výběru v náhledu|režim vložení u znaku|DŮLEŽITÉ — režim výběru|DŮLEŽITÉ — režim vložení|režim VLOŽENÍ JEDNOHO/i.test(
         combinedDetect,
       );
 
@@ -22310,6 +22825,126 @@ Pravidla:
     (ragDebug as any).contentBriefUsed = Boolean(contentBrief);
     (ragDebug as any).contentBriefIterationSkipped = iterationLike;
     (ragDebug as any).contentBriefChars = contentBrief.length;
+
+    /** Email Builder: dva agenti (text → třídění) + kód složí HTML. Bez obřího bodyHtml v JSON. */
+    if (preferEmailBuilderBlocks) {
+      const outlineModels = [geminiModelId, EMAIL_GEN_MODELS.lite, ...EMAIL_GEN_FALLBACK_MODELS];
+      const seenOm = new Set<string>();
+      const uniqueOutlineModels = outlineModels.filter((id) =>
+        seenOm.has(id) ? false : (seenOm.add(id), true),
+      );
+      const callGeminiJson = async (opts: {
+        system: string;
+        user: string;
+        maxTokens: number;
+        schema?: Record<string, unknown>;
+      }) => {
+        for (const modelTry of uniqueOutlineModels) {
+          let genCfg: Record<string, unknown> = {
+            temperature: 0.45,
+            topP: 0.88,
+            maxOutputTokens: opts.maxTokens,
+            responseMimeType: 'application/json',
+          };
+          if (opts.schema) genCfg.responseSchema = opts.schema;
+          const think = thinkingConfigForEmailModel(modelTry);
+          if (think) genCfg.thinkingConfig = think;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelTry}:generateContent?key=${geminiKey}`;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                system_instruction: { parts: [{ text: opts.system }] },
+                contents: [{ role: 'user', parts: [{ text: opts.user }] }],
+                generationConfig: genCfg,
+              }),
+            });
+            if (res.ok) {
+              const j = await res.json();
+              const parts = j?.candidates?.[0]?.content?.parts ?? [];
+              const text = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
+              if (text) {
+                const extracted = extractFirstJsonObject(text);
+                return { ok: true, text: extracted.ok ? JSON.stringify(extracted.value) : text };
+              }
+            }
+            const errT = await res.text().catch(() => '');
+            if (res.status === 400 && genCfg.thinkingConfig && /thinking|unknown name/i.test(errT)) {
+              delete genCfg.thinkingConfig;
+              continue;
+            }
+            if (res.status === 400 && genCfg.responseSchema && /schema|responseSchema|unknown name/i.test(errT)) {
+              delete genCfg.responseSchema;
+              continue;
+            }
+            if (geminiStatusRetryable(res.status) && attempt === 0) {
+              await new Promise((r) => setTimeout(r, 1800));
+              continue;
+            }
+            break;
+          }
+        }
+        return { ok: false, text: '' };
+      };
+
+      const currentOutline = String(body.currentOutline || '').trim();
+      console.log(
+        `[MC Gen] outline agents: outlineChars=${currentOutline.length} brief=${contentBrief.length} scoped=${scopedBlockEdit}`,
+      );
+      const outlineOut = await composeEmailViaOutlineAgents({
+        callGeminiJson,
+        prompt: promptStr,
+        conversationContext: convStr,
+        currentOutline,
+        contentBrief,
+        dataCtx: bundleCtx,
+        fragmentOnly: insertFragmentOnly,
+        editBlockOnly: returnEditedBlockOnly,
+      });
+      if (outlineOut.ok) {
+        let emailData: Record<string, any> = {
+          subject: outlineOut.meta.subject,
+          previewText: outlineOut.meta.previewText,
+          headline: outlineOut.meta.headline,
+          ctaText: outlineOut.meta.ctaText || 'Vyzkoušejte zdarma',
+          ctaUrl: outlineOut.meta.ctaUrl || marketingSitePath('/vyzkousejte'),
+          bodyHtml: outlineOut.bodyHtml,
+          productImages: [],
+        };
+        Object.assign(ragDebug as any, outlineOut.debug, { outlineBlocks: outlineOut.blocks });
+        if (!scopedBlockEdit) {
+          try {
+            const hydrated = hydrateEmailBodyForBuilder(String(emailData.bodyHtml || ''), {
+              webinars,
+              siteOrigin: getPublicSiteOrigin(),
+              headline: String(emailData.headline || emailData.subject || ''),
+              forceInjectWebinars:
+                preferEmailBuilderBlocks ||
+                /webin[aá]?[rř]|blok(y)?\s+webin|data-ai-webinar|dvpp/i.test(
+                  `${promptStr}\n${convStr}\n${emailData.bodyHtml || ''}`,
+                ),
+            });
+            emailData.bodyHtml = hydrated.html;
+            (ragDebug as any).builderHydrateNotes = hydrated.notes;
+          } catch (hydErr: any) {
+            console.log(`[MC Gen] outline hydrate skip: ${hydErr?.message || hydErr}`);
+          }
+        }
+        emailData.bodyHtml = normalizeEmailBuilderHeadings(String(emailData.bodyHtml || ''));
+        const fullHtml = vividbooksEmailTemplate({
+          headline: emailData.headline || emailData.subject || '',
+          body: emailData.bodyHtml || '',
+          ctaText: emailData.ctaText,
+          ctaUrl: emailData.ctaUrl,
+          preheader: emailData.previewText || '',
+        });
+        console.log(`[MC Gen] outline path OK: ${outlineOut.blocks} blocks`);
+        return c.json({ success: true, email: { ...emailData, fullHtml, productImages: [] }, ragDebug });
+      }
+      console.log(`[MC Gen] outline path failed: ${outlineOut.error} — fallback na HTML compose`);
+      (ragDebug as any).outlineFailed = outlineOut.error;
+    }
 
     const sysPrompt = `Jsi SENIOR e-mail marketingovy specialista a designer pro Vividbooks — ceske ucebni materialy, pracovni sesity a tiskoviny s online podporou.
 Tvym ukolem je psat prompty do Mailchimpu EXPLICITNE a FAKTICKY — jako mail od cloveka z tymu pro ucitele, ne jako letak z tlacene reklamy. Kazdy usek musi nest KONKRETNI OBSAH z briefu nebo z kontextu nize (nazvy produktu, webinare s datumy, presne formulace z RAG). Vágní slogany bez faktu jsou chyba.
@@ -22655,11 +23290,32 @@ ${productCtx}${webinarCtx}${blogCtx}${siteMediaCtx}${ragCtx}${campStats}${campSt
         ? `OBSAHOVÝ BRIEF (1. krok — primární zdroj faktů a formulací; strukturu bloků dodrž podle systémového promptu):\n\n${contentBrief}\n\n---\nKontext konverzace:\n${conversationContext}\n\n---\nPůvodní požadavek uživatele:\n${prompt}${composeConcreteHint}`
         : `OBSAHOVÝ BRIEF (1. krok):\n\n${contentBrief}\n\n---\nPožadavek uživatele:\n${prompt}${composeConcreteHint}`;
     } else {
-      const iterHint =
-        '\n\n[KONKRÉTNOST + DÉLKA] Rozviň obsah v souvislých odstavcích a více sekcích \`<h2>\` — nezkracuj na jednovětné bloky; sociální důkazy s čísly jen z podkladů. Drž šablonu (hero + fialové CTA). Žádné vymyšlené počty. Zachovej nebo doplň obaly \`data-vb-block\` + \`data-vb-block-id\` podle systémového promptu (Email Builder).\n';
+      const iterHint = scopedBlockEdit
+        ? '\n\n[KONKRÉTNOST] Splň pokyn na zadaném bloku/fragmentu. NEvracej celý newsletter. Žádné vymyšlené počty. Zachovej data-vb-block + data-vb-block-id.\n'
+        : '\n\n[KONKRÉTNOST + DÉLKA] U existujícího mailu drž podobný rozsah HTML — NEprodlužuj ho kvůli opakování stylů. Sociální důkazy s čísly jen z podkladů. Drž šablonu (hero + fialové CTA). Žádné vymyšlené počty. Zachovej nebo doplň obaly \`data-vb-block\` + \`data-vb-block-id\` podle systémového promptu (Email Builder).\n';
       fullPrompt = conversationContext
         ? `Kontext konverzace:\n${conversationContext}\n\nPozadavek: ${prompt}${iterHint}`
         : `${promptStr}${iterHint}`;
+    }
+    if (insertFragmentOnly) {
+      fullPrompt += `
+\n\n[VÝSTUP — FRAGMENT PRO VLOŽENÍ · POVINNÉ]
+Uživatel přidává blok do EXISTUJÍCÍHO mailu. Klient původní mail zachová.
+V \`bodyHtml\` vrať POUZE 1 novou sekci (výjimečně 2–3), NIKDY celý newsletter.
+- Obal: \`<div data-vb-block="section" data-vb-section-fill="card" data-vb-block-id="vb-block-NOVÉ_ID" …>\`
+- Uvnitř text / highlight / button / image / product-collage podle pokynu
+- Všechna \`data-vb-block-id\` musí být NOVÁ (ne z kontextu existujícího mailu)
+- subject, previewText, headline: prázdný string nebo krátké beze změny
+- ŽÁDNÝ úvod „Vážení učitelé“, žádné kopírování existujících sekcí
+`;
+    }
+    if (returnEditedBlockOnly && !insertFragmentOnly) {
+      fullPrompt += `
+\n\n[VÝSTUP — ÚPRAVA JEDNOHO BLOKU · POVINNÉ]
+V \`bodyHtml\` vrať POUZE outer HTML upraveného bloku se STEJNÝM data-vb-block-id.
+NIKDY celý newsletter, žádný <style>, žádný .vb-email-root, žádné ostatní sekce.
+subject, previewText, headline, ctaText, ctaUrl: stejné hodnoty jako v kontextu, nebo prázdný string.
+`;
     }
     if (preferEmailBuilderBlocks) {
       fullPrompt += `
@@ -22716,6 +23372,11 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
 - Číslované sekce („1) …“, „2) …“) = vždy \`<h2>\` se stylem výše, ne odstavec.
 `;
     }
+    if (insertFragmentOnly || returnEditedBlockOnly) {
+      fullPrompt += `
+\n\n[PŘEPIS VÝSTUPU] Ignoruj požadavek na mobilní <style> + .vb-email-root výše. bodyHtml = jen fragment / jeden blok, ne celý mail.
+`;
+    }
 
     const emailJsonSchema = {
       type: 'OBJECT',
@@ -22725,8 +23386,11 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
         headline: { type: 'STRING', description: 'Kratky titulek v tmave modrem hero v Mailchimp sablone — neopakovat v bodyHtml jako h1' },
         bodyHtml: {
           type: 'STRING',
-          description:
-            'Inline HTML: dlouhy dopis (vice sekci h2, 2–4 odstavce uvodu), konkretni fakta z briefu/RAG; pri bohatem briefu cca 800–1500 slov textu; vb-email-root + mobile CSS; kazdy logicky usek v obalu s data-vb-block + unikatni data-vb-block-id (Email Builder); zadne vymyslene pocty',
+          description: insertFragmentOnly
+            ? 'POUZE novy HTML fragment (1-3 sekce s data-vb-block + nova id). NIKDY cely mail, zadny vb-email-root, zadny style tag.'
+            : returnEditedBlockOnly
+              ? 'POUZE outer HTML upraveneho bloku se stejnym data-vb-block-id. NIKDY cely mail, zadny vb-email-root, zadny style tag.'
+              : 'Inline HTML: dlouhy dopis (vice sekci h2, 2–4 odstavce uvodu), konkretni fakta z briefu/RAG; pri bohatem briefu cca 800–1500 slov textu; vb-email-root + mobile CSS; kazdy logicky usek v obalu s data-vb-block + unikatni data-vb-block-id (Email Builder); zadne vymyslene pocty',
         },
         ctaText: { type: 'STRING' },
         ctaUrl: { type: 'STRING' },
@@ -22748,9 +23412,10 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
     const uniqueComposeModels = composeModelCandidates.filter((id) =>
       seenCompose.has(id) ? false : (seenCompose.add(id), true),
     );
+    const composeMaxTokens = scopedBlockEdit || insertFragmentOnly ? 16_384 : 65_536;
 
     console.log(
-      `[MC Gen] compose models=[${uniqueComposeModels.join(', ')}] tier=${tier}, rag=${ragEnabled}, compact=${preferFast}, briefLed=${Boolean(contentBrief)}`,
+      `[MC Gen] compose models=[${uniqueComposeModels.join(', ')}] tier=${tier}, rag=${ragEnabled}, compact=${preferFast}, briefLed=${Boolean(contentBrief)}, maxOut=${composeMaxTokens}, scoped=${scopedBlockEdit}`,
     );
 
     let geminiResponse: Response | null = null;
@@ -22762,10 +23427,12 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
       let genCfg: Record<string, unknown> = {
         temperature: 0.52,
         topP: 0.88,
-        maxOutputTokens: 16384,
+        maxOutputTokens: composeMaxTokens,
         responseMimeType: 'application/json',
         responseSchema: emailJsonSchema,
       };
+      const thinkCfg = thinkingConfigForEmailModel(modelTry);
+      if (thinkCfg) genCfg.thinkingConfig = thinkCfg;
       const urlTry = `https://generativelanguage.googleapis.com/v1beta/models/${modelTry}:generateContent?key=${geminiKey}`;
       /** Krátké opakování na jednom modelu, pak rychlá rotace — při přetížení Google často pomůže jiné ID dřív než dlouhé čekání. */
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -22780,6 +23447,15 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
           break composeLoop;
         }
         lastErrText = await geminiResponse.text();
+        if (
+          geminiResponse.status === 400 &&
+          genCfg.thinkingConfig &&
+          /thinking|unknown name|invalid.*generation/i.test(lastErrText)
+        ) {
+          console.log(`[MC Gen] ${modelTry}: 400 u thinkingConfig — opakuji bez něj`);
+          delete genCfg.thinkingConfig;
+          continue;
+        }
         if (
           geminiResponse.status === 400 &&
           genCfg.responseSchema &&
@@ -22831,7 +23507,76 @@ NADPISY — POVINNÉ SEMANTICKÉ H1/H2/H3 (stejné jako toolbar editoru „Nadpi
     const parts = cand0?.content?.parts ?? [];
     let rawText = parts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('').trim();
     rawText = rawText.replace(/^```json?\s*/i, '').replace(/```\s*$/i, '').trim();
-    const extracted = extractFirstJsonObject(rawText);
+    let extracted = extractFirstJsonObject(rawText);
+    if (
+      !extracted.ok &&
+      rawText.length > 40 &&
+      (cand0.finishReason === 'MAX_TOKENS' || /Neúplný JSON/.test(extracted.reason))
+    ) {
+      console.log(
+        `[MC Gen] JSON nekompletní (${extracted.reason}, finish=${cand0.finishReason || '?'}) — pokračování`,
+      );
+      try {
+        const contCfg: Record<string, unknown> = {
+          temperature: 0.2,
+          topP: 0.8,
+          maxOutputTokens: 32_768,
+        };
+        const thinkCont = thinkingConfigForEmailModel(composeModelUsed);
+        if (thinkCont) contCfg.thinkingConfig = thinkCont;
+        const contUrl = `https://generativelanguage.googleapis.com/v1beta/models/${composeModelUsed}:generateContent?key=${geminiKey}`;
+        const contRes = await fetch(contUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                role: 'user',
+                parts: [
+                  {
+                    text:
+                      'Předchozí JSON odpověď byla USEKNUTÁ uprostřed řetězce (typicky pole bodyHtml). ' +
+                      'Vypiš POUZE pokračování — začni přesně tam, kde text skončil, nic neopakuj, žádný markdown, žádný nový objekt.\n\n' +
+                      `KONEC USEKNUTÉ ODPOVĚDI (posledních 4000 znaků):\n${rawText.slice(-4000)}`,
+                  },
+                ],
+              },
+            ],
+            generationConfig: contCfg,
+          }),
+        });
+        if (contRes.ok) {
+          const contJson = await contRes.json();
+          const contParts = contJson?.candidates?.[0]?.content?.parts ?? [];
+          const extra = contParts.map((p: any) => (typeof p.text === 'string' ? p.text : '')).join('');
+          if (extra.trim()) {
+            rawText = rawText + extra;
+            extracted = extractFirstJsonObject(rawText);
+            (ragDebug as any).jsonContinued = true;
+            console.log(`[MC Gen] continue +${extra.length} chars, parse=${extracted.ok}`);
+          }
+        } else {
+          console.log(`[MC Gen] continue HTTP ${contRes.status}`);
+        }
+      } catch (contErr: any) {
+        console.log(`[MC Gen] continue error: ${contErr?.message || contErr}`);
+      }
+    }
+    if (!extracted.ok) {
+      const repaired = tryRepairTruncatedJsonObject(rawText);
+      if (repaired.ok && String((repaired.value as any)?.bodyHtml || '').trim()) {
+        const html = String((repaired.value as any).bodyHtml);
+        const openDiv = (html.match(/<div\b/gi) || []).length;
+        const closeDiv = (html.match(/<\/div>/gi) || []).length;
+        const fragmentOk = insertFragmentOnly || returnEditedBlockOnly;
+        const balancedEnough = fragmentOk || openDiv <= closeDiv + 1;
+        if (balancedEnough && /data-vb-block|vb-email-root|<[a-z][\s\S]{20,}/i.test(html)) {
+          extracted = repaired;
+          (ragDebug as any).jsonRepaired = true;
+          console.log(`[MC Gen] JSON opraven uzavřením useknutého objektu (${html.length} chars bodyHtml)`);
+        }
+      }
+    }
     if (!extracted.ok) {
       console.log(`[MC Gen] JSON parse: ${extracted.reason} | head=${rawText.slice(0, 200)}`);
       return c.json(
@@ -26410,6 +27155,7 @@ Deno.serve((incoming) => {
   const fnRoot = `/${fn}`;
   const needsFnPrefix =
     p.startsWith('/admin/') ||
+    p.startsWith('/identity/') ||
     p.startsWith('/public/') ||
     p.startsWith('/webhooks/') ||
     p.startsWith('/newsletter/') ||
