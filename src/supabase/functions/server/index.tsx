@@ -3320,19 +3320,18 @@ app.get('/make-server-93a20b6f/public/notifikace', async (c) => {
       .filter((n: any) => n.isActive && n.type === 'slider')
       .sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
     
-    // Auto-generate webinar bobánek from upcoming webinars
-    const now = new Date();
+    // Auto-generate webinar bobánek from upcoming webinars (čas začátku + 150 min, ne půlnoc)
+    const nowMs = Date.now();
+    const webinarStartMs = (w: any) => {
+      const [h, m] = String(w.time || '18:00').split(':').map(Number);
+      return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
+    };
     const upcomingWebinars = webinars
       .filter((w: any) => {
         if (w.isPast) return false;
-        const wDate = new Date(w.year, (w.monthNum || 1) - 1, w.day || 1);
-        return wDate >= now;
+        return webinarStartMs(w) + 150 * 60 * 1000 > nowMs;
       })
-      .sort((a: any, b: any) => {
-        const dA = new Date(a.year, (a.monthNum || 1) - 1, a.day || 1);
-        const dB = new Date(b.year, (b.monthNum || 1) - 1, b.day || 1);
-        return dA.getTime() - dB.getTime();
-      });
+      .sort((a: any, b: any) => webinarStartMs(a) - webinarStartMs(b));
     
     const nextWebinar = upcomingWebinars[0] || null;
     

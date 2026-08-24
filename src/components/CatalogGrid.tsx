@@ -13,6 +13,7 @@ import { fetchJsonWithRetry } from '../utils/fetchWithRetry';
 import { parseHeroPhoneDiff } from '../utils/heroPhoneOverrides';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { WebinarsSection } from './WebinarsSection';
+import { SubjectHowToWebinarsSection } from './SubjectHowToWebinarsSection';
 import { BlogSection } from './BlogSection';
 import { SEOHead } from './SEOHead';
 import {
@@ -500,12 +501,13 @@ const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk
 /* â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const getCategoryLink = (category: string) => {
   const cat = (category || '').toLowerCase();
-  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/cs/matematika-1-stupen');
-  if (cat.includes('prvouka')) return marketingUrl('/cs/prvouka');
-  if (cat.includes('matematika')) return marketingUrl('/cs/matematika');
-  if (cat.includes('fyzika')) return marketingUrl('/cs/fyzika');
-  if (cat.includes('chemie')) return marketingUrl('/cs/chemie');
+  if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/predmet/matematika-1-stupen');
+  if (cat.includes('prvouka')) return marketingUrl('/predmet/prvouka');
+  if (cat.includes('matematika')) return marketingUrl('/predmet/matematika-2-stupen');
+  if (cat.includes('fyzika')) return marketingUrl('/predmet/fyzika');
+  if (cat.includes('chemie')) return marketingUrl('/predmet/chemie');
   if (cat.includes('p\u0159\u00edrodopis')) return marketingUrl('/predmet/prirodopis');
+  if (cat.includes('\u010desk') || cat.includes('cesk')) return marketingUrl('/predmet/cesky-jazyk');
   return marketingUrl('/katalog');
 };
 
@@ -728,6 +730,14 @@ export default function CatalogGrid() {
       .filter(({ diffMin }) => diffMin < 150)
       .sort((a, b) => a.start.getTime() - b.start.getTime())[0] || null;
   }, [webinars]);
+
+  /* CMS vlastní upozornění má přednost. Auto-bobánek ze serveru ne — bere jen půlnoc, takže dnešní webinář po ránu zmizí. */
+  const customBobanak = notifBobanak?.type === 'custom' ? notifBobanak : null;
+  const bobanakIsToday = Boolean(nextWebinarForBobanak && (() => {
+    const n = new Date();
+    const w = nextWebinarForBobanak.w;
+    return w.day === n.getDate() && (w.monthNum || 0) === n.getMonth() + 1 && w.year === n.getFullYear();
+  })());
 
   useEffect(() => {
     const fetchNotifications = async () => {
@@ -988,7 +998,7 @@ export default function CatalogGrid() {
         bottom: upcomingWebinarSlide.isLive ? 'Vstupte na živé vysílání →' : 'Připojte se — vysílání brzy začíná →',
         layout: 'webinar' as const,
         image: upcomingWebinarSlide.webinar.coverImage || 'https://images.unsplash.com/photo-1588196749597-9ff075ee6b5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
-        link: `/webinar/${upcomingWebinarSlide.webinar.id}/live`,
+        link: `/webinar/${upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id}/live`,
         _isLive: upcomingWebinarSlide.isLive,
         _webinar: upcomingWebinarSlide.webinar,
         textLight: true,
@@ -1547,7 +1557,7 @@ export default function CatalogGrid() {
                     <div className="hidden w-[40%] shrink-0 items-center justify-end py-4 pr-6 md:flex lg:pr-10">
                       <div
                         className="flex w-full max-w-[320px] flex-col overflow-hidden rounded-[20px] bg-[#F0F2F8] shadow-[0_8px_40px_rgba(0,0,0,0.4)] lg:max-w-[380px] xl:max-w-[440px] 2xl:max-w-[500px]"
-                        onClick={e => { e.stopPropagation(); navigate(`/webinar/${(slideView as any)._webinar?.id}`); }}
+                        onClick={e => { e.stopPropagation(); const w = (slideView as any)._webinar; navigate(`/webinar/${w?.slug || w?.id}`); }}
                       >
                         {/* Cover image â€” omezenÃ¡ vÃ½Å¡ka, aby neroztahovala celÃ½ hero */}
                         <div className="relative aspect-video max-h-[100px] w-full shrink-0 overflow-hidden rounded-t-[20px] sm:max-h-[110px] md:max-h-[125px] lg:max-h-[140px]">
@@ -1580,7 +1590,7 @@ export default function CatalogGrid() {
                           {/* CTA */}
                           <button
                             className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-                            onClick={e => { e.stopPropagation(); navigate(`/webinar/${(slideView as any)._webinar?.id}`); }}
+                            onClick={e => { e.stopPropagation(); const w = (slideView as any)._webinar; navigate(`/webinar/${w?.slug || w?.id}`); }}
                           >
                             {(slideView as any)._isLive ? 'Vstoupit' : 'P\u0159ihl\u00e1sit se'}
                           </button>
@@ -2041,28 +2051,28 @@ export default function CatalogGrid() {
       />
       ) : null}
 
-      {/* Webinar bobÃ¡nek â€” vÅ¾dy zobrazÃ­ nejbliÅ¾Å¡Ã­ webinÃ¡Å™ */}
-      {(nextWebinarForBobanak || notifBobanak) && (
+      {/* Dočasně skrytý — dnešní webinář je první dlaždice ve slideru pod hero. */}
+      {false && (nextWebinarForBobanak || customBobanak) && (
       <div className="flex justify-center px-4 mt-5 mb-1">
         <div
           className="inline-flex items-center gap-3 bg-[#FEF0E4] border border-[#F4C49E] text-[#001161] rounded-2xl px-5 py-2.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
           style={{ transform: 'rotate(-1.5deg)' }}
           onClick={() => {
-            if (notifBobanak?.link) navigate(notifBobanak.link);
-            else if (nextWebinarForBobanak) navigate(`/webinar/${nextWebinarForBobanak.w.id}`);
+            if (customBobanak?.link) navigate(customBobanak.link);
+            else if (nextWebinarForBobanak) navigate(`/webinar/${nextWebinarForBobanak.w.slug || nextWebinarForBobanak.w.id}`);
             else navigate('/webinare');
           }}
         >
           <span className="text-lg leading-none">
-            {notifBobanak?.emoji || '\uD83D\uDD14'}
+            {customBobanak?.emoji || '\uD83D\uDD14'}
           </span>
           <div className="flex flex-col gap-0.5">
             <span className="font-['Fenomen_Sans',sans-serif] text-[10px] uppercase tracking-widest opacity-55 leading-none font-bold">
-              {notifBobanak?.type === 'custom' ? 'Upozornění' : 'Blíží se webinář'}
+              {customBobanak ? 'Upozornění' : bobanakIsToday ? 'Dnes webinář' : 'Blíží se webinář'}
             </span>
             <span className="font-['Fenomen_Sans',sans-serif] text-[13px] leading-snug opacity-85 font-bold">
-              {notifBobanak
-                ? `${notifBobanak.title}${notifBobanak.subtitle ? '\u00a0\u2014 ' + notifBobanak.subtitle : ''}`
+              {customBobanak
+                ? `${customBobanak.title}${customBobanak.subtitle ? '\u00a0\u2014 ' + customBobanak.subtitle : ''}`
                 : nextWebinarForBobanak
                   ? `${nextWebinarForBobanak.w.title}\u00a0\u2014 ${nextWebinarForBobanak.w.day}. ${nextWebinarForBobanak.w.monthName} v\u00a0${nextWebinarForBobanak.w.time}`
                   : ''}
@@ -2072,6 +2082,8 @@ export default function CatalogGrid() {
         </div>
       </div>
       )}
+
+      {!isDistributorMode && <SubjectHowToWebinarsSection />}
 
       {/* Product groups */}
       <div className="px-4 md:px-8 mt-8">
