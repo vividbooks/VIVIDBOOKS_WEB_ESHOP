@@ -199,7 +199,7 @@ export function SubjectHowToWebinarsSection() {
             className="mt-1.5 text-[#001161]/70 text-[13px] md:text-[15px] leading-snug whitespace-nowrap max-sm:whitespace-normal"
             style={{ fontFamily: FF }}
           >
-            {'Na září jsme pro Vás připravili sérii odborných webinářů s DVPP certifikátem zdarma.'}
+            {'Na září jsme pro vás připravili sérii odborných webinářů s DVPP certifikátem zdarma.'}
           </p>
         </div>
         <div className="flex w-full items-center justify-between gap-3 md:ml-auto md:w-auto md:justify-start">
