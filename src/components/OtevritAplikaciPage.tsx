@@ -352,9 +352,16 @@ export function OtevritAplikaciPage() {
             {/* Accent Bar */}
             <div className="h-2 bg-[#cbd5e1]" />
 
-            {/* Image Gallery */}
+            {/* Static Image */}
             <div className="px-6 pt-6">
-              <AppImageGallery images={PUVODNI_IMAGES} accentColor={COLORS.PUVODNI_ACCENT} />
+              <motion.img
+                src="/app-screenshots/puvodni-single.png"
+                alt="Původní aplikace"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+                className="w-full rounded-[24px] object-cover aspect-video"
+              />
             </div>
 
             {/* Content */}
