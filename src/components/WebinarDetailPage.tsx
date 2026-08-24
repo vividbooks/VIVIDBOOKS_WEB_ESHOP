@@ -146,6 +146,22 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setPostSurveyAnswers(a);
   }, []);
 
+  const [form, setForm] = useState<FormState>({
+    name: '',
+    email: '',
+    phone: '',
+    position: '',
+    gdpr: false,
+    newsletter: false,
+    schoolName: '',
+    ico: '',
+    schoolAddress: '',
+    webinarMotivation: '',
+    webinarTopicInterest: '',
+    usesVividbooks: '',
+    birthDateIso: '',
+  });
+
   const preSurveyInitialAnswers = useMemo(
     () => ({
       ...fetchedPreSurveyAnswers,
@@ -171,22 +187,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     const uses = postSurveyAnswers[USE_VIVIDBOOKS_QID] || form.usesVividbooks;
     return uses === 'no';
   }, [preSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers, form.usesVividbooks]);
-
-  const [form, setForm] = useState<FormState>({
-    name: '',
-    email: '',
-    phone: '',
-    position: '',
-    gdpr: false,
-    newsletter: false,
-    schoolName: '',
-    ico: '',
-    schoolAddress: '',
-    webinarMotivation: '',
-    webinarTopicInterest: '',
-    usesVividbooks: '',
-    birthDateIso: '',
-  });
 
   useEffect(() => {
     const qEmail = String(searchParams.get('email') || '').trim();
