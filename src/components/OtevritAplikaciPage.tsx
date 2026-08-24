@@ -94,8 +94,8 @@ function AppImageGallery({ images, accentColor }: { images: AppImage[]; accentCo
     <div className="w-full">
       {/* Main Image Display */}
       <div
-        className="w-full aspect-video rounded-[24px] flex items-center justify-center relative overflow-hidden group/img transition-all duration-300"
-        style={{
+        className="w-full rounded-[24px] flex items-center justify-center relative overflow-hidden group/img transition-all duration-300" style={{
+          aspectRatio: '16/9.18',
           background: `linear-gradient(135deg, ${accentColor}15 0%, ${accentColor}05 100%)`,
         }}
       >
@@ -352,9 +352,17 @@ export function OtevritAplikaciPage() {
             {/* Accent Bar */}
             <div className="h-2 bg-[#cbd5e1]" />
 
-            {/* Image Gallery */}
+            {/* Static Image */}
             <div className="px-6 pt-6">
-              <AppImageGallery images={PUVODNI_IMAGES} accentColor={COLORS.PUVODNI_ACCENT} />
+              <motion.img
+                src="/app-screenshots/puvodni-single.png"
+                alt="Původní aplikace"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3 }}
+                style={{ aspectRatio: '16/9.18' }}
+                className="w-full rounded-[24px] object-cover"
+              />
             </div>
 
             {/* Content */}

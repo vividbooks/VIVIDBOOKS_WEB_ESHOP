@@ -153,3 +153,30 @@ export function getResolvedWebinarSurveyQuestions(webinar: Webinar): WebinarSurv
   }
   return DEFAULT_WEBINAR_SURVEY_QUESTIONS;
 }
+
+/** Pole z POST /webinar-registrace → id otázek před webinářem. */
+export function preSurveyAnswersFromRegistration(reg: {
+  webinarMotivation?: string;
+  webinarTopicInterest?: string;
+  usesVividbooks?: string;
+} | null | undefined): Record<string, string> {
+  if (!reg) return {};
+  const out: Record<string, string> = {};
+  const mot = String(reg.webinarMotivation || '').trim();
+  const topic = String(reg.webinarTopicInterest || '').trim();
+  const uses = String(reg.usesVividbooks || '').trim();
+  if (mot) out.motivation = mot;
+  if (topic) out.topic_interest = topic;
+  if (uses === 'yes' || uses === 'no') out.uses_vividbooks = uses;
+  return out;
+}
+
+export function isWebinarSurveyQuestionAnswered(
+  q: Pick<WebinarSurveyQuestion, 'id' | 'type'>,
+  answers: Record<string, string>,
+): boolean {
+  const v = (answers[q.id] || '').trim();
+  if (q.type === 'yes_no') return v === 'yes' || v === 'no';
+  if (q.type === 'open' || q.type === 'abc') return v.length > 0;
+  return true;
+}

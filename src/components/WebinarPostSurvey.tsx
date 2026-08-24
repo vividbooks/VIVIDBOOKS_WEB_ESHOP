@@ -7,6 +7,7 @@ import {
   getPostWebinarPart2AnswerIds,
   getPostWebinarPart2Steps,
   getPreWebinarSurveyQuestions,
+  isWebinarSurveyQuestionAnswered,
   webinarPostWebinarQuizAsSurveyQuestions,
 } from '../utils/webinarSurveyDefaults';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -20,11 +21,7 @@ const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 function isRestQuestionAnswered(q: WebinarSurveyQuestion, answers: Record<string, string>): boolean {
-  const v = (answers[q.id] || '').trim();
-  if (q.type === 'open') return v.length > 0;
-  if (q.type === 'abc') return v.length > 0;
-  if (q.type === 'yes_no') return v === 'yes' || v === 'no';
-  return true;
+  return isWebinarSurveyQuestionAnswered(q, answers);
 }
 
 function parseJsonResponseBody(text: string): unknown {
@@ -54,6 +51,7 @@ export function WebinarPostSurvey({
   participantBirthDateIso = '',
   participantSchoolName = '',
   participantSchoolIco = '',
+  initialAnswers,
 }: {
   webinar: Webinar;
   email: string;
@@ -71,6 +69,8 @@ export function WebinarPostSurvey({
   participantBirthDateIso?: string;
   participantSchoolName?: string;
   participantSchoolIco?: string;
+  /** Už známé odpovědi (registrace / server) — ty otázky se znovu neptají. */
+  initialAnswers?: Record<string, string>;
 }) {
   const fs = variant === 'fullscreen';
   const mergedQuestions = useMemo(
@@ -118,7 +118,22 @@ export function WebinarPostSurvey({
   }, [webinar, scope]);
   const certificateKind = certificateKindOverride ?? (dvppRaw.length > 0 ? 'dvpp' : 'feedback');
 
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>(() => ({ ...(initialAnswers || {}) }));
+
+  useEffect(() => {
+    if (!initialAnswers) return;
+    setAnswers((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(initialAnswers)) {
+        const val = String(v || '').trim();
+        if (!val || next[k]) continue;
+        next[k] = val;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [initialAnswers]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
@@ -135,6 +150,11 @@ export function WebinarPostSurvey({
 
   const restQuestionsComplete = useMemo(
     () => restQuestions.every((q) => isRestQuestionAnswered(q, answers)),
+    [restQuestions, answers],
+  );
+
+  const visibleRestQuestions = useMemo(
+    () => restQuestions.filter((q) => !isRestQuestionAnswered(q, answers)),
     [restQuestions, answers],
   );
 
@@ -360,6 +380,10 @@ export function WebinarPostSurvey({
 
   if (mergedQuestions.length === 0 || skipped) return null;
 
+  if (scope === 'pre' && restQuestions.length > 0 && visibleRestQuestions.length === 0) {
+    return null;
+  }
+
   if (showDvppWizard) {
     return (
       <motion.div
@@ -520,7 +544,7 @@ export function WebinarPostSurvey({
         </div>
       ) : null}
       <div className={fs ? 'mx-auto w-full max-w-[min(720px,100%)]' : undefined}>
-      {restQuestions.length > 0 && (
+      {visibleRestQuestions.length > 0 && (
         <>
           <div className="flex items-start gap-3 mb-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#001161]/8">
@@ -534,7 +558,7 @@ export function WebinarPostSurvey({
           </div>
 
           <div className="space-y-4">
-            {restQuestions.map((q) => (
+            {visibleRestQuestions.map((q) => (
               <div key={q.id}>
                 <label style={FF} className="block text-[13px] font-semibold text-[#001161] mb-1.5">
                   {q.label}
