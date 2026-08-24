@@ -338,10 +338,10 @@ export function WebinarRegistrationFormFields({
           <span className="absolute left-[3px] top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[18px]" />
         </span>
         <span className="font-['Fenomen_Sans',sans-serif] text-[13px] text-[#001161]/80 leading-[1.5]">
-          <span className="font-bold text-[#001161]">{'📚 Chci dostávat novinky a tipy do výuky'}</span>
+          <span className="font-bold text-[#001161]">{'Souhlasím se zasíláním pozvánek na DVPP webináře a slevových akcí Vividbooks.'}</span>
           <br />
           {
-            'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'
+            'Posíláme je jen tehdy, když stojí za to. Bez spamu.'
           }
         </span>
       </label>

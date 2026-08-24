@@ -50,7 +50,6 @@ const NOVA_IMAGES: AppImage[] = [
   { id: 'nova-1', placeholder: '📚', label: 'Knihovna', imageSrc: '/app-screenshots/nova-1.png' },
   { id: 'nova-2', placeholder: '🎯', label: 'Dashboard', imageSrc: '/app-screenshots/nova-2.png' },
   { id: 'nova-3', placeholder: '✍️', label: 'Editor', imageSrc: '/app-screenshots/nova-3.png' },
-  { id: 'nova-4', placeholder: '🤖', label: 'AI Asistent', imageSrc: '/app-screenshots/nova-4.png' },
 ];
 
 const PUVODNI_IMAGES: AppImage[] = [
