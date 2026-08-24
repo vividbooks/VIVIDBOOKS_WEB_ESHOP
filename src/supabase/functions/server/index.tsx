@@ -3955,7 +3955,16 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
     }
     const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
     const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
-    return c.json({ registered: !!(reg || light) });
+    const survey = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as { answers?: Record<string, string> } | null;
+    const partial = (await kv.get(webinarSurveyPartialKey(webinarId, email))) as { answers?: Record<string, string> } | null;
+    return c.json({
+      registered: !!(reg || light),
+      answers: {
+        ...answersFromWebinarRegistration(reg),
+        ...(partial?.answers || {}),
+        ...(survey?.answers || {}),
+      },
+    });
   } catch (err: any) {
     console.log(`[Webinar] registration-check: ${err.message}`);
     return c.json({ error: err.message || 'Chyba' }, 500);
@@ -4587,6 +4596,44 @@ const DEFAULT_SURVEY_QUESTIONS_SERVER: Array<{
   { id: 'topic_interest', type: 'open', label: 'Co by vás u tématu nejvíce zajímalo?' },
   { id: 'uses_vividbooks', type: 'yes_no', label: 'Používám Vividbooks' },
 ];
+
+function answersFromWebinarRegistration(reg: unknown): Record<string, string> {
+  if (!reg || typeof reg !== 'object') return {};
+  const r = reg as Record<string, unknown>;
+  const out: Record<string, string> = {};
+  const mot = String(r.webinarMotivation || '').trim();
+  const topic = String(r.webinarTopicInterest || '').trim();
+  const uses = String(r.usesVividbooks || '').trim();
+  if (mot) out.motivation = mot;
+  if (topic) out.topic_interest = topic;
+  if (uses === 'yes' || uses === 'no') out.uses_vividbooks = uses;
+  return out;
+}
+
+function isSurveyQuestionAnswered(
+  q: { id: string; type: string },
+  answers: Record<string, string>,
+): boolean {
+  const v = (answers[q.id] || '').trim();
+  if (q.type === 'yes_no') return v === 'yes' || v === 'no';
+  return v.length > 0;
+}
+
+async function collectKnownPreSurveyAnswers(
+  webinarId: string,
+  cleanEmail: string,
+): Promise<Record<string, string>> {
+  const [reg, survey, partial] = await Promise.all([
+    kv.get(`webinar_reg_${webinarId}_${cleanEmail}`),
+    kv.get(webinarSurveyAnswerKey(webinarId, cleanEmail)),
+    kv.get(webinarSurveyPartialKey(webinarId, cleanEmail)),
+  ]);
+  return {
+    ...answersFromWebinarRegistration(reg),
+    ...(((partial as { answers?: Record<string, string> } | null)?.answers) || {}),
+    ...(((survey as { answers?: Record<string, string> } | null)?.answers) || {}),
+  };
+}
 
 /** Druhá část po DVPP — musí odpovídat `DEFAULT_POST_WEBINAR_PART2_STEPS` na klientu (bez úvodního kroku). */
 const DEFAULT_POST_WEBINAR_PART2_FOR_SERVER: typeof DEFAULT_SURVEY_QUESTIONS_SERVER = [
@@ -6258,8 +6305,11 @@ async function resolveSurveyInviteUrlForRegistrant(
 ): Promise<string | null> {
   const invite = buildWebinarSurveyInviteUrl(baseUrl, w, cleanEmail);
   if (!invite) return null;
-  const answered = await kv.get(webinarSurveyAnswerKey(String(w.id), cleanEmail));
-  return answered ? null : invite;
+  const questions = resolvePreWebinarSurveyQuestionsFromItem(w);
+  if (questions.length === 0) return null;
+  const answers = await collectKnownPreSurveyAnswers(String(w.id), cleanEmail);
+  const allAnswered = questions.every((q) => isSurveyQuestionAnswered(q, answers));
+  return allAnswered ? null : invite;
 }
 
 function buildWebinarReminderEmailFooter(): string {
@@ -6897,12 +6947,27 @@ const webinarSurveySubmitHandler = async (c: Context) => {
       | undefined;
     const reg = await kvGetWebinarSurveyParticipantForEmail(webinarId, email, webinar);
 
-    const questions = resolveSurveyQuestionsFromWebinarItem(webinar || null);
+    const questions = (() => {
+      const seen = new Set<string>();
+      const list: typeof DEFAULT_SURVEY_QUESTIONS_SERVER = [];
+      for (const q of [
+        ...resolvePreWebinarSurveyQuestionsFromItem(webinar || null),
+        ...resolveSurveyQuestionsFromWebinarItem(webinar || null),
+      ]) {
+        if (!q?.id || seen.has(q.id)) continue;
+        seen.add(q.id);
+        list.push(q);
+      }
+      return list;
+    })();
     if (questions.length === 0) return c.json({ error: 'Dotazník není aktivní.' }, 400);
 
     const partialKey = webinarSurveyPartialKey(webinarId, email);
     const partialDoc = (await kv.get(partialKey)) as { answers?: Record<string, string>; name?: string } | null;
+    const existingDoc = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as { answers?: Record<string, string> } | null;
     const mergedIncoming: Record<string, unknown> = {
+      ...answersFromWebinarRegistration(reg),
+      ...(existingDoc?.answers || {}),
       ...(partialDoc?.answers || {}),
       ...(answers as Record<string, unknown>),
     };

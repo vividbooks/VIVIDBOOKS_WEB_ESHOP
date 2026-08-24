@@ -14,7 +14,11 @@ import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
-import { getMergedWebinarSurveyQuestions, getPreWebinarSurveyQuestions } from '../utils/webinarSurveyDefaults';
+import {
+  getMergedWebinarSurveyQuestions,
+  getPreWebinarSurveyQuestions,
+  preSurveyAnswersFromRegistration,
+} from '../utils/webinarSurveyDefaults';
 import { useVividbooksPresence } from '@/lib/vividbooksPresence';
 import {
   loadSavedDvppContacts,
@@ -137,9 +141,23 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     [preSurveyQuestions],
   );
   const [postSurveyAnswers, setPostSurveyAnswers] = useState<Record<string, string>>({});
+  const [fetchedPreSurveyAnswers, setFetchedPreSurveyAnswers] = useState<Record<string, string>>({});
   const onPostSurveyAnswersChange = useCallback((a: Record<string, string>) => {
     setPostSurveyAnswers(a);
   }, []);
+
+  const preSurveyInitialAnswers = useMemo(
+    () => ({
+      ...fetchedPreSurveyAnswers,
+      ...preSurveyAnswersFromRegistration(form),
+    }),
+    [
+      fetchedPreSurveyAnswers,
+      form.webinarMotivation,
+      form.webinarTopicInterest,
+      form.usesVividbooks,
+    ],
+  );
 
   /** Celostránkový dotazník po akci (`?dvppDotaznik=1`) — potřeba dřív než handleSubmit (kontrola registrace). */
   const isSurveyFullPage = useMemo(
@@ -150,8 +168,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const showPostRegistrationTrial = useMemo(() => {
     if (preSurveyQuestions.length === 0) return true;
     if (!postRegSurveyHasUsesQuestion) return true;
-    return postSurveyAnswers[USE_VIVIDBOOKS_QID] === 'no';
-  }, [preSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers]);
+    const uses = postSurveyAnswers[USE_VIVIDBOOKS_QID] || form.usesVividbooks;
+    return uses === 'no';
+  }, [preSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers, form.usesVividbooks]);
 
   const [form, setForm] = useState<FormState>({
     name: '',
@@ -314,6 +333,36 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     }, 500);
     return () => window.clearTimeout(t);
   }, [surveyDeepLink, webinar.id, preSurveyQuestions.length, webinar.isPast]);
+
+  useEffect(() => {
+    if (webinar.isPast) return;
+    if (!submitted && !surveyDeepLink) return;
+    const em = form.email.trim().toLowerCase();
+    if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(
+          `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/public/webinar-registration-check?webinarId=${encodeURIComponent(String(webinar.id))}&email=${encodeURIComponent(em)}`,
+          { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+        );
+        const data = (await res.json().catch(() => ({}))) as { answers?: Record<string, string> };
+        if (cancelled || !data.answers || typeof data.answers !== 'object') return;
+        const next: Record<string, string> = {};
+        for (const [k, v] of Object.entries(data.answers)) {
+          const val = String(v || '').trim();
+          if (val) next[k] = val;
+        }
+        if (Object.keys(next).length) setFetchedPreSurveyAnswers(next);
+      } catch {
+        /* ticho — zůstanou odpovědi z formuláře */
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [submitted, surveyDeepLink, form.email, webinar.id, webinar.isPast]);
 
   const fetchSchools = async (q: string) => {
     if (q.trim().length < 2) { setSchoolResults([]); setSchoolOpen(false); return; }
@@ -1184,6 +1233,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                     participantName={form.name}
                     onAnswersChange={onPostSurveyAnswersChange}
                     scope="pre"
+                    initialAnswers={preSurveyInitialAnswers}
                   />
 
                   {showPostRegistrationTrial && !surveyDeepLink ? (
