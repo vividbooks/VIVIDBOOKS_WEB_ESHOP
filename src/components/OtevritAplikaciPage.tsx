@@ -245,7 +245,7 @@ export function OtevritAplikaciPage() {
           >
             <Sparkles className="w-5 h-5 text-[#5139ed]" />
             <span style={FF} className="text-[12px] md:text-[13px] font-bold uppercase tracking-widest text-[#5139ed]">
-              {'Nová generace aplikace'}
+              {'NOVÁ APLIKACE VIVIDBOOKS'}
             </span>
           </motion.div>
 
@@ -256,7 +256,7 @@ export function OtevritAplikaciPage() {
             style={COOPER}
             className="text-[36px] md:text-[52px] lg:text-[64px] leading-tight mb-4 text-[#001161] font-light"
           >
-            {'Kterou aplikaci otevřít?'}
+            {'Kterou aplikaci dnes otevřít?'}
           </motion.h1>
 
           <motion.p
@@ -266,7 +266,7 @@ export function OtevritAplikaciPage() {
             style={FF}
             className="text-[15px] md:text-[17px] text-[#001161]/65 max-w-[620px] mx-auto leading-relaxed"
           >
-            {'Obě aplikace běží souběžně. Nová aplikace vám přináší lepší zážitek, původní zůstává dostupná.'}
+            {'Obě běží souběžně. Novou si můžete v klidu osahat a kdykoliv se vrátit zpátky — nic tím neztratíte.'}
           </motion.p>
         </header>
 
@@ -301,7 +301,7 @@ export function OtevritAplikaciPage() {
                   <Sparkles className="w-5 h-5 text-[#5139ed]" />
                 </motion.div>
                 <span className="inline-block rounded-full bg-[#FF8C00] px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-white">
-                  {'Doporučujeme'}
+                  {'DOPORUČUJEME'}
                 </span>
               </div>
 
@@ -310,7 +310,7 @@ export function OtevritAplikaciPage() {
               </h2>
 
               <p style={FF} className="text-[15px] leading-relaxed text-[#001161]/70 mb-6 flex-grow">
-                {'Moderní a intuitivní design. Všechny funkce na jednom místě. Speciálně navržena pro vás.'}
+                {'Knihovna, vividboard i vaše materiály na jednom místě a pod jedním přihlášením. Nové editory, AI pomocník a adaptivní procvičování.'}
               </p>
 
               {/* User Info */}
@@ -363,7 +363,7 @@ export function OtevritAplikaciPage() {
               <div className="flex items-center gap-2 mb-4">
                 <Clock className="w-5 h-5 text-[#64748b]" />
                 <span className="inline-block rounded-full bg-[#e2e8f0] px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[#64748b]">
-                  {'Beze změny'}
+                  {'BEZE ZMĚNY'}
                 </span>
               </div>
 
@@ -372,7 +372,7 @@ export function OtevritAplikaciPage() {
               </h2>
 
               <p style={FF} className="text-[15px] leading-relaxed text-[#001161]/70 mb-6 flex-grow">
-                {'Vyzkoušená a spolehlivá. Všechny vaše přípravy a materiály jsou zde, kde jste zvyklí.'}
+                {'Všechno tam, kde jste zvyklí. Vaše přípravy i materiály zůstávají nedotčené. Původní aplikace poběží do 1. ledna 2027.'}
               </p>
 
               {/* CTA */}
@@ -380,7 +380,7 @@ export function OtevritAplikaciPage() {
                 onClick={() => handleChoose('puvodni')}
                 className="w-full py-4 px-6 border-2 border-[#001161]/20 text-[#001161] font-bold rounded-[14px] inline-flex items-center justify-center gap-2 group/btn transition-all duration-300 hover:bg-[#001161]/6 hover:border-[#001161]/40 active:scale-95"
               >
-                {'Otevřít původní aplikaci'}
+                {'Pokračovat v původní'}
                 <ArrowRight className="w-4 h-4 group-hover/btn:translate-x-1 transition-transform" />
               </button>
             </div>
@@ -420,12 +420,21 @@ export function OtevritAplikaciPage() {
           <div className="flex gap-4">
             <div className="flex-shrink-0 text-2xl">ℹ️</div>
             <div>
-              <h3 style={FF} className="font-bold text-[15px] text-[#001161] mb-2">
+              <h3 style={FF} className="font-bold text-[15px] text-[#001161] mb-3">
                 {'Jak to funguje?'}
               </h3>
-              <p style={FF} className="text-[14px] text-[#001161]/70 leading-relaxed">
-                {'Obě aplikace jsou nyní dostupné a běží souběžně. Můžete si novou aplikaci vyzkoušet a kdykoliv se vrátit k původní. Vaše data jsou v obou verzích synchronizована.'}
-              </p>
+              <div style={FF} className="text-[14px] text-[#001161]/70 leading-relaxed space-y-3">
+                <p>
+                  {'Knihovna, licence i zakoupené předměty jsou v obou aplikacích stejné — přepínat můžete, jak potřebujete. Materiály, které jste si vytvořili ve starém Vividboardu, si do nové aplikace jednorázově přenesete; potom už si každá verze žije vlastním obsahem, takže nové přípravy dělejte rovnou tam, kde chcete zůstat. Původní aplikace zůstává dostupná do 1. ledna 2027.'}
+                </p>
+                <p>
+                  {'Nevíte si rady? Napište nám na '}
+                  <a href="mailto:hello@vividbooks.com" className="font-semibold text-[#5139ed] hover:text-[#7C3AED] transition-colors">
+                    {'hello@vividbooks.com'}
+                  </a>
+                  {' nebo se přidejte na některý z miniwebinářů k nové aplikaci.'}
+                </p>
+              </div>
             </div>
           </div>
         </motion.div>
