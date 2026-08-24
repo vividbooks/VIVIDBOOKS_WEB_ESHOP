@@ -684,7 +684,7 @@ export default function CatalogGrid() {
     if (!upcoming.length) return null;
     const { w, diffMin, isDevPreview } = upcoming[0];
     const isLive = diffMin >= 0 && diffMin < 150;
-    const showInSlider = isDevPreview || (diffMin > -30 && diffMin < 150);
+    const showInSlider = isDevPreview || (diffMin > -60 && diffMin < 150);
     return { webinar: w, diffMin, isLive, showInSlider, isDevPreview };
   }, [webinars]);
 

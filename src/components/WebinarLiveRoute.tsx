@@ -9,7 +9,7 @@ function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
   const date = new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 18, m || 0);
   const diffMin = (Date.now() - date.getTime()) / 60000;
-  if (diffMin < -30) return 'upcoming';
+  if (diffMin < -60) return 'upcoming';
   if (diffMin < 150) return 'live';
   return 'ended';
 }
@@ -34,6 +34,15 @@ export function WebinarLiveRoute() {
   const webinar = webinars.find(w => w.id === id || w.slug === id);
   if (!webinar) return <Navigate to="/webinare" replace />;
 
+  const canonicalSeg = String(webinar.slug || webinar.id || '').trim();
+  const search = searchParams.toString();
+  const searchSuffix = search ? `?${search}` : '';
+
+  // Kanonická live URL = slug (pokud existuje)
+  if (id && canonicalSeg && id !== canonicalSeg) {
+    return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}/live${searchSuffix}`} replace />;
+  }
+
   // Preview z adminu (tlačítko „Náhled") → vždy zobrazit live stránku fullscreen
   if (isPreview) {
     return <WebinarLivePage webinar={webinar} />;
@@ -48,7 +57,7 @@ export function WebinarLiveRoute() {
   // Webinář ještě nezačal → přesměrovat na detail stránku (má sidebar, registraci atd.)
   const status = getLiveStatus(webinar);
   if (status === 'upcoming') {
-    return <Navigate to={`/webinar/${id}`} replace />;
+    return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
   }
 
   // Live nebo skončený → fullscreen live stránka

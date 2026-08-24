@@ -30,7 +30,7 @@ function getWebinarDate(w: Webinar): Date {
 }
 function getLiveStatus(w: Webinar): LiveStatus {
   const diff = (Date.now() - getWebinarDate(w).getTime()) / 60000;
-  if (diff < -30) return 'upcoming';
+  if (diff < -60) return 'upcoming';
   if (diff < 150) return 'live';
   return 'ended';
 }
