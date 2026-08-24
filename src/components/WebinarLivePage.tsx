@@ -28,11 +28,19 @@ function getWebinarDate(w: Webinar): Date {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
   return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 18, m || 0);
 }
-function getLiveStatus(w: Webinar): LiveStatus {
-  const diff = (Date.now() - getWebinarDate(w).getTime()) / 60000;
+function minutesFromStart(w: Webinar, nowMs = Date.now()): number {
+  return (nowMs - getWebinarDate(w).getTime()) / 60000;
+}
+function getLiveStatus(w: Webinar, nowMs = Date.now()): LiveStatus {
+  const diff = minutesFromStart(w, nowMs);
   if (diff < -60) return 'upcoming';
   if (diff < 150) return 'live';
   return 'ended';
+}
+/** Od 10 min před začátkem do konce vysílání může vstoupit kdokoli, bez e-mailu. */
+function isOpenEntry(w: Webinar, nowMs = Date.now()): boolean {
+  const diff = minutesFromStart(w, nowMs);
+  return diff >= -10 && diff < 150;
 }
 function extractYoutubeId(url: string): string | null {
   const pats = [
@@ -492,10 +500,13 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
     } catch { return false; }
   })();
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [status, setStatus] = useState<LiveStatus>(() =>
     (isPreview || isDevImminent) ? 'live' : getLiveStatus(webinar)
   );
   const [checkedIn, setCheckedIn] = useState(isPreview || isDevImminent);
+  const openEntry = isPreview || isDevImminent || isOpenEntry(webinar, nowMs);
+  const canWatch = checkedIn || openEntry;
   const [attendeeName, setAttendeeName] = useState(
     isPreview ? 'Demo (Admin)' : isDevImminent ? 'Dev Admin' : ''
   );
@@ -565,7 +576,12 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
 
   useEffect(() => {
     if (isPreview) return;
-    const id = setInterval(() => setStatus(getLiveStatus(webinar)), 30000);
+    const tick = () => {
+      const t = Date.now();
+      setNowMs(t);
+      setStatus(getLiveStatus(webinar, t));
+    };
+    const id = setInterval(tick, 10000);
     return () => clearInterval(id);
   }, [webinar, isPreview]);
 
@@ -650,16 +666,16 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
             <Countdown target={getWebinarDate(webinar)} />
             <p className="text-[14px] text-[#001161]/50 mt-7" style={{ fontFamily: FF }}>{`${webinar.day}. ${webinar.monthName} ${webinar.year} v ${webinar.time}`}</p>
           </div>
-          {!checkedIn && <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />}
+          {!canWatch && <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />}
         </div>
       )}
 
-      {status === 'live' && !checkedIn && (
+      {status === 'live' && !canWatch && (
         <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />
       )}
 
       {/* ══ LIVE ══════════════════════════════════════════════════ */}
-      {status === 'live' && checkedIn && (
+      {status === 'live' && canWatch && (
         <>
           {isGoogleMeetDelivery(webinar) ? (
             <GoogleMeetLiveLayout webinar={webinar} />
