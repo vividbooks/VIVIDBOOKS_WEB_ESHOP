@@ -94,8 +94,8 @@ function AppImageGallery({ images, accentColor }: { images: AppImage[]; accentCo
     <div className="w-full">
       {/* Main Image Display */}
       <div
-        className="w-full aspect-video rounded-[24px] flex items-center justify-center relative overflow-hidden group/img transition-all duration-300"
-        style={{
+        className="w-full rounded-[24px] flex items-center justify-center relative overflow-hidden group/img transition-all duration-300" style={{
+          aspectRatio: '9/16',
           background: `linear-gradient(135deg, ${accentColor}15 0%, ${accentColor}05 100%)`,
         }}
       >
@@ -360,7 +360,8 @@ export function OtevritAplikaciPage() {
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.3 }}
-                className="w-full rounded-[24px] object-cover aspect-video"
+                style={{ aspectRatio: '9/16' }}
+                className="w-full rounded-[24px] object-cover"
               />
             </div>
 
