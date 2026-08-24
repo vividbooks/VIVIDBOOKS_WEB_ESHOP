@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useSearchParams } from 'react-router';
 import {
   Radio, CheckCircle, AlertCircle, Clock,
-  Play, Mail, Lock, Send, MessageCircle, HelpCircle, Smile,
+  Play, Mail, Lock, Send, MessageCircle, HelpCircle, Smile, UserPlus,
 } from 'lucide-react';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import type { Webinar } from '../data/webinars';
@@ -125,20 +125,28 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notRegistered, setNotRegistered] = useState(false);
+  const registerHref = `/webinar/${encodeURIComponent(String(webinar.slug || webinar.id))}#registrace`;
+  const registerHrefWithEmail = email.trim()
+    ? `${registerHref.split('#')[0]}?email=${encodeURIComponent(email.trim())}#registrace`
+    : registerHref;
   useEffect(() => {
     try { const s = localStorage.getItem('vvb_identity'); if (s) { const p = JSON.parse(s); if (p.email) setEmail(p.email); } } catch {}
   }, []);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!email.trim()) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setNotRegistered(false);
     try {
       const res = await fetch(`${SERVER}/webinar-checkin`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
         body: JSON.stringify({ webinarId: webinar.id, email: email.trim(), webinarSlug: webinar.slug || webinar.id }),
       });
       const data = await res.json();
-      if (!res.ok) setError(data.error || 'E-mail nebyl nalezen.');
-      else {
+      if (!res.ok) {
+        const msg = data.error || 'E-mail nebyl nalezen.';
+        setError(msg);
+        setNotRegistered(res.status === 404 || /nenalezen/i.test(String(msg)));
+      } else {
         let name = '';
         try { const s = localStorage.getItem('vvb_identity'); if (s) name = JSON.parse(s).name || ''; } catch {}
         onSuccess(name, email.trim());
@@ -159,7 +167,7 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
           <form onSubmit={submit} className="space-y-3">
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#001161]/30" />
-              <input type="email" required value={email} onChange={e => { setEmail(e.target.value); setError(''); }}
+              <input type="email" required value={email} onChange={e => { setEmail(e.target.value); setError(''); setNotRegistered(false); }}
                 placeholder={'Registra\u010dn\u00ed e-mail'}
                 className="w-full pl-11 pr-4 py-3.5 bg-[#F0F2F8] rounded-[14px] text-[15px] text-[#001161] outline-none border border-transparent focus:border-[#001161]/20 focus:bg-white transition-all"
                 style={{ fontFamily: FF }} />
@@ -179,6 +187,18 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
               {loading ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{'Ov\u011b\u0159uji\u2026'}</> : <><Play className="w-4 h-4" />{'Vstoupit na stream'}</>}
             </button>
           </form>
+          <a
+            href={registerHrefWithEmail}
+            className={`mt-4 w-full py-3.5 rounded-[14px] font-bold text-[14px] flex items-center justify-center gap-2 no-underline transition-all hover:scale-[1.02] ${
+              notRegistered
+                ? 'bg-[#FF8C00] text-white hover:bg-[#e67d00]'
+                : 'bg-[#F0F2F8] text-[#001161] hover:bg-[#e6e9f2]'
+            }`}
+            style={{ fontFamily: FF }}
+          >
+            <UserPlus className="w-4 h-4" />
+            {notRegistered ? 'Zaregistrovat se a vstoupit' : 'Nemám registraci — přihlásit se'}
+          </a>
         </div>
       </motion.div>
     </div>

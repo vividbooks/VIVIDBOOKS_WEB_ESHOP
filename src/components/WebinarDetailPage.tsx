@@ -169,6 +169,12 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     birthDateIso: '',
   });
 
+  useEffect(() => {
+    const qEmail = String(searchParams.get('email') || '').trim();
+    if (!qEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(qEmail)) return;
+    setForm((prev) => (prev.email ? prev : { ...prev, email: qEmail }));
+  }, [searchParams]);
+
   /**
    * Kdo je přihlášený v aplikaci učebnic (cookie na `.vividbooks.com`). Předvyplňujeme jen
    * prázdná pole, ať uživateli nepřepíšeme, co si už napsal.
