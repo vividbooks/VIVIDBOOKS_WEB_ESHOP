@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useSearchParams } from 'react-router';
 import {
   Radio, CheckCircle, AlertCircle, Clock,
-  Play, Mail, Lock, Send, MessageCircle, HelpCircle, Smile,
+  Play, Mail, Lock, Send, MessageCircle, HelpCircle, Smile, UserPlus,
 } from 'lucide-react';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import type { Webinar } from '../data/webinars';
@@ -28,11 +28,19 @@ function getWebinarDate(w: Webinar): Date {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
   return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 18, m || 0);
 }
-function getLiveStatus(w: Webinar): LiveStatus {
-  const diff = (Date.now() - getWebinarDate(w).getTime()) / 60000;
+function minutesFromStart(w: Webinar, nowMs = Date.now()): number {
+  return (nowMs - getWebinarDate(w).getTime()) / 60000;
+}
+function getLiveStatus(w: Webinar, nowMs = Date.now()): LiveStatus {
+  const diff = minutesFromStart(w, nowMs);
   if (diff < -60) return 'upcoming';
   if (diff < 150) return 'live';
   return 'ended';
+}
+/** Od 10 min před začátkem do konce vysílání může vstoupit kdokoli, bez e-mailu. */
+function isOpenEntry(w: Webinar, nowMs = Date.now()): boolean {
+  const diff = minutesFromStart(w, nowMs);
+  return diff >= -10 && diff < 150;
 }
 function extractYoutubeId(url: string): string | null {
   const pats = [
@@ -125,20 +133,28 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notRegistered, setNotRegistered] = useState(false);
+  const registerHref = `/webinar/${encodeURIComponent(String(webinar.slug || webinar.id))}#registrace`;
+  const registerHrefWithEmail = email.trim()
+    ? `${registerHref.split('#')[0]}?email=${encodeURIComponent(email.trim())}#registrace`
+    : registerHref;
   useEffect(() => {
     try { const s = localStorage.getItem('vvb_identity'); if (s) { const p = JSON.parse(s); if (p.email) setEmail(p.email); } } catch {}
   }, []);
   const submit = async (e: React.FormEvent) => {
     e.preventDefault(); if (!email.trim()) return;
-    setLoading(true); setError('');
+    setLoading(true); setError(''); setNotRegistered(false);
     try {
       const res = await fetch(`${SERVER}/webinar-checkin`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
         body: JSON.stringify({ webinarId: webinar.id, email: email.trim(), webinarSlug: webinar.slug || webinar.id }),
       });
       const data = await res.json();
-      if (!res.ok) setError(data.error || 'E-mail nebyl nalezen.');
-      else {
+      if (!res.ok) {
+        const msg = data.error || 'E-mail nebyl nalezen.';
+        setError(msg);
+        setNotRegistered(res.status === 404 || /nenalezen/i.test(String(msg)));
+      } else {
         let name = '';
         try { const s = localStorage.getItem('vvb_identity'); if (s) name = JSON.parse(s).name || ''; } catch {}
         onSuccess(name, email.trim());
@@ -159,7 +175,7 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
           <form onSubmit={submit} className="space-y-3">
             <div className="relative">
               <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#001161]/30" />
-              <input type="email" required value={email} onChange={e => { setEmail(e.target.value); setError(''); }}
+              <input type="email" required value={email} onChange={e => { setEmail(e.target.value); setError(''); setNotRegistered(false); }}
                 placeholder={'Registra\u010dn\u00ed e-mail'}
                 className="w-full pl-11 pr-4 py-3.5 bg-[#F0F2F8] rounded-[14px] text-[15px] text-[#001161] outline-none border border-transparent focus:border-[#001161]/20 focus:bg-white transition-all"
                 style={{ fontFamily: FF }} />
@@ -179,6 +195,18 @@ function CheckInForm({ webinar, onSuccess }: { webinar: Webinar; onSuccess: (nam
               {loading ? <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />{'Ov\u011b\u0159uji\u2026'}</> : <><Play className="w-4 h-4" />{'Vstoupit na stream'}</>}
             </button>
           </form>
+          <a
+            href={registerHrefWithEmail}
+            className={`mt-4 w-full py-3.5 rounded-[14px] font-bold text-[14px] flex items-center justify-center gap-2 no-underline transition-all hover:scale-[1.02] ${
+              notRegistered
+                ? 'bg-[#FF8C00] text-white hover:bg-[#e67d00]'
+                : 'bg-[#F0F2F8] text-[#001161] hover:bg-[#e6e9f2]'
+            }`}
+            style={{ fontFamily: FF }}
+          >
+            <UserPlus className="w-4 h-4" />
+            {notRegistered ? 'Zaregistrovat se a vstoupit' : 'Nemám registraci — přihlásit se'}
+          </a>
         </div>
       </motion.div>
     </div>
@@ -472,10 +500,13 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
     } catch { return false; }
   })();
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [status, setStatus] = useState<LiveStatus>(() =>
     (isPreview || isDevImminent) ? 'live' : getLiveStatus(webinar)
   );
   const [checkedIn, setCheckedIn] = useState(isPreview || isDevImminent);
+  const openEntry = isPreview || isDevImminent || isOpenEntry(webinar, nowMs);
+  const canWatch = checkedIn || openEntry;
   const [attendeeName, setAttendeeName] = useState(
     isPreview ? 'Demo (Admin)' : isDevImminent ? 'Dev Admin' : ''
   );
@@ -545,7 +576,12 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
 
   useEffect(() => {
     if (isPreview) return;
-    const id = setInterval(() => setStatus(getLiveStatus(webinar)), 30000);
+    const tick = () => {
+      const t = Date.now();
+      setNowMs(t);
+      setStatus(getLiveStatus(webinar, t));
+    };
+    const id = setInterval(tick, 10000);
     return () => clearInterval(id);
   }, [webinar, isPreview]);
 
@@ -630,16 +666,16 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
             <Countdown target={getWebinarDate(webinar)} />
             <p className="text-[14px] text-[#001161]/50 mt-7" style={{ fontFamily: FF }}>{`${webinar.day}. ${webinar.monthName} ${webinar.year} v ${webinar.time}`}</p>
           </div>
-          {!checkedIn && <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />}
+          {!canWatch && <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />}
         </div>
       )}
 
-      {status === 'live' && !checkedIn && (
+      {status === 'live' && !canWatch && (
         <CheckInForm webinar={webinar} onSuccess={handleCheckIn} />
       )}
 
       {/* ══ LIVE ══════════════════════════════════════════════════ */}
-      {status === 'live' && checkedIn && (
+      {status === 'live' && canWatch && (
         <>
           {isGoogleMeetDelivery(webinar) ? (
             <GoogleMeetLiveLayout webinar={webinar} />
