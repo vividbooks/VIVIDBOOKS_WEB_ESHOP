@@ -823,7 +823,7 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                             <span className="text-[10px] text-gray-400 leading-tight">
                               {devImminent === selected.id || selected.devSimulateReminderT30
                                 ? 'Slider v katalogu + cron ode\u0161le mail \u201eZa chv\xedli\u201c (p\u0159i b\u011bhu cronu)'
-                                : 'Simuluje webinář do 30 min \u2014 ukáže slide v katalogu; pro test e-mailu zapnout'}
+                                : 'Simuluje webinář do 60 min \u2014 ukáže slide v katalogu; pro test e-mailu zapnout'}
                             </span>
                           </div>
                         </div>

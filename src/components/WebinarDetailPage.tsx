@@ -169,6 +169,12 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     birthDateIso: '',
   });
 
+  useEffect(() => {
+    const qEmail = String(searchParams.get('email') || '').trim();
+    if (!qEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(qEmail)) return;
+    setForm((prev) => (prev.email ? prev : { ...prev, email: qEmail }));
+  }, [searchParams]);
+
   /**
    * Kdo je přihlášený v aplikaci učebnic (cookie na `.vividbooks.com`). Předvyplňujeme jen
    * prázdná pole, ať uživateli nepřepíšeme, co si už napsal.
@@ -373,7 +379,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const webinarEnd = new Date(webinarStart.getTime() + 90 * 60000);
   const nowMs = Date.now();
   const diffMin = (nowMs - webinarStart.getTime()) / 60000;
-  const showLiveButton = !webinar.isPast && diffMin > -30 && diffMin < 150;
+  const showLiveButton = !webinar.isPast && diffMin > -60 && diffMin < 150;
 
   const devImminentId = typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null;
   const isDevPreview = devImminentId === webinar.id;

@@ -47,14 +47,19 @@ export function WebinarsProvider({ children }: { children: ReactNode }) {
       const items: Webinar[] = data.items || [];
       if (items.length > 0) {
         // Seřadit podle data — nejbližší nadcházející první, pak minulé sestupně
-        const now = new Date();
+        const nowMs = Date.now();
+        const startMs = (w: Webinar) => {
+          const [h, m] = String(w.time || '18:00').split(':').map(Number);
+          return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
+        };
+        const stillOn = (w: Webinar) => startMs(w) + 150 * 60 * 1000 > nowMs;
         const sorted = [...items].sort((a, b) => {
-          const da = new Date(a.year, (a.monthNum || 1) - 1, a.day);
-          const db = new Date(b.year, (b.monthNum || 1) - 1, b.day);
-          const aFuture = da >= now;
-          const bFuture = db >= now;
-          if (aFuture && bFuture) return da.getTime() - db.getTime();
-          if (!aFuture && !bFuture) return db.getTime() - da.getTime();
+          const da = startMs(a);
+          const db = startMs(b);
+          const aFuture = stillOn(a);
+          const bFuture = stillOn(b);
+          if (aFuture && bFuture) return da - db;
+          if (!aFuture && !bFuture) return db - da;
           return aFuture ? -1 : 1;
         });
         setWebinars(sorted);
@@ -79,17 +84,14 @@ export function WebinarsProvider({ children }: { children: ReactNode }) {
     fetchWebinars();
   }, []);
 
-  const now = new Date();
-  const upcoming = webinars.filter(w => {
-    if (w.isPast) return false;
-    const d = new Date(w.year, (w.monthNum || 1) - 1, w.day);
-    return d >= now;
-  });
-  const past = webinars.filter(w => {
-    if (w.isPast) return true;
-    const d = new Date(w.year, (w.monthNum || 1) - 1, w.day);
-    return d < now;
-  });
+  const nowMs = Date.now();
+  const startMs = (w: Webinar) => {
+    const [h, m] = String(w.time || '18:00').split(':').map(Number);
+    return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
+  };
+  const stillOn = (w: Webinar) => startMs(w) + 150 * 60 * 1000 > nowMs;
+  const upcoming = webinars.filter(w => !w.isPast && stillOn(w));
+  const past = webinars.filter(w => w.isPast || !stillOn(w));
 
   return (
     <WebinarsContext.Provider value={{ webinars, upcoming, past, loading, error, refresh: fetchWebinars, source }}>
