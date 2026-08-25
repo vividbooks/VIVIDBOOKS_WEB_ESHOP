@@ -29,6 +29,11 @@ import {
   looksLikeLegalEntityName,
 } from '../supabase/functions/_shared/pipedrive-distributor-person.ts';
 import {
+  buildPipedrivePersonSubjectFieldPayload,
+  mapTrialSubjectsToPipedriveOptionIds,
+  sortSubjectOptionIdsOtherLast,
+} from '../supabase/functions/_shared/pipedrive-person-subject.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -1025,6 +1030,80 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+registerTest('trial předměty se mapují na option ID pole 9095 a „Jiné" jde na konec', () => {
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Mathematics-2', 'Physics']), [311, 309]);
+  assert.deepEqual(
+    mapTrialSubjectsToPipedriveOptionIds([
+      'Physics',
+      'Chemistry',
+      'Mathematics-1',
+      'NaturalHistory',
+      'PrimaryScience',
+      'CzechLang-1',
+      'Other-1',
+    ]),
+    [309, 310, 311, 312, 413, 414, 319],
+  );
+
+  /** Matematika 1. i 2. stupně je stejná volba — bez duplikátu. */
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Mathematics-1', 'Mathematics-2']), [311]);
+
+  /** Neznámý kód se zahodí. */
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Astronomy', 'Chemistry']), [310]);
+
+  /** „Jiné" nesmí být první — pole typu enum bere jen první ID. */
+  assert.deepEqual(sortSubjectOptionIdsOtherLast([319, 312]), [312, 319]);
+});
+
+registerTest('pole 9095 typu set: „Other" od legacy API ustoupí konkrétnímu předmětu', () => {
+  const meta = { key: 'subjectKey', fieldType: 'set' };
+
+  /** Legacy API předvyplnilo Other; učitel vybral Matematiku a Chemii. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [311, 310], '319'),
+    { subjectKey: [311, 310] },
+  );
+
+  /** Konkrétní předměty se sjednotí s dřívějším výběrem, Other zmizí. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [312], [319, 311]),
+    { subjectKey: [311, 312] },
+  );
+
+  /** Samotné „Jiné" zůstane „Jiné" — a když už tam je, nic se neposílá. */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [319], ''), { subjectKey: [319] });
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [319], '319'), null);
+
+  /** Výběr už v poli je → žádný PUT. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [311], [311, 312]), null);
+
+  /** Pipedrive vrací volby i jako objekty s `id`. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [309], [{ id: 319 }]),
+    { subjectKey: [309] },
+  );
+});
+
+registerTest('pole 9095 typu enum: přepíše se prázdné i „Other", ruční předmět zůstane', () => {
+  const meta = { key: 'subjectKey', fieldType: 'enum' };
+
+  /** Prázdné pole dostane konkrétní předmět, ne „Other". */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [319, 312], null), { subjectKey: 312 });
+
+  /** „Other" od legacy API se přepíše skutečným výběrem. */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [311, 310], 319), { subjectKey: 311 });
+
+  /** Konkrétní předmět vybraný ručně v CRM nepřepisujeme. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [311], 312), null);
+
+  /** Jen „Jiné" na vstupu i v poli → není co měnit. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [319], 319), null);
+
+  /** Bez pole nebo bez výběru se nic nezapisuje. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(null, [311], null), null);
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [], 319), null);
 });
 
 registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () => {

@@ -28,7 +28,12 @@ function isWebinarTeacherLikePosition(position: string): boolean {
   return /Učitel|Pedagogický/i.test(position);
 }
 
-/** Stejná logika jako trial API — výchozí předmět pro učitelské role z webináře */
+/**
+ * Webinářový formulář se na předmět neptá, takže ho neposíláme — dřív tu byl
+ * natvrdo `Other-2`, což v Pipedrive nastavilo předmět „Other" (319) a pozdější
+ * skutečný výběr z eshop formuláře už ho nepřepsal. Stupeň školy z učitelské
+ * role poslat můžeme.
+ */
 function buildTrialFieldsFromWebinar(form: WebinarTrialFormSnapshot): FreeTrialFields {
   return {
     name: form.name.trim(),
@@ -39,8 +44,8 @@ function buildTrialFieldsFromWebinar(form: WebinarTrialFormSnapshot): FreeTrialF
     vat: form.ico.replace(/\D/g, '').slice(0, 10),
     gdpr: form.gdpr,
     newsletter: form.newsletter,
-    teacherSubjects: isWebinarTeacherLikePosition(form.position) ? ['Other-2'] : [],
-    schoolStages: [],
+    teacherSubjects: [],
+    schoolStages: isWebinarTeacherLikePosition(form.position) ? ['SchoolStage-2'] : [],
   };
 }
 
