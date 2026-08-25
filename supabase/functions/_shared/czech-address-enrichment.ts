@@ -88,29 +88,29 @@ export function parseFreeFormAddress(rawInput: string | undefined | null): Addre
     .trim();
   const zipMatch = noCountry.match(/\b(\d{3})\s?(\d{2})\b/);
   const zip = zipMatch ? `${zipMatch[1]}${zipMatch[2]}` : '';
-
-  const withoutZip = zipMatch
-    ? (noCountry.slice(0, zipMatch.index) + ' ' + noCountry.slice((zipMatch.index || 0) + zipMatch[0].length))
-      .replace(/\s+/g, ' ')
-      .trim()
-    : noCountry;
-  const parts = withoutZip.split(/,/).map((p) => p.trim()).filter(Boolean);
+  const hasLetters = (p: string) => /[a-zA-ZáčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/.test(p);
 
   let street = '';
   let city = '';
-  if (parts.length === 1) {
-    if (zipMatch) {
-      const before = noCountry.slice(0, zipMatch.index || 0).replace(/[,\s]+$/, '').trim();
-      const after = noCountry.slice((zipMatch.index || 0) + zipMatch[0].length).replace(/^[,\s]+/, '').trim();
-      street = before;
-      city = after;
+  if (zipMatch) {
+    /**
+     * ARES `textovaAdresa` dává městskou část *před* PSČ a obec *za* ním:
+     * „Rašelinová 2433/11, Líšeň, 62800 Brno". Město pro doručení je obec (Brno),
+     * ne část (Líšeň) — jinak se ARES sídlo tváří jako jiná lokalita a zahodí se PSČ.
+     */
+    const beforeZip = noCountry.slice(0, zipMatch.index || 0).replace(/[,\s]+$/, '').trim();
+    const afterZip = noCountry.slice((zipMatch.index || 0) + zipMatch[0].length).replace(/^[,\s]+/, '').trim();
+    const beforeParts = beforeZip.split(/,/).map((p) => p.trim()).filter(Boolean);
+    street = beforeParts[0] || '';
+    city = afterZip.split(/,/)[0]?.trim() || beforeParts.slice(1).find(hasLetters) || '';
+  } else {
+    const parts = noCountry.split(/,/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 1) {
+      street = parts[0];
     } else {
       street = parts[0];
+      city = parts.slice(1).find(hasLetters) || '';
     }
-  } else {
-    street = parts[0];
-    const cityPart = parts.slice(1).find((p) => /[a-zA-ZáčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ]/.test(p)) || '';
-    city = cityPart;
   }
 
   street = street.replace(/[,;]+$/, '').trim();
@@ -157,20 +157,21 @@ type AresSidlo = {
 function addressPartsFromAresSidlo(sidlo: AresSidlo | null | undefined): AddressParts | null {
   if (!sidlo || typeof sidlo !== 'object') return null;
 
+  const streetName = String(sidlo.nazevUlice || '').trim();
+  const streetNumber = formatAresStreetNumber(sidlo.cisloDomovni, sidlo.cisloOrientacni);
+  const street = [streetName, streetNumber].filter(Boolean).join(' ').trim();
+  /** Obec, ne část obce — „Brno" místo „Líšeň", „Třinec" místo „Staré Město". */
+  const city = String(sidlo.nazevObce || '').trim() || String(sidlo.nazevCastiObce || '').trim();
+  const zip = normalizeCzechZip(String(sidlo.psc ?? ''));
+  if (street || city || zip) return { street, city, zip };
+
   const textAddress = String(sidlo.textovaAdresa || sidlo.adresaText || '').trim();
   if (textAddress) {
     const parsed = parseFreeFormAddress(textAddress);
     if (parsed.street || parsed.city || parsed.zip) return parsed;
   }
 
-  const streetName = String(sidlo.nazevUlice || '').trim();
-  const streetNumber = formatAresStreetNumber(sidlo.cisloDomovni, sidlo.cisloOrientacni);
-  const street = [streetName, streetNumber].filter(Boolean).join(' ').trim();
-  const city = String(sidlo.nazevObce || sidlo.nazevCastiObce || '').trim();
-  const zip = normalizeCzechZip(String(sidlo.psc ?? ''));
-
-  if (!street && !city && !zip) return null;
-  return { street, city, zip };
+  return null;
 }
 
 /** Oficiální sídlo subjektu z ARES — spolehlivý zdroj PSČ u škol s platným IČO. */
@@ -282,6 +283,46 @@ export type EnrichCzechAddressOptions = {
   log?: (event: string, data?: Record<string, unknown>) => void;
 };
 
+/** Stejná budova i při rozdílném zápisu „2433/11" vs „2433 / 11". */
+export function streetsReferToSameBuilding(
+  a: string | undefined | null,
+  b: string | undefined | null,
+): boolean {
+  const collapse = (value: string | undefined | null) =>
+    normalizeForCompare(value)
+      .replace(/[,.]/g, ' ')
+      .replace(/\s*\/\s*/g, '/')
+      .replace(/\s+/g, '')
+      .trim();
+  const na = collapse(a);
+  const nb = collapse(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return na.startsWith(nb) || nb.startsWith(na);
+}
+
+/**
+ * Obec vs. městská část / zápis s pomlčkou: „Brno" ≈ „Brno-Líšeň",
+ * „Třinec" ≈ „Třinec - Staré Město". Krátké tokeny (`nad`, `u`) ignorujeme.
+ */
+export function citiesReferToSamePlace(
+  a: string | undefined | null,
+  b: string | undefined | null,
+): boolean {
+  const compact = (value: string | undefined | null) =>
+    normalizeForCompare(value)
+      .replace(/[-–—,]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const ca = compact(a);
+  const cb = compact(b);
+  if (!ca || !cb) return true;
+  if (ca === cb) return true;
+  if (ca.startsWith(cb) || cb.startsWith(ca)) return true;
+  const tokens = (s: string) => s.split(' ').filter((t) => t.length > 2);
+  return tokens(ca).some((t) => tokens(cb).includes(t));
+}
+
 /**
  * Vyčistí zjevně nepoužitelné hodnoty, aby je následné doplňování mohlo nahradit:
  *   - ulice = název kraje (Google `administrative_area_level_1` u adres bez ulice),
@@ -369,12 +410,20 @@ export async function enrichCzechAddressParts(
        * Sídlo z ARES je adresa **objednatele**, ne nutně doručovací adresa z dealu (u dealů přes
        * distributora se liší). Použijeme ho jen tam, kde si s už známou lokalitou neodporuje —
        * jinak bychom zásilku pro školu poslali na adresu zprostředkovatele.
+       *
+       * Městská část z ARES (`Líšeň`, `Staré Město`) se nesmí brát jako jiná obec než `Brno` /
+       * `Třinec`, zvlášť když je ulice i číslo popisné stejné — jinak se zahodí jediné dostupné PSČ
+       * a Base/FF objednávku s `delivery_postcode = "—"` nepřijme.
        */
       const sameLocation = parts.zip && fromAres.zip
         ? parts.zip === fromAres.zip
-        : parts.city && fromAres.city
-        ? normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city)
-        : true;
+        : streetsReferToSameBuilding(parts.street, fromAres.street)
+          && streetHasHouseNumber(parts.street)
+          && streetHasHouseNumber(fromAres.street)
+          ? true
+          : parts.city && fromAres.city
+            ? citiesReferToSamePlace(parts.city, fromAres.city)
+            : true;
 
       if (!sameLocation) {
         options?.log?.('address_ares_location_mismatch', {
