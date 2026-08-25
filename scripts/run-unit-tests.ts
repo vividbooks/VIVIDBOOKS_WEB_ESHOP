@@ -67,6 +67,7 @@ import {
   createTools,
   matchesFieldQuery,
   parseEnvFile,
+  readApiToken,
   resolveApiPath,
   truncateForResponse,
 } from './mcp/pipedrive-mcp-server.mjs';
@@ -1035,6 +1036,15 @@ registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () =
   assert.equal(parsed.OTHER, 'hodnota');
   assert.equal(parsed.PRAZDNY, '');
   assert.equal('bez_rovnitka' in parsed, false);
+});
+
+registerTest('MCP: readApiToken sáhne do .env, když Cursor nedosadí ${env:…}', () => {
+  const envFile = resolve(process.cwd(), 'scripts/mcp/__fixtures__/token.env');
+
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: 'z-prostredi' }, envFile), 'z-prostredi');
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: '${env:PIPEDRIVE_API_TOKEN}' }, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, resolve(process.cwd(), 'scripts/mcp/__fixtures__/neexistuje.env')), '');
 });
 
 registerTest('MCP: resolveApiPath povolí jen cesty Pipedrive API', () => {

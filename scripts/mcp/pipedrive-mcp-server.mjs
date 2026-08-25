@@ -123,8 +123,9 @@ function repoRoot() {
 }
 
 export function readApiToken(env = process.env, envFilePath = resolve(repoRoot(), '.env')) {
+  // Nedosazený zástupný symbol z mcp.json (${env:…}) bereme jako chybějící token, ne jako hodnotu.
   const fromEnv = String(env.PIPEDRIVE_API_TOKEN ?? '').trim();
-  if (fromEnv) return fromEnv;
+  if (fromEnv && !/^\$\{.*\}$/.test(fromEnv)) return fromEnv;
   try {
     const fromFile = parseEnvFile(readFileSync(envFilePath, 'utf8')).PIPEDRIVE_API_TOKEN;
     return String(fromFile ?? '').trim();
