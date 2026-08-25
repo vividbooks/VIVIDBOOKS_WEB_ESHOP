@@ -49,6 +49,40 @@ Formulář na `/vyzkousejte` (TrialPage) → legacy API → Make. Deal zakládá
 
 ---
 
+## 2a. Větev: trial spojený s registrací na webinář
+
+Odpovídá na otázku „existuje ještě nějaká větev, kdy se generuje trial spojený s registrací na webinář?" — **ano, jsou tam ve skutečnosti tři různé mechanismy** a je důležité je nezaměňovat. Trigger všech tří je **web (edge funkce `server/index.tsx`), ne Make** — webinářové Make scénáře (`[NB] [CZ1] Webinar form v1.5` a další, složka *1 Pro – Webinar*) jsou **všechny neaktivní** (poslední edit 27. 2. 2026 / 2023–2025).
+
+| # | Mechanismus | Kdy se spustí | Vytváří skutečný trial (kódy)? |
+| --- | --- | --- | --- |
+| **A** | **„Chci přístup" tlačítko** (`WebinarPostRegistrationTrial.tsx`) | Uživatel po odeslání registrace na webinář ručně klikne | **Ano** — jde přesně stejnou cestou jako `/vyzkousejte` (viz níže) |
+| **B** | **Pipedrive lead z registrace** (`syncWebinarRegistrationToPipedrive`) | Automaticky při **každé** registraci na webinář (endpoint `POST /webinar-registrace`) | **Ne** — vzniká jen Pipedrive *Lead*, ne deal, žádné kódy |
+| **C** | **„Magic trial token"** (`trial_token_*` v KV, endpoint `GET /verify-token/:token`) | Vygeneruje se automaticky při **každé** registraci, ale ověří se jen když někdo otevře `/vyzkousejte?token=…` | **Ne** — jen marketingový stav (Mailchimp tag, Postgres subscriber), UI napíše „tým vám brzy pošle přístupové údaje"; **momentálně nikam neodkazovaný** (viz nález N7) |
+
+### A) „Chci přístup" — jediná větev, která reálně vygeneruje trial
+
+`WebinarDetailPage.tsx` po úspěšné registraci (stav `submitted`) zobrazí `WebinarPostRegistrationTrial`, pokud `showPostRegistrationTrial` (true, pokud webinář nemá pre-survey otázku „Používáte Vividbooks?", nebo na ni účastník odpověděl „ne") a zároveň nejde o survey deep-link registraci.
+
+Tlačítko volá **stejnou funkci `submitFreeTrialAjax`** jako formulář `/vyzkousejte` — tedy legacy API → Make webhook `[NB] [CZ1] Trial form v1.8 [Migrated]` → Pipedrive deal (kapitoly 1–2 výše platí beze změny, včetně opraveného štítkování z nálezu N0). Rozdíl je jen v mapování polí (`buildTrialFieldsFromWebinar`):
+- `teacherSubjects: []` — webinářový formulář se na předmět neptá (schválně, aby se nepřepisoval pozdější reálný výběr z eshop formuláře jednotnou hodnotou „Other-2").
+- `schoolStages: ['SchoolStage-2']`, jen když pozice odpovídá `/Učitel|Pedagogický/i` — jinak `[]`.
+- Position/škola/IČO/GDPR/newsletter beze změny z registračního formuláře.
+
+### B) Pipedrive lead z registrace (bez trialu)
+
+Endpoint `POST /make-server-93a20b6f/webinar-registrace` volá `syncWebinarRegistrationToPipedrive` při **každé** registraci (nezávisle na tlačítku „Chci přístup"). Vytvoří/aktualizuje osobu, případně organizaci (jen když `!notTeacher` a je vyplněné IČO), a založí **Pipedrive Lead** (ne deal!):
+- Titulek `Webinář: {název webináře} — {jméno}`.
+- Label ID z `PIPEDRIVE_WEBINAR_LEAD_LABEL_IDS` (default `340e4c40-b33b-11f0-9969-afaf54a6de3e`).
+- Pole „Webinar type date" (109) a „Lead source" = Webinar, pokud jsou nakonfigurovaná.
+- Owner z `PIPEDRIVE_WEBINAR_LEAD_OWNER_ID` / `PIPEDRIVE_DEFAULT_OWNER_ID`.
+- K leadu poznámka s motivací/tématem/„používá Vividbooks" z pre-survey.
+
+Chyba této synchronizace neblokuje registraci — jen se zaloguje jako `pipedrive_lead_failed` incident a promítne do `integrationSummary` v odpovědi API (admin to vidí v `WebinarRegistraceAdmin.tsx`).
+
+### C) Magic trial token — dnes zřejmě nepoužívaný
+
+Při každé registraci (`POST /webinar-registrace`) se vygeneruje `crypto.randomUUID()` token, uloží do KV (`trial_token_{token}`, expirace +30 dní, `trialActivated: false`) a API vrátí v odpovědi `trialUrl: '/vyzkousejte?token=...'`. `TrialPage.tsx` umí parametr `?token=` zpracovat: zavolá `GET /verify-token/:token`, který při první aktivaci nastaví Mailchimp tag „trial-active", upsertne Postgres subscribera (`trialStatus: 'active'`) a spustí mailingový flow `trial_activated` — **ale nevolá legacy API ani nezakládá Pipedrive deal**. UI pak zobrazí „Zkušební přístup aktivován… Tým Vividbooks vám brzy pošle přístupové údaje" — tedy fakticky jen slib manuálního follow-upu, ne skutečné kódy.
+
 ## 3. Neúspěšné scénáře: dealy z webu (edge funkce)
 
 Když legacy API žádost odmítne nebo vrátí existující kódy, frontend zavolá jeden ze čtyř endpointů. Všechny sdílí `syncTrialPipedriveDeal`: org podle IČO (org pole 4033, strict match), osoba find-or-create (s poli 9093/9095/9099), deduplikace přes otevřený trial deal, aktivita typu call splatná dnes + poznámka na dealu.
@@ -144,6 +178,9 @@ Deal 26839: tři totožné aktivity během 30 sekund. Edge volání je fire-and-
 
 ### N5 · INFO — Rozdílná délka trialu: formulář +14 dní, obchodnický „Generate" +30 dní
 Pokud je to záměr (sales trial delší), je vše v pořádku — jen to stojí za vědomé potvrzení.
+
+### N7 · INFO — „Magic trial token" z webinářové registrace (mechanismus C) nemá dohledaného odesílatele
+`trialUrl: '/vyzkousejte?token=…'` vzniká při každé registraci na webinář a `TrialPage.tsx` ho umí zpracovat, ale žádný nalezený e-mail šablona (`post-part2-trial` follow-up, potvrzovací Mandrill e-mail v `webinar-registrace`) tento token do odkazu nevkládá — všechny nalezené CTA odkazy míří na obecné `/vyzkousejte` bez tokenu. Token/endpoint `GET /verify-token/:token` tak působí jako mrtvý/vestigiální kód, pokud se nepoužívá odjinud (např. ruční e-mail, jiná automatizace mimo tento repozitář). I kdyby se používal, negeneruje trial kódy ani Pipedrive deal — jen marketingový stav. Stojí za ověření, zda je záměr ho odstranit, nebo dokončit propojení s e-mailem.
 
 ### N6 · INFO — CTA 01 nelze přes API auditovat
 E-mail CTA 01 posílá automatizace přímo v Pipedrive (spolu s úkoly „New lead!" / „New Lead - Call" — tvůrce 11629944, tedy účet API/automatizace). Konfigurace workflow automatizací není přes API dostupná; trigger (nový deal s labelem 359? i s labelem 52? jen pipeline 6?) je potřeba ověřit v Pipedrive → Automatizace.
