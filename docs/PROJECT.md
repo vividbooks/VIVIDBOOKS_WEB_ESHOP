@@ -2,7 +2,7 @@
 
 Tento dokument je **zdroj pravdy** pro strukturu repozitáře, kde co běží a **jaké proměnné prostředí** se používají. Při práci na integracích ho používej jako první referenci (místo hádání).
 
-Podrobné nasazení e‑shopu, Stripe a GitHub Pages: [DEPLOYMENT.md](./DEPLOYMENT.md).
+Podrobné nasazení e‑shopu, Stripe a GitHub Pages: [DEPLOYMENT.md](./DEPLOYMENT.md). Připojení Make.com MCP pro Cursor: [MAKE_MCP.md](./MAKE_MCP.md).
 
 ---
 
@@ -242,6 +242,16 @@ Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`
 - Tabulka **`order_alerts`** — monitoring objednávek (Base.com, iDoklad, fronta, …).
 - Tabulka **`app_incidents`** — incidenty mimo čistě e‑shop (např. neodeslaný Mandrill / selhání Mailchimpu u webináře). Zápis z Edge: `supabase/functions/_shared/site-incidents.ts` (`upsertSiteIncident`).
 - API funkce **`admin-order-alerts`** vrací sjednocený seznam (`scope=all|orders|site`), potvrzování / vyřešení funguje pro obě tabulky podle UUID.
+
+---
+
+## Vývojářské nástroje — MCP
+
+| Server | Kde je nastavený | Poznámka |
+|--------|------------------|----------|
+| **Make.com** (`make`) | [`.cursor/mcp.json`](../.cursor/mcp.json) — OAuth URL `https://mcp.make.com` | Spouštění a správa Make scénářů z Cursoru. Přihlášení: Settings → Tools & Integrations → **make** → *Needs login*. Kontrola spojení: `npm run mcp:make:check`. Postup, tokeny, cloud agenti: [MAKE_MCP.md](./MAKE_MCP.md). |
+
+Edge funkce **`make-server-93a20b6f`** s Make.com nesouvisí — název pochází z Figma Make.
 
 ---
 
