@@ -42,6 +42,13 @@ import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtm
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
 import { distributorContactPersonName } from '../../../../supabase/functions/_shared/pipedrive-distributor-person.ts';
+import {
+  PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS,
+  buildPipedrivePersonSubjectFieldPayload,
+  mapTrialSubjectsToPipedriveOptionIds,
+  parsePipedrivePersonOptionIds,
+  sortSubjectOptionIdsOtherLast,
+} from '../../../../supabase/functions/_shared/pipedrive-person-subject.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
@@ -14374,30 +14381,6 @@ function mapTrialPositionToPipedriveOptionId(rawPosition: string): number | null
   return mapPipedrivePersonPositionToOptionId(key);
 }
 
-/** Kód předmětu z trial formuláře (Webflow data-value) → enum/set option ID pole osoby 9095 (Subject). */
-const TRIAL_FORM_SUBJECT_TO_PD_ENUM: Record<string, number> = {
-  Physics: 309,        // Fyzika
-  Chemistry: 310,      // Chemie
-  'Mathematics-1': 311, // Matematika (1. stupeň)
-  'Mathematics-2': 311, // Matematika (2. stupeň)
-  NaturalHistory: 312, // Přírodopis / Biology
-  PrimaryScience: 413, // Prvouka
-  'CzechLang-1': 414,  // Český jazyk (1. stupeň)
-  'CzechLang-2': 414,  // Český jazyk (2. stupeň)
-  'Other-1': 319,      // Jiné (1. stupeň)
-  'Other-2': 319,      // Jiné (2. stupeň)
-};
-
-/** Předměty z trial formuláře → seřazené unikátní option ID pole 9095 (Subject). */
-function mapTrialSubjectsToPipedriveOptionIds(subjects: string[]): number[] {
-  const out: number[] = [];
-  for (const raw of Array.isArray(subjects) ? subjects : []) {
-    const id = TRIAL_FORM_SUBJECT_TO_PD_ENUM[String(raw || '').trim()];
-    if (typeof id === 'number' && !out.includes(id)) out.push(id);
-  }
-  return out;
-}
-
 /** Předměty 1. stupně z trial formuláře (zbytek je 2. stupeň). */
 const TRIAL_FORM_SUBJECTS_FIRST_STAGE = new Set([
   'Mathematics-1',
@@ -14714,8 +14697,6 @@ async function resolvePipedrivePersonEnumFieldMeta(
 const PIPEDRIVE_PERSON_SUBJECT_FIELD_ID = 9095; // Subject / předmět
 const PIPEDRIVE_PERSON_STAGE_FIELD_ID = 9099; // School stage / stupeň
 
-/** Všechna známá option ID pole 9095 (Subject) — pro detekci pole podle voleb. */
-const PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS = [309, 310, 311, 312, 413, 414, 319];
 /** Známá option ID pole 9099 (School stage). */
 const PIPEDRIVE_PERSON_STAGE_OPTION_IDS = [PIPEDRIVE_PERSON_STAGE_OPTION_FIRST, PIPEDRIVE_PERSON_STAGE_OPTION_SECOND];
 
@@ -14755,25 +14736,14 @@ function buildPipedrivePersonEnumPayload(
   return { [meta.key]: optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',') };
 }
 
-/** Z hodnoty custom pole osoby (string „413,311" / číslo / pole) vytáhne option ID. */
-function parsePipedrivePersonOptionIds(value: unknown): number[] {
-  if (value == null || value === '') return [];
-  const arr = Array.isArray(value) ? value : String(value).split(',');
-  const out: number[] = [];
-  for (const item of arr) {
-    const n = parsePipedriveNumericId(
-      typeof item === 'object' && item ? ((item as any).id ?? (item as any).value) : item,
-    );
-    if (n && !out.includes(n)) out.push(n);
-  }
-  return out;
-}
-
 /**
- * Payload pro doplnění custom pole osoby vůči **existující** hodnotě:
- *   - `set` (multi, např. 9095/9099) → **sjednocení** stávajících a nových option ID
+ * Payload pro doplnění custom pole osoby vůči **existující** hodnotě (stupeň 9099):
+ *   - `set` (multi) → **sjednocení** stávajících a nových option ID
  *     (přidá chybějící, nikdy nemaže; když není co přidat, vrátí `null`),
  *   - `enum` / ostatní → doplní pouze když je pole prázdné.
+ *
+ * Předmět (9095) má vlastní builder `buildPipedrivePersonSubjectFieldPayload` —
+ * tam je výběr z formuláře autoritativní a „Other" se přepisuje.
  */
 function buildPipedrivePersonMergedFieldPayload(
   meta: { key: string; fieldType: string } | null,
@@ -15396,15 +15366,16 @@ async function findOrCreatePipedrivePerson(
   /**
    * Payload pro custom pole osoby vůči existující hodnotě:
    *   - pozice (enum 9093) — doplnit jen když prázdné (nepřepisovat ruční úpravu obchodníka),
-   *   - předmět (set 9095) a stupeň (set 9099) — **sjednotit** se stávajícími hodnotami
-   *     (legacy API u úspěšného trialu předvyplní jeden předmět; tady doplníme zbytek výběru).
+   *   - předmět (9095) — výběr z formuláře je autoritativní: „Other" (319) od legacy API
+   *     se odebere / přepíše, jakmile učitel označil konkrétní předmět,
+   *   - stupeň (9099) — **sjednotit** se stávajícími hodnotami.
    */
   const buildCustomFieldFillPayload = (record: Record<string, any> | null | undefined): Record<string, any> => {
     const fill: Record<string, any> = {};
     if (positionFieldKey && positionOptionId != null && isEmptyFieldValue(record?.[positionFieldKey])) {
       fill[positionFieldKey] = positionOptionId;
     }
-    const subjPatch = buildPipedrivePersonMergedFieldPayload(subjectMeta, subjectOptionIds, record?.[subjectMeta?.key ?? '']);
+    const subjPatch = buildPipedrivePersonSubjectFieldPayload(subjectMeta, subjectOptionIds, record?.[subjectMeta?.key ?? '']);
     if (subjPatch) Object.assign(fill, subjPatch);
     const stagePatch = buildPipedrivePersonMergedFieldPayload(stageMeta, stageOptionIds, record?.[stageMeta?.key ?? '']);
     if (stagePatch) Object.assign(fill, stagePatch);
@@ -15426,10 +15397,14 @@ async function findOrCreatePipedrivePerson(
       if (full) record = full;
     }
     const patch: Record<string, any> = { ...extraPatch, ...buildCustomFieldFillPayload(record) };
+    const subjectBefore = parsePipedrivePersonOptionIds(record?.[subjectMeta?.key ?? '']);
+    const stageBefore = parsePipedrivePersonOptionIds(record?.[stageMeta?.key ?? '']);
     console.log(
       `[Pipedrive] Person enrich existing id=${personId}: ` +
         `posKey=${positionFieldKey ? 'ano' : 'ne'} subjKey=${subjectMeta?.key ? 'ano' : 'ne'} stageKey=${stageMeta?.key ? 'ano' : 'ne'} ` +
+        `subjType=${subjectMeta?.fieldType || '-'} stageType=${stageMeta?.fieldType || '-'} ` +
         `option subject=${subjectOptionIds.join(',') || '-'} stage=${stageOptionIds.join(',') || '-'} ` +
+        `pdBefore subject=${subjectBefore.join(',') || '-'} stage=${stageBefore.join(',') || '-'} ` +
         `patchKeys=[${Object.keys(patch).join(', ') || '(žádné)'}]`,
     );
     if (personId && Object.keys(patch).length > 0) {
@@ -15508,7 +15483,11 @@ async function findOrCreatePipedrivePerson(
     payload[positionFieldKey] = positionOptionId;
   }
   if (subjectMeta?.key && subjectOptionIds.length) {
-    Object.assign(payload, buildPipedrivePersonEnumPayload(subjectMeta, subjectOptionIds) || {});
+    /** Pole typu `enum` pobere jen první ID — „Other" (319) proto až na konec. */
+    Object.assign(
+      payload,
+      buildPipedrivePersonEnumPayload(subjectMeta, sortSubjectOptionIdsOtherLast(subjectOptionIds)) || {},
+    );
   }
   if (stageMeta?.key && stageOptionIds.length) {
     Object.assign(payload, buildPipedrivePersonEnumPayload(stageMeta, stageOptionIds) || {});
