@@ -91,6 +91,7 @@
     "og-assets": "python3 scripts/generate_og_assets.py",
     "import-shoptet": "node scripts/import-shoptet-products.mjs",
     "mailchimp-export": "tsx scripts/mailchimp-export.ts",
+    "mcp:make:check": "node scripts/check-make-mcp.mjs",
     "webflow-migration": "tsx scripts/webflow-migration/run.ts"
   }
 }

@@ -57,6 +57,13 @@ import {
   compileOutlineToHtml,
   parseOutlineText,
 } from '../src/supabase/functions/server/emailOutline.ts';
+import {
+  buildMcpHeaders,
+  findJsonRpcMessage,
+  maskMcpUrl,
+  probeMakeMcp,
+  resolveMakeMcpTarget,
+} from './make-mcp-client.mjs';
 
 type UnitTest = {
   name: string;
@@ -1011,6 +1018,214 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+registerTest('Make MCP target respektuje prioritu --url, env a .cursor/mcp.json', () => {
+  assert.deepEqual(
+    resolveMakeMcpTarget({ args: { url: 'https://eu2.make.com/mcp/stream' }, env: { MAKE_MCP_TOKEN: 't' } }),
+    { url: 'https://eu2.make.com/mcp/stream', token: 't', source: '--url' },
+  );
+
+  assert.deepEqual(resolveMakeMcpTarget({ env: { MAKE_MCP_URL: 'https://mcp.make.com/sse' } }), {
+    url: 'https://mcp.make.com/sse',
+    token: '',
+    source: 'MAKE_MCP_URL',
+  });
+
+  assert.deepEqual(resolveMakeMcpTarget({ env: { MAKE_ZONE: 'https://eu2.make.com/', MAKE_MCP_TOKEN: 'secret' } }), {
+    url: 'https://eu2.make.com/mcp/stateless',
+    token: 'secret',
+    source: 'MAKE_ZONE + MAKE_MCP_TOKEN',
+  });
+
+  assert.equal(
+    resolveMakeMcpTarget({ args: { transport: 'stream' }, env: { MAKE_ZONE: 'eu2.make.com', MCP_TOKEN: 'secret' } }).url,
+    'https://eu2.make.com/mcp/stream',
+  );
+
+  // SSE endpoint se přes POST handshake testovat nedá, proto ho klient nepovolí.
+  assert.throws(() => resolveMakeMcpTarget({ args: { transport: 'sse' } }), /Neznámý transport/);
+
+  // Zóna bez tokenu nestačí — použije se OAuth URL z konfigurace.
+  assert.deepEqual(resolveMakeMcpTarget({ env: { MAKE_ZONE: 'eu2.make.com' }, configuredUrl: 'https://mcp.make.com' }), {
+    url: 'https://mcp.make.com',
+    token: '',
+    source: '.cursor/mcp.json',
+  });
+
+  assert.equal(
+    resolveMakeMcpTarget({ args: { transport: 'stream' }, configuredUrl: 'https://mcp.make.com/stateless' }).url,
+    'https://mcp.make.com/stream',
+  );
+
+  assert.deepEqual(resolveMakeMcpTarget(), { url: 'https://mcp.make.com', token: '', source: 'default (OAuth)' });
+});
+
+registerTest('Make MCP URL nikdy neukáže token z cesty', () => {
+  assert.equal(maskMcpUrl('https://eu2.make.com/mcp/u/abc-123/sse'), 'https://eu2.make.com/mcp/u/***/sse');
+  assert.equal(maskMcpUrl('https://mcp.make.com/stateless'), 'https://mcp.make.com/stateless');
+});
+
+registerTest('MCP hlavičky posílají Authorization jen s tokenem', () => {
+  const anonymous = buildMcpHeaders();
+  assert.equal(anonymous.authorization, undefined);
+  assert.equal(anonymous.accept, 'application/json, text/event-stream');
+  assert.equal(anonymous['mcp-protocol-version'], '2025-06-18');
+
+  const authorized = buildMcpHeaders({ token: 'secret', sessionId: 'sess-1' });
+  assert.equal(authorized.authorization, 'Bearer secret');
+  assert.equal(authorized['mcp-session-id'], 'sess-1');
+});
+
+registerTest('findJsonRpcMessage čte SSE rámce i čistý JSON', () => {
+  const sse = [
+    'event: message',
+    'data: {"jsonrpc":"2.0","id":7,"result":{"other":true}}',
+    '',
+    'event: message',
+    'data: {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}',
+    '',
+  ].join('\n');
+
+  assert.deepEqual(findJsonRpcMessage(sse, 2, true), { jsonrpc: '2.0', id: 2, result: { tools: [] } });
+  assert.equal(findJsonRpcMessage(sse, 99, true), null);
+  assert.equal(findJsonRpcMessage('data: {"jsonrpc":"2.0","id":1,', 1, true), null);
+  assert.deepEqual(findJsonRpcMessage('{"jsonrpc":"2.0","id":1,"result":{}}', 1, false), {
+    jsonrpc: '2.0',
+    id: 1,
+    result: {},
+  });
+});
+
+async function withMockMcpServer(
+  handler: (body: Record<string, unknown> | null, res: import('node:http').ServerResponse) => void,
+  fn: (url: string) => Promise<void>,
+) {
+  const { createServer } = await import('node:http');
+  const server = createServer((req, res) => {
+    res.on('error', () => {});
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      raw += chunk;
+    });
+    req.on('end', () => {
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        body = null;
+      }
+      handler(body, res);
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const address = server.address();
+  const port = typeof address === 'object' && address ? address.port : 0;
+  try {
+    await fn(`http://127.0.0.1:${port}/mcp/stateless`);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+function respondSse(res: import('node:http').ServerResponse, payload: unknown) {
+  res.writeHead(200, { 'content-type': 'text/event-stream' });
+  res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
+  res.end();
+}
+
+registerTest('probeMakeMcp dokončí handshake a vypíše nástroje ze SSE odpovědi', async () => {
+  const seenAuthorization: (string | undefined)[] = [];
+
+  await withMockMcpServer(
+    (body, res) => {
+      const method = body?.method;
+      if (method === 'initialize') {
+        respondSse(res, {
+          jsonrpc: '2.0',
+          id: 1,
+          result: { protocolVersion: '2025-06-18', serverInfo: { name: 'make-mcp', version: '1.2.3' } },
+        });
+        return;
+      }
+      if (method === 'notifications/initialized') {
+        res.writeHead(202).end();
+        return;
+      }
+      if (method === 'tools/list') {
+        respondSse(res, {
+          jsonrpc: '2.0',
+          id: 2,
+          result: { tools: [{ name: 'make_run_scenario' }, { name: 'make_list_scenarios' }] },
+        });
+        return;
+      }
+      res.writeHead(400).end();
+    },
+    async (url) => {
+      const probe = await probeMakeMcp({
+        url,
+        token: 'test-token',
+        fetchImpl: (input: string, init: RequestInit) => {
+          seenAuthorization.push((init.headers as Record<string, string>)?.authorization);
+          return fetch(input, init);
+        },
+      });
+
+      assert.equal(probe.outcome, 'ok');
+      assert.equal(probe.serverInfo.name, 'make-mcp');
+      assert.equal(probe.protocolVersion, '2025-06-18');
+      assert.deepEqual(
+        probe.tools.map((tool: { name: string }) => tool.name),
+        ['make_run_scenario', 'make_list_scenarios'],
+      );
+    },
+  );
+
+  assert.deepEqual(seenAuthorization, ['Bearer test-token', 'Bearer test-token', 'Bearer test-token']);
+});
+
+registerTest('probeMakeMcp umí i application/json odpověď', async () => {
+  await withMockMcpServer(
+    (body, res) => {
+      const method = body?.method;
+      res.writeHead(method === 'notifications/initialized' ? 202 : 200, { 'content-type': 'application/json' });
+      if (method === 'initialize') {
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { serverInfo: { name: 'json-mcp' } } }));
+        return;
+      }
+      if (method === 'tools/list') {
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: 2, result: { tools: [{ name: 'make_get_execution' }] } }));
+        return;
+      }
+      res.end();
+    },
+    async (url) => {
+      const probe = await probeMakeMcp({ url });
+      assert.equal(probe.outcome, 'ok');
+      assert.equal(probe.tools.length, 1);
+    },
+  );
+});
+
+registerTest('probeMakeMcp hlásí unauthorized místo pádu', async () => {
+  await withMockMcpServer(
+    (_body, res) => {
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate': 'Bearer resource_metadata="https://mcp.make.com/.well-known/oauth-protected-resource"',
+      });
+      res.end(JSON.stringify({ code: 'SC401', message: 'Unauthorized.' }));
+    },
+    async (url) => {
+      const probe = await probeMakeMcp({ url });
+      assert.equal(probe.outcome, 'unauthorized');
+      assert.equal(probe.status, 401);
+      assert.match(probe.wwwAuthenticate ?? '', /oauth-protected-resource/);
+    },
+  );
 });
 
 await run();
