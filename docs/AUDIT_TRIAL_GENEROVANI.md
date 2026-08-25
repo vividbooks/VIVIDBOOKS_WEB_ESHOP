@@ -114,9 +114,15 @@ label_ids = if(case != "new"; if(position = Parent|Homeschooling; 81; 52); 359)
 
 **Dopad:** (a) CTA 01 neodchází novým trialům; (b) hrozí, že CTA 01 odejde školám, které jen žádají o kód znovu / mají předplatné (label 52); (c) reporting podle štítků je od ~5. 8. zkreslený.
 
-**Oprava:** v scénáři 6775847 v šesti modulech „New deal" (257, 258, 259, 260, 369, 383) otočit formuli na
-`if(case = "new"; if(position = Parent|Homeschooling; 81; 52); 359)`
-a CTA 02/03 aktivity podmínit `case = new` (obnovit chování routeru „What case?"). Zpětně přeštítkovat dealy založené od 5. 8. (356 ↔ label, viz pole case). Pozn.: dealy z webu (edge funkce, „… - trial 2.0.") label 359 mají **správně** — pokrývají právě re-request/upsell případy dle původní sémantiky.
+**Oprava — stav k 25. 8. 2026 16:31:**
+
+1. ✅ **Data v Pipedrive přeštítkována** (hotovo přes API): 37 dealů case „New" z 5.–25. 8. přepnuto z labelu 359 na **52 „Trial web (interactive)"**, 2 dealy case „Active free/subscription trial yet" (26810, 26819) z 52 na **359**. Kontrolní přepočet pipeline 6: 39 dealů case=New má label 52, 3 dealy case≠new mají 359, **žádná nesrovnalost nezůstala**. Pipeline 7 zkontrolována zvlášť — 26823 (case 358 → 359) i webové dealy „… - trial 2.0." (26801, 26651) jsou správně.
+2. ⏳ **Scénář 6775847 čeká na opravu v Make UI** — zápis blueprintu z této session nešel provést (Make MCP `scenarios_update` vyžaduje kompletní blueprint o 524 kB, přímé volání `eu1.make.com` blokuje egress politika). Postup:
+   - V šesti modulech „New deal" (**257, 258, 259, 260, 369, 383**) změnit `label_ids` z
+     `{{if(30.case != "new"; if(30.position = "Parent" | 30.position = "Homeschooling"; 81; 52); 359)}}` na
+     **`{{if(30.case = "new"; if(30.position = "Parent" | 30.position = "Homeschooling"; 81; 52); 359)}}`** (stačí přepsat `!=` na `=`).
+   - Aktivity CTA 02 a CTA 03 (moduly **279/280, 283/284, 287/288, 291/292, 379/380, 393/394**) podmínit filtrem `{{30.case}} = new`, aby se zakládaly jen pro nové trialy (obnovení chování routeru „What case?").
+3. ⏳ Po opravě ověřit v Pipedrive → Automatizace, komu se mezi 5. a 25. 8. odeslala CTA 01 na dealy s labelem 52 (tehdy re-request/upsell) — případně dořešit s obchodem.
 
 ### N1 · STŘEDNÍ — Dva systémy zakládají dealy pro tutéž žádost; chrání jen jednosměrná deduplikace
 Make zakládá deal pro *každý* case (new, activeFreeTrialYet, activeSubscriptionYet) a deduplikaci nemá. Edge funkce dedupuje jen svoje dealy: když Make doběhne první (obvyklé — dnes 26836), edge přidá jen aktivitu. Když ale edge předběhne Make (webhook je asynchronní), vzniknou **dva dealy pro jednu žádost** — jeden „…- trial 2.0." (edge) a jeden „Škola – Jméno" (Make, label 52). *Doporučení:* deduplikaci doplnit i do Make scénáře, nebo zakládání dealů v ne-new cases nechat jen jednomu systému.
