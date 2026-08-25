@@ -1496,7 +1496,7 @@ export default function CatalogGrid() {
                           <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-400"></span>
                         </span>
                         <span className="text-white/70 text-[11px] uppercase tracking-widest font-bold leading-none" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
-                          {(slideView as any)._isLive ? 'PrÃ¡vÄ› probÃ­hÃ¡' : 'ZaÄÃ­nÃ¡ za chvÃ­li'}
+                          {(slideView as any)._isLive ? 'Právě probíhá' : 'Začíná za chvíli'}
                         </span>
                       </div>
                       {/* Nadpis (menÅ¡Ã­) */}

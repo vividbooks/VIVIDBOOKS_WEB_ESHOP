@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "pipedrive": {
+      "url": "https://mcp.pipedrive.ai/mcp"
+    },
+    "pipedrive-api": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/scripts/mcp/pipedrive-mcp-server.mjs"],
+      "env": {
+        "PIPEDRIVE_API_TOKEN": "${env:PIPEDRIVE_API_TOKEN}"
+      }
+    }
+  }
+}

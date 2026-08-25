@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { strict as assert } from 'node:assert';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
 import {
   appEntryTargetUrl,
@@ -62,6 +65,17 @@ import {
   compileOutlineToHtml,
   parseOutlineText,
 } from '../src/supabase/functions/server/emailOutline.ts';
+// @ts-expect-error — MCP server je čisté ESM bez typů (spouští ho Cursor přes `node`).
+import {
+  buildRequestUrl,
+  createRequestHandler,
+  createTools,
+  matchesFieldQuery,
+  parseEnvFile,
+  readApiToken,
+  resolveApiPath,
+  truncateForResponse,
+} from './mcp/pipedrive-mcp-server.mjs';
 
 type UnitTest = {
   name: string;
@@ -1090,6 +1104,224 @@ registerTest('pole 9095 typu enum: přepíše se prázdné i „Other", ruční 
   /** Bez pole nebo bez výběru se nic nezapisuje. */
   assert.equal(buildPipedrivePersonSubjectFieldPayload(null, [311], null), null);
   assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [], 319), null);
+});
+
+registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () => {
+  const parsed = parseEnvFile(
+    ['# komentář', 'export PIPEDRIVE_API_TOKEN="tok en"', "OTHER='hodnota'", 'PRAZDNY=', 'bez_rovnitka'].join('\n'),
+  );
+
+  assert.equal(parsed.PIPEDRIVE_API_TOKEN, 'tok en');
+  assert.equal(parsed.OTHER, 'hodnota');
+  assert.equal(parsed.PRAZDNY, '');
+  assert.equal('bez_rovnitka' in parsed, false);
+});
+
+registerTest('MCP: readApiToken sáhne do .env, když Cursor nedosadí ${env:…}', () => {
+  const envFile = resolve(process.cwd(), 'scripts/mcp/__fixtures__/token.env');
+
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: 'z-prostredi' }, envFile), 'z-prostredi');
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: '${env:PIPEDRIVE_API_TOKEN}' }, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, resolve(process.cwd(), 'scripts/mcp/__fixtures__/neexistuje.env')), '');
+});
+
+registerTest('MCP: resolveApiPath povolí jen cesty Pipedrive API', () => {
+  assert.deepEqual(resolveApiPath('/api/v2/deals/123'), { pathname: '/api/v2/deals/123', search: '' });
+  assert.deepEqual(resolveApiPath('v1/dealFields?limit=500'), { pathname: '/v1/dealFields', search: 'limit=500' });
+
+  assert.throws(() => resolveApiPath('https://api.pipedrive.com/v1/deals'), /jen cestu API/);
+  assert.throws(() => resolveApiPath('/v1/../../etc/passwd'), /Nepovolená cesta/);
+  assert.throws(() => resolveApiPath('/webhooks'), /musí začínat/);
+  assert.throws(() => resolveApiPath(''), /Chybí parametr/);
+});
+
+registerTest('MCP: buildRequestUrl spojí query a zahodí api_token z URL', () => {
+  const url = buildRequestUrl('https://api.pipedrive.com', '/v1/dealFields?start=0', {
+    limit: 500,
+    api_token: 'tajne',
+    ids: [1, 2],
+    prazdne: null,
+  });
+
+  assert.equal(url.origin + url.pathname, 'https://api.pipedrive.com/v1/dealFields');
+  assert.equal(url.searchParams.get('start'), '0');
+  assert.equal(url.searchParams.get('limit'), '500');
+  assert.equal(url.searchParams.get('ids'), '1,2');
+  assert.equal(url.searchParams.has('api_token'), false);
+  assert.equal(url.searchParams.has('prazdne'), false);
+});
+
+registerTest('MCP: matchesFieldQuery hledá podle názvu, hashe i názvu volby', () => {
+  const field = {
+    id: 12586,
+    key: '26e4a2f8dc44e49f369c468ccc816ad668b37d92',
+    name: 'Eshop ID',
+    field_type: 'varchar',
+    options: [{ id: 419, label: 'E-shop B2C' }],
+  };
+
+  assert.equal(matchesFieldQuery(field, 'eshop id'), true);
+  assert.equal(matchesFieldQuery(field, '26e4a2f8'), true);
+  assert.equal(matchesFieldQuery(field, '12586'), true);
+  assert.equal(matchesFieldQuery(field, 'b2c'), true);
+  assert.equal(matchesFieldQuery(field, 'faktura'), false);
+});
+
+registerTest('MCP: truncateForResponse zkrátí velkou odpověď', () => {
+  assert.equal(truncateForResponse('krátké', 100), 'krátké');
+
+  const long = truncateForResponse('x'.repeat(50), 10);
+  assert.equal(long.startsWith('x'.repeat(10)), true);
+  assert.match(long, /odpověď zkrácena \(50 znaků\)/);
+});
+
+registerTest('MCP: nástroje volají Pipedrive read-only s hlavičkou x-api-token', async () => {
+  const calls: Array<{ url: string; method?: string; token?: string }> = [];
+  const fetchImpl = async (url: URL, init: { method?: string; headers: Record<string, string> }) => {
+    calls.push({ url: url.toString(), method: init.method, token: init.headers['x-api-token'] });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: [
+          { id: 12586, key: '26e4a2f8', name: 'Eshop ID', field_type: 'varchar' },
+          { id: 1, key: 'label', name: 'Label', field_type: 'enum', options: [{ id: 419, label: 'E-shop B2C' }] },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+
+  const tools = createTools({ apiBaseUrl: 'https://api.pipedrive.com', apiToken: 'test-token', fetchImpl });
+
+  const fields = JSON.parse(await tools.pipedrive_find_field.run({ entity: 'deal', query: 'b2c' }));
+  assert.equal(fields.total_fields, 2);
+  assert.equal(fields.matches.length, 1);
+  assert.equal(fields.matches[0].key, 'label');
+  assert.equal(fields.matches[0].options[0].id, 419);
+
+  await tools.pipedrive_search.run({ entity: 'products', term: 'DPD', exact_match: true, limit: 5 });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://api.pipedrive.com/v1/dealFields?limit=500');
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].token, 'test-token');
+  assert.match(calls[1].url, /^https:\/\/api\.pipedrive\.com\/api\/v2\/products\/search\?/);
+  assert.match(calls[1].url, /term=DPD/);
+  assert.match(calls[1].url, /exact_match=true/);
+
+  await assert.rejects(() => tools.pipedrive_find_field.run({ entity: 'faktura', query: 'x' }), /Neznámá entita/);
+});
+
+registerTest('MCP: bez tokenu vrátí nástroj srozumitelnou chybu, ne pád serveru', async () => {
+  const tools = createTools({
+    apiBaseUrl: 'https://api.pipedrive.com',
+    apiToken: '',
+    fetchImpl: async () => {
+      throw new Error('fetch se nemá volat bez tokenu');
+    },
+  });
+  const handle = createRequestHandler(tools);
+
+  const response = await handle({
+    jsonrpc: '2.0',
+    id: 7,
+    method: 'tools/call',
+    params: { name: 'pipedrive_get', arguments: { path: '/api/v2/deals' } },
+  });
+
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /Chybí PIPEDRIVE_API_TOKEN/);
+});
+
+registerTest('MCP: handshake a tools/list odpovídají MCP protokolu', async () => {
+  const handle = createRequestHandler(createTools({ apiBaseUrl: 'https://api.pipedrive.com', apiToken: 't' }));
+
+  const init = await handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+  assert.equal(init.result.protocolVersion, '2025-06-18');
+  assert.equal(init.result.serverInfo.name, 'pipedrive-api');
+
+  const legacy = await handle({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } });
+  assert.equal(legacy.result.protocolVersion, '2025-06-18');
+
+  const list = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
+  assert.deepEqual(list.result.tools.map((tool: { name: string }) => tool.name).sort(), [
+    'pipedrive_find_field',
+    'pipedrive_get',
+    'pipedrive_search',
+  ]);
+  assert.equal(list.result.tools.every((tool: { inputSchema?: unknown }) => Boolean(tool.inputSchema)), true);
+
+  const unknownMethod = await handle({ jsonrpc: '2.0', id: 4, method: 'resources/list' });
+  assert.equal(unknownMethod.error.code, -32601);
+
+  const unknownTool = await handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'pipedrive_delete' } });
+  assert.equal(unknownTool.error.code, -32602);
+});
+
+registerTest('MCP: server běží přes stdio proti mock Pipedrive API', async () => {
+  const requestLog: string[] = [];
+  const api = createServer((req, res) => {
+    requestLog.push(`${req.method} ${req.url} token=${req.headers['x-api-token']}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ success: true, data: { id: 123, title: 'Objednávka VB-2026-0099' } }));
+  });
+  await new Promise<void>((listening) => api.listen(0, '127.0.0.1', listening));
+  const { port } = api.address() as AddressInfo;
+
+  const child = spawn('node', [resolve(process.cwd(), 'scripts/mcp/pipedrive-mcp-server.mjs')], {
+    env: {
+      ...process.env,
+      PIPEDRIVE_API_TOKEN: 'stdio-token',
+      PIPEDRIVE_API_BASE_URL: `http://127.0.0.1:${port}`,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const responses: Array<Record<string, any>> = [];
+  let buffer = '';
+  const twoResponses = new Promise<void>((received) => {
+    child.stdout.on('data', (chunk) => {
+      buffer += String(chunk);
+      let newline = buffer.indexOf('\n');
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) responses.push(JSON.parse(line));
+        if (responses.length === 2) received();
+        newline = buffer.indexOf('\n');
+      }
+    });
+  });
+
+  try {
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`,
+    );
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'pipedrive_get', arguments: { path: '/api/v2/deals/123' } },
+      })}\n`,
+    );
+
+    await Promise.race([
+      twoResponses,
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP server neodpověděl do 10 s')), 10_000)),
+    ]);
+  } finally {
+    child.stdin.end();
+    child.kill();
+    await new Promise<void>((closed) => api.close(() => closed()));
+  }
+
+  assert.equal(responses[0].result.serverInfo.name, 'pipedrive-api');
+  assert.equal(responses[1].result.isError, undefined);
+  assert.match(responses[1].result.content[0].text, /Objednávka VB-2026-0099/);
+  assert.deepEqual(requestLog, ['GET /api/v2/deals/123 token=stdio-token']);
 });
 
 await run();

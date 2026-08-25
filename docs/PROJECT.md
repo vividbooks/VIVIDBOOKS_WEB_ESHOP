@@ -245,6 +245,30 @@ Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`
 
 ---
 
+## MCP servery v Cursoru (Pipedrive)
+
+Konfigurace je v repu: [`.cursor/mcp.json`](../.cursor/mcp.json). Cursor ji načte automaticky po otevření projektu; zapnutí/odhlášení je v **Cursor → Customize → MCP**.
+
+| Server | Transport | Přihlášení | K čemu |
+|--------|-----------|------------|--------|
+| `pipedrive` | remote HTTP — `https://mcp.pipedrive.ai/mcp` | OAuth (tlačítko **Login / Needs login** v Customize → MCP; přihlásíš se svým PD účtem) | Oficiální server Pipedrive: čtení i zápis dealů, osob, organizací a aktivit v rozsahu práv přihlášeného uživatele. |
+| `pipedrive-api` | stdio — `node scripts/mcp/pipedrive-mcp-server.mjs` | `PIPEDRIVE_API_TOKEN` (prostředí nebo `.env` v kořeni repa) | **Read-only** přístup k REST API včetně věcí, které oficiální server nedává: hash klíče vlastních polí, ID voleb štítků, `/v1/dealFields`, `/api/v2/*`. |
+
+Nástroje serveru `pipedrive-api`:
+
+- `pipedrive_find_field` — najde vlastní pole podle názvu, hashe, ID pole nebo názvu volby (např. „Eshop ID“ → `26e4a2f8…`, štítek „E-shop B2C“ → `419`). Přesně ta ID, která pak jdou do `PIPEDRIVE_*_FIELD_KEY` / `PIPEDRIVE_ESHOP_LABEL_IDS_*`.
+- `pipedrive_search` — fulltext nad dealy, osobami, organizacemi, leady, produkty (`/api/v2/*/search`).
+- `pipedrive_get` — libovolný **GET** na `/v1/`, `/api/v1/` nebo `/api/v2/` (jiné metody a cesty server odmítne, token jde hlavičkou `x-api-token`, ne v URL).
+
+Poznámky:
+
+- Token je stejný jako Supabase Edge Secret `PIPEDRIVE_API_TOKEN`; do gitu nepatří (`.env` je v `.gitignore`). Po jeho doplnění je potřeba MCP server v Cursoru restartovat (toggle v Customize → MCP).
+- Bez tokenu server nespadne — nástroj jen vrátí chybu „Chybí PIPEDRIVE_API_TOKEN“, takže `pipedrive` (OAuth) funguje samostatně.
+- Smoke testy MCP serveru běží v `npm test` (`scripts/run-unit-tests.ts`, testy s prefixem `MCP:`) proti mock API, žádný reálný PD provoz.
+- Pro Cloud Agenty (cursor.com) se MCP nebere z `.cursor/mcp.json`, ale z **Dashboard → Integrations & MCP**.
+
+---
+
 ## Pro údržbu dokumentace
 
 - Novou **serverovou** proměnnou doplň do **tabulek výše** a do [`.env.example`](../.env.example) (komentář), pokud dává smysl pro vývojáře.
