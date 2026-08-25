@@ -378,13 +378,22 @@ function ensureExportLayoutClasses(root: HTMLElement) {
   }
 }
 
+/** localhost / 127.0.0.1 → kanonický marketingový web (uložené drafty z lokálního builderu). */
+function rewriteLocalDevUrlsInEmailHtml(html: string): string {
+  if (!html) return html;
+  const prod = 'https://www.vividbooks.com';
+  return html
+    .replace(/https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?/gi, prod)
+    .replace(/https?:\/\/\[::1\](:\d+)?/gi, prod);
+}
+
 /**
  * Připraví tělo mailu k odeslání / Mailchimpu:
  * normalizace → scrub editor UI → layout classes → strip editor attrs.
  * Mobilní CSS je v odesílací šabloně (`vividbooksEmailTemplate`), ne v těle.
  */
 export function compileEmailBodyForSend(html: string): string {
-  const normalized = normalizeEmailBodyHtml(html || '');
+  const normalized = rewriteLocalDevUrlsInEmailHtml(normalizeEmailBodyHtml(html || ''));
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
     return normalized;
   }
@@ -405,5 +414,5 @@ export function compileEmailBodyForSend(html: string): string {
     stripEditorAttrs(el);
   }
 
-  return root.outerHTML;
+  return rewriteLocalDevUrlsInEmailHtml(root.outerHTML);
 }
