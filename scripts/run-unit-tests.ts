@@ -23,8 +23,9 @@ import {
   parseFreeFormAddress,
   preferStreetWithHouseNumber,
   streetHasHouseNumber,
+  citiesLikelySame,
 } from '../supabase/functions/_shared/czech-address-enrichment.ts';
-import { orgAddressLine, personPostalLine } from '../supabase/functions/_shared/pipedrive-address.ts';
+import { orgAddressLine, personPostalLine, preferOrgAddressForDelivery } from '../supabase/functions/_shared/pipedrive-address.ts';
 import {
   distributorContactPersonName,
   looksLikeLegalEntityName,
@@ -663,6 +664,55 @@ registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adres
       { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
     );
   });
+});
+
+registerTest('ARES se stejným PSČ a jiným městem sídlo nepřepíše (Znojmo vs. Suchohrdly)', async () => {
+  const ares = {
+    sidlo: { nazevUlice: 'Pod Skalou', cisloDomovni: 167, nazevObce: 'Suchohrdly', psc: 66902 },
+  };
+
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: '', city: 'Znojmo', zip: '66902' },
+        { geocodeDisabled: true, ico: '73565211' },
+      ),
+      { street: '', city: 'Znojmo', zip: '66902' },
+    );
+  });
+});
+
+registerTest('citiesLikelySame bere městskou část jako totéž město', () => {
+  assert.equal(citiesLikelySame('Zlín 4-Louky', 'Zlín'), true);
+  assert.equal(citiesLikelySame('Znojmo', 'Suchohrdly'), false);
+  assert.equal(citiesLikelySame('Praha 5 - Stodůlky', 'Praha'), true);
+  assert.equal(citiesLikelySame('', 'Znojmo'), true);
+});
+
+registerTest('preferOrgAddressForDelivery bere provozovnu organizace, ne bydliště osoby', () => {
+  assert.deepEqual(
+    preferOrgAddressForDelivery(
+      { street: 'Velká Mikulášská 4', city: 'Znojmo', zip: '66902' },
+      { street: 'Pod Skalou 167', city: 'Suchohrdly', zip: '66902' },
+    ),
+    { street: 'Velká Mikulášská 4', city: 'Znojmo', zip: '66902' },
+  );
+
+  assert.deepEqual(
+    preferOrgAddressForDelivery(
+      { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
+      { street: 'Hradská 506', city: 'Velká Polom', zip: '74764' },
+    ),
+    { street: 'Hradská 506', city: 'Velká Polom', zip: '74764' },
+  );
+
+  assert.deepEqual(
+    preferOrgAddressForDelivery(
+      { street: '', city: '', zip: '' },
+      { street: 'Jablonského 394/13', city: 'Písek', zip: '39701' },
+    ),
+    { street: 'Jablonského 394/13', city: 'Písek', zip: '39701' },
+  );
 });
 
 registerTest('distributorContactPersonName: s.r.o. nepoužije jako jméno osoby', () => {
