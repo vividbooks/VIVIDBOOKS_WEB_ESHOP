@@ -260,12 +260,35 @@ Nástroje serveru `pipedrive-api`:
 - `pipedrive_search` — fulltext nad dealy, osobami, organizacemi, leady, produkty (`/api/v2/*/search`).
 - `pipedrive_get` — libovolný **GET** na `/v1/`, `/api/v1/` nebo `/api/v2/` (jiné metody a cesty server odmítne, token jde hlavičkou `x-api-token`, ne v URL).
 
+### Kde servery hledat v UI (a proč je hledání nenajde)
+
+- Vyhledávací pole s tlačítkem **Browse Marketplace** prohledává **jen oficiální katalog** pluginů. Pipedrive v katalogu Cursoru není, takže „pipedrive“ tam vrátí **No matches** — s naší konfigurací to nesouvisí.
+- Servery z repa jsou v **Customize → MCPs** v seznamu pod scope **Workspace** (ne mezi výsledky hledání). Filtr scope musí být na Workspace nebo All.
+- Workspace konfigurace se načte, jen když je v okně otevřená **složka repa**; v okně **Agents** a v multi-root workspace se `.cursor/mcp.json` často nenačte vůbec.
+
+### Když se servery v Customize neobjeví
+
+Zkopíruj je do globální konfigurace `~/.cursor/mcp.json`, která platí ve všech oknech nezávisle na otevřeném projektu:
+
+```bash
+npm run mcp:install            # zapíše do ~/.cursor/mcp.json, původní soubor zálohuje do mcp.json.bak
+npm run mcp:install -- --dry-run   # jen náhled
+npm run mcp:install -- --links     # deeplinky „nainstalovat kliknutím“
+```
+
+Skript ([`scripts/mcp/install-cursor-mcp.mjs`](../scripts/mcp/install-cursor-mcp.mjs)) zachová ostatní servery v globálním configu a `${workspaceFolder}` nahradí absolutní cestou k repu (globální config si ji jinak nedosadí). Po zápisu spusť v Cursoru **Developer: Reload Window**.
+
+Samotný oficiální server jde přidat i bez repa jedním odkazem:
+`cursor://anysphere.cursor-deeplink/mcp/install?name=pipedrive&config=eyJ1cmwiOiJodHRwczovL21jcC5waXBlZHJpdmUuYWkvbWNwIn0%3D`
+
 Poznámky:
 
 - Token je stejný jako Supabase Edge Secret `PIPEDRIVE_API_TOKEN`; do gitu nepatří (`.env` je v `.gitignore`). Po jeho doplnění je potřeba MCP server v Cursoru restartovat (toggle v Customize → MCP).
+- Lokální server hledá `.env` vedle sebe v repu, takže funguje i po instalaci do globálního `~/.cursor/mcp.json`.
+- Když server v seznamu je, ale nefunguje: **Output → MCP Logs** (`Cmd/Ctrl+Shift+U`) ukáže start serveru i chyby přihlášení.
 - Bez tokenu server nespadne — nástroj jen vrátí chybu „Chybí PIPEDRIVE_API_TOKEN“, takže `pipedrive` (OAuth) funguje samostatně.
 - Smoke testy MCP serveru běží v `npm test` (`scripts/run-unit-tests.ts`, testy s prefixem `MCP:`) proti mock API, žádný reálný PD provoz.
-- Pro Cloud Agenty (cursor.com) se MCP nebere z `.cursor/mcp.json`, ale z **Dashboard → Integrations & MCP**.
+- Pro Cloud Agenty (cursor.com/agents) se `.cursor/mcp.json` **nepoužívá** — osobní servery se přidávají přes MCP dropdown na cursor.com/agents, týmové v **Dashboard → Integrations & MCP**.
 
 ---
 
