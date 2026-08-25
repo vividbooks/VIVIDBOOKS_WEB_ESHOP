@@ -81,3 +81,35 @@ export function orgAddressLine(org: Record<string, unknown>): AddressParts {
     zip: flat.zip || nested.zip || parsedString.zip,
   };
 }
+
+/**
+ * Doručovací adresa pro distributorský deal: organizace v CRM (provozovna / sklad),
+ * ne poštovní adresa osoby ani sídlo z ARES. Osoba se použije jen na chybějící části.
+ *
+ * Příklad deal 26680: org „Velká Mikulášská 4, 66902 Znojmo“ vs. osoba/ARES
+ * „Pod Skalou 167, 66902 Suchohrdly“ (trvalé bydliště OSVČ se stejným PSČ).
+ */
+export function preferOrgAddressForDelivery(
+  org: AddressParts,
+  person: AddressParts,
+): AddressParts {
+  const orgStreet = String(org.street || '').trim();
+  const orgCity = String(org.city || '').trim();
+  const orgZip = normalizeCzechZip(org.zip);
+  const personStreet = String(person.street || '').trim();
+  const personCity = String(person.city || '').trim();
+  const personZip = normalizeCzechZip(person.zip);
+
+  if (orgStreet && streetHasHouseNumber(orgStreet)) {
+    return {
+      street: orgStreet,
+      city: orgCity || personCity,
+      zip: orgZip || personZip,
+    };
+  }
+  return {
+    street: preferStreetWithHouseNumber(orgStreet, personStreet) || personStreet,
+    city: orgCity || personCity,
+    zip: orgZip || personZip,
+  };
+}

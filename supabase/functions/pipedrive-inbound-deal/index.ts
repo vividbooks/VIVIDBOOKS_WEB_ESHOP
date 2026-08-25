@@ -21,13 +21,19 @@ import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
  *      při oříznutí zůstává plný název PD organizace v `admin_note`.
  *
  *   B) Pole je **vyplněné** (nebo k dealu existuje řádek v `orders.pipedrive_deal_id`) → deal
- *      vznikl synchronizací z e‑shopu (typicky platba převodem). Obchodník mohl produkty v dealu
- *      upravit. Najdeme původní objednávku přes `order_number`, **přepíšeme `order_items` podle
- *      dealu** (původní `shipping_method`, `payment_status`, `status` i `paid_at` zachováme —
- *      platba převodem ještě nemusí být na účtě, webhook je jen signál pro Base re-export)
- *      a **vždy** zařadíme Base export: pokud máme `basecom_order_id` →
+ *      vznikl synchronizací z e‑shopu (platba převodem **nebo distributorský formulář**). Obchodník
+ *      mohl produkty v dealu upravit. Najdeme původní objednávku přes `order_number`,
+ *      **přepíšeme `order_items` podle dealu**.
+ *      U běžného e‑shopu původní `shipping_method`, `payment_status`, `status` i `paid_at` zachováme
+ *      (převod ještě nemusí být na účtě).       U `source='distributor'` formulář dopravu nemá
+ *      (`shipping_method='none'`), takže při won nastavíme stejné PPL + převod + `processing`
+ *      jako u scénáře A — jinak by Base dostal `delivery_method: none` a platbu „Platba kartou“.
+ *      Doručovací adresu vezmeme z **PD organizace** (provozovna v CRM), ne ze sídla ARES
+ *      uloženého při odeslání formuláře — IČO často míří na bydliště OSVČ, zatímco v Pipedrive
+ *      je adresa výdejny. E‑mail a telefon z formuláře necháme.
+ *      V obou případech **zařadíme Base export**: pokud máme `basecom_order_id` →
  *      `setOrderStatus` (stav z `BASECOM_ORDER_STATUS_ID_PIPEDRIVE_INBOUND`, fallback
- *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem.
+ *      `BASECOM_ORDER_STATUS_ID`); jinak `addOrder` s plným payloadem. iDoklad se neposílá.
  *
  * Status u nově vytvořené objednávky (scénář A) je vždy:
  *   `status = 'processing'`, `payment_status = 'pending'`, `paid_at = null`
@@ -57,6 +63,8 @@ import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
  *   3) pokud něco stále chybí, **Google Geocoding API** (`GOOGLE_MAPS_API_KEY`; log
  *      `geocode_skipped_no_api_key` když chybí) a **ARES podle IČO** (oficiální sídlo včetně PSČ);
  *      adresa v názvu organizace za pomlčkou se parsuje automaticky.
+ * U `source='distributor'` (won z formuláře) je doručovací adresa **organizace v CRM**,
+ * ne sídlo ARES z IČO ani poštovní adresa osoby — ty často míří na bydliště OSVČ.
  * Vypnutí geocodingu: `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`. Pokud zůstane adresa neúplná,
  * loguje se `address_incomplete` a do `admin_note` se přidá upozornění.
  *
@@ -91,11 +99,12 @@ import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
  */
 import postgres from 'npm:postgres';
 import {
+  type AddressParts,
   enrichCzechAddressParts,
   normalizeCzechZip,
   streetHasHouseNumber,
 } from '../_shared/czech-address-enrichment.ts';
-import { orgAddressLine, personPostalLine } from '../_shared/pipedrive-address.ts';
+import { orgAddressLine, personPostalLine, preferOrgAddressForDelivery } from '../_shared/pipedrive-address.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -876,15 +885,17 @@ Deno.serve(async (req) => {
   let street = '';
   let city = '';
   let zip = '';
+  let personAddr: AddressParts = { street: '', city: '', zip: '' };
+  let orgAddr: AddressParts = { street: '', city: '', zip: '' };
 
   if (person) {
     email = readPersonEmail(person);
     name = String(person.name || '').trim() || 'Zákazník Pipedrive';
     phone = readPersonPhone(person);
-    const line = personPostalLine(person);
-    street = line.street;
-    city = line.city;
-    zip = line.zip;
+    personAddr = personPostalLine(person);
+    street = personAddr.street;
+    city = personAddr.city;
+    zip = personAddr.zip;
     if (!email.trim()) {
       missingPipedriveContact = true;
       missingEmailOnly = true;
@@ -912,9 +923,10 @@ Deno.serve(async (req) => {
       /**
        * Doplnit adresu z Org tam, kde Person sub‑pole nestačí — strukturovaná podpole `address_*`
        * (PD v1), nested `address` (PD v2) nebo plain text `org.address`. Po‑komponentově: jen co
-       * v `street`/`city`/`zip` chybí.
+       * v `street`/`city`/`zip` chybí. U distributora se níže bere org jako doručovací adresa
+       * (osoba/ARES bývá bydliště, ne výdejna).
        */
-      const orgAddr = orgAddressLine(org);
+      orgAddr = orgAddressLine(org);
       if (!street) street = orgAddr.street;
       if (!city) city = orgAddr.city;
       if (!zip) zip = orgAddr.zip;
@@ -1202,6 +1214,32 @@ Deno.serve(async (req) => {
     /* ============================================================================ */
     if (existing.length > 0) {
       const target = existing[0];
+      const isDistributor = String(target.source || '') === 'distributor';
+
+      let distributorStreet: string | null = null;
+      let distributorCity: string | null = null;
+      let distributorZip: string | null = null;
+      if (isDistributor) {
+        let distAddr = preferOrgAddressForDelivery(orgAddr, personAddr);
+        distAddr = await enrichCzechAddressParts(distAddr, {
+          ico,
+          orgName: pipedriveOrgFullName,
+          geocodeDisabled,
+          log: (event, data) => logInbound(event, { dealId, source: 'distributor', ...data }),
+        });
+        street = distAddr.street;
+        city = distAddr.city;
+        zip = distAddr.zip;
+        distributorStreet = street.trim() || null;
+        distributorCity = city.trim() || null;
+        distributorZip = zip.trim() || null;
+        logInbound('distributor_address_from_org', {
+          dealId,
+          org: orgAddr,
+          person: personAddr,
+          used: distAddr,
+        });
+      }
 
       await sql.begin(async (tx) => {
         await tx`delete from public.order_items where order_id = ${target.id}::uuid`;
@@ -1228,29 +1266,65 @@ Deno.serve(async (req) => {
         }
 
         /**
-         * Scénář B (update existující eshop objednávky):
-         *   - `shipping_method` a `shipping_price` **nepřepisujeme** — eshop checkout dopravu zvolil
-         *     a obchodník v PD jen mění produkty/stav. `subtotal` a `total` přepočítáme z PD
-         *     položek + původní `shipping_price` z `orders`.
-         *   - `payment_status`, `status`, `paid_at` rovněž **nepřepisujeme**. Webhook „deal won"
-         *     v PD je jen signál pro Base re-export, není to potvrzení o platbě převodu (peníze
-         *     teprve dorazí). Skutečný `payment_status='paid'` nastavuje až bankovní integrace
-         *     nebo admin ručně. U Stripe objednávek je `paid_at` už uložené z `stripe-webhook`.
+         * Scénář B (update existující objednávky):
+         *   - E‑shop checkout: `shipping_method` a `shipping_price` **nepřepisujeme** — dopravu
+         *     zvolil zákazník. `subtotal` a `total` přepočítáme z PD položek + původní
+         *     `shipping_price`. `payment_status`, `status`, `paid_at` rovněž **nepřepisujeme**.
+         *   - Distributor (`source='distributor'`): formulář dopravu nemá (`none` / 0 Kč) a platba
+         *     je `invoice`. Při won nastavíme PPL + převod + `processing` stejně jako u ručního
+         *     CRM dealu (scénář A), ať Base dostane „PPL" / „Bankovní převod". E‑mail a telefon
+         *     z formuláře necháme; **doručovací adresu přepíšeme z PD organizace** — ARES sídlo
+         *     z formuláře je často bydliště OSVČ, ne výdejna z CRM.
          */
-        const existingShippingRows = await tx<{ shipping_price: number | null; shipping_method: string | null }[]>`
-          select shipping_price, shipping_method from public.orders where id = ${target.id}::uuid limit 1
+        const existingShippingRows = await tx<{
+          shipping_price: number | null;
+          shipping_method: string | null;
+          street: string | null;
+          city: string | null;
+          zip: string | null;
+        }[]>`
+          select shipping_price, shipping_method, street, city, zip
+            from public.orders where id = ${target.id}::uuid limit 1
         `;
         const existingShippingPrice = Number(existingShippingRows[0]?.shipping_price ?? 0);
-        const updateTotal = subtotal + (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+        const shippingPriceForUpdate = isDistributor
+          ? shippingPrice
+          : (Number.isFinite(existingShippingPrice) ? existingShippingPrice : 0);
+        const updateTotal = subtotal + shippingPriceForUpdate;
+        const statusAfterUpdate = isDistributor ? orderStatus : target.status;
 
-        await tx`
-          update public.orders set
-            subtotal = ${subtotal},
-            total = ${updateTotal},
-            pipedrive_deal_id = ${dealIdStr},
-            updated_at = now()
-          where id = ${target.id}::uuid
-        `;
+        if (isDistributor) {
+          const streetToSave = distributorStreet || String(existingShippingRows[0]?.street || '').trim() || null;
+          const cityToSave = distributorCity || String(existingShippingRows[0]?.city || '').trim() || null;
+          const zipToSave = distributorZip || normalizeCzechZip(existingShippingRows[0]?.zip) || null;
+          street = streetToSave || street;
+          city = cityToSave || city;
+          zip = zipToSave || zip;
+          await tx`
+            update public.orders set
+              subtotal = ${subtotal},
+              total = ${updateTotal},
+              shipping_method = ${shipMethod},
+              shipping_price = ${shippingPrice},
+              payment_method = 'transfer',
+              status = ${orderStatus},
+              street = ${streetToSave},
+              city = ${cityToSave},
+              zip = ${zipToSave},
+              pipedrive_deal_id = ${dealIdStr},
+              updated_at = now()
+            where id = ${target.id}::uuid
+          `;
+        } else {
+          await tx`
+            update public.orders set
+              subtotal = ${subtotal},
+              total = ${updateTotal},
+              pipedrive_deal_id = ${dealIdStr},
+              updated_at = now()
+            where id = ${target.id}::uuid
+          `;
+        }
 
         await tx`
           insert into public.order_events (
@@ -1264,47 +1338,26 @@ Deno.serve(async (req) => {
             ${target.id}::uuid,
             'pipedrive_inbound_update',
             ${target.status},
-            ${target.status},
+            ${statusAfterUpdate},
             ${JSON.stringify({
               pipedriveDealId: dealId,
               eshopOrderNumber: eshopOrderNumber || null,
               replacedItems: lines.length,
               prevPaymentStatus: target.payment_status,
+              ...(isDistributor
+                ? {
+                    distributorBaseExport: true,
+                    addressFrom: 'pipedrive_org',
+                    street: distributorStreet,
+                    city: distributorCity,
+                    zip: distributorZip,
+                  }
+                : {}),
             })}::jsonb,
             'pipedrive'
           )
         `;
       });
-
-      /**
-       * Distributorská objednávka (`source='distributor'`) se do Base.com ani iDokladu neexportuje —
-       * expedici i fakturaci řeší obchod mimo e‑shopovou frontu. Položky a částky z dealu už jsou
-       * přepsané výše, takže tady jen skončíme bez `export_queue`.
-       */
-      if (String(target.source || '') === 'distributor') {
-        logInbound('updated_distributor_no_export', {
-          dealId,
-          orderId: target.id,
-          orderNumber: target.order_number,
-          replacedItems: lines.length,
-        });
-        return jsonResponse(
-          req,
-          {
-            success: true,
-            mode: 'updated',
-            orderId: target.id,
-            orderNumber: target.order_number,
-            dealId,
-            eshopOrderNumber: eshopOrderNumber || null,
-            replacedItems: lines.length,
-            queuedServices: [],
-            skippedExport: 'distributor',
-          },
-          200,
-          inboundModeHeaders('updated', 'distributor_no_export'),
-        );
-      }
 
       const customerSnapshot = {
         email: email.trim(),
@@ -1444,6 +1497,7 @@ Deno.serve(async (req) => {
         queuedServices,
         hasBasecomOrderId: Boolean(savedBlOrderId),
         baseStatusIdResolved: pdInboundBaseStatusId,
+        ...(String(target.source || '') === 'distributor' ? { distributorBaseExport: true } : {}),
       });
 
       return jsonResponse(
