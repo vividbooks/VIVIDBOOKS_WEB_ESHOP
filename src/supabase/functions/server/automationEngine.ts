@@ -25,6 +25,8 @@ import { sendResendEmail } from './resendClient.ts';
 import { createMailingToken } from './mailingTokens.ts';
 import { applyMergeFields } from './campaignSendEngine.ts';
 import * as kv from './kv_store.tsx';
+import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
+import { buildVividbooksBrandShell } from '../../../../supabase/functions/_shared/email-brand-shell.ts';
 
 export type AutomationTriggerType =
   | 'subscriber_created'
@@ -173,9 +175,14 @@ async function addOrRemoveTag(
   }
 }
 
-/** Fallback obal, když draft nemá fullHtml — jednoduché bílé tělo. */
+/** Fallback obal, když draft nemá fullHtml — jednotná brand šablona. */
 function minimalEmailWrap(body: string): string {
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/></head><body style="margin:0;padding:24px;background-color:#f3f4f6;font-family:Arial,Helvetica,sans-serif;"><div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;font-size:16px;line-height:1.6;color:#333333;">${body}</div></body></html>`;
+  return buildVividbooksBrandShell({
+    title: 'Vividbooks',
+    headerSubtitle: 'Zpráva pro vás',
+    content: body,
+    headExtra: EMAIL_FORCE_LIGHT_HEAD,
+  });
 }
 
 /** Pošle e-mail kroku automatizace (draft z KV nebo inline HTML) přes Resend. */

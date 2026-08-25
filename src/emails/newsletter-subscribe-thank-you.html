@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="light dark" />
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light" />
+  <meta name="x-apple-disable-message-reformatting" content="" />
   <title>Děkujeme za odběr newsletteru</title>
   <!--
     Předmět (návrh): „Děkujeme za odběr — těší nás, že vám záleží na výuce“
@@ -17,24 +19,56 @@
     {{PRIVACY_URL}}      — URL zásad ochrany osobních údajů na webu
     {{YEAR}}             — např. 2026
   -->
+  <style type="text/css">
+    :root { color-scheme: light only; }
+    @media (prefers-color-scheme: dark) {
+      :root { color-scheme: light only; }
+      body, .vb-force-light { background-color: #f4f6fb !important; }
+      .vb-force-light-card { background-color: #ffffff !important; }
+      .vb-force-light-text,
+      .vb-force-light-text p,
+      .vb-force-light-text li,
+      .vb-force-light-text span,
+      .vb-force-light-text ul { color: #1a1a22 !important; }
+      .vb-force-light-text a,
+      .vb-force-light-text strong { color: #001161 !important; }
+      .vb-force-light-muted,
+      .vb-force-light-muted p { color: #4b5563 !important; }
+      .vb-force-light-header { background-color: #001161 !important; }
+      .vb-force-light-header p { color: rgba(255,255,255,0.65) !important; }
+      a[style*="background:#E8942A"],
+      a[style*="background: #E8942A"] { color: #ffffff !important; }
+      a.vb-email-logo-wrap {
+        background-color: #ffffff !important;
+        border-radius: 12px !important;
+        padding: 10px 14px !important;
+        display: inline-block !important;
+      }
+      img.vb-email-logo {
+        filter: none !important;
+        -webkit-filter: none !important;
+        opacity: 1 !important;
+      }
+    }
+  </style>
 </head>
-<body style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb;padding:24px 12px;">
+<body class="vb-force-light" style="margin:0;padding:0;background:#f4f6fb;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased;">
+  <table role="presentation" class="vb-force-light" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f6fb;padding:24px 12px;">
     <tr>
       <td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
+        <table role="presentation" class="vb-force-light-card" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,17,97,0.08);">
           <!-- Hlavička -->
           <tr>
-            <td style="background:#001161;padding:22px 24px 20px;text-align:center;border-radius:12px 12px 0 0;">
-              <a href="{{SITE_URL}}" style="text-decoration:none;border:0;display:inline-block;">
-                <img src="{{LOGO_URL}}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;" />
+            <td class="vb-force-light-header" style="background:#001161;padding:22px 24px 20px;text-align:center;border-radius:12px 12px 0 0;">
+              <a class="vb-email-logo-wrap" href="{{SITE_URL}}" style="text-decoration:none;border:0;display:inline-block;line-height:0;">
+                <img class="vb-email-logo" src="{{LOGO_URL}}" alt="Vividbooks" width="60" style="display:block;margin:0 auto;width:60px;max-width:60px;height:auto;border:0;" />
               </a>
               <p style="margin:12px 0 0;color:rgba(255,255,255,0.65);font-size:11px;text-transform:uppercase;letter-spacing:2px;">Newsletter pro učitele</p>
             </td>
           </tr>
           <!-- Obsah -->
           <tr>
-            <td style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
+            <td class="vb-force-light-text" style="padding:28px 28px 8px;color:#1a1a22;font-size:16px;line-height:1.65;">
               <p style="margin:0 0 1em;">{{OPENING_LINE}}</p>
               <p style="margin:0 0 1em;">
                 moc si vážíme toho, že vám záleží na <strong style="color:#001161;">kvalitním vzdělávání</strong> — a že jste se k nám v tomto směru přihlásili. Jsme rádi, že můžeme být součástí vaší výuky a přinášet vám inspiraci, která má skutečný dopad na žáky.
@@ -61,7 +95,7 @@
           </tr>
           <!-- Právní a odběr -->
           <tr>
-            <td style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
+            <td class="vb-force-light-muted" style="padding:20px 28px 28px;color:#6b7280;font-size:12px;line-height:1.6;border-top:1px solid #edf2f7;">
               <p style="margin:0 0 1em;">
                 Tento e-mail vám posíláme, protože jste na webu <a href="{{SITE_URL}}" style="color:#001161;">vividbooks.com</a> vyjádřili zájem o odběr newsletteru. Zpracování osobních údajů (e-mail) probíhá v souladu s našimi
                 <a href="{{PRIVACY_URL}}" style="color:#001161;">zásadami ochrany osobních údajů</a>.
@@ -73,7 +107,7 @@
             </td>
           </tr>
         </table>
-        <p style="margin:16px 0 0;font-size:11px;color:#9ca3af;text-align:center;max-width:560px;">
+        <p class="vb-force-light-muted" style="margin:16px 0 0;font-size:11px;color:#9ca3af;text-align:center;max-width:560px;">
           Pokud jste newsletter neobjednali vy, dejte nám prosím vědět odpovědí na tento e-mail — adresu z databáze smažeme.
         </p>
       </td>

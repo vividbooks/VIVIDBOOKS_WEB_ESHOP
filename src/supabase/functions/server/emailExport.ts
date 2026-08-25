@@ -131,8 +131,17 @@ const ATTRS_TO_STRIP = [
 ];
 
 /** String-based compile (bez DOM) — bezpečná síť pro cesty mimo EmailBuilder. */
+/** localhost z lokálního Email Builderu → produkční marketingový web. */
+function rewriteLocalDevUrlsInEmailHtml(html: string): string {
+  if (!html) return html;
+  const prod = 'https://www.vividbooks.com';
+  return html
+    .replace(/https?:\/\/(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?/gi, prod)
+    .replace(/https?:\/\/\[::1\](:\d+)?/gi, prod);
+}
+
 export function compileEmailBodyForSend(html: string): string {
-  let out = String(html || '');
+  let out = rewriteLocalDevUrlsInEmailHtml(String(html || ''));
   if (!out.trim()) return out;
 
   // Nejdřív UI editoru (ještě před strip attrs, jinak ztratíme selektory)
