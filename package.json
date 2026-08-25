@@ -87,6 +87,7 @@
     "build": "vite build && node scripts/prerender-seo.mjs",
     "prerender:seo": "node scripts/prerender-seo.mjs",
     "test": "tsx scripts/run-unit-tests.ts",
+    "mcp:install": "node scripts/mcp/install-cursor-mcp.mjs",
     "build:github-pages": "node scripts/gh-pages-build.mjs",
     "og-assets": "python3 scripts/generate_og_assets.py",
     "import-shoptet": "node scripts/import-shoptet-products.mjs",

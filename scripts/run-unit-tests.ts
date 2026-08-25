@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, resolve } from 'node:path';
 import { strict as assert } from 'node:assert';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -76,6 +77,13 @@ import {
   resolveApiPath,
   truncateForResponse,
 } from './mcp/pipedrive-mcp-server.mjs';
+// @ts-expect-error — instalátor MCP configu je čisté ESM bez typů.
+import {
+  buildInstallLink,
+  installGlobalMcp,
+  interpolateWorkspaceFolder,
+  mergeMcpServers,
+} from './mcp/install-cursor-mcp.mjs';
 
 type UnitTest = {
   name: string;
@@ -1322,6 +1330,72 @@ registerTest('MCP: server běží přes stdio proti mock Pipedrive API', async (
   assert.equal(responses[1].result.isError, undefined);
   assert.match(responses[1].result.content[0].text, /Objednávka VB-2026-0099/);
   assert.deepEqual(requestLog, ['GET /api/v2/deals/123 token=stdio-token']);
+});
+
+registerTest('MCP instalátor: ${workspaceFolder} se nahradí absolutní cestou', () => {
+  const resolved = interpolateWorkspaceFolder(
+    {
+      command: 'node',
+      args: ['${workspaceFolder}/scripts/mcp/pipedrive-mcp-server.mjs'],
+      env: { PIPEDRIVE_API_TOKEN: '${env:PIPEDRIVE_API_TOKEN}' },
+      cislo: 42,
+    },
+    '/Users/dan/vividbooks',
+  );
+
+  assert.deepEqual(resolved.args, ['/Users/dan/vividbooks/scripts/mcp/pipedrive-mcp-server.mjs']);
+  assert.equal(resolved.env.PIPEDRIVE_API_TOKEN, '${env:PIPEDRIVE_API_TOKEN}');
+  assert.equal(resolved.cislo, 42);
+});
+
+registerTest('MCP instalátor: merge zachová cizí servery a rozliší přidané/přepsané', () => {
+  const merged = mergeMcpServers(
+    { mcpServers: { supabase: { url: 'https://mcp.supabase.com/mcp' }, pipedrive: { url: 'https://stary/mcp' } } },
+    { pipedrive: { url: 'https://mcp.pipedrive.ai/mcp' }, 'pipedrive-api': { type: 'stdio', command: 'node' } },
+  );
+
+  assert.equal(merged.config.mcpServers.supabase.url, 'https://mcp.supabase.com/mcp');
+  assert.equal(merged.config.mcpServers.pipedrive.url, 'https://mcp.pipedrive.ai/mcp');
+  assert.deepEqual(merged.added, ['pipedrive-api']);
+  assert.deepEqual(merged.updated, ['pipedrive']);
+  assert.deepEqual(merged.unchanged, []);
+});
+
+registerTest('MCP instalátor: deeplink nese base64 konfiguraci serveru', () => {
+  const link = buildInstallLink('pipedrive', { url: 'https://mcp.pipedrive.ai/mcp' });
+
+  assert.equal(link.startsWith('cursor://anysphere.cursor-deeplink/mcp/install?name=pipedrive&config='), true);
+  const encoded = decodeURIComponent(link.split('config=')[1]);
+  assert.deepEqual(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')), {
+    url: 'https://mcp.pipedrive.ai/mcp',
+  });
+});
+
+registerTest('MCP instalátor: zápis do ~/.cursor/mcp.json zálohuje a nepřepíše cizí servery', () => {
+  const tmpHome = mkdtempSync(resolve(tmpdir(), 'vb-mcp-install-'));
+  const globalConfigPath = resolve(tmpHome, '.cursor', 'mcp.json');
+  mkdirSync(dirname(globalConfigPath), { recursive: true });
+  writeFileSync(globalConfigPath, JSON.stringify({ mcpServers: { jiny: { url: 'https://priklad/mcp' } } }, null, 2));
+
+  const preview = installGlobalMcp({ repoRoot: process.cwd(), globalConfigPath, dryRun: true });
+  assert.deepEqual(preview.added.sort(), ['pipedrive', 'pipedrive-api']);
+  assert.deepEqual(JSON.parse(readFileSync(globalConfigPath, 'utf8')).mcpServers, {
+    jiny: { url: 'https://priklad/mcp' },
+  });
+
+  const written = installGlobalMcp({ repoRoot: process.cwd(), globalConfigPath });
+  const result = JSON.parse(readFileSync(globalConfigPath, 'utf8'));
+
+  assert.equal(result.mcpServers.jiny.url, 'https://priklad/mcp');
+  assert.equal(result.mcpServers.pipedrive.url, 'https://mcp.pipedrive.ai/mcp');
+  assert.equal(
+    result.mcpServers['pipedrive-api'].args[0],
+    resolve(process.cwd(), 'scripts/mcp/pipedrive-mcp-server.mjs'),
+  );
+  assert.equal(result.mcpServers['pipedrive-api'].args[0].includes('${workspaceFolder}'), false);
+  assert.equal(JSON.parse(readFileSync(written.backupPath, 'utf8')).mcpServers.pipedrive, undefined);
+
+  rmSync(tmpHome, { recursive: true, force: true });
 });
 
 await run();
