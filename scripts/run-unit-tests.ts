@@ -19,6 +19,7 @@ import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/fun
 import {
   enrichCzechAddressParts,
   geocodeFreeFormAddressViaGoogle,
+  geocodeFreeFormAddressViaNominatim,
   looksLikeRegionName,
   parseFreeFormAddress,
   preferStreetWithHouseNumber,
@@ -663,6 +664,127 @@ registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adres
       { street: 'Hradská', city: 'Velká Polom', zip: '74764' },
     );
   });
+});
+
+registerTest('ARES doplní PSČ i u obcí, kde se sídlo hlásí na městskou část', async () => {
+  /**
+   * Reálný případ — deal 26877, ZŠ Zelená 42 Ostrava (IČO 70933987). Adresa z PD měla obec
+   * „Ostrava", ARES vrací `textovaAdresa` s městskou částí „Moravská Ostrava". Dřív se kvůli
+   * tomu rozdílu zahodilo správné PSČ 70200 a do Base šla objednávka bez PSČ.
+   */
+  const ares = {
+    sidlo: {
+      textovaAdresa: 'Zelená 1406/42, Moravská Ostrava, 702 00 Ostrava',
+      nazevUlice: 'Zelená',
+      cisloDomovni: 1406,
+      cisloOrientacni: 42,
+      nazevObce: 'Ostrava',
+      nazevCastiObce: 'Moravská Ostrava',
+      psc: 70200,
+    },
+  };
+
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Zelená 1406/42', city: 'Ostrava', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Zelená 1406/42', city: 'Ostrava', zip: '70200' },
+    );
+  });
+
+  /** Shodná ulice s číslem popisným = tatáž adresa, i když deal uvádí městskou část. */
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Zelená 1406/42', city: 'Moravská Ostrava', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Zelená 1406/42', city: 'Moravská Ostrava', zip: '70200' },
+    );
+  });
+
+  /** Jiná ulice v jiné obci zůstává „jiné místo" — sídlo distributora se nesmí přetáhnout. */
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
+    );
+  });
+});
+
+registerTest('ARES: adresa bez názvu ulice se skládá z obce a čísla popisného', async () => {
+  await withStubbedRuntime(
+    {},
+    () => ({ sidlo: { cisloDomovni: 123, nazevObce: 'Velká Polom', psc: 74764 } }),
+    async () => {
+      assert.deepEqual(
+        await enrichCzechAddressParts(
+          { street: '', city: 'Velká Polom', zip: '' },
+          { geocodeDisabled: true, ico: '70933987' },
+        ),
+        { street: 'Velká Polom 123', city: 'Velká Polom', zip: '74764' },
+      );
+    },
+  );
+});
+
+registerTest('Nominatim doplní PSČ bez API klíče', async () => {
+  const osmResult = [{
+    address: {
+      road: 'Zelená',
+      house_number: '1406/42',
+      suburb: 'Moravská Ostrava',
+      city: 'Ostrava',
+      postcode: '702 00',
+      country_code: 'cz',
+    },
+  }];
+
+  await withStubbedRuntime({}, () => osmResult, async () => {
+    assert.deepEqual(await geocodeFreeFormAddressViaNominatim('Zelená 1406/42, Ostrava'), {
+      street: 'Zelená 1406/42',
+      city: 'Ostrava',
+      zip: '70200',
+    });
+  });
+
+  /** Malé obce nemají v OSM `city`, jen `village` / `town`. */
+  await withStubbedRuntime(
+    {},
+    () => [{ address: { village: 'Velká Polom', postcode: '747 64' } }],
+    async () => {
+      assert.deepEqual(await geocodeFreeFormAddressViaNominatim('Velká Polom'), {
+        street: '',
+        city: 'Velká Polom',
+        zip: '74764',
+      });
+    },
+  );
+});
+
+registerTest('bez Google klíče se PSČ dohledá přes OSM fallback', async () => {
+  /**
+   * Google Geocoding vrací `REQUEST_DENIED`, dokud má projekt vypnutou fakturaci — přesně to se
+   * dělo v produkci. Bez záložního geokodéru by objednávka bez IČO zůstala trvale bez PSČ.
+   */
+  await withStubbedRuntime(
+    { GOOGLE_MAPS_API_KEY: 'test-key' },
+    (url) =>
+      url.includes('maps.googleapis.com')
+        ? { status: 'REQUEST_DENIED', error_message: 'You must enable Billing' }
+        : [{ address: { road: 'Zelená', house_number: '1406/42', city: 'Ostrava', postcode: '702 00' } }],
+    async () => {
+      assert.deepEqual(
+        await enrichCzechAddressParts({ street: 'Zelená 1406/42', city: 'Ostrava', zip: '' }, {}),
+        { street: 'Zelená 1406/42', city: 'Ostrava', zip: '70200' },
+      );
+    },
+  );
 });
 
 registerTest('distributorContactPersonName: s.r.o. nepoužije jako jméno osoby', () => {

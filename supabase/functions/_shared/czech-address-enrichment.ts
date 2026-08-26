@@ -154,23 +154,34 @@ type AresSidlo = {
   psc?: number | string;
 };
 
+/**
+ * Strukturovaná pole sídla mají přednost před parsem `textovaAdresa`. Textová adresa uvádí jako
+ * prostřední segment **městskou část** („Zelená 1406/42, Moravská Ostrava, 702 00 Ostrava"), takže
+ * `parseFreeFormAddress` vrátí jako město „Moravská Ostrava" místo obce „Ostrava". Proti adrese
+ * z dealu („Ostrava") to pak vyjde jako jiné místo a PSČ se zahodí — `nazevObce` je tatáž obec,
+ * kterou používá deal. Textový parse zůstává jako doplnění toho, co ve strukturovaných polích chybí.
+ */
 function addressPartsFromAresSidlo(sidlo: AresSidlo | null | undefined): AddressParts | null {
   if (!sidlo || typeof sidlo !== 'object') return null;
 
-  const textAddress = String(sidlo.textovaAdresa || sidlo.adresaText || '').trim();
-  if (textAddress) {
-    const parsed = parseFreeFormAddress(textAddress);
-    if (parsed.street || parsed.city || parsed.zip) return parsed;
-  }
-
   const streetName = String(sidlo.nazevUlice || '').trim();
   const streetNumber = formatAresStreetNumber(sidlo.cisloDomovni, sidlo.cisloOrientacni);
-  const street = [streetName, streetNumber].filter(Boolean).join(' ').trim();
   const city = String(sidlo.nazevObce || sidlo.nazevCastiObce || '').trim();
-  const zip = normalizeCzechZip(String(sidlo.psc ?? ''));
+  /** Obce bez pojmenovaných ulic mají v ARES jen číslo popisné — adresa je pak „Velká Polom 123". */
+  const streetBase = streetName || (streetNumber ? city : '');
+  const structured: AddressParts = {
+    street: [streetBase, streetNumber].filter(Boolean).join(' ').trim(),
+    city,
+    zip: normalizeCzechZip(String(sidlo.psc ?? '')),
+  };
 
-  if (!street && !city && !zip) return null;
-  return { street, city, zip };
+  const textAddress = String(sidlo.textovaAdresa || sidlo.adresaText || '').trim();
+  const parsed = textAddress ? parseFreeFormAddress(textAddress) : { street: '', city: '', zip: '' };
+  const merged = mergeAddressPartsFillMissing(structured, parsed);
+  merged.street = preferStreetWithHouseNumber(merged.street, parsed.street);
+
+  if (!merged.street && !merged.city && !merged.zip) return null;
+  return merged;
 }
 
 /** Oficiální sídlo subjektu z ARES — spolehlivý zdroj PSČ u škol s platným IČO. */
@@ -275,6 +286,66 @@ export async function geocodeFreeFormAddressViaGoogle(
   }
 }
 
+/**
+ * Provozní podmínky OSM vyžadují identifikaci volajícího včetně kontaktu na provozovatele.
+ */
+const NOMINATIM_USER_AGENT = 'vividbooks-eshop (+https://www.vividbooks.com)';
+
+/**
+ * Nominatim (OpenStreetMap) — záložní geokodér **bez API klíče**. Google Geocoding vyžaduje projekt
+ * s aktivní fakturací; jakmile klíč chybí nebo vrátí `REQUEST_DENIED`, zbylo by dohledání PSČ jen
+ * na ARES, tedy jen u objednávek s IČO. Nominatim pokryje i adresy bez IČO.
+ *
+ * OSM limit je 1 dotaz/s — inbound dealy chodí po jednom, takže se do něj vejdeme.
+ */
+export async function geocodeFreeFormAddressViaNominatim(
+  rawAddress: string,
+  options?: GeocodeAddressOptions,
+): Promise<AddressParts | null> {
+  const cleanedInput = String(rawAddress || '').replace(/\s+/g, ' ').trim();
+  if (!cleanedInput) return null;
+
+  const url = new URL('https://nominatim.openstreetmap.org/search');
+  url.searchParams.set('q', cleanedInput);
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('addressdetails', '1');
+  url.searchParams.set('limit', '1');
+  url.searchParams.set('countrycodes', 'cz,sk');
+  url.searchParams.set('accept-language', 'cs');
+
+  try {
+    const res = await fetch(url.toString(), {
+      headers: { Accept: 'application/json', 'User-Agent': NOMINATIM_USER_AGENT },
+    });
+    if (!res.ok) {
+      options?.log?.('geocode_osm_failed', { status: res.status });
+      return null;
+    }
+    const data = (await res.json()) as Array<{ address?: Record<string, string> }>;
+    const address = Array.isArray(data) ? data[0]?.address : null;
+    if (!address) {
+      options?.log?.('geocode_osm_no_result', { query: cleanedInput });
+      return null;
+    }
+
+    const road = String(address.road || address.pedestrian || address.footway || '').trim();
+    const houseNumber = String(address.house_number || '').trim();
+    /** `city` u malých obcí chybí — OSM je vede jako `town` / `village` / `municipality`. */
+    const city = String(
+      address.city || address.town || address.village || address.municipality || '',
+    ).trim();
+    return {
+      street: [road, houseNumber].filter(Boolean).join(' ').trim(),
+      city,
+      zip: normalizeCzechZip(address.postcode),
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    options?.log?.('geocode_osm_error', { error: msg });
+    return null;
+  }
+}
+
 export type EnrichCzechAddressOptions = {
   ico?: string | null;
   orgName?: string | null;
@@ -305,7 +376,7 @@ function dropDegenerateAddressParts(parts: AddressParts): AddressParts {
 /**
  * Mezikrok: po načtení adresy z PD Person/Org doplní chybějící PSČ (a případně ulici/město):
  *   1) adresa v názvu organizace (za pomlčkou),
- *   2) Google Geocoding (ulice + město),
+ *   2) geokodování adresy — Google Geocoding, při jeho selhání Nominatim / OSM (bez klíče),
  *   3) ARES podle IČO (oficiální sídlo včetně PSČ).
  *
  * Doplňování se spouští i tehdy, když je ulice sice vyplněná, ale **chybí jí číslo popisné** —
@@ -340,8 +411,20 @@ export async function enrichCzechAddressParts(
     ].filter(Boolean);
     const geocodeQuery = geocodeQueryParts.join(', ').trim();
     if (geocodeQuery) {
-      const geocoded = await geocodeFreeFormAddressViaGoogle(geocodeQuery, { log: options.log });
-      if (geocoded) {
+      /**
+       * Google první (u českých čísel popisných je přesnější), OSM jako záloha — bez ní by při
+       * neplatném / nezaplaceném Google klíči nezbyl žádný geokodér a PSČ by se nedohledalo vůbec.
+       */
+      const geocoders: Array<[string, () => Promise<AddressParts | null>]> = [
+        ['google', () => geocodeFreeFormAddressViaGoogle(geocodeQuery, { log: options.log })],
+        ['osm', () => geocodeFreeFormAddressViaNominatim(geocodeQuery, { log: options.log })],
+      ];
+
+      for (const [source, runGeocoder] of geocoders) {
+        if (!needsMoreDetail()) break;
+        const geocoded = await runGeocoder();
+        if (!geocoded) continue;
+
         const before = { ...parts };
         parts = mergeAddressPartsFillMissing(parts, geocoded);
         parts.street = preferStreetWithHouseNumber(parts.street, geocoded.street);
@@ -352,6 +435,7 @@ export async function enrichCzechAddressParts(
           parts.zip !== before.zip
         ) {
           options?.log?.('address_geocoded', {
+            source,
             before,
             after: parts,
             query: geocodeQuery,
@@ -370,7 +454,17 @@ export async function enrichCzechAddressParts(
        * distributora se liší). Použijeme ho jen tam, kde si s už známou lokalitou neodporuje —
        * jinak bychom zásilku pro školu poslali na adresu zprostředkovatele.
        */
-      const sameLocation = parts.zip && fromAres.zip
+      /**
+       * Shodná ulice včetně čísla popisného je doslova tatáž adresa — i když se zápis obce liší
+       * („Ostrava" v dealu vs. městská část v ARES). PSČ z takového sídla je bezpečné převzít;
+       * bez této větve se u velkých měst zahazovalo i naprosto správné PSČ.
+       */
+      const sameStreet =
+        streetHasHouseNumber(parts.street) &&
+        normalizeForCompare(parts.street) === normalizeForCompare(fromAres.street);
+      const sameLocation = sameStreet
+        ? true
+        : parts.zip && fromAres.zip
         ? parts.zip === fromAres.zip
         : parts.city && fromAres.city
         ? normalizeForCompare(parts.city) === normalizeForCompare(fromAres.city)

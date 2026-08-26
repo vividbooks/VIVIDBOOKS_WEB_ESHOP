@@ -6,6 +6,7 @@ import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
 import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
+import { enrichCzechAddressParts, normalizeCzechZip } from '../_shared/czech-address-enrichment.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -691,6 +692,65 @@ async function handleBasecomPipedriveInboundSetStatus(
   return { sourceOrderStatus: rows[0]?.status ?? 'unknown' };
 }
 
+/**
+ * Poslední záchrana pro chybějící PSČ těsně před zápisem do Base.
+ *
+ * PSČ se u objednávek z Pipedrive občas nepřenese — v PD ho na Person / Organization nikdo
+ * nevyplnil, nebo ho Pipedrive nevrátí ve strukturovaných podpolích. Base ani dopravce ale zásilku
+ * bez PSČ nedoručí, a chyba se odhalí až na skladu. Dohledáme ho proto ještě jednou zde: import
+ * z PD mezitím mohl selhat (neplatný Google klíč, dočasně nedostupný ARES) a adresu mohl doplnit
+ * i admin ručně, takže tenhle pokus vychází z aktuálního stavu objednávky.
+ *
+ * Doplněné PSČ zapisujeme zpět do `orders`, aby stejnou hodnotu dostal i iDoklad a admin viděl,
+ * co se do Base odeslalo. Když se dohledat nepodaří, export nezastavujeme — objednávka na sklad
+ * projde a nekompletní adresa je vidět v `admin_note` + v alertech.
+ */
+async function backfillMissingPostalCode(sql: postgres.Sql, order: OrderRow): Promise<void> {
+  if (normalizeCzechZip(order.zip)) return;
+
+  const street = String(order.street || '').trim();
+  const city = String(order.city || '').trim();
+  const ico = String(order.ico || '').trim();
+  /** Bez obce i IČO není z čeho vyjít — geokodér by hádal a ARES nemá podle čeho hledat. */
+  if (!city && !ico) return;
+
+  const enriched = await enrichCzechAddressParts(
+    { street, city, zip: '' },
+    {
+      ico: ico || null,
+      orgName: order.school_name,
+      log: (event, data) => console.log(`[export-basecom] ${event}`, JSON.stringify({ orderId: order.id, ...data })),
+    },
+  );
+
+  if (!enriched.zip) {
+    /**
+     * `—` byl dřív placeholder pro chybějící PSČ u importů z PD. Do Base ani iDokladu ho posílat
+     * nechceme — prázdné pole je jasný signál „chybí", em pomlčka vypadá jako vyplněné PSČ.
+     */
+    if (String(order.zip || '').trim() === '—') order.zip = null;
+    console.log(
+      '[export-basecom] postal_code_backfill_failed',
+      JSON.stringify({ orderId: order.id, orderNumber: order.order_number, street, city, ico }),
+    );
+    return;
+  }
+
+  await sql`
+    update public.orders
+       set zip = ${enriched.zip},
+           updated_at = now()
+     where id = ${order.id}::uuid
+  `;
+  /** Payload pro Base se skládá z `order`, ne z čerstvého selectu — hodnotu doplníme i tam. */
+  order.zip = enriched.zip;
+
+  console.log(
+    '[export-basecom] postal_code_backfilled',
+    JSON.stringify({ orderId: order.id, orderNumber: order.order_number, street, city, ico, zip: enriched.zip }),
+  );
+}
+
 async function handleBasecomExport(
   sql: postgres.Sql,
   orderId: string,
@@ -729,6 +789,16 @@ async function handleBasecomExport(
   const order = orderRows[0];
   if (!order) {
     throw new Error(`Order ${orderId} not found.`);
+  }
+
+  /** Dohledání PSČ je „nice to have" — jeho selhání nesmí zastavit export objednávky na sklad. */
+  try {
+    await backfillMissingPostalCode(sql, order);
+  } catch (e) {
+    console.log(
+      '[export-basecom] postal_code_backfill_error',
+      JSON.stringify({ orderId: order.id, error: e instanceof Error ? e.message : String(e) }),
+    );
   }
 
   const orderItems = await sql<OrderItemRow[]>`
