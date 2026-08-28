@@ -2,6 +2,13 @@ import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AlertCircle, Building2, Loader2, Search } from 'lucide-react';
 import { privacyPolicyUrl } from '../utils/publicSiteUrl';
+import { SubjectCheckbox } from './TrialSubjectCheckbox';
+import {
+  DEPUTY_SCHOOL_STAGES,
+  TEACHER_SUBJECTS_1ST,
+  TEACHER_SUBJECTS_2ND,
+  trialSubjectQuestionForPosition,
+} from '../utils/trialSubjectOptions';
 
 export type WebinarRegFormState = {
   name: string;
@@ -17,15 +24,29 @@ export type WebinarRegFormState = {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: '' | 'yes' | 'no';
+  /**
+   * Co učí / na jakém stupni — stejné volby jako trial formulář na `/vyzkousejte`
+   * (`src/utils/trialSubjectOptions.ts`). Ptáme se rovnou tady, aby se předmět
+   * (Pipedrive pole osoby 9095) a stupeň (9099) zapsaly už při registraci
+   * a měl je i trial založený hned po ní.
+   */
+  teacherSubjects1st: string[];
+  teacherSubjects2nd: string[];
+  schoolStages: string[];
   /** Volitelné — brána DVPP dotazníku na stránce webináře */
   birthDateIso?: string;
 };
+
+/** Pole `WebinarRegFormState`, která drží zaškrtnuté kódy předmětů / stupňů. */
+export type WebinarRegSubjectField = 'teacherSubjects1st' | 'teacherSubjects2nd' | 'schoolStages';
 
 type Props = {
   form: WebinarRegFormState;
   notTeacher: boolean;
   onTogglePedagogMode: () => void;
   handleChange: (field: keyof WebinarRegFormState, value: string | boolean) => void;
+  /** Přepnutí jednoho předmětu / stupně (checkbox dlaždice). */
+  handleToggleSubject: (field: WebinarRegSubjectField, code: string) => void;
   handleSubmit: (e: React.FormEvent) => void;
   handleSchoolNameChange: (v: string) => void;
   handleSchoolSelect: (school: { ico: string; name: string; address?: string }) => void;
@@ -52,6 +73,7 @@ export function WebinarRegistrationFormFields({
   notTeacher,
   onTogglePedagogMode,
   handleChange,
+  handleToggleSubject,
   handleSubmit,
   handleSchoolNameChange,
   handleSchoolSelect,
@@ -68,6 +90,9 @@ export function WebinarRegistrationFormFields({
   prefilledFromAppName,
   onClearAppPrefill,
 }: Props) {
+  /** Pozice určuje, na co se ptáme: učitel → předměty, vedení / poradce → stupeň. */
+  const subjectQuestion = trialSubjectQuestionForPosition(form.position);
+
   return (
     <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-3">
       {prefilledFromAppName && onClearAppPrefill ? (
@@ -239,6 +264,84 @@ export function WebinarRegistrationFormFields({
           </svg>
         </div>
       </div>
+
+      <AnimatePresence initial={false}>
+        {!notTeacher && subjectQuestion === 'subjects' ? (
+          <motion.div
+            key="subjects-section"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white rounded-[12px] border border-[#001161]/10 px-4 py-4 flex flex-col gap-4">
+              <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161] leading-tight">
+                {'Co u\u010d\u00edte? *'}
+              </p>
+              <div>
+                <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 mb-2">
+                  {'1. stupe\u0148'}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {TEACHER_SUBJECTS_1ST.map(({ value, label }) => (
+                    <SubjectCheckbox
+                      key={`1-${value}`}
+                      label={label}
+                      checked={form.teacherSubjects1st.includes(value)}
+                      onChange={() => handleToggleSubject('teacherSubjects1st', value)}
+                    />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/70 mb-2">
+                  {'2. stupe\u0148'}
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {TEACHER_SUBJECTS_2ND.map(({ value, label }) => (
+                    <SubjectCheckbox
+                      key={`2-${value}`}
+                      label={label}
+                      checked={form.teacherSubjects2nd.includes(value)}
+                      onChange={() => handleToggleSubject('teacherSubjects2nd', value)}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence initial={false}>
+        {!notTeacher && subjectQuestion === 'stages' ? (
+          <motion.div
+            key="stages-section"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white rounded-[12px] border border-[#001161]/10 px-4 py-4 flex flex-col gap-3">
+              <p className="font-['Fenomen_Sans',sans-serif] text-[14px] font-semibold text-[#001161] leading-tight">
+                {'Kter\u00fd stupe\u0148 v\u00e1s zaj\u00edm\u00e1? *'}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {DEPUTY_SCHOOL_STAGES.map(({ value, label }) => (
+                  <SubjectCheckbox
+                    key={value}
+                    label={label}
+                    checked={form.schoolStages.includes(value)}
+                    onChange={() => handleToggleSubject('schoolStages', value)}
+                  />
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
 
       <p className="font-['Fenomen_Sans',sans-serif] text-[11px] font-bold text-[#001161]/40 uppercase tracking-widest mt-2 pl-1">
         {'Webin\u00e1\u0159'}

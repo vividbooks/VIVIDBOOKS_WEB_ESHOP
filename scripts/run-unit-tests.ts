@@ -36,6 +36,12 @@ import {
   sortSubjectOptionIdsOtherLast,
 } from '../supabase/functions/_shared/pipedrive-person-subject.ts';
 import {
+  buildTrialSubjectFields,
+  formatTrialSelectionCodes,
+  trialSubjectQuestionForPosition,
+  trialSubjectSelectionError,
+} from '../src/utils/trialSubjectOptions.ts';
+import {
   buildTrialActivityNoteText,
   buildTrialDealNoteHtml,
   buildTrialDealNoteText,
@@ -1328,6 +1334,91 @@ registerTest('pole 9095 typu enum: přepíše se prázdné i „Other", ruční 
   /** Bez pole nebo bez výběru se nic nezapisuje. */
   assert.equal(buildPipedrivePersonSubjectFieldPayload(null, [311], null), null);
   assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [], 319), null);
+});
+
+registerTest('trial z webináře: pozice určuje, na co se ptáme (předmět vs. stupeň)', () => {
+  /** Webinářový seznam pozic — jiný než v trial formuláři. */
+  assert.equal(trialSubjectQuestionForPosition('Učitel/ka na ZŠ'), 'subjects');
+  assert.equal(trialSubjectQuestionForPosition('Učitel/ka na SŠ'), 'subjects');
+  assert.equal(trialSubjectQuestionForPosition('Pedagogický pracovník/ce'), 'subjects');
+  assert.equal(trialSubjectQuestionForPosition('Ředitel/ka školy'), 'stages');
+  assert.equal(trialSubjectQuestionForPosition('Výchovný/á poradce/poradkyně'), 'stages');
+  assert.equal(trialSubjectQuestionForPosition('Rodič'), 'none');
+  assert.equal(trialSubjectQuestionForPosition('Jiné'), 'none');
+  assert.equal(trialSubjectQuestionForPosition(''), 'none');
+
+  /** Seznam pozic z trial formuláře (`/vyzkousejte`). */
+  assert.equal(trialSubjectQuestionForPosition('Učitel/ka'), 'subjects');
+  assert.equal(trialSubjectQuestionForPosition('Zástupce/kyně ředitele'), 'stages');
+  assert.equal(trialSubjectQuestionForPosition('Metodik/čka'), 'stages');
+});
+
+registerTest('trial z webináře posílá skutečný výběr — žádný natvrdo 2. stupeň ani „Other"', () => {
+  /** Učitel: předměty obou stupňů, stupeň si server odvodí z předmětů. */
+  assert.deepEqual(
+    buildTrialSubjectFields({
+      position: 'Učitel/ka na ZŠ',
+      subjects1st: ['Mathematics-1'],
+      subjects2nd: ['Physics'],
+      schoolStages: ['SchoolStage-2'],
+    }),
+    { teacherSubjects: ['Mathematics-1', 'Physics'], schoolStages: [] },
+  );
+
+  /** Ředitel: jen stupeň, žádné předměty. */
+  assert.deepEqual(
+    buildTrialSubjectFields({
+      position: 'Ředitel/ka školy',
+      subjects1st: ['Mathematics-1'],
+      subjects2nd: [],
+      schoolStages: ['SchoolStage-1'],
+    }),
+    { teacherSubjects: [], schoolStages: ['SchoolStage-1'] },
+  );
+
+  /** Rodič / jiné: do Pipedrive nejde předmět ani stupeň (dřív se posílal `SchoolStage-2`). */
+  assert.deepEqual(
+    buildTrialSubjectFields({
+      position: 'Rodič',
+      subjects1st: ['Mathematics-1'],
+      subjects2nd: ['Physics'],
+      schoolStages: ['SchoolStage-2'],
+    }),
+    { teacherSubjects: [], schoolStages: [] },
+  );
+});
+
+registerTest('trial z webináře: bez výběru předmětu/stupně se neodesílá', () => {
+  const empty = { subjects1st: [], subjects2nd: [], schoolStages: [] };
+
+  assert.equal(
+    trialSubjectSelectionError({ position: 'Učitel/ka na ZŠ', ...empty }),
+    'Vyberte prosím alespoň jeden předmět.',
+  );
+  assert.equal(
+    trialSubjectSelectionError({ position: 'Ředitel/ka školy', ...empty }),
+    'Vyberte prosím alespoň jeden stupeň školy.',
+  );
+
+  /** Stačí jeden předmět z libovolného stupně. */
+  assert.equal(
+    trialSubjectSelectionError({ position: 'Učitel/ka na ZŠ', ...empty, subjects2nd: ['Chemistry'] }),
+    null,
+  );
+  /** Rodič nic nevybírá — žádost projde. */
+  assert.equal(trialSubjectSelectionError({ position: 'Rodič', ...empty }), null);
+});
+
+registerTest('registrace na webinář: kódy předmětů se v adminu čtou i se stupněm', () => {
+  assert.equal(
+    formatTrialSelectionCodes(['Physics', 'Mathematics-1']),
+    'Fyzika (2. st.), Matematika (1. st.)',
+  );
+  assert.equal(formatTrialSelectionCodes(['SchoolStage-1', 'SchoolStage-2']), '1. stupeň, 2. stupeň');
+  /** Neznámý kód se zobrazí tak, jak přišel — radši surová hodnota než prázdno. */
+  assert.equal(formatTrialSelectionCodes(['Astronomy']), 'Astronomy');
+  assert.equal(formatTrialSelectionCodes([]), '');
+  assert.equal(formatTrialSelectionCodes(undefined), '');
 });
 
 registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () => {

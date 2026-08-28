@@ -12,7 +12,11 @@ import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
-import { WebinarRegistrationFormFields } from './WebinarRegistrationFormFields';
+import { WebinarRegistrationFormFields, type WebinarRegSubjectField } from './WebinarRegistrationFormFields';
+import {
+  buildTrialSubjectFields,
+  trialSubjectSelectionError,
+} from '../utils/trialSubjectOptions';
 import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
 import {
   getMergedWebinarSurveyQuestions,
@@ -65,6 +69,10 @@ interface FormState {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: '' | 'yes' | 'no';
+  /** Co učí / na jakém stupni — stejné kódy jako trial formulář (`/vyzkousejte`). */
+  teacherSubjects1st: string[];
+  teacherSubjects2nd: string[];
+  schoolStages: string[];
   /** YYYY-MM-DD — brána DVPP dotazníku */
   birthDateIso: string;
 }
@@ -136,10 +144,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const postSurveyMerged = useMemo(() => getMergedWebinarSurveyQuestions(webinar), [webinar]);
   /** Před webinářem: motivace / témata (bez DVPP kvízu). */
   const preSurveyQuestions = useMemo(() => getPreWebinarSurveyQuestions(webinar), [webinar]);
-  const postRegSurveyHasUsesQuestion = useMemo(
-    () => preSurveyQuestions.some((q) => q.id === USE_VIVIDBOOKS_QID),
-    [preSurveyQuestions],
-  );
   const [postSurveyAnswers, setPostSurveyAnswers] = useState<Record<string, string>>({});
   const [fetchedPreSurveyAnswers, setFetchedPreSurveyAnswers] = useState<Record<string, string>>({});
   const onPostSurveyAnswersChange = useCallback((a: Record<string, string>) => {
@@ -159,6 +163,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     webinarMotivation: '',
     webinarTopicInterest: '',
     usesVividbooks: '',
+    teacherSubjects1st: [],
+    teacherSubjects2nd: [],
+    schoolStages: [],
     birthDateIso: '',
   });
 
@@ -181,12 +188,20 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     [dvppDotaznikQ, postSurveyMerged.length, webinar.isPast],
   );
 
+  /**
+   * Nabídku trialu nedostane ten, kdo řekl „Vividbooks už používám".
+   *
+   * „Používám Vividbooks" je povinné pole **registračního formuláře**, takže se
+   * ptáme vždycky; odpověď z dotazníku (když ho webinář má) má přednost. Dřív
+   * se koukalo jen na dotazník — u webináře s vlastními otázkami v CMS bez
+   * `uses_vividbooks` (nebo s vypnutým dotazníkem) se blok ukázal i stávajícím
+   * uživatelům. Ti pak od legacy API dostali „Email is used yet." místo kódů
+   * a v CRM po nich zůstal jen deal s labelem Trial 2.0.
+   */
   const showPostRegistrationTrial = useMemo(() => {
-    if (preSurveyQuestions.length === 0) return true;
-    if (!postRegSurveyHasUsesQuestion) return true;
     const uses = postSurveyAnswers[USE_VIVIDBOOKS_QID] || form.usesVividbooks;
-    return uses === 'no';
-  }, [preSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers, form.usesVividbooks]);
+    return uses !== 'yes';
+  }, [postSurveyAnswers, form.usesVividbooks]);
 
   useEffect(() => {
     const qEmail = String(searchParams.get('email') || '').trim();
@@ -481,9 +496,41 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   };
 
   const handleChange = (field: keyof FormState, value: string | boolean) => {
-    setForm(prev => ({ ...prev, [field]: value }));
+    setForm(prev => ({
+      ...prev,
+      [field]: value,
+      /** Jiná pozice → jiná otázka (předmět vs. stupeň), dřívější výběr zahodíme. */
+      ...(field === 'position'
+        ? { teacherSubjects1st: [], teacherSubjects2nd: [], schoolStages: [] }
+        : {}),
+    }));
     setError('');
   };
+
+  /** Zaškrtnutí / odškrtnutí jednoho předmětu nebo stupně. */
+  const handleToggleSubject = useCallback((field: WebinarRegSubjectField, code: string) => {
+    setForm(prev => ({
+      ...prev,
+      [field]: prev[field].includes(code)
+        ? prev[field].filter(c => c !== code)
+        : [...prev[field], code],
+    }));
+    setError('');
+  }, []);
+
+  /** Výběr z formuláře → `TeacherSubjects` / `SchoolStages` pro server a trial. */
+  const trialSubjectFields = useMemo(
+    () =>
+      notTeacher
+        ? { teacherSubjects: [], schoolStages: [] }
+        : buildTrialSubjectFields({
+            position: form.position,
+            subjects1st: form.teacherSubjects1st,
+            subjects2nd: form.teacherSubjects2nd,
+            schoolStages: form.schoolStages,
+          }),
+    [notTeacher, form.position, form.teacherSubjects1st, form.teacherSubjects2nd, form.schoolStages],
+  );
 
   const dvppGateValid = useMemo(() => {
     const icoD = form.ico.replace(/\D/g, '');
@@ -500,7 +547,15 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     setNotTeacher((v) => {
       const next = !v;
       if (!v) {
-        setForm((prev) => ({ ...prev, schoolName: '', ico: '', schoolAddress: '' }));
+        setForm((prev) => ({
+          ...prev,
+          schoolName: '',
+          ico: '',
+          schoolAddress: '',
+          teacherSubjects1st: [],
+          teacherSubjects2nd: [],
+          schoolStages: [],
+        }));
         setSchoolResults([]);
         setSchoolOpen(false);
       }
@@ -529,6 +584,18 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     if (form.usesVividbooks !== 'yes' && form.usesVividbooks !== 'no') {
       setError('Vyberte pros\u00edm u polo\u017eky \u201ePou\u017e\u00edv\u00e1m Vividbooks\u201c mo\u017enost Ano nebo Ne.');
       return;
+    }
+    if (!notTeacher) {
+      const subjectError = trialSubjectSelectionError({
+        position: form.position,
+        subjects1st: form.teacherSubjects1st,
+        subjects2nd: form.teacherSubjects2nd,
+        schoolStages: form.schoolStages,
+      });
+      if (subjectError) {
+        setError(subjectError);
+        return;
+      }
     }
     if (isSurveyFullPage && requireFullSurveyReg) {
       const em = form.email.trim().toLowerCase();
@@ -576,6 +643,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             mailchimpTagName: webinar.mailchimpTagName,
             notTeacher,
             ...form,
+            /** Server je mapuje na pole osoby 9095 (předmět) a 9099 (stupeň). */
+            teacherSubjects: trialSubjectFields.teacherSubjects,
+            schoolStages: trialSubjectFields.schoolStages,
           }),
         },
       );
@@ -889,6 +959,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   notTeacher={notTeacher}
                   onTogglePedagogMode={handleTogglePedagogMode}
                   handleChange={handleChange}
+                  handleToggleSubject={handleToggleSubject}
                   handleSubmit={handleSubmit}
                   handleSchoolNameChange={handleSchoolNameChange}
                   handleSchoolSelect={handleSchoolSelect}
@@ -1247,6 +1318,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                         newsletter: form.newsletter,
                         schoolName: form.schoolName,
                         ico: form.ico,
+                        teacherSubjects: trialSubjectFields.teacherSubjects,
+                        schoolStages: trialSubjectFields.schoolStages,
                       }}
                       notTeacher={notTeacher}
                     />
@@ -1258,6 +1331,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   notTeacher={notTeacher}
                   onTogglePedagogMode={handleTogglePedagogMode}
                   handleChange={handleChange}
+                  handleToggleSubject={handleToggleSubject}
                   handleSubmit={handleSubmit}
                   handleSchoolNameChange={handleSchoolNameChange}
                   handleSchoolSelect={handleSchoolSelect}

@@ -8,6 +8,7 @@ import {
 import { toast } from 'sonner@2.0.3';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
 import { webinarEventTimestampMs } from '../../utils/webinarEventTimestamp';
+import { formatTrialSelectionCodes } from '../../utils/trialSubjectOptions';
 import { cn } from '../ui/utils';
 import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 
@@ -250,6 +251,9 @@ interface Registration {
   webinarMotivation?: string;
   webinarTopicInterest?: string;
   usesVividbooks?: 'yes' | 'no' | string;
+  /** Předměty / stupeň z registrace (kódy jako v trial formuláři). */
+  teacherSubjects?: string[];
+  schoolStages?: string[];
   registeredAt: string;
   attended: boolean;
   attendedAt?: string;
@@ -510,6 +514,8 @@ export default function WebinarRegistraceAdmin() {
       'Telefon',
       'Pozice',
       'Používá Vividbooks',
+      'Předmět',
+      'Stupeň',
       'Motivace',
       'Co zajímá',
       'Newsletter',
@@ -523,6 +529,8 @@ export default function WebinarRegistraceAdmin() {
       r.phone,
       r.position,
       r.usesVividbooks === 'yes' ? 'Ano' : r.usesVividbooks === 'no' ? 'Ne' : '',
+      formatTrialSelectionCodes(r.teacherSubjects),
+      formatTrialSelectionCodes(r.schoolStages),
       r.webinarMotivation || '',
       r.webinarTopicInterest || '',
       r.newsletter ? 'Ano' : 'Ne',
@@ -818,6 +826,16 @@ export default function WebinarRegistraceAdmin() {
                                   {reg.usesVividbooks === 'yes' || reg.usesVividbooks === 'no' ? (
                                     <span className="inline-flex items-center rounded-lg border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-bold text-indigo-800">
                                       {`Vividbooks: ${reg.usesVividbooks === 'yes' ? 'Ano' : 'Ne'}`}
+                                    </span>
+                                  ) : null}
+                                  {formatTrialSelectionCodes(reg.teacherSubjects) ? (
+                                    <span className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-800">
+                                      {`Učí: ${formatTrialSelectionCodes(reg.teacherSubjects)}`}
+                                    </span>
+                                  ) : null}
+                                  {formatTrialSelectionCodes(reg.schoolStages) ? (
+                                    <span className="inline-flex items-center rounded-lg border border-violet-100 bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-800">
+                                      {`Stupeň: ${formatTrialSelectionCodes(reg.schoolStages)}`}
                                     </span>
                                   ) : null}
                                   <button
