@@ -36,6 +36,12 @@ import {
   sortSubjectOptionIdsOtherLast,
 } from '../supabase/functions/_shared/pipedrive-person-subject.ts';
 import {
+  buildTrialActivityNoteText,
+  buildTrialDealNoteHtml,
+  buildTrialDealNoteText,
+  TRIAL_PIPEDRIVE_LABEL_NAME,
+} from '../supabase/functions/_shared/trial-pipedrive-note.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -1160,6 +1166,94 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+registerTest('poznámka trial obchodu vysvětlí česky, proč nevznikly kódy a proč je to trial 2.0', () => {
+  const note = buildTrialDealNoteText({
+    scenario: 'email_used_in_school',
+    contactName: 'Jana Nováková',
+    email: 'jana@zsplana.cz',
+    phone: '777123456',
+    position: 'Učitel',
+    schoolName: 'ZŠ Planá',
+    ico: '12345678',
+    subjects: ['Mathematics-2'],
+    submittedAt: '28. 8. 2026 14:32',
+  });
+
+  /** Důvod, proč API nevydalo kódy — včetně doslovné odpovědi. */
+  assert.match(note, /Proč se nevygenerovaly přístupové kódy:/);
+  assert.match(note, /e-mail je u školy ve Vividbooks už evidovaný/);
+  assert.match(note, /Odpověď API Vividbooks: „Email is used yet\."/);
+
+  /** Vysvětlení labelu i zařazení do pipeline. */
+  assert.match(note, /Proč je obchod označený „Trial web \(interactive\) - 2\.0":/);
+  assert.match(note, /Zařazení: CZ-Sales-Akvizice-CZ1/);
+  assert.match(note, /Další krok:/);
+
+  /** Údaje z formuláře na konci. */
+  assert.match(note, /Kontakt: Jana Nováková/);
+  assert.match(note, /IČO: 12345678/);
+  /** Kódy předmětů se do poznámky píšou česky. */
+  assert.match(note, /Předměty: Matematika \(2\. stupeň\)/);
+  assert.match(note, /Odesláno: 28\. 8\. 2026 14:32/);
+
+  /** Bez telefonu/pozice se prázdné řádky nevypisují. */
+  const minimal = buildTrialDealNoteText({ scenario: 'active_subscription', contactName: 'Petr Malý' });
+  assert.ok(!minimal.includes('Telefon:'));
+  assert.ok(!minimal.includes('Pozice:'));
+  assert.match(minimal, /aktivní placené předplatné/);
+  assert.match(minimal, /Odpověď API Vividbooks: „You have active subscription trial yet\."/);
+});
+
+registerTest('poznámka u aktivního trialu mluví o nových kódech, ne o odmítnutí', () => {
+  const note = buildTrialDealNoteText({ scenario: 'existing_active_trial', contactName: 'Eva Dvořáková' });
+  assert.match(note, /Proč se nevygenerovaly nové přístupové kódy:/);
+  assert.match(note, /zopakovalo kódy, které škole už běží/);
+  /** Tenhle scénář nemá legacy reason — řádek s odpovědí API tedy chybí. */
+  assert.ok(!note.includes('Odpověď API Vividbooks'));
+
+  /** Doslovný reason z frontendu má přednost před scénářovým fallbackem. */
+  const withReason = buildTrialDealNoteText({
+    scenario: 'active_subscription',
+    legacyReason: 'Something else happened.',
+    legacyMessage: 'Vaše škola už má aktivní předplatné.',
+  });
+  assert.match(withReason, /Odpověď API Vividbooks: „Something else happened\."/);
+  assert.match(withReason, /Zákazník na webu viděl: „Vaše škola už má aktivní předplatné\."/);
+});
+
+registerTest('opakovaná žádost se v poznámce označí a HTML varianta ztuční nadpisy', () => {
+  const deduped = buildTrialDealNoteText({ scenario: 'email_used_in_school', deduplicated: true });
+  assert.match(deduped, /Opakovaná žádost: pro školu už byl v Pipedrive otevřený trial obchod/);
+
+  const html = buildTrialDealNoteHtml({ scenario: 'email_used_in_school', contactName: 'Jan Novák' });
+  assert.match(html, /<b>Proč se nevygenerovaly přístupové kódy:<\/b>/);
+  assert.match(html, /<b>Další krok:<\/b>/);
+  assert.ok(html.includes('<br>'));
+  /** Údaje nejsou nadpis — zůstávají bez zvýraznění. */
+  assert.ok(html.includes('Kontakt: Jan Novák'));
+  assert.ok(!html.includes('<b>Kontakt: Jan Novák</b>'));
+  /** Název labelu v textu odpovídá tomu, co se v Pipedrive nastavuje. */
+  assert.ok(html.includes(TRIAL_PIPEDRIVE_LABEL_NAME));
+});
+
+registerTest('poznámka aktivity je kratší, ale důvod i další krok obsahuje', () => {
+  const activityNote = buildTrialActivityNoteText({
+    scenario: 'email_used_in_school',
+    intro: 'Opětovná žádost o kód.',
+    contactName: 'Jana Nováková',
+    email: 'jana@zsplana.cz',
+    deduplicated: true,
+  });
+  const lines = activityNote.split('\n');
+  assert.equal(lines[0], 'Opětovná žádost o kód.');
+  assert.match(activityNote, /Proč se nevygenerovaly přístupové kódy:/);
+  assert.match(activityNote, /Odpověď API Vividbooks: „Email is used yet\."/);
+  assert.match(activityNote, /Další krok:/);
+  assert.match(activityNote, /Zákazník žádal o trial znovu/);
+  /** Aktivita nenese celý blok o labelu — ten je v poznámce obchodu. */
+  assert.ok(!activityNote.includes('Proč je obchod označený'));
 });
 
 registerTest('trial předměty se mapují na option ID pole 9095 a „Jiné" jde na konec', () => {
