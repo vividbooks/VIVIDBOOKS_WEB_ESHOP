@@ -144,10 +144,6 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const postSurveyMerged = useMemo(() => getMergedWebinarSurveyQuestions(webinar), [webinar]);
   /** Před webinářem: motivace / témata (bez DVPP kvízu). */
   const preSurveyQuestions = useMemo(() => getPreWebinarSurveyQuestions(webinar), [webinar]);
-  const postRegSurveyHasUsesQuestion = useMemo(
-    () => preSurveyQuestions.some((q) => q.id === USE_VIVIDBOOKS_QID),
-    [preSurveyQuestions],
-  );
   const [postSurveyAnswers, setPostSurveyAnswers] = useState<Record<string, string>>({});
   const [fetchedPreSurveyAnswers, setFetchedPreSurveyAnswers] = useState<Record<string, string>>({});
   const onPostSurveyAnswersChange = useCallback((a: Record<string, string>) => {
@@ -192,12 +188,20 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
     [dvppDotaznikQ, postSurveyMerged.length, webinar.isPast],
   );
 
+  /**
+   * Nabídku trialu nedostane ten, kdo řekl „Vividbooks už používám".
+   *
+   * „Používám Vividbooks" je povinné pole **registračního formuláře**, takže se
+   * ptáme vždycky; odpověď z dotazníku (když ho webinář má) má přednost. Dřív
+   * se koukalo jen na dotazník — u webináře s vlastními otázkami v CMS bez
+   * `uses_vividbooks` (nebo s vypnutým dotazníkem) se blok ukázal i stávajícím
+   * uživatelům. Ti pak od legacy API dostali „Email is used yet." místo kódů
+   * a v CRM po nich zůstal jen deal s labelem Trial 2.0.
+   */
   const showPostRegistrationTrial = useMemo(() => {
-    if (preSurveyQuestions.length === 0) return true;
-    if (!postRegSurveyHasUsesQuestion) return true;
     const uses = postSurveyAnswers[USE_VIVIDBOOKS_QID] || form.usesVividbooks;
-    return uses === 'no';
-  }, [preSurveyQuestions.length, postRegSurveyHasUsesQuestion, postSurveyAnswers, form.usesVividbooks]);
+    return uses !== 'yes';
+  }, [postSurveyAnswers, form.usesVividbooks]);
 
   useEffect(() => {
     const qEmail = String(searchParams.get('email') || '').trim();
