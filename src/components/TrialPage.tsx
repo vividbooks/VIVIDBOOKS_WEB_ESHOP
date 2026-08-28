@@ -14,6 +14,11 @@ import {
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 import { APP_ENTRY_PATH } from '../config/publicUrls';
+import {
+  DEPUTY_SCHOOL_STAGES,
+  TEACHER_SUBJECTS_1ST,
+  TEACHER_SUBJECTS_2ND,
+} from '../utils/trialSubjectOptions';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
@@ -53,26 +58,10 @@ const POSITIONS = [
   'Jin\u00e9',
 ];
 
-/** Hodnoty jako ve Webflow (Mailchimp / integrace) */
-const TEACHER_SUBJECTS_1ST: Array<{ value: string; label: string }> = [
-  { value: 'Mathematics-1', label: 'Matematika' },
-  { value: 'PrimaryScience', label: 'Prvouka' },
-  { value: 'CzechLang-1', label: '\u010cesk\u00fd jazyk' },
-  { value: 'Other-1', label: 'Jin\u00e9' },
-];
-const TEACHER_SUBJECTS_2ND: Array<{ value: string; label: string }> = [
-  { value: 'Physics', label: 'Fyzika' },
-  { value: 'Chemistry', label: 'Chemie' },
-  { value: 'Mathematics-2', label: 'Matematika' },
-  { value: 'NaturalHistory', label: 'P\u0159\u00edrodopis' },
-  { value: 'CzechLang-2', label: '\u010cesk\u00fd jazyk' },
-  { value: 'Other-2', label: 'Jin\u00e9' },
-];
-
-const DEPUTY_SCHOOL_STAGES: Array<{ value: string; label: string }> = [
-  { value: 'SchoolStage-1', label: '1. stupe\u0148' },
-  { value: 'SchoolStage-2', label: '2. stupe\u0148' },
-];
+/**
+ * Předměty a stupně (hodnoty jako ve Webflow) sdílí trial formulář
+ * s jednoklikovým trialem po webináři — viz `src/utils/trialSubjectOptions.ts`.
+ */
 
 const INPUT_CLASS =
   "w-full text-[15px] text-[#001161] bg-white border border-[#001161]/12 rounded-xl px-5 py-3.5 outline-none focus:border-[#7C3AED] focus:ring-2 focus:ring-[#7C3AED]/20 transition-all placeholder:text-[#001161]/35";
@@ -209,7 +198,7 @@ function useDebouncedCallback<T extends (...args: any[]) => void>(fn: T, delay: 
 }
 
 /* ── Subject checkbox ── */
-function SubjectCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
+export function SubjectCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
     <button type="button" onClick={onChange}
       className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl border transition-all text-left ${checked ? 'bg-[#7C3AED]/8 border-[#7C3AED]/40' : 'bg-white border-[#001161]/10 hover:border-[#7C3AED]/30'}`}>
