@@ -927,7 +927,8 @@ Deno.serve(async (req) => {
   /**
    * Mezikrok doplnění adresy — po načtení z PD Person/Org:
    *   1) adresa v názvu organizace (za pomlčkou),
-   *   2) Google Geocoding (`GOOGLE_MAPS_API_KEY`; vypnutí `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`),
+   *   2) geokodování adresy — Google (`GOOGLE_MAPS_API_KEY`), pak Nominatim / OSM bez klíče
+   *      (obojí lze vypnout přes `PIPEDRIVE_INBOUND_DISABLE_GEOCODE=1`),
    *   3) ARES podle IČO (oficiální sídlo včetně PSČ).
    */
   const geocodeDisabled = String(Deno.env.get('PIPEDRIVE_INBOUND_DISABLE_GEOCODE') || '').trim() === '1';
@@ -1312,9 +1313,9 @@ Deno.serve(async (req) => {
         phone: phone.trim() || null,
         schoolName,
         ico: hasIco ? ico : null,
-        street: street.trim() || '—',
-        city: city.trim() || '—',
-        zip: zip.trim() || '—',
+        street: street.trim() || null,
+        city: city.trim() || null,
+        zip: zip.trim() || null,
       };
       const baseMetaRows = await sql<{
         basecom_order_id: string | null;
@@ -1519,9 +1520,9 @@ Deno.serve(async (req) => {
         ${phone.trim() || null},
         ${schoolName},
         ${hasIco ? ico : null},
-        ${street.trim() || '—'},
-        ${city.trim() || '—'},
-        ${zip.trim() || '—'},
+        ${street.trim() || null},
+        ${city.trim() || null},
+        ${zip.trim() || null},
         'CZ',
         ${shipMethod},
         ${shippingPrice},
@@ -1600,9 +1601,9 @@ Deno.serve(async (req) => {
         ${phone.trim() || null},
         ${schoolName},
         ${hasIco ? ico : null},
-        ${street.trim() || '—'},
-        ${city.trim() || '—'},
-        ${zip.trim() || '—'},
+        ${street.trim() || null},
+        ${city.trim() || null},
+        ${zip.trim() || null},
         'CZ',
         ${shipMethod},
         ${shippingPrice},
@@ -1661,9 +1662,9 @@ Deno.serve(async (req) => {
       phone: phone.trim() || null,
       schoolName,
       ico: hasIco ? ico : null,
-      street: street.trim() || '—',
-      city: city.trim() || '—',
-      zip: zip.trim() || '—',
+      street: street.trim() || null,
+      city: city.trim() || null,
+      zip: zip.trim() || null,
     };
     const shippingSnapshotA = { method: shipMethod, price: shippingPrice };
 

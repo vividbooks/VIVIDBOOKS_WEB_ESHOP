@@ -83,7 +83,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `WEBFLOW_API_TOKEN` | Sync / obsah z Webflow (kde použito v `server/index.tsx`). |
 | `PIPEDRIVE_API_TOKEN` | Pipedrive API. |
 | `PIPEDRIVE_DEFAULT_STAGE_ID`, `PIPEDRIVE_DEFAULT_OWNER_ID`, … | Pipeline / deal logika. |
-| `PIPEDRIVE_PERSON_POSITION_FIELD_KEY`, `PIPEDRIVE_PERSON_SUBJECT_FIELD_KEY`, `PIPEDRIVE_PERSON_STAGE_FIELD_KEY` | Volitelné override hash klíčů vlastních polí **osoby** pro trial/webinář: pozice (UI ID 9093), předmět (9095), stupeň (9099). Bez nastavení se klíče auto-detekují přes `/personFields` (pozice navíc přes známý default hash). Z trial formuláře (`/vyzkousejte`) se mapuje: pozice z `<select>` (Učitel→164, Ředitel→159, Zástupce→160, Metodik→274, Rodič→166, Jiné→172), předmět z výběru (Fyzika→309, Chemie→310, Matematika→311, Přírodopis→312, Prvouka→413, Český jazyk→414, Jiné→319) a stupeň (1. stupeň→421, 2. stupeň→422). Pole 9095/9099 typu `enum` dostanou jednu hodnotu, `set` všechny vybrané. |
+| `PIPEDRIVE_PERSON_POSITION_FIELD_KEY`, `PIPEDRIVE_PERSON_SUBJECT_FIELD_KEY`, `PIPEDRIVE_PERSON_STAGE_FIELD_KEY` | Volitelné override hash klíčů vlastních polí **osoby** pro trial/webinář: pozice (UI ID 9093), předmět (9095), stupeň (9099). Bez nastavení se klíče auto-detekují přes `/personFields` (pozice navíc přes známý default hash). Z trial formuláře (`/vyzkousejte`) se mapuje: pozice z `<select>` (Učitel→164, Ředitel→159, Zástupce→160, Metodik→274, Rodič→166, Jiné→172), předmět z výběru (Fyzika→309, Chemie→310, Matematika→311, Přírodopis→312, Prvouka→413, Český jazyk→414, Jiné→319) a stupeň (1. stupeň→421, 2. stupeň→422). Pole 9095/9099 typu `enum` dostanou jednu hodnotu, `set` všechny vybrané. U předmětu (9095) je výběr z formuláře **autoritativní** (`supabase/functions/_shared/pipedrive-person-subject.ts`): „Jiné" (319), které tam zapíše legacy `api.vividbooks` při zakládání osoby, se odebere / přepíše, jakmile učitel označil konkrétní předmět; ručně vybraný konkrétní předmět z CRM se nepřepisuje. |
 | `PIPEDRIVE_ESHOP_*` | E‑shop dealy v Pipedrivu (viz `.env.example`). |
 | `PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY` | Hash custom pole „Eshop ID" (UI ID 12586) — eshop ho plní `orders.order_number` při založení dealu (`syncEshopOrderToPipedriveFromDb`) a refresh PUTu (`refreshEshopPipedriveDealFromDb`). Webhook `pipedrive-inbound-deal` ho čte pro lookup existující objednávky. Default v kódu: `26e4a2f8dc44e49f369c468ccc816ad668b37d92`. |
 | `PIPEDRIVE_PRODUCT_CODE_FIELD` | Volitelně jeden klíč (nebo tečková cesta) v KV produktu pro **kód** odpovídající poli *Product code* v Pipedrivu; řádky dealu se přidají přes `GET /api/v2/products/search` (`exact_match` na `code`). Bez nastavení se bere heuristika (`pipedriveProductCode`, metadata, `shoptetId`, `isbn`, …). **Řádky `bundle:`** se zatím do dealu nepřidávají (nutné rozvinutí z definice balíčku). |
@@ -242,6 +242,53 @@ Zdroj objednávky je v tabulce `public.orders.source` (CHECK `eshop`/`pipedrive`
 - Tabulka **`order_alerts`** — monitoring objednávek (Base.com, iDoklad, fronta, …).
 - Tabulka **`app_incidents`** — incidenty mimo čistě e‑shop (např. neodeslaný Mandrill / selhání Mailchimpu u webináře). Zápis z Edge: `supabase/functions/_shared/site-incidents.ts` (`upsertSiteIncident`).
 - API funkce **`admin-order-alerts`** vrací sjednocený seznam (`scope=all|orders|site`), potvrzování / vyřešení funguje pro obě tabulky podle UUID.
+
+---
+
+## MCP servery v Cursoru (Pipedrive)
+
+Konfigurace je v repu: [`.cursor/mcp.json`](../.cursor/mcp.json). Cursor ji načte automaticky po otevření projektu; zapnutí/odhlášení je v **Cursor → Customize → MCP**.
+
+| Server | Transport | Přihlášení | K čemu |
+|--------|-----------|------------|--------|
+| `pipedrive` | remote HTTP — `https://mcp.pipedrive.ai/mcp` | OAuth (tlačítko **Login / Needs login** v Customize → MCP; přihlásíš se svým PD účtem) | Oficiální server Pipedrive: čtení i zápis dealů, osob, organizací a aktivit v rozsahu práv přihlášeného uživatele. |
+| `pipedrive-api` | stdio — `node scripts/mcp/pipedrive-mcp-server.mjs` | `PIPEDRIVE_API_TOKEN` (prostředí nebo `.env` v kořeni repa) | **Read-only** přístup k REST API včetně věcí, které oficiální server nedává: hash klíče vlastních polí, ID voleb štítků, `/v1/dealFields`, `/api/v2/*`. |
+
+Nástroje serveru `pipedrive-api`:
+
+- `pipedrive_find_field` — najde vlastní pole podle názvu, hashe, ID pole nebo názvu volby (např. „Eshop ID“ → `26e4a2f8…`, štítek „E-shop B2C“ → `419`). Přesně ta ID, která pak jdou do `PIPEDRIVE_*_FIELD_KEY` / `PIPEDRIVE_ESHOP_LABEL_IDS_*`.
+- `pipedrive_search` — fulltext nad dealy, osobami, organizacemi, leady, produkty (`/api/v2/*/search`).
+- `pipedrive_get` — libovolný **GET** na `/v1/`, `/api/v1/` nebo `/api/v2/` (jiné metody a cesty server odmítne, token jde hlavičkou `x-api-token`, ne v URL).
+
+### Kde servery hledat v UI (a proč je hledání nenajde)
+
+- Vyhledávací pole s tlačítkem **Browse Marketplace** prohledává **jen oficiální katalog** pluginů. Pipedrive v katalogu Cursoru není, takže „pipedrive“ tam vrátí **No matches** — s naší konfigurací to nesouvisí.
+- Servery z repa jsou v **Customize → MCPs** v seznamu pod scope **Workspace** (ne mezi výsledky hledání). Filtr scope musí být na Workspace nebo All.
+- Workspace konfigurace se načte, jen když je v okně otevřená **složka repa**; v okně **Agents** a v multi-root workspace se `.cursor/mcp.json` často nenačte vůbec.
+
+### Když se servery v Customize neobjeví
+
+Zkopíruj je do globální konfigurace `~/.cursor/mcp.json`, která platí ve všech oknech nezávisle na otevřeném projektu:
+
+```bash
+npm run mcp:install            # zapíše do ~/.cursor/mcp.json, původní soubor zálohuje do mcp.json.bak
+npm run mcp:install -- --dry-run   # jen náhled
+npm run mcp:install -- --links     # deeplinky „nainstalovat kliknutím“
+```
+
+Skript ([`scripts/mcp/install-cursor-mcp.mjs`](../scripts/mcp/install-cursor-mcp.mjs)) zachová ostatní servery v globálním configu a `${workspaceFolder}` nahradí absolutní cestou k repu (globální config si ji jinak nedosadí). Po zápisu spusť v Cursoru **Developer: Reload Window**.
+
+Samotný oficiální server jde přidat i bez repa jedním odkazem:
+`cursor://anysphere.cursor-deeplink/mcp/install?name=pipedrive&config=eyJ1cmwiOiJodHRwczovL21jcC5waXBlZHJpdmUuYWkvbWNwIn0%3D`
+
+Poznámky:
+
+- Token je stejný jako Supabase Edge Secret `PIPEDRIVE_API_TOKEN`; do gitu nepatří (`.env` je v `.gitignore`). Po jeho doplnění je potřeba MCP server v Cursoru restartovat (toggle v Customize → MCP).
+- Lokální server hledá `.env` vedle sebe v repu, takže funguje i po instalaci do globálního `~/.cursor/mcp.json`.
+- Když server v seznamu je, ale nefunguje: **Output → MCP Logs** (`Cmd/Ctrl+Shift+U`) ukáže start serveru i chyby přihlášení.
+- Bez tokenu server nespadne — nástroj jen vrátí chybu „Chybí PIPEDRIVE_API_TOKEN“, takže `pipedrive` (OAuth) funguje samostatně.
+- Smoke testy MCP serveru běží v `npm test` (`scripts/run-unit-tests.ts`, testy s prefixem `MCP:`) proti mock API, žádný reálný PD provoz.
+- Pro Cloud Agenty (cursor.com/agents) se `.cursor/mcp.json` **nepoužívá** — osobní servery se přidávají přes MCP dropdown na cursor.com/agents, týmové v **Dashboard → Integrations & MCP**.
 
 ---
 

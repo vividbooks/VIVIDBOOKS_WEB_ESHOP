@@ -1,6 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, resolve } from 'node:path';
 import { strict as assert } from 'node:assert';
+import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
 import {
   appEntryTargetUrl,
@@ -15,6 +19,7 @@ import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/fun
 import {
   enrichCzechAddressParts,
   geocodeFreeFormAddressViaGoogle,
+  geocodeFreeFormAddressViaNominatim,
   looksLikeRegionName,
   parseFreeFormAddress,
   preferStreetWithHouseNumber,
@@ -25,6 +30,17 @@ import {
   distributorContactPersonName,
   looksLikeLegalEntityName,
 } from '../supabase/functions/_shared/pipedrive-distributor-person.ts';
+import {
+  buildPipedrivePersonSubjectFieldPayload,
+  mapTrialSubjectsToPipedriveOptionIds,
+  sortSubjectOptionIdsOtherLast,
+} from '../supabase/functions/_shared/pipedrive-person-subject.ts';
+import {
+  buildTrialActivityNoteText,
+  buildTrialDealNoteHtml,
+  buildTrialDealNoteText,
+  TRIAL_PIPEDRIVE_LABEL_NAME,
+} from '../supabase/functions/_shared/trial-pipedrive-note.ts';
 import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
@@ -57,6 +73,24 @@ import {
   compileOutlineToHtml,
   parseOutlineText,
 } from '../src/supabase/functions/server/emailOutline.ts';
+// @ts-expect-error — MCP server je čisté ESM bez typů (spouští ho Cursor přes `node`).
+import {
+  buildRequestUrl,
+  createRequestHandler,
+  createTools,
+  matchesFieldQuery,
+  parseEnvFile,
+  readApiToken,
+  resolveApiPath,
+  truncateForResponse,
+} from './mcp/pipedrive-mcp-server.mjs';
+// @ts-expect-error — instalátor MCP configu je čisté ESM bez typů.
+import {
+  buildInstallLink,
+  installGlobalMcp,
+  interpolateWorkspaceFolder,
+  mergeMcpServers,
+} from './mcp/install-cursor-mcp.mjs';
 
 type UnitTest = {
   name: string;
@@ -638,6 +672,127 @@ registerTest('ARES doplní číslo popisné jen tam, kde sídlo odpovídá adres
   });
 });
 
+registerTest('ARES doplní PSČ i u obcí, kde se sídlo hlásí na městskou část', async () => {
+  /**
+   * Reálný případ — deal 26877, ZŠ Zelená 42 Ostrava (IČO 70933987). Adresa z PD měla obec
+   * „Ostrava", ARES vrací `textovaAdresa` s městskou částí „Moravská Ostrava". Dřív se kvůli
+   * tomu rozdílu zahodilo správné PSČ 70200 a do Base šla objednávka bez PSČ.
+   */
+  const ares = {
+    sidlo: {
+      textovaAdresa: 'Zelená 1406/42, Moravská Ostrava, 702 00 Ostrava',
+      nazevUlice: 'Zelená',
+      cisloDomovni: 1406,
+      cisloOrientacni: 42,
+      nazevObce: 'Ostrava',
+      nazevCastiObce: 'Moravská Ostrava',
+      psc: 70200,
+    },
+  };
+
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Zelená 1406/42', city: 'Ostrava', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Zelená 1406/42', city: 'Ostrava', zip: '70200' },
+    );
+  });
+
+  /** Shodná ulice s číslem popisným = tatáž adresa, i když deal uvádí městskou část. */
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Zelená 1406/42', city: 'Moravská Ostrava', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Zelená 1406/42', city: 'Moravská Ostrava', zip: '70200' },
+    );
+  });
+
+  /** Jiná ulice v jiné obci zůstává „jiné místo" — sídlo distributora se nesmí přetáhnout. */
+  await withStubbedRuntime({}, () => ares, async () => {
+    assert.deepEqual(
+      await enrichCzechAddressParts(
+        { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
+        { geocodeDisabled: true, ico: '70933987' },
+      ),
+      { street: 'Hradská 506', city: 'Velká Polom', zip: '' },
+    );
+  });
+});
+
+registerTest('ARES: adresa bez názvu ulice se skládá z obce a čísla popisného', async () => {
+  await withStubbedRuntime(
+    {},
+    () => ({ sidlo: { cisloDomovni: 123, nazevObce: 'Velká Polom', psc: 74764 } }),
+    async () => {
+      assert.deepEqual(
+        await enrichCzechAddressParts(
+          { street: '', city: 'Velká Polom', zip: '' },
+          { geocodeDisabled: true, ico: '70933987' },
+        ),
+        { street: 'Velká Polom 123', city: 'Velká Polom', zip: '74764' },
+      );
+    },
+  );
+});
+
+registerTest('Nominatim doplní PSČ bez API klíče', async () => {
+  const osmResult = [{
+    address: {
+      road: 'Zelená',
+      house_number: '1406/42',
+      suburb: 'Moravská Ostrava',
+      city: 'Ostrava',
+      postcode: '702 00',
+      country_code: 'cz',
+    },
+  }];
+
+  await withStubbedRuntime({}, () => osmResult, async () => {
+    assert.deepEqual(await geocodeFreeFormAddressViaNominatim('Zelená 1406/42, Ostrava'), {
+      street: 'Zelená 1406/42',
+      city: 'Ostrava',
+      zip: '70200',
+    });
+  });
+
+  /** Malé obce nemají v OSM `city`, jen `village` / `town`. */
+  await withStubbedRuntime(
+    {},
+    () => [{ address: { village: 'Velká Polom', postcode: '747 64' } }],
+    async () => {
+      assert.deepEqual(await geocodeFreeFormAddressViaNominatim('Velká Polom'), {
+        street: '',
+        city: 'Velká Polom',
+        zip: '74764',
+      });
+    },
+  );
+});
+
+registerTest('bez Google klíče se PSČ dohledá přes OSM fallback', async () => {
+  /**
+   * Google Geocoding vrací `REQUEST_DENIED`, dokud má projekt vypnutou fakturaci — přesně to se
+   * dělo v produkci. Bez záložního geokodéru by objednávka bez IČO zůstala trvale bez PSČ.
+   */
+  await withStubbedRuntime(
+    { GOOGLE_MAPS_API_KEY: 'test-key' },
+    (url) =>
+      url.includes('maps.googleapis.com')
+        ? { status: 'REQUEST_DENIED', error_message: 'You must enable Billing' }
+        : [{ address: { road: 'Zelená', house_number: '1406/42', city: 'Ostrava', postcode: '702 00' } }],
+    async () => {
+      assert.deepEqual(
+        await enrichCzechAddressParts({ street: 'Zelená 1406/42', city: 'Ostrava', zip: '' }, {}),
+        { street: 'Zelená 1406/42', city: 'Ostrava', zip: '70200' },
+      );
+    },
+  );
+});
+
 registerTest('distributorContactPersonName: s.r.o. nepoužije jako jméno osoby', () => {
   assert.equal(looksLikeLegalEntityName('Baar Group s.r.o.'), true);
   assert.equal(looksLikeLegalEntityName('EUROMEDIA GROUP, a.s.'), true);
@@ -1011,6 +1166,452 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+registerTest('poznámka trial obchodu vysvětlí česky, proč nevznikly kódy a proč je to trial 2.0', () => {
+  const note = buildTrialDealNoteText({
+    scenario: 'email_used_in_school',
+    contactName: 'Jana Nováková',
+    email: 'jana@zsplana.cz',
+    phone: '777123456',
+    position: 'Učitel',
+    schoolName: 'ZŠ Planá',
+    ico: '12345678',
+    subjects: ['Mathematics-2'],
+    submittedAt: '28. 8. 2026 14:32',
+  });
+
+  /** Důvod, proč API nevydalo kódy — včetně doslovné odpovědi. */
+  assert.match(note, /Proč se nevygenerovaly přístupové kódy:/);
+  assert.match(note, /e-mail je u školy ve Vividbooks už evidovaný/);
+  assert.match(note, /Odpověď API Vividbooks: „Email is used yet\."/);
+
+  /** Vysvětlení labelu i zařazení do pipeline. */
+  assert.match(note, /Proč je obchod označený „Trial web \(interactive\) - 2\.0":/);
+  assert.match(note, /Zařazení: CZ-Sales-Akvizice-CZ1/);
+  assert.match(note, /Další krok:/);
+
+  /** Údaje z formuláře na konci. */
+  assert.match(note, /Kontakt: Jana Nováková/);
+  assert.match(note, /IČO: 12345678/);
+  /** Kódy předmětů se do poznámky píšou česky. */
+  assert.match(note, /Předměty: Matematika \(2\. stupeň\)/);
+  assert.match(note, /Odesláno: 28\. 8\. 2026 14:32/);
+
+  /** Bez telefonu/pozice se prázdné řádky nevypisují. */
+  const minimal = buildTrialDealNoteText({ scenario: 'active_subscription', contactName: 'Petr Malý' });
+  assert.ok(!minimal.includes('Telefon:'));
+  assert.ok(!minimal.includes('Pozice:'));
+  assert.match(minimal, /aktivní placené předplatné/);
+  assert.match(minimal, /Odpověď API Vividbooks: „You have active subscription trial yet\."/);
+});
+
+registerTest('poznámka u aktivního trialu mluví o nových kódech, ne o odmítnutí', () => {
+  const note = buildTrialDealNoteText({ scenario: 'existing_active_trial', contactName: 'Eva Dvořáková' });
+  assert.match(note, /Proč se nevygenerovaly nové přístupové kódy:/);
+  assert.match(note, /zopakovalo kódy, které škole už běží/);
+  /** Tenhle scénář nemá legacy reason — řádek s odpovědí API tedy chybí. */
+  assert.ok(!note.includes('Odpověď API Vividbooks'));
+
+  /** Doslovný reason z frontendu má přednost před scénářovým fallbackem. */
+  const withReason = buildTrialDealNoteText({
+    scenario: 'active_subscription',
+    legacyReason: 'Something else happened.',
+    legacyMessage: 'Vaše škola už má aktivní předplatné.',
+  });
+  assert.match(withReason, /Odpověď API Vividbooks: „Something else happened\."/);
+  assert.match(withReason, /Zákazník na webu viděl: „Vaše škola už má aktivní předplatné\."/);
+});
+
+registerTest('opakovaná žádost se v poznámce označí a HTML varianta ztuční nadpisy', () => {
+  const deduped = buildTrialDealNoteText({ scenario: 'email_used_in_school', deduplicated: true });
+  assert.match(deduped, /Opakovaná žádost: pro školu už byl v Pipedrive otevřený trial obchod/);
+
+  const html = buildTrialDealNoteHtml({ scenario: 'email_used_in_school', contactName: 'Jan Novák' });
+  assert.match(html, /<b>Proč se nevygenerovaly přístupové kódy:<\/b>/);
+  assert.match(html, /<b>Další krok:<\/b>/);
+  assert.ok(html.includes('<br>'));
+  /** Údaje nejsou nadpis — zůstávají bez zvýraznění. */
+  assert.ok(html.includes('Kontakt: Jan Novák'));
+  assert.ok(!html.includes('<b>Kontakt: Jan Novák</b>'));
+  /** Název labelu v textu odpovídá tomu, co se v Pipedrive nastavuje. */
+  assert.ok(html.includes(TRIAL_PIPEDRIVE_LABEL_NAME));
+});
+
+registerTest('poznámka aktivity je kratší, ale důvod i další krok obsahuje', () => {
+  const activityNote = buildTrialActivityNoteText({
+    scenario: 'email_used_in_school',
+    intro: 'Opětovná žádost o kód.',
+    contactName: 'Jana Nováková',
+    email: 'jana@zsplana.cz',
+    deduplicated: true,
+  });
+  const lines = activityNote.split('\n');
+  assert.equal(lines[0], 'Opětovná žádost o kód.');
+  assert.match(activityNote, /Proč se nevygenerovaly přístupové kódy:/);
+  assert.match(activityNote, /Odpověď API Vividbooks: „Email is used yet\."/);
+  assert.match(activityNote, /Další krok:/);
+  assert.match(activityNote, /Zákazník žádal o trial znovu/);
+  /** Aktivita nenese celý blok o labelu — ten je v poznámce obchodu. */
+  assert.ok(!activityNote.includes('Proč je obchod označený'));
+});
+
+registerTest('trial předměty se mapují na option ID pole 9095 a „Jiné" jde na konec', () => {
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Mathematics-2', 'Physics']), [311, 309]);
+  assert.deepEqual(
+    mapTrialSubjectsToPipedriveOptionIds([
+      'Physics',
+      'Chemistry',
+      'Mathematics-1',
+      'NaturalHistory',
+      'PrimaryScience',
+      'CzechLang-1',
+      'Other-1',
+    ]),
+    [309, 310, 311, 312, 413, 414, 319],
+  );
+
+  /** Matematika 1. i 2. stupně je stejná volba — bez duplikátu. */
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Mathematics-1', 'Mathematics-2']), [311]);
+
+  /** Neznámý kód se zahodí. */
+  assert.deepEqual(mapTrialSubjectsToPipedriveOptionIds(['Astronomy', 'Chemistry']), [310]);
+
+  /** „Jiné" nesmí být první — pole typu enum bere jen první ID. */
+  assert.deepEqual(sortSubjectOptionIdsOtherLast([319, 312]), [312, 319]);
+});
+
+registerTest('pole 9095 typu set: „Other" od legacy API ustoupí konkrétnímu předmětu', () => {
+  const meta = { key: 'subjectKey', fieldType: 'set' };
+
+  /** Legacy API předvyplnilo Other; učitel vybral Matematiku a Chemii. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [311, 310], '319'),
+    { subjectKey: [311, 310] },
+  );
+
+  /** Konkrétní předměty se sjednotí s dřívějším výběrem, Other zmizí. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [312], [319, 311]),
+    { subjectKey: [311, 312] },
+  );
+
+  /** Samotné „Jiné" zůstane „Jiné" — a když už tam je, nic se neposílá. */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [319], ''), { subjectKey: [319] });
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [319], '319'), null);
+
+  /** Výběr už v poli je → žádný PUT. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [311], [311, 312]), null);
+
+  /** Pipedrive vrací volby i jako objekty s `id`. */
+  assert.deepEqual(
+    buildPipedrivePersonSubjectFieldPayload(meta, [309], [{ id: 319 }]),
+    { subjectKey: [309] },
+  );
+});
+
+registerTest('pole 9095 typu enum: přepíše se prázdné i „Other", ruční předmět zůstane', () => {
+  const meta = { key: 'subjectKey', fieldType: 'enum' };
+
+  /** Prázdné pole dostane konkrétní předmět, ne „Other". */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [319, 312], null), { subjectKey: 312 });
+
+  /** „Other" od legacy API se přepíše skutečným výběrem. */
+  assert.deepEqual(buildPipedrivePersonSubjectFieldPayload(meta, [311, 310], 319), { subjectKey: 311 });
+
+  /** Konkrétní předmět vybraný ručně v CRM nepřepisujeme. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [311], 312), null);
+
+  /** Jen „Jiné" na vstupu i v poli → není co měnit. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [319], 319), null);
+
+  /** Bez pole nebo bez výběru se nic nezapisuje. */
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(null, [311], null), null);
+  assert.equal(buildPipedrivePersonSubjectFieldPayload(meta, [], 319), null);
+});
+
+registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () => {
+  const parsed = parseEnvFile(
+    ['# komentář', 'export PIPEDRIVE_API_TOKEN="tok en"', "OTHER='hodnota'", 'PRAZDNY=', 'bez_rovnitka'].join('\n'),
+  );
+
+  assert.equal(parsed.PIPEDRIVE_API_TOKEN, 'tok en');
+  assert.equal(parsed.OTHER, 'hodnota');
+  assert.equal(parsed.PRAZDNY, '');
+  assert.equal('bez_rovnitka' in parsed, false);
+});
+
+registerTest('MCP: readApiToken sáhne do .env, když Cursor nedosadí ${env:…}', () => {
+  const envFile = resolve(process.cwd(), 'scripts/mcp/__fixtures__/token.env');
+
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: 'z-prostredi' }, envFile), 'z-prostredi');
+  assert.equal(readApiToken({ PIPEDRIVE_API_TOKEN: '${env:PIPEDRIVE_API_TOKEN}' }, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, envFile), 'token-ze-souboru');
+  assert.equal(readApiToken({}, resolve(process.cwd(), 'scripts/mcp/__fixtures__/neexistuje.env')), '');
+});
+
+registerTest('MCP: resolveApiPath povolí jen cesty Pipedrive API', () => {
+  assert.deepEqual(resolveApiPath('/api/v2/deals/123'), { pathname: '/api/v2/deals/123', search: '' });
+  assert.deepEqual(resolveApiPath('v1/dealFields?limit=500'), { pathname: '/v1/dealFields', search: 'limit=500' });
+
+  assert.throws(() => resolveApiPath('https://api.pipedrive.com/v1/deals'), /jen cestu API/);
+  assert.throws(() => resolveApiPath('/v1/../../etc/passwd'), /Nepovolená cesta/);
+  assert.throws(() => resolveApiPath('/webhooks'), /musí začínat/);
+  assert.throws(() => resolveApiPath(''), /Chybí parametr/);
+});
+
+registerTest('MCP: buildRequestUrl spojí query a zahodí api_token z URL', () => {
+  const url = buildRequestUrl('https://api.pipedrive.com', '/v1/dealFields?start=0', {
+    limit: 500,
+    api_token: 'tajne',
+    ids: [1, 2],
+    prazdne: null,
+  });
+
+  assert.equal(url.origin + url.pathname, 'https://api.pipedrive.com/v1/dealFields');
+  assert.equal(url.searchParams.get('start'), '0');
+  assert.equal(url.searchParams.get('limit'), '500');
+  assert.equal(url.searchParams.get('ids'), '1,2');
+  assert.equal(url.searchParams.has('api_token'), false);
+  assert.equal(url.searchParams.has('prazdne'), false);
+});
+
+registerTest('MCP: matchesFieldQuery hledá podle názvu, hashe i názvu volby', () => {
+  const field = {
+    id: 12586,
+    key: '26e4a2f8dc44e49f369c468ccc816ad668b37d92',
+    name: 'Eshop ID',
+    field_type: 'varchar',
+    options: [{ id: 419, label: 'E-shop B2C' }],
+  };
+
+  assert.equal(matchesFieldQuery(field, 'eshop id'), true);
+  assert.equal(matchesFieldQuery(field, '26e4a2f8'), true);
+  assert.equal(matchesFieldQuery(field, '12586'), true);
+  assert.equal(matchesFieldQuery(field, 'b2c'), true);
+  assert.equal(matchesFieldQuery(field, 'faktura'), false);
+});
+
+registerTest('MCP: truncateForResponse zkrátí velkou odpověď', () => {
+  assert.equal(truncateForResponse('krátké', 100), 'krátké');
+
+  const long = truncateForResponse('x'.repeat(50), 10);
+  assert.equal(long.startsWith('x'.repeat(10)), true);
+  assert.match(long, /odpověď zkrácena \(50 znaků\)/);
+});
+
+registerTest('MCP: nástroje volají Pipedrive read-only s hlavičkou x-api-token', async () => {
+  const calls: Array<{ url: string; method?: string; token?: string }> = [];
+  const fetchImpl = async (url: URL, init: { method?: string; headers: Record<string, string> }) => {
+    calls.push({ url: url.toString(), method: init.method, token: init.headers['x-api-token'] });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        data: [
+          { id: 12586, key: '26e4a2f8', name: 'Eshop ID', field_type: 'varchar' },
+          { id: 1, key: 'label', name: 'Label', field_type: 'enum', options: [{ id: 419, label: 'E-shop B2C' }] },
+        ],
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+
+  const tools = createTools({ apiBaseUrl: 'https://api.pipedrive.com', apiToken: 'test-token', fetchImpl });
+
+  const fields = JSON.parse(await tools.pipedrive_find_field.run({ entity: 'deal', query: 'b2c' }));
+  assert.equal(fields.total_fields, 2);
+  assert.equal(fields.matches.length, 1);
+  assert.equal(fields.matches[0].key, 'label');
+  assert.equal(fields.matches[0].options[0].id, 419);
+
+  await tools.pipedrive_search.run({ entity: 'products', term: 'DPD', exact_match: true, limit: 5 });
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://api.pipedrive.com/v1/dealFields?limit=500');
+  assert.equal(calls[0].method, 'GET');
+  assert.equal(calls[0].token, 'test-token');
+  assert.match(calls[1].url, /^https:\/\/api\.pipedrive\.com\/api\/v2\/products\/search\?/);
+  assert.match(calls[1].url, /term=DPD/);
+  assert.match(calls[1].url, /exact_match=true/);
+
+  await assert.rejects(() => tools.pipedrive_find_field.run({ entity: 'faktura', query: 'x' }), /Neznámá entita/);
+});
+
+registerTest('MCP: bez tokenu vrátí nástroj srozumitelnou chybu, ne pád serveru', async () => {
+  const tools = createTools({
+    apiBaseUrl: 'https://api.pipedrive.com',
+    apiToken: '',
+    fetchImpl: async () => {
+      throw new Error('fetch se nemá volat bez tokenu');
+    },
+  });
+  const handle = createRequestHandler(tools);
+
+  const response = await handle({
+    jsonrpc: '2.0',
+    id: 7,
+    method: 'tools/call',
+    params: { name: 'pipedrive_get', arguments: { path: '/api/v2/deals' } },
+  });
+
+  assert.equal(response.result.isError, true);
+  assert.match(response.result.content[0].text, /Chybí PIPEDRIVE_API_TOKEN/);
+});
+
+registerTest('MCP: handshake a tools/list odpovídají MCP protokolu', async () => {
+  const handle = createRequestHandler(createTools({ apiBaseUrl: 'https://api.pipedrive.com', apiToken: 't' }));
+
+  const init = await handle({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+  assert.equal(init.result.protocolVersion, '2025-06-18');
+  assert.equal(init.result.serverInfo.name, 'pipedrive-api');
+
+  const legacy = await handle({ jsonrpc: '2.0', id: 2, method: 'initialize', params: { protocolVersion: '1999-01-01' } });
+  assert.equal(legacy.result.protocolVersion, '2025-06-18');
+
+  const list = await handle({ jsonrpc: '2.0', id: 3, method: 'tools/list' });
+  assert.deepEqual(list.result.tools.map((tool: { name: string }) => tool.name).sort(), [
+    'pipedrive_find_field',
+    'pipedrive_get',
+    'pipedrive_search',
+  ]);
+  assert.equal(list.result.tools.every((tool: { inputSchema?: unknown }) => Boolean(tool.inputSchema)), true);
+
+  const unknownMethod = await handle({ jsonrpc: '2.0', id: 4, method: 'resources/list' });
+  assert.equal(unknownMethod.error.code, -32601);
+
+  const unknownTool = await handle({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'pipedrive_delete' } });
+  assert.equal(unknownTool.error.code, -32602);
+});
+
+registerTest('MCP: server běží přes stdio proti mock Pipedrive API', async () => {
+  const requestLog: string[] = [];
+  const api = createServer((req, res) => {
+    requestLog.push(`${req.method} ${req.url} token=${req.headers['x-api-token']}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ success: true, data: { id: 123, title: 'Objednávka VB-2026-0099' } }));
+  });
+  await new Promise<void>((listening) => api.listen(0, '127.0.0.1', listening));
+  const { port } = api.address() as AddressInfo;
+
+  const child = spawn('node', [resolve(process.cwd(), 'scripts/mcp/pipedrive-mcp-server.mjs')], {
+    env: {
+      ...process.env,
+      PIPEDRIVE_API_TOKEN: 'stdio-token',
+      PIPEDRIVE_API_BASE_URL: `http://127.0.0.1:${port}`,
+    },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const responses: Array<Record<string, any>> = [];
+  let buffer = '';
+  const twoResponses = new Promise<void>((received) => {
+    child.stdout.on('data', (chunk) => {
+      buffer += String(chunk);
+      let newline = buffer.indexOf('\n');
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) responses.push(JSON.parse(line));
+        if (responses.length === 2) received();
+        newline = buffer.indexOf('\n');
+      }
+    });
+  });
+
+  try {
+    child.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`,
+    );
+    child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`);
+    child.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'pipedrive_get', arguments: { path: '/api/v2/deals/123' } },
+      })}\n`,
+    );
+
+    await Promise.race([
+      twoResponses,
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('MCP server neodpověděl do 10 s')), 10_000)),
+    ]);
+  } finally {
+    child.stdin.end();
+    child.kill();
+    await new Promise<void>((closed) => api.close(() => closed()));
+  }
+
+  assert.equal(responses[0].result.serverInfo.name, 'pipedrive-api');
+  assert.equal(responses[1].result.isError, undefined);
+  assert.match(responses[1].result.content[0].text, /Objednávka VB-2026-0099/);
+  assert.deepEqual(requestLog, ['GET /api/v2/deals/123 token=stdio-token']);
+});
+
+registerTest('MCP instalátor: ${workspaceFolder} se nahradí absolutní cestou', () => {
+  const resolved = interpolateWorkspaceFolder(
+    {
+      command: 'node',
+      args: ['${workspaceFolder}/scripts/mcp/pipedrive-mcp-server.mjs'],
+      env: { PIPEDRIVE_API_TOKEN: '${env:PIPEDRIVE_API_TOKEN}' },
+      cislo: 42,
+    },
+    '/Users/dan/vividbooks',
+  );
+
+  assert.deepEqual(resolved.args, ['/Users/dan/vividbooks/scripts/mcp/pipedrive-mcp-server.mjs']);
+  assert.equal(resolved.env.PIPEDRIVE_API_TOKEN, '${env:PIPEDRIVE_API_TOKEN}');
+  assert.equal(resolved.cislo, 42);
+});
+
+registerTest('MCP instalátor: merge zachová cizí servery a rozliší přidané/přepsané', () => {
+  const merged = mergeMcpServers(
+    { mcpServers: { supabase: { url: 'https://mcp.supabase.com/mcp' }, pipedrive: { url: 'https://stary/mcp' } } },
+    { pipedrive: { url: 'https://mcp.pipedrive.ai/mcp' }, 'pipedrive-api': { type: 'stdio', command: 'node' } },
+  );
+
+  assert.equal(merged.config.mcpServers.supabase.url, 'https://mcp.supabase.com/mcp');
+  assert.equal(merged.config.mcpServers.pipedrive.url, 'https://mcp.pipedrive.ai/mcp');
+  assert.deepEqual(merged.added, ['pipedrive-api']);
+  assert.deepEqual(merged.updated, ['pipedrive']);
+  assert.deepEqual(merged.unchanged, []);
+});
+
+registerTest('MCP instalátor: deeplink nese base64 konfiguraci serveru', () => {
+  const link = buildInstallLink('pipedrive', { url: 'https://mcp.pipedrive.ai/mcp' });
+
+  assert.equal(link.startsWith('cursor://anysphere.cursor-deeplink/mcp/install?name=pipedrive&config='), true);
+  const encoded = decodeURIComponent(link.split('config=')[1]);
+  assert.deepEqual(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')), {
+    url: 'https://mcp.pipedrive.ai/mcp',
+  });
+});
+
+registerTest('MCP instalátor: zápis do ~/.cursor/mcp.json zálohuje a nepřepíše cizí servery', () => {
+  const tmpHome = mkdtempSync(resolve(tmpdir(), 'vb-mcp-install-'));
+  const globalConfigPath = resolve(tmpHome, '.cursor', 'mcp.json');
+  mkdirSync(dirname(globalConfigPath), { recursive: true });
+  writeFileSync(globalConfigPath, JSON.stringify({ mcpServers: { jiny: { url: 'https://priklad/mcp' } } }, null, 2));
+
+  const preview = installGlobalMcp({ repoRoot: process.cwd(), globalConfigPath, dryRun: true });
+  assert.deepEqual(preview.added.sort(), ['pipedrive', 'pipedrive-api']);
+  assert.deepEqual(JSON.parse(readFileSync(globalConfigPath, 'utf8')).mcpServers, {
+    jiny: { url: 'https://priklad/mcp' },
+  });
+
+  const written = installGlobalMcp({ repoRoot: process.cwd(), globalConfigPath });
+  const result = JSON.parse(readFileSync(globalConfigPath, 'utf8'));
+
+  assert.equal(result.mcpServers.jiny.url, 'https://priklad/mcp');
+  assert.equal(result.mcpServers.pipedrive.url, 'https://mcp.pipedrive.ai/mcp');
+  assert.equal(
+    result.mcpServers['pipedrive-api'].args[0],
+    resolve(process.cwd(), 'scripts/mcp/pipedrive-mcp-server.mjs'),
+  );
+  assert.equal(result.mcpServers['pipedrive-api'].args[0].includes('${workspaceFolder}'), false);
+  assert.equal(JSON.parse(readFileSync(written.backupPath, 'utf8')).mcpServers.pipedrive, undefined);
+
+  rmSync(tmpHome, { recursive: true, force: true });
 });
 
 await run();
