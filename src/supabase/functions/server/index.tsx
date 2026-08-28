@@ -38,6 +38,11 @@ import {
   EMAIL_MX_REJECT_CS,
 } from '../../../utils/emailValidation.ts';
 import { normalizeCzechPhone, PHONE_CZ_HINT } from '../../../utils/phoneCZ.ts';
+import {
+  buildTrialActivityNoteText,
+  buildTrialDealNoteHtml,
+  type TrialPipedriveScenario,
+} from '../../../../supabase/functions/_shared/trial-pipedrive-note.ts';
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
@@ -15635,15 +15640,13 @@ async function createPipedriveActivity(
 }
 
 /**
- * Scénář volání Pipedrive z trial formuláře — určuje pipeline / stage /
- * popis aktivity / fallback ownera. Label je vždy stejný (option 359 na poli
- * 12463 = „Trial web (interactive) - 2.0"), liší se obchodní pipeline.
+ * `TrialPipedriveScenario` (scénář volání Pipedrive z trial formuláře — určuje
+ * pipeline / stage / popis aktivity / fallback ownera) žije ve sdíleném modulu
+ * `_shared/trial-pipedrive-note.ts` spolu s českými texty poznámek, protože
+ * scénář a jeho vysvětlení pro obchodníka patří k sobě. Label je pro všechny
+ * scénáře stejný (option 359 na poli 12463 = „Trial web (interactive) - 2.0"),
+ * liší se obchodní pipeline.
  */
-type TrialPipedriveScenario =
-  | 'active_subscription'      // legacy reason "You have active subscription trial yet."
-  | 'email_used_in_school'     // legacy reason "Email is used yet." (opětovná žádost o kód)
-  | 'existing_active_trial'    // legacy odpověděla existujícími trial kódy (kind=existing_trial) — škola aktuálně má trial
-  | 'open_deal_in_progress';   // škola má v CRM otevřený (rozjednaný) deal a přesto vyplnila trial formulář
 
 interface TrialPipedriveScenarioConfig {
   pipelineId: number;
@@ -15784,9 +15787,14 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
  *   - label „Trial web (interactive) - 2.0" (option 359 na deal poli 12463).
  *   - aktivita typu `call` splatná dnes, přiřazená deal ownerovi, s notou
  *     odpovídající scénáři.
+ *   - **poznámka do obchodu** (`_shared/trial-pipedrive-note.ts`) — česky
+ *     vysvětlí, proč legacy API nevydalo přístupové kódy (včetně doslovného
+ *     `reason`) a proč je obchod označený labelem „…2.0"; z labelu samotného to
+ *     obchodník nepozná. Poznámka vzniká vždy, když máme deal — i u deduplikace
+ *     a i když organizace nemá ownera (na rozdíl od aktivity).
  *
  * Idempotence: pokud už pro org existuje **otevřený** deal v této pipeline
- * s tímto labelem, nový deal se nezakládá — jen se přidá aktivita.
+ * s tímto labelem, nový deal se nezakládá — jen se přidá aktivita a poznámka.
  */
 async function syncTrialPipedriveDeal(
   scenario: TrialPipedriveScenario,
@@ -15801,6 +15809,10 @@ async function syncTrialPipedriveDeal(
     subjects?: string[];
     /** Trial: kódy stupňů (zástupce) → pole osoby 9099. */
     schoolStages?: string[];
+    /** Doslovný `reason` z legacy API (např. „Email is used yet.") — do poznámky. */
+    legacyReason?: string;
+    /** Hláška, kterou zákazník viděl na webu — do poznámky. */
+    legacyMessage?: string;
   },
 ): Promise<{
   skipped: boolean;
@@ -15828,6 +15840,8 @@ async function syncTrialPipedriveDeal(
   const position = String(params.position || '').trim();
   const subjects = Array.isArray(params.subjects) ? params.subjects : [];
   const schoolStages = Array.isArray(params.schoolStages) ? params.schoolStages : [];
+  const legacyReason = String(params.legacyReason || '').trim();
+  const legacyMessage = String(params.legacyMessage || '').trim();
 
   if (!contactName) return { skipped: true, reason: 'missing_contact_name', scenario };
 
@@ -15926,8 +15940,50 @@ async function syncTrialPipedriveDeal(
     }
   }
 
-  let activity: any = null;
+  /** Podklad pro české texty poznámky — proč nepřišly kódy a proč je obchod „trial 2.0". */
+  const noteParams = {
+    scenario,
+    contactName,
+    email,
+    phone,
+    position,
+    schoolName,
+    ico,
+    subjects,
+    schoolStages,
+    legacyReason,
+    legacyMessage,
+    deduplicated,
+    submittedAt: new Date().toLocaleString('cs-CZ', {
+      timeZone: 'Europe/Prague',
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }),
+  };
+
+  /** Poznámka do obchodu je hlavní nosič vysvětlení: obchodník z labelu
+   *  „Trial web (interactive) - 2.0" nepozná, proč legacy API kódy nevydalo.
+   *  Zakládáme ji **vždy, když máme deal** — tedy i u deduplikace (opakovaná
+   *  žádost je informace navíc, ne duplicita) a i když organizace nemá ownera
+   *  (poznámka na ownerovi nezávisí, na rozdíl od aktivity). */
   let note: any = null;
+  if (dealId) {
+    try {
+      note = await createPipedriveNote(apiToken, {
+        content: buildTrialDealNoteHtml(noteParams),
+        dealId,
+        orgId: orgLookup.orgId,
+        personId,
+      });
+      console.log(
+        `[${cfg.logPrefix}] note created id=${parsePipedriveNumericId(note?.id) ?? 'null'} deal=${dealId} dedup=${deduplicated}`,
+      );
+    } catch (error: any) {
+      console.log(`[${cfg.logPrefix}] note create error: ${error.message}`);
+    }
+  }
+
+  let activity: any = null;
   if (ownerUserId && dealId) {
     const { todayISO } = buildTodayContextBlock();
     const subject = (Deno.env.get(cfg.envKeys.activitySubject) || '').trim()
@@ -15935,16 +15991,8 @@ async function syncTrialPipedriveDeal(
       || `Kontaktovat zákazníka: ${schoolName || ico || contactName}`;
     const activityType = (Deno.env.get(cfg.envKeys.activityType) || '').trim() || cfg.defaults.activityType;
     const noteText = (Deno.env.get(cfg.envKeys.activityNote) || '').trim() || cfg.defaults.activityNote;
-    const noteBody = [
-      noteText,
-      contactName ? `Kontakt: ${contactName}` : '',
-      email ? `E‑mail: ${email}` : '',
-      phone ? `Telefon: ${phone}` : '',
-      position ? `Pozice: ${position}` : '',
-      schoolName ? `Škola: ${schoolName}` : '',
-      ico ? `IČO: ${ico}` : '',
-      deduplicated ? '⚠️ Zákazník žádal o trial znovu (otevřený deal už existoval).' : '',
-    ].filter(Boolean).join('\n');
+    /** Kratší varianta téhož vysvětlení — v úkolu ho obchodník vidí dřív než poznámku. */
+    const noteBody = buildTrialActivityNoteText({ ...noteParams, intro: noteText });
     try {
       activity = await createPipedriveActivity(apiToken, {
         subject,
@@ -15961,22 +16009,6 @@ async function syncTrialPipedriveDeal(
       );
     } catch (error: any) {
       console.log(`[${cfg.logPrefix}] activity create error: ${error.message}`);
-    }
-
-    /** Pro nově založený deal přidáme i samostatnou poznámku — usnadní vyhledávání
-     *  v deal feedu, kde activity note bývá v menším bloku. U deduplikace nevytváříme
-     *  duplikátní poznámku — všechno potřebné je v activity note. */
-    if (!deduplicated) {
-      try {
-        note = await createPipedriveNote(apiToken, {
-          content: noteBody.replace(/\n/g, '<br>'),
-          dealId,
-          orgId: orgLookup.orgId,
-          personId,
-        });
-      } catch (error: any) {
-        console.log(`[${cfg.logPrefix}] note create error: ${error.message}`);
-      }
     }
   } else if (!ownerUserId) {
     console.log(
@@ -16464,6 +16496,11 @@ async function handleTrialPipedriveEndpoint(
     const position = String(body.position ?? '').trim();
     const subjects = readTrialStringArrayField(body, 'teacherSubjects', 'subjects');
     const schoolStages = readTrialStringArrayField(body, 'schoolStages');
+    /** Doslovná odpověď legacy API + hláška zobrazená zákazníkovi — jdou do
+     *  poznámky obchodu, aby obchodník viděl přesný důvod, proč kódy nevznikly.
+     *  Volitelné: scénář má vlastní fallback text, kdyby je frontend neposlal. */
+    const legacyReason = String(body.legacyReason ?? body.reason ?? '').trim().slice(0, 300);
+    const legacyMessage = String(body.legacyMessage ?? '').trim().slice(0, 500);
     if (!contactName) {
       return c.json({ skipped: true, reason: 'missing_contact_name' }, 400);
     }
@@ -16480,6 +16517,8 @@ async function handleTrialPipedriveEndpoint(
       position,
       subjects,
       schoolStages,
+      legacyReason,
+      legacyMessage,
     });
 
     return c.json({ success: true, ...result });
