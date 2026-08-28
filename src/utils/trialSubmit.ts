@@ -103,11 +103,14 @@ export function parseTrialCodes(data: Record<string, unknown> | null): { student
 export function parseFreeTrialError(data: Record<string, unknown> | null): {
   message: string;
   code: 'email_used_in_school' | 'active_subscription_trial' | 'generic';
+  /** Doslovný `reason` z API — posílá se do poznámky obchodu v Pipedrive. */
+  rawReason: string;
 } {
   const reason = typeof data?.reason === 'string' ? data.reason : '';
   if (reason === 'Email is used yet.') {
     return {
       code: 'email_used_in_school',
+      rawReason: reason,
       message:
         'Tento e-mail je u vaší školy už v systému Vividbooks. Nový přístup z formuláře nezískáte — obraťte se na kolegy ve škole nebo na vášeho obchodního zástupce. Brzy vás bude kontaktovat náš obchodní zástupce a navrhne další postup.',
     };
@@ -115,13 +118,15 @@ export function parseFreeTrialError(data: Record<string, unknown> | null): {
   if (reason === 'You have active subscription trial yet.') {
     return {
       code: 'active_subscription_trial',
+      rawReason: reason,
       message: 'Vaše škola už má aktivní předplatné. Brzy vás bude kontaktovat náš obchodní zástupce a navrhne další postup.',
     };
   }
-  if (reason) return { code: 'generic', message: reason };
+  if (reason) return { code: 'generic', rawReason: reason, message: reason };
   const m = data?.message ?? data?.error ?? data?.detail ?? data?.title;
   return {
     code: 'generic',
+    rawReason: '',
     message: typeof m === 'string' ? m : 'Požadavek se nezdařil.',
   };
 }
@@ -147,7 +152,13 @@ export function freeTrialErrorMessage(data: Record<string, unknown> | null): str
  *
  * Volání je „nejlepší úsilí" — chyba se neeskaluje na UI, jen zaloguje do konzole.
  */
-async function postTrialPipedriveSync(url: string, label: string, fields: FreeTrialFields): Promise<void> {
+async function postTrialPipedriveSync(
+  url: string,
+  label: string,
+  fields: FreeTrialFields,
+  /** Odpověď legacy API — server ji cituje v české poznámce obchodu. */
+  legacy?: { reason?: string; message?: string },
+): Promise<void> {
   try {
     const { fullName } = splitFullNameForTrial(fields.name);
     const body = {
@@ -160,6 +171,10 @@ async function postTrialPipedriveSync(url: string, label: string, fields: FreeTr
       /** Předměty (učitel) a stupně (zástupce) — server z nich nastaví pole osoby 9095 / 9099. */
       teacherSubjects: fields.teacherSubjects,
       schoolStages: fields.schoolStages,
+      /** Doslovný `reason` z `/web/free-trial-ajax` a hláška, kterou viděl zákazník
+       *  — do poznámky obchodu („proč se nevygenerovaly kódy"). */
+      legacyReason: legacy?.reason ?? '',
+      legacyMessage: legacy?.message ?? '',
     };
     const res = await fetch(url, {
       method: 'POST',
@@ -181,12 +196,18 @@ async function postTrialPipedriveSync(url: string, label: string, fields: FreeTr
   }
 }
 
-export function notifyTrialActiveSubscriptionToPipedrive(fields: FreeTrialFields): Promise<void> {
-  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_UPSELL_URL, 'trial-pipedrive-upsell', fields);
+export function notifyTrialActiveSubscriptionToPipedrive(
+  fields: FreeTrialFields,
+  legacy?: { reason?: string; message?: string },
+): Promise<void> {
+  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_UPSELL_URL, 'trial-pipedrive-upsell', fields, legacy);
 }
 
-export function notifyTrialEmailUsedToPipedrive(fields: FreeTrialFields): Promise<void> {
-  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_REREQUEST_URL, 'trial-pipedrive-rerequest', fields);
+export function notifyTrialEmailUsedToPipedrive(
+  fields: FreeTrialFields,
+  legacy?: { reason?: string; message?: string },
+): Promise<void> {
+  return postTrialPipedriveSync(TRIAL_PIPEDRIVE_REREQUEST_URL, 'trial-pipedrive-rerequest', fields, legacy);
 }
 
 /**
@@ -264,7 +285,7 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
 
   if (!res.ok) {
     const err = parseFreeTrialError(data);
-    triggerTrialPipedriveSync(err.code, fields);
+    triggerTrialPipedriveSync(err.code, fields, { reason: err.rawReason, message: err.message });
     return {
       status: 'error',
       code: err.code,
@@ -293,7 +314,7 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
   }
 
   const err = parseFreeTrialError(data);
-  triggerTrialPipedriveSync(err.code, fields);
+  triggerTrialPipedriveSync(err.code, fields, { reason: err.rawReason, message: err.message });
   return { status: 'error', code: err.code, message: err.message };
 }
 
@@ -309,12 +330,14 @@ export async function submitFreeTrialAjax(fields: FreeTrialFields): Promise<Free
 function triggerTrialPipedriveSync(
   code: 'email_used_in_school' | 'active_subscription_trial' | 'generic',
   fields: FreeTrialFields,
+  /** Doslovná odpověď API + hláška pro zákazníka — do poznámky obchodu. */
+  legacy?: { reason?: string; message?: string },
 ): void {
   if (code === 'active_subscription_trial') {
-    void notifyTrialActiveSubscriptionToPipedrive(fields);
+    void notifyTrialActiveSubscriptionToPipedrive(fields, legacy);
     return;
   }
   if (code === 'email_used_in_school') {
-    void notifyTrialEmailUsedToPipedrive(fields);
+    void notifyTrialEmailUsedToPipedrive(fields, legacy);
   }
 }
