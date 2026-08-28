@@ -37,6 +37,7 @@ import {
 } from '../supabase/functions/_shared/pipedrive-person-subject.ts';
 import {
   buildTrialSubjectFields,
+  formatTrialSelectionCodes,
   trialSubjectQuestionForPosition,
   trialSubjectSelectionError,
 } from '../src/utils/trialSubjectOptions.ts';
@@ -1312,6 +1313,18 @@ registerTest('trial z webináře: bez výběru předmětu/stupně se neodesílá
   );
   /** Rodič nic nevybírá — žádost projde. */
   assert.equal(trialSubjectSelectionError({ position: 'Rodič', ...empty }), null);
+});
+
+registerTest('registrace na webinář: kódy předmětů se v adminu čtou i se stupněm', () => {
+  assert.equal(
+    formatTrialSelectionCodes(['Physics', 'Mathematics-1']),
+    'Fyzika (2. st.), Matematika (1. st.)',
+  );
+  assert.equal(formatTrialSelectionCodes(['SchoolStage-1', 'SchoolStage-2']), '1. stupeň, 2. stupeň');
+  /** Neznámý kód se zobrazí tak, jak přišel — radši surová hodnota než prázdno. */
+  assert.equal(formatTrialSelectionCodes(['Astronomy']), 'Astronomy');
+  assert.equal(formatTrialSelectionCodes([]), '');
+  assert.equal(formatTrialSelectionCodes(undefined), '');
 });
 
 registerTest('MCP: parseEnvFile načte token i s uvozovkami a komentáři', () => {

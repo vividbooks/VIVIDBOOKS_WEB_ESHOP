@@ -110,3 +110,24 @@ export function trialSubjectSelectionError(params: {
   }
   return null;
 }
+
+/**
+ * Kód → čitelný název pro admin výpis a CSV export. U předmětů se přidává
+ * stupeň, protože „Matematika" i „Český jazyk" jsou v obou stupních.
+ */
+const TRIAL_SELECTION_LABELS: Record<string, string> = {
+  ...Object.fromEntries(TEACHER_SUBJECTS_1ST.map((o) => [o.value, `${o.label} (1. st.)`])),
+  ...Object.fromEntries(TEACHER_SUBJECTS_2ND.map((o) => [o.value, `${o.label} (2. st.)`])),
+  ...Object.fromEntries(DEPUTY_SCHOOL_STAGES.map((o) => [o.value, o.label])),
+};
+
+export function trialSelectionLabel(code: string): string {
+  const key = String(code || '').trim();
+  return TRIAL_SELECTION_LABELS[key] ?? key;
+}
+
+/** Seznam kódů → „Fyzika (2. st.), Matematika (1. st.)"; prázdný vstup → prázdný řetězec. */
+export function formatTrialSelectionCodes(codes: string[] | null | undefined): string {
+  if (!Array.isArray(codes) || codes.length === 0) return '';
+  return codes.map(trialSelectionLabel).filter(Boolean).join(', ');
+}

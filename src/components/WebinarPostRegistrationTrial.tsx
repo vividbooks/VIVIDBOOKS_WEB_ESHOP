@@ -2,20 +2,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { motion } from 'motion/react';
 import { AlertCircle, CheckCircle, ExternalLink, Loader2 } from 'lucide-react';
-import { SchoolSearch, SubjectCheckbox, type PdOwner, type PipedriveStatus } from './TrialPage';
+import { SchoolSearch, type PdOwner, type PipedriveStatus } from './TrialPage';
 import { submitFreeTrialAjax, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 import { APP_ENTRY_PATH } from '../config/publicUrls';
-import {
-  buildTrialSubjectFields,
-  trialSubjectQuestionForPosition,
-  trialSubjectSelectionError,
-  DEPUTY_SCHOOL_STAGES,
-  TEACHER_SUBJECTS_1ST,
-  TEACHER_SUBJECTS_2ND,
-} from '../utils/trialSubjectOptions';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -30,36 +22,17 @@ export interface WebinarTrialFormSnapshot {
   newsletter: boolean;
   schoolName: string;
   ico: string;
+  /**
+   * Předměty (učitel) a stupně (vedení / poradce) vybrané už v registraci na
+   * webinář — server z nich nastaví pole osoby 9095 (předmět) a 9099 (stupeň).
+   * Dřív se odsud posílal natvrdo `Other-2` a později natvrdo `SchoolStage-2`,
+   * takže u trialů z webináře zůstal v CRM předmět „Other" a špatný stupeň.
+   */
+  teacherSubjects: string[];
+  schoolStages: string[];
 }
 
-/** Co učí / na jakém stupni — webinářová registrace se na to neptá, doptáváme se tady. */
-export type WebinarTrialSubjectSelection = {
-  subjects1st: string[];
-  subjects2nd: string[];
-  schoolStages: string[];
-};
-
-const EMPTY_SUBJECT_SELECTION: WebinarTrialSubjectSelection = {
-  subjects1st: [],
-  subjects2nd: [],
-  schoolStages: [],
-};
-
-/**
- * Formulář webináře se na předmět ani stupeň neptá. Dřív se sem posílal natvrdo
- * `Other-2` (v Pipedrive předmět „Other" 319, který pak už nešel přepsat) a poté
- * natvrdo `SchoolStage-2` u všech učitelských pozic — takže pole osoby 9095
- * (předmět) a 9099 (stupeň) byla u trialů z webináře prázdná nebo nesprávná.
- * Teď se doptáme stejnými volbami jako trial formulář a posíláme skutečný výběr.
- */
-function buildTrialFieldsFromWebinar(
-  form: WebinarTrialFormSnapshot,
-  selection: WebinarTrialSubjectSelection,
-): FreeTrialFields {
-  const { teacherSubjects, schoolStages } = buildTrialSubjectFields({
-    position: form.position,
-    ...selection,
-  });
+function buildTrialFieldsFromWebinar(form: WebinarTrialFormSnapshot): FreeTrialFields {
   return {
     name: form.name.trim(),
     email: form.email.trim(),
@@ -69,8 +42,8 @@ function buildTrialFieldsFromWebinar(
     vat: form.ico.replace(/\D/g, '').slice(0, 10),
     gdpr: form.gdpr,
     newsletter: form.newsletter,
-    teacherSubjects,
-    schoolStages,
+    teacherSubjects: form.teacherSubjects,
+    schoolStages: form.schoolStages,
   };
 }
 
@@ -99,23 +72,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
   const [trialResult, setTrialResult] = useState<FreeTrialSubmitResult | null>(null);
   const [trialSubmitting, setTrialSubmitting] = useState(false);
   const [trialError, setTrialError] = useState('');
-
-  /** Předměty / stupeň — v registraci na webinář nejsou, doptáváme se před odesláním. */
-  const [selection, setSelection] = useState<WebinarTrialSubjectSelection>(EMPTY_SUBJECT_SELECTION);
-  const subjectQuestion = trialSubjectQuestionForPosition(form.position);
-
-  /** Změna pozice v registračním formuláři → dřívější výběr už nemusí dávat smysl. */
-  useEffect(() => {
-    setSelection(EMPTY_SUBJECT_SELECTION);
-  }, [form.position]);
-
-  const toggleSelection = (field: keyof WebinarTrialSubjectSelection, code: string) =>
-    setSelection((prev) => ({
-      ...prev,
-      [field]: prev[field].includes(code)
-        ? prev[field].filter((c) => c !== code)
-        : [...prev[field], code],
-    }));
 
   const ico = form.ico.replace(/\D/g, '').slice(0, 10);
 
@@ -199,11 +155,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
       setTrialError(EMAIL_FORMAT_HINT_CS);
       return;
     }
-    const selectionError = trialSubjectSelectionError({ position: form.position, ...selection });
-    if (selectionError) {
-      setTrialError(selectionError);
-      return;
-    }
     setTrialSubmitting(true);
     setTrialError('');
     try {
@@ -216,7 +167,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         setTrialError(typeof vd.message === 'string' ? vd.message : EMAIL_FORMAT_HINT_CS);
         return;
       }
-      const payload = buildTrialFieldsFromWebinar(form, selection);
+      const payload = buildTrialFieldsFromWebinar(form);
       const result = await submitFreeTrialAjax(payload);
       if (result.status === 'error') {
         setTrialError(result.message);
@@ -318,9 +269,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           {'Vyzkou\u0161ejte Vividbooks'}
         </h3>
         <p style={FF} className="text-[13px] text-[#001161]/60 leading-relaxed">
-          {subjectQuestion === 'none'
-            ? 'M\u00e1te z\u00e1jem o 14denn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm? Sta\u010d\u00ed jeden klik \u2014 stejn\u011b jako u zku\u0161ebn\u00edho formul\u00e1\u0159e v\u00e1m p\u0159ijde potvrzen\u00ed a p\u0159\u00edstupov\u00e9 k\u00f3dy.'
-            : 'M\u00e1te z\u00e1jem o 14denn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm? Dopl\u0148te je\u0161t\u011b, \u010deho se p\u0159\u00edstup t\u00fdk\u00e1 \u2014 potvrzen\u00ed a p\u0159\u00edstupov\u00e9 k\u00f3dy v\u00e1m p\u0159ijdou stejn\u011b jako ze zku\u0161ebn\u00edho formul\u00e1\u0159e.'}
+          {'M\u00e1te z\u00e1jem o 14denn\u00ed p\u0159\u00edstup k digit\u00e1ln\u00edm u\u010debnic\u00edm? Sta\u010d\u00ed jeden klik \u2014 stejn\u011b jako u zku\u0161ebn\u00edho formul\u00e1\u0159e v\u00e1m p\u0159ijde potvrzen\u00ed a p\u0159\u00edstupov\u00e9 k\u00f3dy.'}
         </p>
       </div>
 
@@ -342,62 +291,6 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
           pdStatus === 'active_trial'
         }
       />
-
-      {subjectQuestion === 'subjects' ? (
-        <div className="rounded-2xl border border-[#001161]/8 bg-white/60 p-4 space-y-4">
-          <p style={FF} className="text-[14px] font-bold text-[#001161]">
-            {'Co u\u010d\u00edte? *'}
-          </p>
-          <div>
-            <p style={FF} className="mb-2 text-[12px] font-semibold text-[#001161]/70">
-              {'1. stupe\u0148'}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {TEACHER_SUBJECTS_1ST.map(({ value, label }) => (
-                <SubjectCheckbox
-                  key={`1-${value}`}
-                  label={label}
-                  checked={selection.subjects1st.includes(value)}
-                  onChange={() => toggleSelection('subjects1st', value)}
-                />
-              ))}
-            </div>
-          </div>
-          <div>
-            <p style={FF} className="mb-2 text-[12px] font-semibold text-[#001161]/70">
-              {'2. stupe\u0148'}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {TEACHER_SUBJECTS_2ND.map(({ value, label }) => (
-                <SubjectCheckbox
-                  key={`2-${value}`}
-                  label={label}
-                  checked={selection.subjects2nd.includes(value)}
-                  onChange={() => toggleSelection('subjects2nd', value)}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {subjectQuestion === 'stages' ? (
-        <div className="rounded-2xl border border-[#001161]/8 bg-white/60 p-4 space-y-3">
-          <p style={FF} className="text-[14px] font-bold text-[#001161]">
-            {'Kter\u00fd stupe\u0148 v\u00e1s zaj\u00edm\u00e1? *'}
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            {DEPUTY_SCHOOL_STAGES.map(({ value, label }) => (
-              <SubjectCheckbox
-                key={value}
-                label={label}
-                checked={selection.schoolStages.includes(value)}
-                onChange={() => toggleSelection('schoolStages', value)}
-              />
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       <div className="space-y-2">
         <button

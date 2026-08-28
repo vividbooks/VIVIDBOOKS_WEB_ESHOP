@@ -3394,6 +3394,9 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       webinarMotivation: bodyMotivation,
       webinarTopicInterest: bodyTopicInterest,
       usesVividbooks: bodyUsesVividbooks,
+      /** Předměty (učitel) a stupně (vedení / poradce) — kódy z trial formuláře. */
+      teacherSubjects: bodyTeacherSubjects,
+      schoolStages: bodySchoolStages,
     } = body;
 
     const notTeacher = !!bodyNotTeacher;
@@ -3404,6 +3407,13 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const webinarTopicInterest = String(bodyTopicInterest ?? '').trim();
     const usesVividbooksNorm =
       bodyUsesVividbooks === 'yes' || bodyUsesVividbooks === 'no' ? bodyUsesVividbooks : null;
+    /**
+     * Předmět / stupeň se od trial formuláře (`/vyzkousejte`) ptáme i tady, aby se
+     * pole osoby 9095 (předmět) a 9099 (stupeň) v Pipedrive vyplnila hned při
+     * registraci — a měl je i trial, který si člověk založí hned po ní.
+     */
+    const teacherSubjects = readTrialStringArrayField(body, 'teacherSubjects', 'subjects');
+    const schoolStages = readTrialStringArrayField(body, 'schoolStages');
 
     if (!webinarId || !name || !email || !position) {
       return c.json({ error: 'Chybí povinná pole (webinarId, name, email, position).' }, 400);
@@ -3445,6 +3455,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       schoolAddress,
       ico: icoDigits,
       usesVividbooks: usesVividbooksNorm,
+      teacherSubjects,
+      schoolStages,
       ...(webinarMotivation ? { webinarMotivation } : {}),
       ...(webinarTopicInterest ? { webinarTopicInterest } : {}),
     };
@@ -3754,6 +3766,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
           webinarMotivation,
           webinarTopicInterest,
           usesVividbooks: usesVividbooksNorm,
+          teacherSubjects,
+          schoolStages,
         });
         pipedriveSync = pdResult.ok
           ? { ok: true, skipped: false, leadId: pdResult.leadId }
@@ -14490,6 +14504,10 @@ async function syncWebinarRegistrationToPipedrive(params: {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: 'yes' | 'no';
+  /** Kódy předmětů (učitel) z registrace → pole osoby 9095; stupeň se z nich odvodí. */
+  teacherSubjects?: string[];
+  /** Kódy stupňů (`SchoolStage-1/2`) pro nevyučující role → pole osoby 9099. */
+  schoolStages?: string[];
 }): Promise<{ ok: boolean; detail?: string; leadId?: string }> {
   const apiToken = params.apiToken;
   let organizationId: number | null = null;
@@ -14508,6 +14526,37 @@ async function syncWebinarRegistrationToPipedrive(params: {
   let positionOptionId =
     mapWebinarRegistrationPositionToPipedriveOptionId(params.positionLabel) ??
     mapPipedrivePersonPositionToOptionId(params.positionLabel);
+
+  /**
+   * Předmět (9095) a stupeň (9099) z registračního formuláře — stejné mapování
+   * i stejná pravidla přepisu jako u trialu: u předmětu je výběr z formuláře
+   * autoritativní („Other" ustoupí konkrétnímu předmětu), stupeň se sjednocuje.
+   * U učitele se stupeň odvodí z vybraných předmětů.
+   */
+  const subjectCodes = Array.isArray(params.teacherSubjects) ? params.teacherSubjects : [];
+  const stageCodes = Array.isArray(params.schoolStages) ? params.schoolStages : [];
+  const subjectOptionIds = mapTrialSubjectsToPipedriveOptionIds(subjectCodes);
+  const stageOptionIds = mapTrialStageToPipedriveOptionIds(subjectCodes, stageCodes);
+  const subjectMeta = subjectOptionIds.length ? await getPipedrivePersonSubjectFieldMeta(apiToken) : null;
+  const stageMeta = stageOptionIds.length ? await getPipedrivePersonStageFieldMeta(apiToken) : null;
+
+  /** Předmět/stupeň vůči hodnotám, které osoba v CRM už má (`record` z `GET /persons/{id}`). */
+  const subjectStagePatch = (record: Record<string, any> | null | undefined): Record<string, unknown> => {
+    const patch: Record<string, unknown> = {};
+    const subj = buildPipedrivePersonSubjectFieldPayload(
+      subjectMeta,
+      subjectOptionIds,
+      record?.[subjectMeta?.key ?? ''],
+    );
+    if (subj) Object.assign(patch, subj);
+    const stage = buildPipedrivePersonMergedFieldPayload(
+      stageMeta,
+      stageOptionIds,
+      record?.[stageMeta?.key ?? ''],
+    );
+    if (stage) Object.assign(patch, stage);
+    return patch;
+  };
 
   const emailLower = params.email.toLowerCase().trim();
   const existing = await searchPipedrivePersonByEmailGlobal(apiToken, emailLower);
@@ -14534,6 +14583,12 @@ async function syncWebinarRegistrationToPipedrive(params: {
       (patch as Record<string, unknown>)[positionFieldKey] = positionOptionId;
     }
 
+    if (subjectMeta || stageMeta) {
+      /** Custom pole čteme z plného detailu — search odpověď je spolehlivě nemá. */
+      const full = (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data;
+      Object.assign(patch, subjectStagePatch(full || existing));
+    }
+
     if (Object.keys(patch).length > 0) {
       await pipedriveRequest(apiToken, `/persons/${personId}`, {
         method: 'PUT',
@@ -14549,6 +14604,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
     if (positionFieldKey && positionOptionId != null) {
       payload[positionFieldKey] = positionOptionId;
     }
+    Object.assign(payload, subjectStagePatch(null));
     const created = await pipedriveRequest<any>(apiToken, '/persons', {
       method: 'POST',
       body: JSON.stringify(payload),
