@@ -70,8 +70,7 @@ function ContentBlock({ block }: { block: NovinkaBlock }) {
         <img
           src={block.src}
           alt={block.alt}
-          className="w-full rounded-[14px] object-cover"
-          style={{ maxHeight: '280px' }}
+          className="article-body-img w-full h-auto rounded-[14px]"
         />
         {block.caption && (
           <figcaption className="font-['Fenomen_Sans',sans-serif] text-[#001161]/40 text-[12px] text-center mt-2">

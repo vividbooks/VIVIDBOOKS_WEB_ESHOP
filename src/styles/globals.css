@@ -297,23 +297,34 @@ html {
 .webinar-richtext h2 { font-size: 1.3em; }
 .webinar-richtext h3 { font-size: 1.1em; }
 
-/* ── Novinka richtext — HTML z Webflow / WYSIWYG editoru ─────────── */
-.novinka-richtext {
+/* ── Novinka / blog richtext — HTML z Webflow / WYSIWYG editoru ──── */
+.novinka-richtext,
+.blog-richtext {
   font-family: 'Fenomen Sans', sans-serif;
   color: #001161;
   font-size: 16px;
   line-height: 1.8;
 }
-.novinka-richtext p { margin-bottom: 1em; }
-.novinka-richtext p:last-child { margin-bottom: 0; }
-.novinka-richtext strong, .novinka-richtext b { font-weight: 700; }
-.novinka-richtext em, .novinka-richtext i { font-style: italic; }
-.novinka-richtext ul { list-style: disc; padding-left: 1.5em; margin-bottom: 1em; }
-.novinka-richtext ol { list-style: decimal; padding-left: 1.5em; margin-bottom: 1em; }
-.novinka-richtext li { margin-bottom: 0.4em; }
-.novinka-richtext a { color: #ff6a35; text-decoration: underline; }
-.novinka-richtext a:hover { opacity: 0.75; }
-.novinka-richtext h2 {
+.novinka-richtext p,
+.blog-richtext p { margin-bottom: 1em; }
+.novinka-richtext p:last-child,
+.blog-richtext p:last-child { margin-bottom: 0; }
+.novinka-richtext strong, .novinka-richtext b,
+.blog-richtext strong, .blog-richtext b { font-weight: 700; }
+.novinka-richtext em, .novinka-richtext i,
+.blog-richtext em, .blog-richtext i { font-style: italic; }
+.novinka-richtext ul,
+.blog-richtext ul { list-style: disc; padding-left: 1.5em; margin-bottom: 1em; }
+.novinka-richtext ol,
+.blog-richtext ol { list-style: decimal; padding-left: 1.5em; margin-bottom: 1em; }
+.novinka-richtext li,
+.blog-richtext li { margin-bottom: 0.4em; }
+.novinka-richtext a,
+.blog-richtext a { color: #ff6a35; text-decoration: underline; }
+.novinka-richtext a:hover,
+.blog-richtext a:hover { opacity: 0.75; }
+.novinka-richtext h2,
+.blog-richtext h2 {
   font-family: 'Fenomen Sans', sans-serif;
   font-weight: 800;
   color: #001161;
@@ -322,7 +333,8 @@ html {
   margin-top: 2.2em;
   margin-bottom: 0.6em;
 }
-.novinka-richtext h3 {
+.novinka-richtext h3,
+.blog-richtext h3 {
   font-family: 'Fenomen Sans', sans-serif;
   font-weight: 700;
   color: #001161;
@@ -330,7 +342,8 @@ html {
   margin-top: 1.8em;
   margin-bottom: 0.5em;
 }
-.novinka-richtext blockquote {
+.novinka-richtext blockquote,
+.blog-richtext blockquote {
   border-left: 4px solid #ff6a35;
   background: #f0f2f8;
   border-radius: 14px;
@@ -338,11 +351,33 @@ html {
   margin: 1.5rem 0;
   font-style: italic;
 }
-.novinka-richtext img {
+.novinka-richtext figure,
+.blog-richtext figure {
+  margin: 1.75rem 0;
+  overflow: visible;
+  height: auto;
+  max-height: none;
+}
+/* Tělo článku: původní poměr stran, žádný ořez */
+.article-body-img,
+.novinka-richtext img,
+.blog-richtext img {
+  width: 100%;
   max-width: 100%;
+  height: auto !important;
+  max-height: none !important;
+  object-fit: contain !important;
+  object-position: center;
+  display: block;
+}
+.novinka-richtext img,
+.blog-richtext img {
   border-radius: 14px;
   margin: 1.2rem 0;
-  display: block;
+}
+.novinka-richtext figure img,
+.blog-richtext figure img {
+  margin: 0;
 }
 
 /* ── Form validation: scroll + shake + red ring (OrderPage, Checkout, Trial) ── */

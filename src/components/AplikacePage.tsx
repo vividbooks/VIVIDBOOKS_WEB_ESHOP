@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Link } from 'react-router';
-import { ArrowRight, ChevronRight, ExternalLink } from 'lucide-react';
+import { ArrowRight, ExternalLink } from 'lucide-react';
 import { SEOHead } from './SEOHead';
-import { HeroAplikaceVideoBackground, HeroAplikaceVideoTitle } from './HeroAplikaceVideoSlide';
+import { HeroAplikaceVideoBackground } from './HeroAplikaceVideoSlide';
 import { SubjectTabsSection, type SubjectExtraTab } from './SubjectTabsSection';
 import { APP_ENTRY_PATH } from '../config/publicUrls';
 import { APP_ENTRY_RESET_PARAM } from '@/lib/appEntryChoice';
@@ -53,8 +53,6 @@ function useNovaAplikaceUnlocked(): boolean {
   }, []);
   return unlocked;
 }
-
-const APP_SECTIONS = ['Knihovna', 'Můj obsah', 'AI asistent', 'Moje třída'] as const;
 
 const NEWS: { kicker: string; title: string; text: string }[] = [
   {
@@ -291,278 +289,108 @@ function SectionHead({ kicker, title, text }: { kicker: string; title: string; t
   );
 }
 
-/* ── Konfety ──────────────────────────────────────────────────── */
 
-type Particle = {
-  x: number; y: number; vx: number; vy: number;
-  gravity: number; size: number; rot: number; vr: number;
-  color: string; life: number;
+/* ── Dlaždice témat ───────────────────────────────────────────── */
+
+type Topic = {
+  /** Slug článku v Novinkách, na který dlaždice vede. */
+  slug: string;
+  image: string;
+  title: string;
+  bullets: [string, string, string];
 };
 
-const CONFETTI_PALETTE = [WB.crimson, WB.blue, WB.orange, WB.violetDeep, WB.mint];
+const TOPICS: Topic[] = [
+  {
+    slug: 'nova-aplikace-vividbooks-jeden-ucet-a-nova-knihovna',
+    image: '/aplikace/tema-01-nova-aplikace.webp',
+    title: 'Nová aplikace a knihovna pod jedním účtem',
+    bullets: [
+      'Jeden účet pro knihovnu i Vividboard, bez přepínání',
+      'Čtenářský mód a ovládání zoomu pro interaktivní tabuli',
+      'Kódy stránek: z papírového sešitu skočíte přímo do aplikace',
+    ],
+  },
+  {
+    slug: 'vividbooks-ai-asistent-ktery-zna-nase-ucebnice',
+    image: '/aplikace/tema-02-umela-inteligence.webp',
+    title: 'Vividbooks AI napříč celou aplikací',
+    bullets: [
+      'Z chatu rovnou test nebo interaktivní board',
+      'Umí pracovat i s vaším vlastním PDF',
+      'Formativní hodnocení testů, které si můžete doladit',
+    ],
+  },
+  {
+    slug: 'novy-editor-pracovnich-listu',
+    image: '/aplikace/tema-03-pracovni-listy.webp',
+    title: 'Nový editor pracovních listů',
+    bullets: [
+      'Texty, obrázky, volný prostor i hotové aktivity',
+      'Otázky systém chápe jako otázky — list převedete na board',
+      'Sady příkladů vygeneruje Početník podle ročníku a úrovní',
+    ],
+  },
+  {
+    slug: 'novy-vividboard-aktivity-a-soutezni-rezimy',
+    image: '/aplikace/tema-04-vividboard.webp',
+    title: 'Nový Vividboard a soutěžní režimy',
+    bullets: [
+      'Klávesnice na příklady, videokvíz, poznávačka, kartičky',
+      'Soutěž, týmy i duely — nebo promítání zcela bez telefonů',
+      'Obsah ze starého Vividboardu si jednorázově přenesete',
+    ],
+  },
+  {
+    slug: 'pocetnik-adaptivni-procvicovani-matematiky',
+    image: '/aplikace/tema-05-pocetnik.webp',
+    title: 'Početník: adaptivní procvičování matematiky',
+    bullets: [
+      'Tři režimy: procvičovat hned, zadat ve výuce, vytisknout sadu',
+      'Úroveň se mění podle odpovědí, ne podle pořadí úloh',
+      'Ve vyhodnocení vidíte úspěšnost po jednotlivých úrovních',
+    ],
+  },
+];
 
-function useConfetti() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const particles = useRef<Particle[]>([]);
-  const raf = useRef<number | null>(null);
-
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) {
-      raf.current = null;
-      return;
-    }
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    for (const p of particles.current) {
-      p.vy += p.gravity;
-      p.x += p.vx;
-      p.y += p.vy;
-      p.rot += p.vr;
-      p.life -= 1;
-      ctx.save();
-      ctx.translate(p.x, p.y);
-      ctx.rotate(p.rot);
-      ctx.globalAlpha = Math.max(0, Math.min(1, p.life / 28));
-      ctx.fillStyle = p.color;
-      ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 0.6);
-      ctx.restore();
-    }
-    particles.current = particles.current.filter((p) => p.life > 0 && p.y < canvas.height + 40);
-    raf.current = particles.current.length > 0 ? requestAnimationFrame(draw) : null;
-  }, []);
-
-  const spawn = useCallback(
-    (x: number, y: number, count: number, power: number, color?: string) => {
-      if (typeof window === 'undefined') return;
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      for (let n = 0; n < count; n += 1) {
-        const angle = Math.random() * Math.PI * 2;
-        const speed = Math.random() * power + 2;
-        particles.current.push({
-          x,
-          y,
-          vx: Math.cos(angle) * speed,
-          vy: Math.sin(angle) * speed - 3,
-          gravity: 0.16 + Math.random() * 0.1,
-          size: 5 + Math.random() * 6,
-          rot: Math.random() * 6,
-          vr: (Math.random() - 0.5) * 0.3,
-          color: color ?? CONFETTI_PALETTE[Math.floor(Math.random() * CONFETTI_PALETTE.length)],
-          life: 55 + Math.random() * 35,
-        });
-      }
-      if (raf.current == null) raf.current = requestAnimationFrame(draw);
-    },
-    [draw],
-  );
-
-  useEffect(() => {
-    const resize = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    };
-    resize();
-    window.addEventListener('resize', resize);
-    return () => {
-      window.removeEventListener('resize', resize);
-      if (raf.current != null) cancelAnimationFrame(raf.current);
-      raf.current = null;
-      particles.current = [];
-    };
-  }, []);
-
-  const burst = useCallback((x: number, y: number, color: string) => spawn(x, y, 48, 8, color), [spawn]);
-  const blast = useCallback(() => {
-    spawn(window.innerWidth * 0.3, window.innerHeight * 0.4, 90, 12);
-    spawn(window.innerWidth * 0.7, window.innerHeight * 0.4, 90, 12);
-  }, [spawn]);
-
-  const canvas = <canvas ref={canvasRef} className="fixed inset-0 pointer-events-none z-[60]" aria-hidden />;
-
-  return { canvas, burst, blast };
-}
-
-/* ── Adventní kalendář ────────────────────────────────────────── */
-
-function CalendarTile({
-  door,
-  isOpen,
-  onToggle,
-}: {
-  door: Door;
-  isOpen: boolean;
-  onToggle: (rect: DOMRect) => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [hovered, setHovered] = useState(false);
-
-  const toggle = () => {
-    const rect = ref.current?.getBoundingClientRect();
-    if (rect) onToggle(rect);
-  };
-
-  const rotation = isOpen ? -115 : hovered ? -13 : 0;
-
+/** `wide` = dlaždice na celou šířku mřížky, aby poslední z nepárového počtu nezůstala osamocená. */
+function TopicTile({ topic, wide = false }: { topic: Topic; wide?: boolean }) {
   return (
-    <div
-      ref={ref}
-      role="button"
-      tabIndex={0}
-      aria-expanded={isOpen}
-      aria-label={`${door.day} — ${door.doorTitle}`}
-      onClick={toggle}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggle();
-        }
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      className="relative aspect-[16/11] sm:aspect-[3/4.75] lg:aspect-[3/5] min-h-[248px] sm:min-h-[300px] cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[#5139ed] focus-visible:ring-offset-2 rounded-[16px] [perspective:1500px]"
+    <Link
+      to={`/novinky/${topic.slug}`}
+      className={`group flex flex-col overflow-hidden rounded-[20px] bg-white border border-[#001161]/8 transition-transform hover:-translate-y-1 ${
+        wide ? 'md:col-span-2 md:flex-row' : ''
+      }`}
     >
-      {/* Obsah pod dvířky */}
-      <div
-        className="absolute inset-0 z-[1] rounded-[16px] border border-[#001161]/8 bg-white p-4 sm:p-[18px] flex flex-col min-h-0 overflow-hidden shadow-[inset_0_2px_24px_rgba(0,17,97,0.05)]"
-        style={{ color: door.color }}
-      >
-        <span className="h-2 w-[34px] rounded-[2px] mb-2.5 shrink-0" style={{ backgroundColor: door.color }} />
-        <p
-          className="text-[#001161] font-bold text-[14px] sm:text-[15px] leading-[1.22] shrink-0"
-          style={{ fontFamily: ff }}
-        >
-          {door.contentTitle}
-        </p>
-        <ul className="mt-1.5 min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5 [-webkit-overflow-scrolling:touch]">
-          {door.bullets.map((bullet) => (
-            <li
-              key={bullet}
-              className="relative text-[11.5px] sm:text-[12px] leading-[1.32] text-[#33322d] py-[5px] pl-[15px] border-t border-[#001161]/8 first:border-t-0"
-              style={{ fontFamily: ff }}
-            >
-              <span className="absolute left-0 top-[10px] size-[6px] rounded-[2px]" style={{ backgroundColor: door.color }} />
+      <img
+        src={topic.image}
+        alt={topic.title}
+        loading="lazy"
+        className={`w-full aspect-[1240/820] object-cover ${wide ? 'md:w-1/2 md:self-stretch md:aspect-auto' : ''}`}
+      />
+
+      <div className={`flex flex-1 flex-col p-6 md:p-7 ${wide ? 'md:w-1/2 md:justify-center' : ''}`}>
+        <h2 className="text-[#001161] text-[20px] md:text-[23px] font-bold leading-[1.2]" style={{ fontFamily: ff }}>
+          {topic.title}
+        </h2>
+        <ul className="mt-4 space-y-2">
+          {topic.bullets.map((bullet) => (
+            <li key={bullet} className="flex gap-2.5 text-[14.5px] leading-snug text-[#3b4463]" style={{ fontFamily: ff }}>
+              <span aria-hidden className="mt-[7px] size-[6px] shrink-0 rounded-full" style={{ backgroundColor: WB.crimson }} />
               {bullet}
             </li>
           ))}
         </ul>
-        <p
-          className="shrink-0 mt-2 border-t border-[#001161]/8 pt-2 text-[10.5px] sm:text-[11px] font-bold text-[#4e5871]"
-          style={{ fontFamily: ff }}
-        >
-          {door.foot}
-        </p>
-      </div>
 
-      {/* Dvířka */}
-      <div
-        className="absolute inset-0 z-[2] rounded-[16px] border border-[#001161]/8 bg-white p-5 flex flex-col justify-between overflow-hidden origin-left [transform-style:preserve-3d] [backface-visibility:hidden] transition-[transform,box-shadow] duration-700"
-        style={{
-          transform: `rotateY(${rotation}deg)`,
-          transitionTimingFunction: 'cubic-bezier(.34,1.3,.4,1)',
-          boxShadow: isOpen
-            ? '30px 0 46px rgba(0,17,97,0.16)'
-            : hovered
-              ? '14px 6px 30px rgba(0,17,97,0.10)'
-              : '0 8px 22px rgba(0,17,97,0.05)',
-        }}
-      >
         <span
-          className="self-start rounded-full px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-[0.6px] text-white"
-          style={{ fontFamily: ff, backgroundColor: door.color }}
-        >
-          {door.day}
-        </span>
-        <p className="text-[#001161] text-[21px] font-bold leading-[1.12] mt-3" style={{ fontFamily: ff }}>{door.doorTitle}</p>
-        <div>
-          <p className="text-[13px] text-[#4e5871]" style={{ fontFamily: ff }}>
-            {door.teaser}
-          </p>
-          <span
-            className="inline-flex items-center gap-1.5 mt-3 text-[12px] font-bold"
-            style={{ fontFamily: ff, color: door.color }}
-          >
-            Otevřít okénko
-            <ChevronRight className="size-3.5" strokeWidth={3} />
-          </span>
-        </div>
-        <span className="absolute top-0 right-0 bottom-0 w-[9px] rounded-r-[16px]" style={{ backgroundColor: door.color }} />
-      </div>
-    </div>
-  );
-}
-
-function AdventCalendar() {
-  const [openDays, setOpenDays] = useState<string[]>([]);
-  const { canvas, burst, blast } = useConfetti();
-  const allOpen = openDays.length === DOORS.length;
-  const celebratedRef = useRef(false);
-
-  useEffect(() => {
-    if (allOpen && !celebratedRef.current) {
-      celebratedRef.current = true;
-      blast();
-    }
-  }, [allOpen, blast]);
-
-  const handleToggle = (door: Door, rect: DOMRect) => {
-    setOpenDays((prev) => {
-      if (prev.includes(door.day)) return prev.filter((d) => d !== door.day);
-      burst(rect.left + rect.width / 2, rect.top + rect.height / 2, door.color);
-      return [...prev, door.day];
-    });
-  };
-
-  return (
-    <>
-      {canvas}
-
-      <SectionHead
-        kicker="Přípravný týden · webináře"
-        title="Adventní kalendář novinek"
-        text="Ano, adventní kalendář v srpnu. Naším Štědrým dnem je totiž první září — a než u tabule zazvoní, rozbalujeme novinky den po dni. Pět okének, pět dárků pro váš nový školní rok. Klikněte a nahlédněte, co jsme nadělili."
-      />
-
-      <div className="max-w-[260px] mx-auto -mt-2 mb-8">
-        <div className="h-2 rounded-full bg-[#f1efe7] border border-[#001161]/8 overflow-hidden">
-          <div
-            className="h-full rounded-full transition-[width] duration-500"
-            style={{
-              width: `${(openDays.length / DOORS.length) * 100}%`,
-              background: `linear-gradient(90deg, ${WB.crimson}, ${WB.orange})`,
-              transitionTimingFunction: 'cubic-bezier(.16,1,.3,1)',
-            }}
-          />
-        </div>
-        <p className="mt-2 text-center text-[12.5px] font-bold text-[#4e5871]" style={{ fontFamily: ff }}>
-          Otevřeno <span style={{ color: WB.crimson }}>{openDays.length}</span> / {DOORS.length}
-        </p>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 md:gap-5">
-        {DOORS.map((door) => (
-          <CalendarTile
-            key={door.day}
-            door={door}
-            isOpen={openDays.includes(door.day)}
-            onToggle={(rect) => handleToggle(door, rect)}
-          />
-        ))}
-      </div>
-
-      <div className="mt-8 text-center">
-        <Link
-          to="/webinare"
-          className="inline-flex items-center gap-2 font-bold text-[15px] hover:underline"
+          className="mt-6 inline-flex items-center gap-2 font-bold text-[14.5px] group-hover:underline"
           style={{ fontFamily: ff, color: WB.blue }}
         >
-          Přihlásit se na webináře
+          Číst celý článek
           <ArrowRight className="w-4 h-4" />
-        </Link>
+        </span>
       </div>
-    </>
+    </Link>
   );
 }
 
@@ -579,58 +407,35 @@ export function AplikacePage() {
       <SEOHead
         title="Nová aplikace Vividbooks"
         path="/aplikace"
-        description="V srpnu spouštíme novou aplikaci Vividbooks. Knihovna, lekce, procvičování, vividboard i umělá inteligence — vše na jednom místě, pod jedním přihlášením."
+        description="Nová aplikace Vividbooks je tady. Knihovna, lekce, procvičování, vividboard i umělá inteligence — vše na jednom místě, pod jedním přihlášením. Původní aplikace běží souběžně do 1. ledna."
       />
 
-      {/* Hero */}
-      <section className="px-5 sm:px-8 md:px-12 pt-6 md:pt-8 pb-14 md:pb-[4.5rem]">
-        <div className="max-w-[1180px] mx-auto">
-          <div className="relative overflow-hidden rounded-[24px] bg-white min-h-[420px] md:min-h-[540px]">
-            <HeroAplikaceVideoBackground priority />
-            <div className="relative flex min-h-[420px] md:min-h-[540px] flex-col">
-              <div className="flex flex-1 flex-col items-center justify-center px-6 pt-10 md:px-12 md:pt-14">
-                <span
-                  className="mb-4 md:mb-5 rounded-full border border-white/40 bg-white/15 px-4 py-1.5 text-[13px] md:text-[14px] font-bold text-white backdrop-blur-[2px]"
-                  style={{ fontFamily: ff }}
-                >
-                  Odemykáme {NOVA_APLIKACE_LAUNCH_LABEL}
-                </span>
-                <HeroAplikaceVideoTitle line1="Nová aplikace" line2="Vividbooks" />
-              </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-2.5 md:gap-3 px-6 pb-5 md:px-12 md:pb-6">
-                {APP_SECTIONS.map((section) => (
-                  <span
-                    key={section}
-                    className="rounded-[10px] bg-[#fdeeee] px-4 py-2 text-[15px] md:text-[17px] font-bold text-[#001161]"
-                    style={{ fontFamily: ff }}
-                  >
-                    {section}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <p
-            className="text-[#3b4463] text-[16px] md:text-[19px] max-w-[56ch] mx-auto text-center leading-relaxed mt-8 md:mt-10"
+      {/* Úvod */}
+      <section className="px-5 sm:px-8 md:px-12 pt-10 md:pt-16 pb-4 md:pb-8">
+        <div className="max-w-[860px] mx-auto text-center">
+          <p className="text-[12.5px] font-bold uppercase tracking-[1.4px]" style={{ fontFamily: ff, color: WB.crimson }}>
+            Nová aplikace
+          </p>
+          <h1
+            className="text-[#001161] text-[32px] sm:text-[40px] md:text-[54px] font-bold leading-[1.06] mt-3"
             style={{ fontFamily: ff }}
           >
-            V srpnu spouštíme novou aplikaci Vividbooks. Stará poběží souběžně až do 1. ledna, takže na přechod máte spoustu času — ale
-            podívejte se už teď, co všechno nová aplikace nabízí.
+            Nová aplikace Vividbooks je tady
+          </h1>
+          <p
+            className="text-[#3b4463] text-[16px] md:text-[19px] max-w-[58ch] mx-auto leading-relaxed mt-5 md:mt-6"
+            style={{ fontFamily: ff }}
+          >
+            Je rychlejší, přehlednější a konečně celá pod jedním přihlášením — knihovna i Vividboard na jednom místě. Původní
+            aplikace běží souběžně až do 1. ledna, takže na přechod máte spoustu času.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-7 md:mt-8">
             <AppLaunchButton icon={<ArrowRight className="w-4 h-4" />} />
-            <BtnGhost href="#novinky">Prohlédnout novinky</BtnGhost>
+            <BtnGhost href="#temata">Prohlédnout novinky</BtnGhost>
           </div>
         </div>
       </section>
-
-      {/* Adventní kalendář */}
-      <SectionShell id="kalendar" className="bg-[#f5f7fb]">
-        <AdventCalendar />
-      </SectionShell>
 
       {/* Co je nové */}
       <section id="novinky">
@@ -652,6 +457,29 @@ export function AplikacePage() {
         />
       </section>
 
+      {/* Pět témat do hloubky */}
+      <SectionShell id="temata" className="bg-[#f5f7fb]">
+        <div className="mb-8 md:mb-10 text-center">
+          <p className="text-[12.5px] font-bold uppercase tracking-[1.4px]" style={{ fontFamily: ff, color: WB.crimson }}>
+            Pět témat podrobně
+          </p>
+          <p className="text-[#4e5871] text-[15px] max-w-[56ch] mx-auto mt-3 leading-relaxed" style={{ fontFamily: ff }}>
+            Každou novinku jsme na konci srpna ukazovali naživo v miniwebináři. Rozklikněte si téma, které vás zajímá — u každého je
+            i odkaz na záznam a na dotazník, kterým si vystavíte certifikát DVPP.
+          </p>
+        </div>
+
+        <div className="grid gap-6 md:gap-7 md:grid-cols-2">
+          {TOPICS.map((topic, idx) => (
+            <TopicTile
+              key={topic.slug}
+              topic={topic}
+              wide={TOPICS.length % 2 === 1 && idx === TOPICS.length - 1}
+            />
+          ))}
+        </div>
+      </SectionShell>
+
       {/* CTA */}
       <SectionShell>
         <div className="relative overflow-hidden rounded-[24px] min-h-[320px] md:min-h-[400px] text-center">
@@ -671,7 +499,7 @@ export function AplikacePage() {
         </div>
 
         <p className="text-center text-[13px] text-[#4e5871] mt-8" style={{ fontFamily: ff }}>
-          Nová aplikace a adventní kalendář novinek. Termíny a obsah se mohou drobně upravit.
+          Aplikaci průběžně dolaďujeme, takže se termíny a obsah mohou drobně upravit.
         </p>
       </SectionShell>
     </motion.div>

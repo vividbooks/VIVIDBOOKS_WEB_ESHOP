@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
-import { Loader2 } from 'lucide-react';
+import { ExternalLink, Loader2 } from 'lucide-react';
 import { SEOHead } from './SEOHead';
-import { useNovinky } from '../contexts/NovinkyContext';
+import { NovaAplikaceNovinkySlider } from './NovaAplikaceNovinkySlider';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarCard } from './WebinarCard';
 import { useDvppVideos } from '../contexts/DvppVideosContext';
@@ -37,15 +37,6 @@ function ArrowToSidebar() {
   );
 }
 
-function luminance(hex: string): number {
-  const c = hex.replace('#', '');
-  if (c.length !== 6) return 200;
-  const r = parseInt(c.slice(0, 2), 16);
-  const g = parseInt(c.slice(2, 4), 16);
-  const b = parseInt(c.slice(4, 6), 16);
-  return r * 0.299 + g * 0.587 + b * 0.114;
-}
-
 function isTodayWebinar(day: number, monthNum: number, year: number) {
   const today = new Date();
   return (
@@ -76,16 +67,10 @@ function webinarMatchesTopic(webinar: Webinar, topic: { id: string; name: string
 
 /** Samostatná úvodní stránka pro embed v app.vividbooks.com (/app-uvod). */
 export function AppUvodPage() {
-  const { posts, loading, source } = useNovinky();
   const { webinars, upcoming, loading: webinarsLoading } = useWebinars();
   const { topics, loading: topicsLoading } = useDvppVideos();
   const { posts: blogPosts, loading: blogLoading } = useBlogPosts();
   const [activeWebinarTopic, setActiveWebinarTopic] = React.useState<string | null>(null);
-
-  const newsTiles = useMemo(() => {
-    const visible = posts.filter((p) => source === 'static' || (p as { published?: boolean }).published !== false);
-    return visible.slice(0, 3);
-  }, [posts, source]);
 
   const todayWebinar = useMemo(() => (
     webinars.find((webinar) => isTodayWebinar(webinar.day, webinar.monthNum, webinar.year)) ?? null
@@ -196,81 +181,38 @@ export function AppUvodPage() {
         )}
       </div>
 
-      {/* Novinky pod rozcestníkem */}
-      <div className="mx-auto max-w-[920px]">
+      {/* Přechod na novou aplikaci — nahradilo dlaždice novinek, obojí ukazovalo totéž. */}
+      <div className="mx-auto max-w-[920px] text-center">
         <h2
-          className={`${cooper} text-[#001161] text-[22px] md:text-[26px] text-center mb-6 md:mb-7`}
+          className={`${cooper} text-[#001161] text-[24px] md:text-[30px] mb-3`}
         >
-          Co je nového v aplikaci:
+          Přejděte na novou aplikaci Vividbooks
         </h2>
+        <p
+          className="mx-auto mb-7 max-w-[560px] text-[15px] leading-relaxed text-[#001161]/65 md:mb-8 md:text-[16px]"
+          style={{ fontFamily: ff }}
+        >
+          Kromě spousty nových funkcí v ní naleznete i nové a aktualizované materiály.
+        </p>
 
-        {loading ? (
-          <div className="flex justify-center py-16">
-            <Loader2 className="h-10 w-10 animate-spin text-[#001161]/30" aria-label="Načítání" />
-          </div>
-        ) : newsTiles.length === 0 ? (
-          <p className="text-center text-[#001161]/50 text-[14px]" style={{ fontFamily: ff }}>
-            Zatím tu nejsou žádné novinky.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 md:gap-5">
-            {newsTiles.map((post) => {
-              const hasCoverImage = !!post.coverImage;
-              const tileBg = post.bgColor ?? '#F0F2F8';
-              const lum = luminance(tileBg);
-              const isDark = lum < 140;
-              const titleColor = isDark ? '#ffffff' : '#001161';
+        <a
+          href="https://nove.vividbooks.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mb-9 inline-flex items-center gap-2 rounded-[10px] bg-[#F0114A] px-6 py-3.5 text-[15px] font-bold text-white no-underline shadow-sm transition-transform hover:scale-[1.02] md:mb-10"
+          style={{ fontFamily: ff }}
+        >
+          Otevřít novou aplikaci
+          <ExternalLink className="h-4 w-4" />
+        </a>
 
-              return (
-                <a
-                  key={post.id}
-                  href={`/novinky/${post.slug}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group block no-underline"
-                >
-                  <article className="overflow-hidden rounded-[22px] shadow-sm transition-all duration-300 group-hover:scale-[1.02] group-hover:shadow-lg">
-                    <div
-                      className="relative"
-                      style={{ aspectRatio: '4 / 3', background: tileBg }}
-                    >
-                      {hasCoverImage && (
-                        <img
-                          src={post.coverImage}
-                          alt=""
-                          className="absolute inset-0 h-full w-full object-cover"
-                        />
-                      )}
-                      {post.tileText && !hasCoverImage && (
-                        <div className="absolute inset-0 flex items-center justify-center p-4">
-                          <span
-                            className={`${cooper} text-center whitespace-pre-line leading-none`}
-                            style={{
-                              color: titleColor,
-                              fontSize: 'clamp(28px, 7vw, 52px)',
-                              opacity: 0.95,
-                            }}
-                          >
-                            {post.tileText}
-                          </span>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/[0.06]" />
-                    </div>
-                    <div className="px-4 py-3.5" style={{ background: tileBg }}>
-                      <p
-                        className="line-clamp-2 text-[13px] font-bold leading-snug md:text-[14px]"
-                        style={{ fontFamily: ff, color: titleColor }}
-                      >
-                        {post.title}
-                      </p>
-                    </div>
-                  </article>
-                </a>
-              );
-            })}
-          </div>
-        )}
+        <h3
+          className="mb-3 text-center text-[18px] font-bold text-[#001161]/75 md:text-[20px]"
+          style={{ fontFamily: ff }}
+        >
+          Co je nového
+        </h3>
+        <NovaAplikaceNovinkySlider />
       </div>
 
       <section className="mx-auto mt-16 max-w-[920px] rounded-[28px] bg-white px-0 pb-4 text-center md:mt-20">
