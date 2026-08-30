@@ -11,32 +11,6 @@ import { useBlogPosts } from '../contexts/BlogContext';
 const ff = "'Fenomen Sans', sans-serif";
 const cooper = "font-['Cooper_Light',serif]";
 
-function ArrowToSidebar() {
-  return (
-    <svg
-      viewBox="0 0 260 96"
-      className="pointer-events-none absolute left-[-150px] top-[-12px] hidden h-[78px] w-[220px] text-[#001161]/70 lg:block xl:left-[-190px] xl:h-[88px] xl:w-[250px]"
-      aria-hidden
-    >
-      <path
-        d="M252 28C190 58 103 64 18 18"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeLinecap="round"
-      />
-      <path
-        d="M16 18 41 14M16 18l16 20"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 function isTodayWebinar(day: number, monthNum: number, year: number) {
   const today = new Date();
   return (
@@ -95,78 +69,13 @@ export function AppUvodPage() {
 
       <div className="mx-auto max-w-[920px] text-center">
         <h1
-          className={`${cooper} text-[#001161] text-[28px] leading-tight md:text-[40px] mb-8 md:mb-12`}
+          className={`${cooper} text-[#001161] text-[28px] leading-tight md:text-[40px] mb-8 md:mb-10`}
         >
           <span className="rounded-[10px] bg-[#FFEE84] px-2.5 py-0.5 md:px-3 md:py-1 inline-block">
             Vítejte
           </span>{' '}
           ve Vividbooks!
         </h1>
-
-        <div className="relative mx-auto max-w-[520px]">
-          <ArrowToSidebar />
-          <p
-            className="font-['Fenomen_Sans',sans-serif] text-[#001161]/75 text-[20px] md:text-[30px] max-w-[520px] mx-auto leading-[1.15] mb-5 font-bold"
-            style={{ fontFamily: ff }}
-          >
-            Vyberte si Váš předmět
-            <br className="hidden md:block" />
-            {' '}v levé liště.
-          </p>
-          <p
-            className="font-['Fenomen_Sans',sans-serif] text-[#001161]/55 text-[14px] md:text-[15px] mb-8 md:mb-10 font-bold"
-            style={{ fontFamily: ff }}
-          >
-            Nebo si otevřete:
-          </p>
-        </div>
-
-        {/* Rozcestník */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5 mb-12 md:mb-14 text-left">
-          <a
-            href="https://sesit.vividbooks.com/sheet-selector"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex flex-col overflow-hidden rounded-[22px] bg-[#FFF7D6] p-5 shadow-sm transition-all hover:scale-[1.01] hover:shadow-md md:p-6 no-underline"
-          >
-            <p
-              className="text-[#001161] text-[17px] md:text-[19px] leading-snug mb-4 font-bold"
-              style={{ fontFamily: ff }}
-            >
-              Pracovní sešit s online rozšířením
-            </p>
-            <div className="mt-auto flex justify-center">
-              <img
-                src="/app-uvod/workbooks.png"
-                alt=""
-                className="h-[150px] w-auto max-w-full object-contain md:h-[190px]"
-                loading="lazy"
-              />
-            </div>
-          </a>
-
-          <a
-            href="https://app.vividboard.cz"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="group flex flex-col overflow-hidden rounded-[22px] bg-[#E4FAF0] p-5 shadow-sm transition-all hover:scale-[1.01] hover:shadow-md md:p-6 no-underline"
-          >
-            <p
-              className="text-[#001161] text-[17px] md:text-[19px] leading-snug mb-4 font-bold"
-              style={{ fontFamily: ff }}
-            >
-              Vytvořte si vlastní interaktivní materiál
-            </p>
-            <div className="mt-auto flex justify-center">
-              <img
-                src="/app-uvod/interactive-material.png"
-                alt=""
-                className="h-[150px] w-auto max-w-full object-contain md:h-[190px]"
-                loading="lazy"
-              />
-            </div>
-          </a>
-        </div>
 
         {!webinarsLoading && todayWebinar && (
           <section className="mx-auto mb-12 max-w-[620px] text-left md:mb-14">
