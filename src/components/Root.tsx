@@ -17,6 +17,7 @@ import { CookieConsentBar } from './CookieConsentBar';
 import { GoogleConsentBridge } from './GoogleConsentBridge';
 import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
 import { EshopHostRedirect } from './EshopHostRedirect';
+import { IdentifiedWebEventTracker } from './IdentifiedWebEventTracker';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -35,6 +36,7 @@ function RootInner() {
   return (
     <>
       <ScrollToTop />
+      <IdentifiedWebEventTracker />
       <EshopHostRedirect />
       <WebflowLegacyRedirect />
       <Toaster

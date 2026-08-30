@@ -2,6 +2,7 @@ import Stripe from 'npm:stripe';
 import postgres from 'npm:postgres';
 import { ensureWorkflowSteps, upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
+import { scheduleCheckoutIdentityUpsert } from '../_shared/checkout-identity.ts';
 
 type OrderItemMetadata = {
   productId: string;
@@ -555,6 +556,62 @@ async function loadCheckoutContextForSucceededPayment(
   };
 }
 
+/**
+ * Dual-write do public.subscribers (vlastní mailing): zaplacená objednávka → source `checkout`,
+ * is_customer, total_orders+1, first_purchase_at. Neblokuje zpracování webhooku (volající má try/catch).
+ * Status kontaktu se u existujícího řádku nemění (unsubscribed zůstane unsubscribed).
+ */
+async function upsertCheckoutSubscriber(
+  sql: ReturnType<typeof postgres>,
+  customer: { email: string; name: string; phone?: string; schoolName?: string; ico?: string },
+): Promise<void> {
+  const email = customer.email.trim().toLowerCase();
+  if (!email || !email.includes('@')) return;
+  const nameParts = customer.name.trim().split(' ');
+  const firstName = nameParts[0] || null;
+  const lastName = nameParts.slice(1).join(' ') || null;
+  await sql`
+    insert into public.subscribers (
+      email, first_name, last_name, phone, school_name, ico,
+      source, status, subscribed_at, is_customer, total_orders, first_purchase_at
+    ) values (
+      ${email}, ${firstName}, ${lastName}, ${customer.phone?.trim() || null},
+      ${customer.schoolName?.trim() || null}, ${customer.ico?.trim() || null},
+      'checkout', 'subscribed', now(), true, 1, now()
+    )
+    on conflict (email) do update set
+      first_name = coalesce(public.subscribers.first_name, excluded.first_name),
+      last_name = coalesce(public.subscribers.last_name, excluded.last_name),
+      phone = coalesce(public.subscribers.phone, excluded.phone),
+      school_name = coalesce(public.subscribers.school_name, excluded.school_name),
+      ico = coalesce(public.subscribers.ico, excluded.ico),
+      is_customer = true,
+      total_orders = public.subscribers.total_orders + 1,
+      first_purchase_at = coalesce(public.subscribers.first_purchase_at, now())
+  `;
+
+  /* Automatizace: enrollment do aktivních flows s triggerem order_paid (runner je pak vykoná). */
+  try {
+    await sql`
+      insert into public.automation_enrollments (flow_id, subscriber_id, status, current_step_key, context)
+      select
+        f.id,
+        s.id,
+        'active',
+        f.definition->'steps'->0->>'key',
+        jsonb_build_object('next_run_at', now(), 'trigger_event', jsonb_build_object('type', 'order_paid'))
+      from public.automation_flows f
+      cross join public.subscribers s
+      where f.is_active
+        and f.definition->'trigger'->>'type' = 'order_paid'
+        and s.email = ${email}
+      on conflict (flow_id, subscriber_id) do nothing
+    `;
+  } catch (e) {
+    console.warn('[stripe-webhook] automation enrollment (neblokuje):', e instanceof Error ? e.message : e);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') {
     return errorResponse('Method not allowed.', 405);
@@ -951,6 +1008,17 @@ Deno.serve(async (req) => {
       }
 
       if (createdOrderId) {
+        /* Mailing kontakt (neblokující). */
+        try {
+          await upsertCheckoutSubscriber(sql, customer);
+        } catch (subErr) {
+          console.warn(
+            '[stripe-webhook] subscribers upsert failed (non-blocking):',
+            subErr instanceof Error ? subErr.message : subErr,
+          );
+        }
+        scheduleCheckoutIdentityUpsert(customer);
+
         const hasStoredInquiry =
           schoolInquiry != null
           && typeof schoolInquiry === 'object'

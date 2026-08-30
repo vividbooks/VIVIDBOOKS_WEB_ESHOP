@@ -37,6 +37,7 @@ import {
   type SupersededOrder,
 } from '../_shared/cancel-superseded-orders.ts';
 import { normalizeCzechPhone, PHONE_CZ_HINT } from '../_shared/phone-cz.ts';
+import { scheduleCheckoutIdentityUpsert } from '../_shared/checkout-identity.ts';
 
 function isPostgresUniqueViolation(e: unknown): boolean {
   return Boolean(
@@ -472,6 +473,14 @@ Deno.serve(async (req) => {
             deliveryAddress: shipping.deliveryAddress,
           });
 
+          scheduleCheckoutIdentityUpsert({
+            email: customer.email,
+            name: customer.name,
+            phone: normalizedCustomerPhone,
+            schoolName: customer.schoolName,
+            ico,
+          });
+
           return jsonResponse(req, {
             success: true,
             orderId: draftOrderId,
@@ -638,6 +647,14 @@ Deno.serve(async (req) => {
       }
 
       const orderRow = outcome.row;
+
+      scheduleCheckoutIdentityUpsert({
+        email: customer.email,
+        name: customer.name,
+        phone: normalizedCustomerPhone,
+        schoolName: customer.schoolName,
+        ico,
+      });
 
       if (outcome.superseded.length > 0) {
         console.log(

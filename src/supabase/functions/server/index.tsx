@@ -9,6 +9,11 @@ import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
 import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
+import {
+  identityUpsertAuthorized,
+  recordIdentifiedWebEvent,
+  upsertIdentity,
+} from './identityUpsert.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
 import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
@@ -3998,6 +4003,37 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
 }
 app.get('/make-server-93a20b6f/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
 app.get('/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
+
+async function handleIdentityUpsertPost(c: Context) {
+  if (!identityUpsertAuthorized(c.req.raw)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const env = getServiceRoleEnv();
+  if (!env) return c.json({ error: 'Server není nakonfigurovaný' }, 500);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'Neplatné tělo' }, 400);
+  const sb = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+  const result = await upsertIdentity(sb, body as Parameters<typeof upsertIdentity>[1]);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+}
+
+/** Identifikovaný pageview z cookie vb_id. Nesmí subscribe. Anon JWT stačí. */
+async function handleIdentityWebEventPost(c: Context) {
+  const env = getServiceRoleEnv();
+  if (!env) return c.json({ error: 'Server není nakonfigurovaný' }, 500);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'Neplatné tělo' }, 400);
+  const sb = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+  const result = await recordIdentifiedWebEvent(sb, body as { email?: string; name?: string; path?: string });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+}
+
+app.post('/make-server-93a20b6f/identity/upsert', handleIdentityUpsertPost);
+app.post('/identity/upsert', handleIdentityUpsertPost);
+app.post('/make-server-93a20b6f/identity/web-event', handleIdentityWebEventPost);
+app.post('/identity/web-event', handleIdentityWebEventPost);
 
 /** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
 app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
