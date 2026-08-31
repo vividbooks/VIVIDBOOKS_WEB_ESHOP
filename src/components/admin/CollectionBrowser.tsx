@@ -2375,7 +2375,14 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
       return;
     }
 
-    if (!window.confirm(`Synchronizovat do Base.com všech ${physicalProducts.length} fyzických produktů?`)) {
+    const targetProducts = physicalProducts.filter(
+      (item: any) => !String(item.basecomProductId ?? '').trim(),
+    );
+    if (targetProducts.length === 0) {
+      toast.success('Všechny fyzické produkty už jsou v Base.com. Nové nejsou žádné.');
+      return;
+    }
+    if (!window.confirm(`Synchronizovat do Base.com ${targetProducts.length} nových produktů (které tam ještě nejsou)?`)) {
       return;
     }
 
@@ -2386,9 +2393,9 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
     let failureCount = 0;
 
     try {
-      for (let index = 0; index < physicalProducts.length; index += 1) {
-        const product = physicalProducts[index];
-        setBulkSyncProgress(`${index + 1} / ${physicalProducts.length}: ${product.name || product.id}`);
+      for (let index = 0; index < targetProducts.length; index += 1) {
+        const product = targetProducts[index];
+        setBulkSyncProgress(`${index + 1} / ${targetProducts.length}: ${product.name || product.id}`);
 
         try {
           const result = await runAdminProductBaseSync(product);
@@ -2831,7 +2838,7 @@ function GenericBrowser({ collection, config }: { collection: string; config: ty
               disabled={bulkSyncing || loading}
               className="w-full text-[11px] bg-[#001161] hover:bg-[#000d4a] text-white px-3 py-1.5 rounded-lg font-medium disabled:opacity-50"
             >
-              {bulkSyncing ? 'Synchronizuji vše do Base.com…' : 'Synchronizovat všechny fyzické produkty do Base.com'}
+              {bulkSyncing ? 'Synchronizuji nové do Base.com…' : 'Synchronizovat nové produkty do Base.com'}
             </button>
           )}
           {config.apiName === 'produkty' && bulkSyncProgress && (
