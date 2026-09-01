@@ -5,6 +5,7 @@ import {
   Radio, CheckCircle, AlertCircle, Clock,
   Play, Mail, Lock, Send, MessageCircle, HelpCircle, Smile, UserPlus,
 } from 'lucide-react';
+import { createClient, type SupabaseClient, type RealtimeChannel } from '@supabase/supabase-js';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import type { Webinar } from '../data/webinars';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
@@ -66,6 +67,88 @@ function avatarColor(name: string) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % colors.length;
   return colors[h];
+}
+
+/* ─── Presence — kolik lidí má live stránku otevřenou ───────────── */
+interface PresenceCounts { total: number; watching: number }
+
+function peopleOnlineLabel(n: number): string {
+  if (n === 1) return '1 člověk online';
+  if (n >= 2 && n <= 4) return `${n} lidé online`;
+  return `${n} lidí online`;
+}
+
+/**
+ * Počítá otevřené záložky live stránky přes Supabase Realtime presence.
+ * Celý běh je obalený v try/catch — když realtime selže, vrátí nuly a stránka jede dál beze změny.
+ */
+function usePresenceCounts(webinarId: string, enabled: boolean): PresenceCounts {
+  const [counts, setCounts] = useState<PresenceCounts>({ total: 0, watching: 0 });
+
+  useEffect(() => {
+    if (!enabled || !webinarId || typeof window === 'undefined') return;
+    let client: SupabaseClient | null = null;
+    let channel: RealtimeChannel | null = null;
+    let joined = false;
+    let onVisibility: (() => void) | null = null;
+
+    try {
+      client = createClient(`https://${projectId}.supabase.co`, publicAnonKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'vvb-presence-anon' },
+      });
+      const selfKey = `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      channel = client.channel(`webinar-presence-${webinarId}`, { config: { presence: { key: selfKey } } });
+
+      const recount = () => {
+        try {
+          const state = (channel?.presenceState() ?? {}) as Record<string, Array<{ watching?: boolean }>>;
+          const entries = Object.values(state);
+          setCounts({
+            total: entries.length,
+            watching: entries.filter(metas => metas.some(m => m?.watching)).length,
+          });
+        } catch {}
+      };
+      const track = () => {
+        if (!joined) return;
+        try { channel?.track({ watching: document.visibilityState === 'visible', at: Date.now() }); } catch {}
+      };
+
+      channel.on('presence', { event: 'sync' }, recount);
+      onVisibility = () => track();
+      document.addEventListener('visibilitychange', onVisibility);
+      channel.subscribe(status => {
+        joined = status === 'SUBSCRIBED';
+        if (joined) track();
+      });
+    } catch {
+      setCounts({ total: 0, watching: 0 });
+    }
+
+    return () => {
+      try { if (onVisibility) document.removeEventListener('visibilitychange', onVisibility); } catch {}
+      try { if (channel) client?.removeChannel(channel); } catch {}
+    };
+  }, [webinarId, enabled]);
+
+  return counts;
+}
+
+function PresenceBadge({ counts }: { counts: PresenceCounts }) {
+  if (counts.total < 1) return null;
+  const away = counts.total - counts.watching;
+  return (
+    <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-[#F0F2F8] pl-2.5 pr-3 py-1.5">
+      <span className="relative flex w-2 h-2">
+        <span className="absolute inline-flex w-full h-full rounded-full bg-green-500 opacity-60 animate-ping" />
+        <span className="relative inline-flex w-2 h-2 rounded-full bg-green-500" />
+      </span>
+      <span className="text-[12px] font-bold text-[#001161]" style={{ fontFamily: FF }}>{peopleOnlineLabel(counts.total)}</span>
+      {away > 0 && (
+        <span className="text-[11px] text-[#001161]/45" style={{ fontFamily: FF }}>{`· ${away} na jiné záložce`}</span>
+      )}
+    </div>
+  );
 }
 
 /* ─── Logo ──────────────────────────────────────────────────────── */
@@ -513,6 +596,10 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
   const [floaters, setFloaters] = useState<FloatingEmoji[]>([]);
   const lastReactionTs = useRef<number>(0);
   const sentReactionIds = useRef<Set<string>>(new Set());
+  const presence = usePresenceCounts(
+    webinar.id,
+    status === 'live' && canWatch && !isGoogleMeetDelivery(webinar),
+  );
 
   const rawYoutubeUrl =
     (webinar as { liveUrl?: string }).liveUrl ||
@@ -699,6 +786,7 @@ export function WebinarLivePage({ webinar }: { webinar: Webinar }) {
                       {webinar.time ? ` · ${webinar.time}` : ''}
                       {webinar.lecturer ? ` · ${webinar.lecturer}` : ''}
                     </p>
+                    <PresenceBadge counts={presence} />
                   </div>
                 </div>
 
