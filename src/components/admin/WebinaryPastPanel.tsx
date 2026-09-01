@@ -16,18 +16,9 @@ import { useWebinars } from '../../contexts/WebinarsContext';
 import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 import { parseJsonResponseBody } from '../../utils/parseJsonResponseBody';
 import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
+import { extractYoutubeId } from '../../utils/youtube';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
-
-function extractYoutubeId(url: string): string | null {
-  const pats = [
-    /youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)/,
-    /youtu\.be\/([a-zA-Z0-9_-]+)/,
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]+)/,
-  ];
-  for (const p of pats) { const m = url.match(p); if (m) return m[1]; }
-  return null;
-}
 
 function norm(s: string) {
   return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
@@ -1652,7 +1643,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                     type="url"
                     value={form.recordingUrl}
                     onChange={e => upd({ recordingUrl: e.target.value })}
-                    placeholder={'https://www.youtube.com/watch?v=…'}
+                    placeholder={'https://www.youtube.com/watch?v=… nebo /live/…'}
                     className={inputCls + ' flex-1 font-mono text-[12px]'}
                   />
                   {form.recordingUrl && videoId && (
