@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useParams, Navigate, useSearchParams } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarLivePage } from './WebinarLivePage';
 import { Loader2 } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
-import { isTonightYoutubeHotfix, TONIGHT_YOUTUBE_LIVE } from '../utils/webinarLiveHotfix';
+import { recallLiveUrl, rememberLiveUrl } from '../utils/webinarLiveFallback';
+import { WebinarUnavailableNotice } from './WebinarUnavailableNotice';
 
 function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
@@ -15,19 +16,32 @@ function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   return 'ended';
 }
 
+function streamUrlOf(w: Webinar): string {
+  return (
+    (w as { liveUrl?: string }).liveUrl ||
+    w.youtubeUrl ||
+    (w as { recordingUrl?: string }).recordingUrl ||
+    ''
+  );
+}
+
 export function WebinarLiveRoute() {
   const { id } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const isPreview = searchParams.get('preview') === '1';
   const { webinars, loading } = useWebinars();
 
-  // Hotfix 1. 9. 2026: vlastní live stream spadl — posíláme rovnou na YouTube.
-  if (!isPreview && isTonightYoutubeHotfix(id)) {
-    if (typeof window !== 'undefined') {
-      window.location.replace(TONIGHT_YOUTUBE_LIVE);
-    }
-    return null;
-  }
+  const webinar = webinars.find(w => w.id === id || w.slug === id);
+
+  /**
+   * Dokud web funguje, ukládáme si odkaz na stream. Když příště selže Edge API,
+   * máme kam diváka poslat místo toho, abychom mu zavřeli vysílání.
+   */
+  useEffect(() => {
+    if (!webinar) return;
+    const url = streamUrlOf(webinar);
+    if (url) rememberLiveUrl(webinar, url);
+  }, [webinar]);
 
   if (loading) {
     return (
@@ -40,8 +54,16 @@ export function WebinarLiveRoute() {
     );
   }
 
-  const webinar = webinars.find(w => w.id === id || w.slug === id);
-  if (!webinar) return <Navigate to="/webinare" replace />;
+  /**
+   * Nedohledaný webinář je téměř vždy výpadek API, ne neplatná adresa.
+   * 1. 9. 2026 se tady přesměrovávalo na /webinare, což divákům uprostřed
+   * vysílání zavřelo stream. Nikdy neodnavigovat pryč — poslat na stream.
+   */
+  if (!webinar) {
+    const remembered = recallLiveUrl(id);
+    if (remembered && typeof window !== 'undefined') window.location.replace(remembered);
+    return <WebinarUnavailableNotice streamUrl={remembered} />;
+  }
 
   const canonicalSeg = String(webinar.slug || webinar.id || '').trim();
   const search = searchParams.toString();

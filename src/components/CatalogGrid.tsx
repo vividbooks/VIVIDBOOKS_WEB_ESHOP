@@ -27,7 +27,6 @@ import { useWebinars } from '../contexts/WebinarsContext';
 import { NewsletterBanner } from './NewsletterBanner';
 import { NovinkySection } from './NovinkySection';
 import { marketingUrl } from '../config/marketingSite';
-import { webinarWatchUrl } from '../utils/webinarLiveHotfix';
 import {
   clampHeroBlockGapPx,
   clampHeroTitleLineHeightPct,
@@ -999,10 +998,7 @@ export default function CatalogGrid() {
         bottom: upcomingWebinarSlide.isLive ? 'Vstupte na živé vysílání →' : 'Připojte se — vysílání brzy začíná →',
         layout: 'webinar' as const,
         image: upcomingWebinarSlide.webinar.coverImage || 'https://images.unsplash.com/photo-1588196749597-9ff075ee6b5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
-        link: webinarWatchUrl(
-          upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id,
-          `/webinar/${upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id}/live`,
-        ),
+        link: `/webinar/${upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id}/live`,
         _isLive: upcomingWebinarSlide.isLive,
         _webinar: upcomingWebinarSlide.webinar,
         textLight: true,
@@ -1597,9 +1593,7 @@ export default function CatalogGrid() {
                             onClick={e => {
                               e.stopPropagation();
                               const w = (slideView as any)._webinar;
-                              const dest = webinarWatchUrl(w?.slug || w?.id, `/webinar/${w?.slug || w?.id}`);
-                              if (dest.startsWith('http')) window.location.assign(dest);
-                              else navigate(dest);
+                              navigate(`/webinar/${w?.slug || w?.id}`);
                             }}
                           >
                             {(slideView as any)._isLive ? 'Vstoupit' : 'P\u0159ihl\u00e1sit se'}
