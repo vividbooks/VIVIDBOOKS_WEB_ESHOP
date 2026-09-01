@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import type { Webinar } from '../data/webinars';
+import { webinarWatchUrl } from '../utils/webinarLiveHotfix';
 
 const FF = "'Fenomen Sans', sans-serif";
 const SERIF = "'Cooper Light', serif";
@@ -140,7 +141,10 @@ export function SubjectHowToWebinarsSection() {
       return {
         ...card,
         live,
-        href: live ? `/webinar/${live.slug || live.id}` : '/webinare',
+        href: webinarWatchUrl(
+          card.slug,
+          live ? `/webinar/${live.slug || live.id}` : '/webinare',
+        ),
       };
     });
 
@@ -259,7 +263,10 @@ export function SubjectHowToWebinarsSection() {
             <button
               key={card.slug}
               type="button"
-              onClick={() => navigate(card.href)}
+              onClick={() => {
+                if (card.href.startsWith('http')) window.location.assign(card.href);
+                else navigate(card.href);
+              }}
               aria-label={`${title} — ${day}. ${monthName} ${time}`}
               className={`group shrink-0 text-left rounded-[20px] overflow-hidden cursor-pointer flex flex-col ${
                 card.featuredToday ? 'border-[3px] border-[#DC2626]' : ''

@@ -3,10 +3,18 @@ import { useParams, Navigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarDetailPage } from './WebinarDetailPage';
 import { Loader2 } from 'lucide-react';
+import { isTonightYoutubeHotfix, TONIGHT_YOUTUBE_LIVE } from '../utils/webinarLiveHotfix';
 
 export function WebinarDetailRoute() {
   const { id } = useParams<{ id: string }>();
   const { webinars, loading } = useWebinars();
+
+  if (isTonightYoutubeHotfix(id)) {
+    if (typeof window !== 'undefined') {
+      window.location.replace(TONIGHT_YOUTUBE_LIVE);
+    }
+    return null;
+  }
 
   if (loading) {
     return (
@@ -21,6 +29,12 @@ export function WebinarDetailRoute() {
   const webinar = webinars.find(w => w.id === id || w.slug === id);
 
   if (!webinar) return <Navigate to="/webinare" replace />;
+
+  // Kanonická URL = slug (pokud existuje) — id URL přesměrujeme, ať Google nemá duplicity.
+  const canonicalSeg = String(webinar.slug || webinar.id || '').trim();
+  if (id && canonicalSeg && id !== canonicalSeg) {
+    return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
+  }
 
   return <WebinarDetailPage webinar={webinar} />;
 }

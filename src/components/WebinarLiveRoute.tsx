@@ -4,6 +4,7 @@ import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarLivePage } from './WebinarLivePage';
 import { Loader2 } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
+import { isTonightYoutubeHotfix, TONIGHT_YOUTUBE_LIVE } from '../utils/webinarLiveHotfix';
 
 function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
@@ -19,6 +20,14 @@ export function WebinarLiveRoute() {
   const [searchParams] = useSearchParams();
   const isPreview = searchParams.get('preview') === '1';
   const { webinars, loading } = useWebinars();
+
+  // Hotfix 1. 9. 2026: vlastní live stream spadl — posíláme rovnou na YouTube.
+  if (!isPreview && isTonightYoutubeHotfix(id)) {
+    if (typeof window !== 'undefined') {
+      window.location.replace(TONIGHT_YOUTUBE_LIVE);
+    }
+    return null;
+  }
 
   if (loading) {
     return (

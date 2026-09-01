@@ -27,6 +27,7 @@ import { useWebinars } from '../contexts/WebinarsContext';
 import { NewsletterBanner } from './NewsletterBanner';
 import { NovinkySection } from './NovinkySection';
 import { marketingUrl } from '../config/marketingSite';
+import { webinarWatchUrl } from '../utils/webinarLiveHotfix';
 import {
   clampHeroBlockGapPx,
   clampHeroTitleLineHeightPct,
@@ -998,7 +999,10 @@ export default function CatalogGrid() {
         bottom: upcomingWebinarSlide.isLive ? 'Vstupte na živé vysílání →' : 'Připojte se — vysílání brzy začíná →',
         layout: 'webinar' as const,
         image: upcomingWebinarSlide.webinar.coverImage || 'https://images.unsplash.com/photo-1588196749597-9ff075ee6b5b?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1080',
-        link: `/webinar/${upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id}/live`,
+        link: webinarWatchUrl(
+          upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id,
+          `/webinar/${upcomingWebinarSlide.webinar.slug || upcomingWebinarSlide.webinar.id}/live`,
+        ),
         _isLive: upcomingWebinarSlide.isLive,
         _webinar: upcomingWebinarSlide.webinar,
         textLight: true,
@@ -1590,7 +1594,13 @@ export default function CatalogGrid() {
                           {/* CTA */}
                           <button
                             className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-                            onClick={e => { e.stopPropagation(); const w = (slideView as any)._webinar; navigate(`/webinar/${w?.slug || w?.id}`); }}
+                            onClick={e => {
+                              e.stopPropagation();
+                              const w = (slideView as any)._webinar;
+                              const dest = webinarWatchUrl(w?.slug || w?.id, `/webinar/${w?.slug || w?.id}`);
+                              if (dest.startsWith('http')) window.location.assign(dest);
+                              else navigate(dest);
+                            }}
                           >
                             {(slideView as any)._isLive ? 'Vstoupit' : 'P\u0159ihl\u00e1sit se'}
                           </button>

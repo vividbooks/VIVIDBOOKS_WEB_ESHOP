@@ -10,6 +10,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
+import { webinarWatchUrl } from '../utils/webinarLiveHotfix';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields, type WebinarRegSubjectField } from './WebinarRegistrationFormFields';
@@ -449,7 +450,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const isDevPreview = devImminentId === webinar.id;
   const showDirectEntry = isDevPreview && !webinar.isPast;
 
-  const liveUrl = marketingUrl(`${webinarPath}/live`);
+  const liveUrl = webinarWatchUrl(webinar.slug || webinar.id, marketingUrl(`${webinarPath}/live`));
 
   const downloadIcsFromApi = () => {
     const b64 = postReg?.calendar?.icsBase64;
@@ -1127,7 +1128,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               </div>
             </div>
             <a
-              href={`${webinarPath}/live`}
+              href={webinarWatchUrl(webinar.slug || webinar.id, `${webinarPath}/live`)}
               className="shrink-0 bg-white hover:bg-gray-100 text-red-600 font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-5 py-2.5 rounded-full transition-all hover:scale-105 no-underline"
             >
               {'Vstoupit na stream \u2192'}
@@ -1186,7 +1187,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                   </a>
                   {(showDirectEntry || showLiveButton) && (
                     <button
-                      onClick={() => navigate(`${webinarPath}/live`)}
+                      onClick={() => {
+                        const url = webinarWatchUrl(webinar.slug || webinar.id, `${webinarPath}/live`);
+                        if (url.startsWith('http')) window.location.assign(url);
+                        else navigate(url);
+                      }}
                       className="flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/85 text-white font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-6 py-3 rounded-full transition-all hover:scale-105 active:scale-95 cursor-pointer shadow-[0_4px_16px_rgba(0,17,97,0.25)]"
                     >
                       <Radio className="w-3.5 h-3.5" />
