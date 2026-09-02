@@ -97,6 +97,7 @@ import {
   interpolateWorkspaceFolder,
   mergeMcpServers,
 } from './mcp/install-cursor-mcp.mjs';
+import { saveWebinarSurveyPartialAnswer } from '../src/utils/webinarSurveyPartialSave.ts';
 
 type UnitTest = {
   name: string;
@@ -1703,6 +1704,60 @@ registerTest('MCP instalátor: zápis do ~/.cursor/mcp.json zálohuje a nepřep�
   assert.equal(JSON.parse(readFileSync(written.backupPath, 'utf8')).mcpServers.pipedrive, undefined);
 
   rmSync(tmpHome, { recursive: true, force: true });
+});
+
+/**
+ * Zaseknuté spojení dřív uvěznilo účastnici na posledním kroku dotazníku: `fetch` bez
+ * timeoutu se nikdy nevyřešil, tlačítko „dál“ zůstalo zablokované a certifikát nevznikl.
+ */
+registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí chybu, ne věčné čekání', async () => {
+  const originalFetch = Reflect.get(globalThis, 'fetch');
+  const originalSetTimeout = globalThis.setTimeout;
+  const args = { webinarId: 'matematika-2026', email: 'ucitelka@skola.cz', questionId: 'q1', value: 'A' };
+
+  try {
+    /** Timeout je 12 s — ať test neběží 12 s, necháme časovač doběhnout hned. */
+    Reflect.set(globalThis, 'setTimeout', ((fn: () => void) =>
+      originalSetTimeout(fn, 0)) as unknown as typeof setTimeout);
+
+    /** Server, který nikdy neodpoví: přesně případ kolísavé Wi-Fi nebo proxy. */
+    Reflect.set(globalThis, 'fetch', ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      })) as unknown as typeof fetch);
+
+    /** Bez timeoutu by se níže uvedený `await` nikdy nevrátil — ať test selže, ne visí. */
+    let guardTimer: ReturnType<typeof originalSetTimeout> | undefined;
+    const guard = new Promise<never>((_resolve, reject) => {
+      guardTimer = originalSetTimeout(
+        () => reject(new Error('ukládání odpovědi zůstalo viset — chybí timeout')),
+        3000,
+      );
+    });
+
+    try {
+      const stalled = await Promise.race([saveWebinarSurveyPartialAnswer(args), guard]);
+      assert.equal(stalled.ok, false, 'zaseknuté spojení se musí vzdát, ne viset donekonečna');
+    } finally {
+      if (guardTimer) clearTimeout(guardTimer);
+    }
+
+    /** Výpadek sítě nesmí vyhodit výjimku — průvodce by ji vyhodnotil jako blokující chybu. */
+    Reflect.set(globalThis, 'fetch', (() =>
+      Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch);
+
+    const offline = await saveWebinarSurveyPartialAnswer(args);
+    assert.equal(offline.ok, false);
+  } finally {
+    Reflect.set(globalThis, 'setTimeout', originalSetTimeout);
+    if (originalFetch === undefined) {
+      Reflect.deleteProperty(globalThis, 'fetch');
+    } else {
+      Reflect.set(globalThis, 'fetch', originalFetch);
+    }
+  }
 });
 
 await run();

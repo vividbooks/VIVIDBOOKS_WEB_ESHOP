@@ -19,7 +19,17 @@ function parseJsonResponseBody(text: string): unknown {
 }
 
 /**
+ * Zaseklé spojení (kolísavá Wi-Fi, mobilní síť, proxy) jinak `fetch` nikdy neodmítne —
+ * průvodce dotazníkem pak čeká donekonečna a tlačítko „dál“ zůstane zablokované.
+ */
+const PARTIAL_SAVE_TIMEOUT_MS = 12000;
+
+/**
  * Uloží jednu odpověď dotazníku po webináři (KV) — i bez dokončení celého formuláře.
+ *
+ * Ukládání je „best effort“: kompletní sadu odpovědí stejně posílá závěrečné
+ * `webinar-survey-submit`, takže selhání tady nesmí zablokovat průchod dotazníkem.
+ * Funkce proto nikdy nevyhazuje výjimku a vždy se do timeoutu vrátí.
  */
 export async function saveWebinarSurveyPartialAnswer(args: {
   webinarId: string;
@@ -28,20 +38,41 @@ export async function saveWebinarSurveyPartialAnswer(args: {
   value: string;
   /** Jméno z úvodního formuláře — doplní přehled odpovědí i bez záznamu v KV (light lead / registrace). */
   participantName?: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<{ ok: true; wrongAnswer?: true } | { ok: false; error: string }> {
   const pn = String(args.participantName ?? '').trim();
-  const res = await fetch(`${SERVER}/webinar-survey-partial`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-    body: JSON.stringify({
-      webinarId: String(args.webinarId ?? '').trim(),
-      email: args.email.trim(),
-      questionId: args.questionId.trim(),
-      value: args.value,
-      ...(pn ? { participantName: pn } : {}),
-    }),
-  });
-  const rawText = await res.text();
+
+  let res: Response;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PARTIAL_SAVE_TIMEOUT_MS);
+  try {
+    res = await fetch(`${SERVER}/webinar-survey-partial`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+      body: JSON.stringify({
+        webinarId: String(args.webinarId ?? '').trim(),
+        email: args.email.trim(),
+        questionId: args.questionId.trim(),
+        value: args.value,
+        ...(pn ? { participantName: pn } : {}),
+      }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    const aborted = e instanceof DOMException && e.name === 'AbortError';
+    return {
+      ok: false,
+      error: aborted ? 'Uložení odpovědi trvalo příliš dlouho' : 'Odpověď se nepodařilo uložit',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let rawText: string;
+  try {
+    rawText = await res.text();
+  } catch {
+    return { ok: false, error: 'Odpověď serveru se nepodařilo načíst' };
+  }
   let data: { error?: string; success?: boolean; wrongAnswer?: boolean } = {};
   try {
     data = (parseJsonResponseBody(rawText) || {}) as typeof data;
