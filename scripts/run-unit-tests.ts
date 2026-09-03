@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
-import { attendeesCountLabel, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
+import { attendeesCountLabel, isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
 import {
   appEntryTargetUrl,
   forgetAppEntryChoice,
@@ -171,6 +171,13 @@ registerTest('režim přesměrování pustí diváka na YouTube, jen když je ka
   assert.equal(attendeesCountLabel(5), '5 účastníků');
   assert.equal(attendeesCountLabel(124), '124 účastníků');
   assert.equal(attendeesCountLabel(0), '0 účastníků');
+
+  /** Den konání = kalendářní den, ne „hodina před“. */
+  const w = { day: 3, monthNum: 9, year: 2026 };
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 3, 8, 0).getTime()), true, 'ráno v den konání');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 3, 23, 59).getTime()), true, 'večer v den konání');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 2, 23, 59).getTime()), false, 'den před');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 4, 0, 1).getTime()), false, 'den po');
 
   /** Živý odkaz má přednost před záznamem — po webináři se sem doplňuje recordingUrl. */
   assert.equal(liveStreamUrlOf({ liveUrl: yt, recordingUrl: 'https://youtu.be/aaaaaaaaaaa' }), yt);

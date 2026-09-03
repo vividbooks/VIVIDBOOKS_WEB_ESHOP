@@ -39,6 +39,22 @@ export function resolveLiveDelivery(w: WebinarLike): LiveDeliveryPlan {
   return { kind: 'live_stream' };
 }
 
+/**
+ * Je dnes den konání? Ten den má divák vidět červený pruh „Webinář začíná dnes“
+ * a `/live` ho nesmí vracet na detail — i dopoledne ho pustíme dál.
+ */
+export function isWebinarDay(
+  w: Pick<Webinar, 'day' | 'monthNum' | 'year'>,
+  nowMs: number = Date.now(),
+): boolean {
+  const now = new Date(nowMs);
+  return (
+    now.getFullYear() === Number(w.year) &&
+    now.getMonth() + 1 === Number(w.monthNum || 1) &&
+    now.getDate() === Number(w.day || 1)
+  );
+}
+
 /** „přihlášeno 1 účastník / 3 účastníci / 120 účastníků“ pro mezistránku před přesměrováním. */
 export function attendeesCountLabel(count: number): string {
   const n = Math.max(0, Math.floor(count));

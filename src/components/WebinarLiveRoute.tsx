@@ -6,7 +6,7 @@ import { WebinarLiveRedirectPage } from './WebinarLiveRedirectPage';
 import { Loader2 } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
 import { recallLiveUrl, rememberLiveUrl } from '../utils/webinarLiveFallback';
-import { liveStreamUrlOf, resolveLiveDelivery } from '../utils/webinarLiveDelivery';
+import { isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../utils/webinarLiveDelivery';
 import { WebinarUnavailableNotice } from './WebinarUnavailableNotice';
 
 function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
@@ -90,14 +90,17 @@ export function WebinarLiveRoute() {
       : <WebinarLivePage webinar={webinar} />;
   }
 
-  // Webinář ještě nezačal → přesměrovat na detail stránku (má sidebar, registraci atd.)
+  // Webinář je až jindy → přesměrovat na detail stránku (má sidebar, registraci atd.).
+  // V den konání pouštíme dál kdykoli — detail na něj odkazuje červeným pruhem.
   const status = getLiveStatus(webinar);
-  if (status === 'upcoming') {
+  const today = isWebinarDay(webinar);
+  if (status === 'upcoming' && !today) {
     return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
   }
 
-  // Probíhá a je v režimu přesměrování → zapsat příchod a poslat na YouTube
-  if (status === 'live' && redirectUrl) {
+  // Den konání v režimu přesměrování → zapsat příchod a poslat na YouTube
+  // (i před začátkem — YouTube umí čekárnu, náš web nemusí nic držet).
+  if (status !== 'ended' && redirectUrl) {
     return <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />;
   }
 
