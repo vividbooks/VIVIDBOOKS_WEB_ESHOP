@@ -3,7 +3,6 @@ import type { Context } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
 import * as kv from './kv_store.tsx';
-import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import md5 from 'npm:md5';
 import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
@@ -1843,69 +1842,26 @@ app.delete('/make-server-93a20b6f/admin/novinky/:id', async (c) => {
   }
 });
 
-/* ── Krátká paměťová cache veřejných endpointů ──────────────────────
- * 1. 9. 2026 otevřelo web během jedné minuty ~800 lidí. /webinare i
- * /dvpp-videos čtou z KV stovky kB na každý požadavek, nic se necachovalo
- * a databáze to neustála — /dvpp-videos začal vracet 500 a webu tím zmizel
- * seznam webinářů. Isolate žije krátce, ale špičku to utlumí spolehlivě.
- *
- * `build` se pro daný klíč nikdy nespustí paralelně a když selže, radši
- * vrátíme starší data než chybu. */
-const PUBLIC_CACHE_TTL_MS = 60_000;
-const publicCache = new Map<string, { at: number; body: unknown }>();
-const publicCacheInflight = new Map<string, Promise<unknown>>();
-const PUBLIC_CACHE_HEADERS = {
-  'Cache-Control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=600',
-};
-
-async function cachedPublic<T>(key: string, build: () => Promise<T>): Promise<T> {
-  const hit = publicCache.get(key);
-  if (hit && Date.now() - hit.at < PUBLIC_CACHE_TTL_MS) return hit.body as T;
-
-  const running = publicCacheInflight.get(key);
-  if (running) return running as Promise<T>;
-
-  const p = (async () => {
-    try {
-      const body = await build();
-      publicCache.set(key, { at: Date.now(), body });
-      return body;
-    } catch (e) {
-      if (hit) {
-        console.warn(`[cache:${key}] build selhal, vracim starsi data:`, (e as Error)?.message);
-        return hit.body as T;
-      }
-      throw e;
-    } finally {
-      publicCacheInflight.delete(key);
-    }
-  })();
-  publicCacheInflight.set(key, p);
-  return p as Promise<T>;
-}
-
 /* ── Public: Get webinars ─────────────────────────────────────── */
 app.get('/make-server-93a20b6f/webinare', async (c) => {
   try {
-    const itemsPublic = await cachedPublic('webinare-public', async () => {
-      const items = await getCollection(WEBINARS_KEY);
-      /* Přepis je jen pro admin/RAG — neposílat na veřejný web (velikost + soukromí). */
-      return items.map((w: any) => {
-        const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
-        const pub = { ...rest } as any;
-        /* Vždy explicitní boolean — výchozí `false` (dotazník bez registrace na webinář). */
-        pub.surveyRequireFullRegistration = w.surveyRequireFullRegistration === true;
-        if (Array.isArray(pub.postWebinarQuizQuestions)) {
-          pub.postWebinarQuizQuestions = pub.postWebinarQuizQuestions.map((q: any) => {
-            if (!q || typeof q !== 'object') return q;
-            const { correctIndex: _c, ...qq } = q;
-            return qq;
-          });
-        }
-        return pub;
-      });
+    const items = await getCollection(WEBINARS_KEY);
+    /* Přepis je jen pro admin/RAG — neposílat na veřejný web (velikost + soukromí). */
+    const itemsPublic = items.map((w: any) => {
+      const { prepis: _p, devSimulateReminderMorning: _dm, devSimulateReminderT30: _dt, ...rest } = w;
+      const pub = { ...rest } as any;
+      /* Vždy explicitní boolean — výchozí `false` (dotazník bez registrace na webinář). */
+      pub.surveyRequireFullRegistration = w.surveyRequireFullRegistration === true;
+      if (Array.isArray(pub.postWebinarQuizQuestions)) {
+        pub.postWebinarQuizQuestions = pub.postWebinarQuizQuestions.map((q: any) => {
+          if (!q || typeof q !== 'object') return q;
+          const { correctIndex: _c, ...qq } = q;
+          return qq;
+        });
+      }
+      return pub;
     });
-    return c.json({ items: itemsPublic }, 200, PUBLIC_CACHE_HEADERS);
+    return c.json({ items: itemsPublic });
   } catch (e: any) {
     return c.json({ error: `Chyba webinare public GET: ${e.message}` }, 500);
   }
@@ -4022,17 +3978,24 @@ app.get('/make-server-93a20b6f/webinar-registrace/:webinarId', async (c) => {
 /**
  * Veřejný počet přihlášených — jen číslo pro mezistránku „Přepojujeme vás na vysílání“.
  * Seznam registrací (s e-maily) zůstává jen v `/webinar-registrace/:webinarId`.
- * Cache: v hodině před webinářem sem chodí všichni diváci naráz.
+ * Krátká paměťová cache: v hodině před webinářem sem chodí všichni diváci naráz.
  */
+const webinarRegCountCache = new Map<string, { at: number; count: number }>();
+const WEBINAR_REG_COUNT_TTL_MS = 60_000;
 app.get('/make-server-93a20b6f/webinar-registrace-count/:webinarId', async (c) => {
   try {
     const webinarId = String(c.req.param('webinarId') || '').trim();
     if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
-    const count = await cachedPublic(`webinar-reg-count-${webinarId}`, async () => {
+    const hit = webinarRegCountCache.get(webinarId);
+    let count = hit && Date.now() - hit.at < WEBINAR_REG_COUNT_TTL_MS ? hit.count : null;
+    if (count === null) {
       const rows = await kv.getByPrefix(`webinar_reg_${webinarId}_`);
-      return rows.length;
+      count = rows.length;
+      webinarRegCountCache.set(webinarId, { at: Date.now(), count });
+    }
+    return c.json({ webinarId, count }, 200, {
+      'Cache-Control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=600',
     });
-    return c.json({ webinarId, count }, 200, PUBLIC_CACHE_HEADERS);
   } catch (err: any) {
     return c.json({ error: `Chyba počtu registrací: ${err.message}` }, 500);
   }
@@ -4097,11 +4060,6 @@ app.post('/make-server-93a20b6f/identity/upsert', handleIdentityUpsertPost);
 app.post('/identity/upsert', handleIdentityUpsertPost);
 app.post('/make-server-93a20b6f/identity/web-event', handleIdentityWebEventPost);
 app.post('/identity/web-event', handleIdentityWebEventPost);
-// Export kontaktů pro registr škol v aplikaci Ultra (stejné tajemství jako identity/upsert).
-app.get('/make-server-93a20b6f/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
-app.get('/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
-app.get('/make-server-93a20b6f/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
-app.get('/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
 
 /** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
 app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
@@ -5710,20 +5668,15 @@ async function resolveWebinarZaznamPageUrl(origin: string, w: any, opts?: { emai
     const slug = String(w.slug || w.id || '').trim() || 'webinar';
     return `${base}/webinar/${encodeURIComponent(slug)}`;
   }
-  const url = `${base}/webinare/zaznam/${encodeURIComponent(zaznamId)}`;
-  return withFollowupEmailOnZaznamUrl(url, opts?.email || '');
-}
-
-/** Doplní `?email=&from=email` k URL záznamu — bez dalšího KV čtení. */
-function withFollowupEmailOnZaznamUrl(baseUrl: string, email: string): string {
-  const clean = String(baseUrl || '').split('?')[0];
-  const em = String(email || '').trim().toLowerCase();
-  if (!clean) return String(baseUrl || '');
-  if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return clean;
-  const qs = new URLSearchParams();
-  qs.set('email', em);
-  qs.set('from', 'email');
-  return `${clean}?${qs.toString()}`;
+  let url = `${base}/webinare/zaznam/${encodeURIComponent(zaznamId)}`;
+  const em = String(opts?.email || '').trim().toLowerCase();
+  if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    const qs = new URLSearchParams();
+    qs.set('email', em);
+    qs.set('from', 'email');
+    url += `?${qs.toString()}`;
+  }
+  return url;
 }
 
 /** Ověření přístupu ke záznamu podle e-mailu (registrace na živý webinář nebo u záznamu). */
@@ -6101,8 +6054,6 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
   toEmail: string;
   toName: string;
   emailKind: 'test' | 'bulk';
-  /** Předpočítaná URL záznamu bez e-mailu — bulk send ji nesmí tahat z KV u každého příjemce. */
-  recordingUrlBase?: string;
 }): Promise<{ ok: boolean; detail?: string }> {
   const { webinarId, w, merged, learningsHtml, toEmail, toName, emailKind } = opts;
   const slug = String((w as any).slug || (w as any).id || '').trim() || String(webinarId);
@@ -6120,9 +6071,7 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
     ? !!(surveyQuizUrl || quizPreviewLabels.length > 0)
     : !!certificateExternalUrl;
 
-  const recordingUrlDefault = opts.recordingUrlBase
-    ? withFollowupEmailOnZaznamUrl(opts.recordingUrlBase, toEmail)
-    : await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
+  const recordingUrlDefault = await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
   const base = String(origin || '').replace(/\/$/, '');
   const devRec = String((merged as any).devFollowupRecordingUrl ?? (w as any).devFollowupRecordingUrl ?? '').trim();
   const recordingUrl = devRec
@@ -6214,42 +6163,6 @@ async function adminWebinarPostFollowupTestSendHandler(c: Context) {
   }
 }
 
-const FOLLOWUP_BULK_CONCURRENCY = 10;
-const FOLLOWUP_BULK_TIME_BUDGET_MS = 55_000;
-
-/** Naváže hromadné odeslání, když první request nestačí (Edge timeout / časový rozpočet). */
-function scheduleFollowupBulkContinuation(body: { webinarId: string; mailchimpTag?: string }): void {
-  const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
-  const key =
-    Deno.env.get('SUPABASE_ANON_KEY') ||
-    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ||
-    '';
-  if (!base || !key) {
-    console.log('[webinar-post-followup-bulk] continue skipped — chybí SUPABASE_URL / klíč');
-    return;
-  }
-  const url = `${base}/functions/v1/make-server-93a20b6f/admin/webinar-post-followup-bulk-send`;
-  fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-    body: JSON.stringify({
-      webinarId: body.webinarId,
-      ...(body.mailchimpTag ? { mailchimpTag: body.mailchimpTag } : {}),
-      _continue: true,
-    }),
-  }).catch((e) => {
-    console.log(`[webinar-post-followup-bulk] continue schedule failed: ${e?.message || e}`);
-  });
-}
-
-function countFollowupSentRecipients(state: FollowupCampaignState): number {
-  let n = 0;
-  for (const rec of Object.values(state.recipients)) {
-    if (rec?.sentAt) n++;
-  }
-  return n;
-}
-
 /** Hromadné odeslání e-mailu se záznamem + dotazníkem všem registrovaným (KV `webinar_reg_{id}_`). */
 async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
   try {
@@ -6316,112 +6229,45 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
       );
     }
 
-    if (!(body as any)?._continue) {
-      try {
-        await syncFollowupTrackingFromMandrillSearch(webinarId, w);
-      } catch (syncErr: any) {
-        console.log(
-          `[webinar-post-followup-bulk] Mandrill sync před odesláním přeskočen: ${syncErr?.message || syncErr}`,
-        );
-      }
-    }
-
-    const origin = getPublicSiteOrigin();
-    const recordingUrlBase = await resolveWebinarZaznamPageUrl(origin, w);
-
-    const track = await getFollowupTrackingState(webinarId);
-    const pending = recipients.filter((r) => !track.recipients[r.email]?.sentAt);
-    const skippedAlreadySent = recipients.length - pending.length;
-
-    if (pending.length === 0) {
-      const overlap0 = kvRecipients.length + mcData.rows.length - recipients.length;
-      console.log(
-        `[webinar-post-followup-bulk] webinarId=${webinarId} already-sent=${skippedAlreadySent} nothing-to-send`,
-      );
-      return c.json({
-        ok: true,
-        sent: 0,
-        skipped: skippedAlreadySent,
-        remaining: 0,
-        continued: false,
-        total: recipients.length,
-        failed: 0,
-        failures: [],
-        breakdown: {
-          kvRegistrations: kvRecipients.length,
-          mailchimpTagged: mcData.rows.length,
-          mailchimpTag: mcData.tag || null,
-          uniqueRecipients: recipients.length,
-          overlapKvAndMailchimp: overlap0 > 0 ? overlap0 : 0,
-          mailchimpError: mcData.error || null,
-        },
-      });
-    }
-
     let sent = 0;
     const failures: { email: string; detail?: string }[] = [];
+    const track = await getFollowupTrackingState(webinarId);
     const nowIso = new Date().toISOString();
-    const startedAt = Date.now();
-    let stoppedEarly = false;
-
-    for (let i = 0; i < pending.length; i += FOLLOWUP_BULK_CONCURRENCY) {
-      if (i > 0 && Date.now() - startedAt > FOLLOWUP_BULK_TIME_BUDGET_MS) {
-        stoppedEarly = true;
-        break;
-      }
-      const slice = pending.slice(i, i + FOLLOWUP_BULK_CONCURRENCY);
-      const results = await Promise.all(
-        slice.map(async (rec) => {
-          const out = await sendWebinarPostFollowupEmailToRecipient({
-            webinarId,
-            w,
-            merged,
-            learningsHtml,
-            toEmail: rec.email,
-            toName: rec.name || rec.email.split('@')[0],
-            emailKind: 'bulk',
-            recordingUrlBase,
-          });
-          return { rec, out };
-        }),
-      );
-      for (const { rec, out } of results) {
-        if (out.ok) {
-          sent++;
-          const prev = track.recipients[rec.email] || {};
-          track.recipients[rec.email] = {
-            ...prev,
-            sentAt: prev.sentAt || nowIso,
-          };
-        } else {
-          failures.push({ email: rec.email, detail: out.detail });
-        }
-      }
-      track.lastBulkAt = nowIso;
-      track.lastBulkSucceeded = countFollowupSentRecipients(track);
-      await saveFollowupTrackingState(webinarId, track);
-    }
-
-    const remaining = pending.length - sent - failures.length;
-    const shouldContinue = stoppedEarly && remaining > 0;
-    if (shouldContinue) {
-      scheduleFollowupBulkContinuation({
+    for (const rec of recipients) {
+      const out = await sendWebinarPostFollowupEmailToRecipient({
         webinarId,
-        mailchimpTag: mailchimpTagOverride || undefined,
+        w,
+        merged,
+        learningsHtml,
+        toEmail: rec.email,
+        toName: rec.name || rec.email.split('@')[0],
+        emailKind: 'bulk',
       });
+      if (out.ok) {
+        sent++;
+        const prev = track.recipients[rec.email] || {};
+        track.recipients[rec.email] = {
+          ...prev,
+          sentAt: prev.sentAt || nowIso,
+        };
+      } else {
+        failures.push({ email: rec.email, detail: out.detail });
+      }
+    }
+    if (sent > 0) {
+      track.lastBulkAt = nowIso;
+      track.lastBulkSucceeded = sent;
+      await saveFollowupTrackingState(webinarId, track);
     }
 
     const overlap =
       kvRecipients.length + mcData.rows.length - recipients.length;
     console.log(
-      `[webinar-post-followup-bulk] webinarId=${webinarId} kv=${kvRecipients.length} mc=${mcData.rows.length} unique=${recipients.length} overlap≈${overlap} sent=${sent} skipped=${skippedAlreadySent} failed=${failures.length} remaining=${Math.max(0, remaining)} continued=${shouldContinue}`,
+      `[webinar-post-followup-bulk] webinarId=${webinarId} kv=${kvRecipients.length} mc=${mcData.rows.length} unique=${recipients.length} overlap≈${overlap} sent=${sent} failed=${failures.length}`,
     );
     return c.json({
       ok: failures.length === 0,
       sent,
-      skipped: skippedAlreadySent,
-      remaining: Math.max(0, remaining),
-      continued: shouldContinue,
       total: recipients.length,
       failed: failures.length,
       failures: failures.slice(0, 20),
@@ -13472,37 +13318,23 @@ async function syncDvppVideos(): Promise<{ topics: any[]; videos: any[] }> {
   return result;
 }
 
-/* Auto-sync z Webflow je drahý. Bez tohoto stavidla si ho 1. 9. 2026 vyžádal
- * každý jednotlivý požadavek ve špičce a endpoint se pod tím složil. */
-const DVPP_AUTOSYNC_COOLDOWN_MS = 10 * 60_000;
-let dvppLastAutoSyncAt = 0;
-
 /* GET /dvpp-videos — public, auto-syncs if empty */
 app.get('/make-server-93a20b6f/dvpp-videos', async (c) => {
   try {
-    const payload = await cachedPublic('dvpp-videos-public', async () => {
-      let data: any = await kv.get(DVPP_VIDEOS_KEY);
-      if (!data?.topics?.length && !data?.videos?.length) {
-        if (Date.now() - dvppLastAutoSyncAt > DVPP_AUTOSYNC_COOLDOWN_MS) {
-          dvppLastAutoSyncAt = Date.now();
-          console.log('[dvpp-videos] Cache empty, auto-syncing from Webflow...');
-          try {
-            data = await syncDvppVideos();
-          } catch (syncErr: any) {
-            console.error('[dvpp-videos] Auto-sync failed:', syncErr.message);
-            data = { topics: [], videos: [] };
-          }
-        } else {
-          console.warn('[dvpp-videos] Cache empty, ale auto-sync je v cooldownu.');
-          data = { topics: [], videos: [] };
-        }
+    let data: any = await kv.get(DVPP_VIDEOS_KEY);
+    if (!data?.topics?.length && !data?.videos?.length) {
+      console.log('[dvpp-videos] Cache empty, auto-syncing from Webflow...');
+      try {
+        data = await syncDvppVideos();
+      } catch (syncErr: any) {
+        console.error('[dvpp-videos] Auto-sync failed:', syncErr.message);
+        data = { topics: [], videos: [] };
       }
-      const webinars = (await getCollection(WEBINARS_KEY)) as any[];
-      const rawVideos = mergePastWebinarsIntoDvppVideos(data.videos ?? [], webinars);
-      const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
-      return { topics: data.topics ?? [], videos, updatedAt: data.updatedAt };
-    });
-    return c.json(payload, 200, PUBLIC_CACHE_HEADERS);
+    }
+    const webinars = (await getCollection(WEBINARS_KEY)) as any[];
+    const rawVideos = mergePastWebinarsIntoDvppVideos(data.videos ?? [], webinars);
+    const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
+    return c.json({ topics: data.topics ?? [], videos, updatedAt: data.updatedAt });
   } catch (e: any) {
     console.error('[dvpp-videos] GET error:', e.message);
     return c.json({ error: e.message, topics: [], videos: [] }, 500);
