@@ -24,14 +24,14 @@ Stavy: `pending → active → graduating → alumni → expired`, vedlejší `d
 
 ## Kódy a legacy admin
 
-Aplikace stále rozhoduje o přístupu podle kódů školy z legacy Vividbooks (`api.vividbooks.com`). Program pracuje s principem **jedna fakulta = jedna „škola“ v legacy adminu**:
+Aplikace stále rozhoduje o přístupu podle kódů z legacy Vividbooks (`api.vividbooks.com`). **Každý student má vlastní kódy**:
 
-- První ověřený student fakulty zavolá `free-trial-ajax` (Position `Student`, Whence `studenti`, School = „<fakulta> – studenti“, Vat = IČO univerzity). Vrácené kódy se uloží k fakultě (`teacher_code`, `student_code`, `codes_valid_until` = +14 dní) a dostane je každý další student bez dalšího volání.
-- **Obchod pak v legacy adminu prodlouží platnost** (ideálně na celý akademický rok) a zapíše datum do „Platí do“ u fakulty. Cron 21 dní před koncem upozorní v denním digestu.
-- Kódy lze vložit ručně (bez volání API) — nastavení `autoIssueCodes = false` nebo vyplnění u fakulty předem.
-- Režim `per_student` (každý student vlastní trial) je v nastavení pro případ, že by legacy API se sdílenou „školou“ nefungovalo. **Ověřit s prvními registracemi** — chování legacy API pro opakované registrace na stejné IČO není z tohoto repozitáře vidět.
+- Při ověření e-mailu se zavolá `free-trial-ajax` pod jménem studenta: Position `Student`, Whence `studenti`, School = „<Jméno Příjmení> – student <fakulta>“, Vat prázdné (nastavení `legacyVatMode`, alternativně IČO univerzity). Vrácené kódy se uloží ke studentovi (`teacher_code`, `student_code`, `codes_valid_until` = +14 dní).
+- **Obchod pak v legacy adminu prodlouží studentův trial** (ideálně do konce studia + 6 měsíců) a zapíše datum do „Kódy platí do“ v detailu studenta. Cron 21 dní před koncem dá studenta do fronty *Prodloužit trial v legacy adminu* a do denního digestu.
+- Když API kódy nevrátí (`legacy_error`, `thank_only`): student zůstává `active`, dostane e-mail „kódy pošleme zvlášť“, jde do fronty *Bez kódů* a `digestEmail` dostane upozornění. V adminu: „Založit kódy“ zavolá API znovu, nebo se kódy vloží ručně a pošlou tlačítkem „Poslat kódy znovu“.
+- `autoIssueCodes = false` vypne automatické volání API (kódy vkládá admin).
 
-Student bez kódů (legacy chyba) zůstává `active`, dostane e-mail „kódy pošleme zvlášť“ a padá do fronty *Bez kódů* + okamžité upozornění na `digestEmail`. Po doplnění kódů u fakulty stačí „Poslat kódy znovu“.
+**Ověřit s prvními registracemi**: jestli legacy API přijme prázdné IČO a zda organizace pojmenovaná po studentovi vznikne zvlášť (očekáváme `legacy_created`; `legacy_existing_trial` by znamenalo sdílenou organizaci).
 
 ## Měřitelné cíle (admin → Cíle)
 
@@ -43,7 +43,7 @@ Student bez kódů (legacy chyba) zůstává `active`, dostane e-mail „kódy p
 | Používá Vividbooks | 50 % | `uses_in_practice = true` z těch, kdo odpověděli na check-in |
 | Absolventi se známou školou | 60 % | `employer_school_name/ico` u `alumni` + `expired` |
 
-Denní digest (`digestEmail`, výchozí vitek@vividbooks.com): nové registrace, ověření, odpovědi na check-in, fakulty k prodloužení, studenti bez kódů.
+Denní digest (`digestEmail`, výchozí vitek@vividbooks.com): nové registrace, ověření, odpovědi na check-in, studenti k prodloužení v legacy adminu, studenti bez kódů.
 
 ## Fakulty a oslovení
 
@@ -61,7 +61,7 @@ Seznam: 9 pedagogických fakult (jádro) + fakulty s učitelskými programy (MFF
 
 ## Co ověřit po nasazení
 
-1. Registrace testovacím univerzitním e-mailem → ověřovací e-mail → kódy. Zkontrolovat v legacy adminu, jak vznikla „škola“ fakulty a prodloužit ji.
-2. Druhý student ze stejné fakulty → musí dostat stejné kódy bez volání API (`legacy_result = faculty_codes`).
+1. Registrace testovacím univerzitním e-mailem → ověřovací e-mail → kódy. Zkontrolovat v legacy adminu, že vznikla samostatná organizace studenta, a prodloužit ji.
+2. Druhý student ze stejné fakulty → musí dostat **jiné** kódy (`legacy_result = legacy_created`).
 3. `POST /admin/student-program/run-cron?dryRun=1` → bez chyb.
 4. `/marketing/studenti` → Přehled načte data, Fakulty jsou naplněné (seed proběhne automaticky při prvním čtení).

@@ -30,19 +30,9 @@ CREATE TABLE IF NOT EXISTS public.student_program_faculties (
   samples_sent_at TIMESTAMPTZ,
   workshop_at TIMESTAMPTZ,
   notes TEXT,
-  -- přístupové kódy fakulty (jedna „škola“ v legacy Vividbooks adminu = jedna fakulta)
-  teacher_code TEXT,
-  student_code TEXT,
-  codes_source TEXT CHECK (codes_source IS NULL OR codes_source IN ('legacy_trial', 'manual')),
-  codes_issued_at TIMESTAMPTZ,
-  codes_valid_until DATE,
-  codes_note TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-COMMENT ON COLUMN public.student_program_faculties.codes_valid_until IS
-  'Do kdy platí kódy fakulty v legacy adminu. Prodlužuje obchod; cron hlídá blížící se konec.';
 
 CREATE INDEX IF NOT EXISTS idx_student_program_faculties_kind ON public.student_program_faculties (kind);
 CREATE INDEX IF NOT EXISTS idx_student_program_faculties_outreach ON public.student_program_faculties (outreach_status);
@@ -94,10 +84,11 @@ CREATE TABLE IF NOT EXISTS public.student_program_students (
   verification_sent_at TIMESTAMPTZ,
   verified_at TIMESTAMPTZ,
   access_token TEXT,
-  -- kódy z legacy Vividbooks (free-trial API)
+  -- vlastní kódy studenta z legacy Vividbooks (free-trial API)
   teacher_code TEXT,
   student_code TEXT,
   codes_issued_at TIMESTAMPTZ,
+  codes_valid_until DATE,
   legacy_result TEXT,
   legacy_reason TEXT,
   access_valid_until DATE,
@@ -138,13 +129,17 @@ CREATE INDEX IF NOT EXISTS idx_student_program_students_next_checkin
   ON public.student_program_students (next_checkin_at) WHERE next_checkin_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_student_program_students_graduation
   ON public.student_program_students (expected_graduation);
+CREATE INDEX IF NOT EXISTS idx_student_program_students_codes_valid
+  ON public.student_program_students (codes_valid_until) WHERE teacher_code IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_student_program_students_personal_email
   ON public.student_program_students (lower(personal_email)) WHERE personal_email IS NOT NULL;
 
 COMMENT ON TABLE public.student_program_students IS
   'Studenti učitelství s přístupem zdarma. Klíč = univerzitní e-mail (lower/trim).';
 COMMENT ON COLUMN public.student_program_students.access_valid_until IS
-  'Konec studia + 6 měsíců. Skutečnou platnost kódů určuje legacy admin (access_extended_until).';
+  'Nárok studenta: konec studia + 6 měsíců. Skutečnou platnost kódů určuje legacy admin (codes_valid_until).';
+COMMENT ON COLUMN public.student_program_students.codes_valid_until IS
+  'Do kdy platí studentův trial v legacy adminu (po založení +14 dní). Obchod prodlouží a zapíše nové datum; cron hlídá konec.';
 COMMENT ON COLUMN public.student_program_students.access_extended_until IS
   'Ruční prodloužení nad rámec konce studia + 6 měsíců (např. doktorand, přerušení).';
 

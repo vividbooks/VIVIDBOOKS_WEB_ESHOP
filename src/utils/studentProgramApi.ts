@@ -32,6 +32,7 @@ export type StudentProgramStudentView = {
   accessValidUntil: string | null;
   teacherCode: string | null;
   studentCode: string | null;
+  codesValidUntil: string | null;
   faculty: StudentProgramPublicFaculty | null;
   subjects: string[];
   schoolStages: string[];
@@ -162,8 +163,9 @@ export type StudentProgramGoals = {
 };
 
 export type StudentProgramSettings = {
-  legacyMode: 'per_faculty' | 'per_student';
   autoIssueCodes: boolean;
+  legacyVatMode: 'none' | 'university_ico';
+  legacyTrialDays: number;
   checkinIntervalDays: number;
   digestEmail: string;
   outreachFromName: string;
@@ -179,9 +181,9 @@ export type StudentProgramOverview = {
   engagement: { responded: number; usesYes: number; activeShare: number | null; checkinsSent: number; responseRate: number | null };
   alumni: { total: number; schoolKnown: number; schoolShare: number | null; teaching: number };
   progress: { studentsPct: number | null; pedfPct: number | null; partnersPct: number | null; activeSharePct: number | null; alumniSchoolPct: number | null; daysToTarget: number };
-  queues: { facultiesNeedingExtension: Array<{ id: string; facultyShort: string; codesValidUntil: string | null; activeStudents: number }>; studentsWithoutCodes: number; graduatingSoon: number; checkinsDue: number; pendingOlderThan3Days: number };
+  queues: { studentsNeedingExtension: Array<{ id: string; name: string; email: string; facultyShort: string | null; codesValidUntil: string | null; accessValidUntil: string | null }>; extensionDue: number; studentsWithoutCodes: number; graduatingSoon: number; checkinsDue: number; pendingOlderThan3Days: number; importedNotInvited: number };
   months: Record<string, { registered: number; verified: number }>;
-  perFaculty: Array<{ id: string; facultyShort: string; university: string; kind: 'pedf' | 'other'; outreachStatus: string; estimatedStudents: number | null; hasCodes: boolean; codesValidUntil: string | null; total: number; active: number; alumni: number; responded: number; usesYes: number }>;
+  perFaculty: Array<{ id: string; facultyShort: string; university: string; kind: 'pedf' | 'other'; outreachStatus: string; estimatedStudents: number | null; total: number; active: number; alumni: number; responded: number; usesYes: number }>;
 };
 
 export type StudentProgramStudentRow = {
@@ -202,6 +204,7 @@ export type StudentProgramStudentRow = {
   teacher_code: string | null;
   student_code: string | null;
   codes_issued_at: string | null;
+  codes_valid_until: string | null;
   legacy_result: string | null;
   legacy_reason: string | null;
   access_valid_until: string | null;
@@ -259,12 +262,6 @@ export type StudentProgramFacultyRow = {
   samples_sent_at: string | null;
   workshop_at: string | null;
   notes: string | null;
-  teacher_code: string | null;
-  student_code: string | null;
-  codes_source: 'legacy_trial' | 'manual' | null;
-  codes_issued_at: string | null;
-  codes_valid_until: string | null;
-  codes_note: string | null;
   stats: { total: number; active: number; alumni: number; usesYes: number; responded: number };
   contacts: StudentProgramFacultyContact[];
 };
@@ -289,6 +286,8 @@ export const studentProgramAdmin = {
   updateStudent: (id: string, patch: Partial<StudentProgramStudentRow>) =>
     adminJson<{ ok: boolean; item: StudentProgramStudentRow }>(`/students/${id}`, { method: 'PUT', body: JSON.stringify(patch), json: true }),
   resendCodes: (id: string) => adminJson<{ ok: boolean; detail: string | null; hasCodes: boolean }>(`/students/${id}/resend-codes`, { method: 'POST' }),
+  invite: (id: string) => adminJson<{ ok: boolean; detail: string | null }>(`/students/${id}/invite`, { method: 'POST' }),
+  issueCodes: (id: string, force = false) => adminJson<{ ok: boolean; legacyResult: string; legacyReason: string | null; item: StudentProgramStudentRow }>(`/students/${id}/issue-codes${force ? '?force=1' : ''}`, { method: 'POST' }),
   sendCheckin: (id: string) => adminJson<{ ok: boolean; detail: string | null }>(`/students/${id}/send-checkin`, { method: 'POST' }),
   deleteStudent: (id: string) => adminJson<{ ok: boolean }>(`/students/${id}`, { method: 'DELETE' }),
   faculties: () => adminJson<{ items: StudentProgramFacultyRow[]; unassigned: { total: number; active: number } | null; templates: OutreachTemplate[] }>('/faculties'),

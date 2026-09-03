@@ -107,10 +107,12 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
 
   const queues = [
     { key: 'no_codes', label: 'Ověření bez kódů', count: data.queues.studentsWithoutCodes, tone: 'danger' as const },
+    { key: 'extension_due', label: 'Prodloužit trial v legacy adminu', count: data.queues.extensionDue, tone: 'warn' as const },
     { key: 'checkin_due', label: 'Check-in po termínu', count: data.queues.checkinsDue, tone: 'warn' as const },
     { key: 'graduating_soon', label: 'Končí do 90 dnů', count: data.queues.graduatingSoon, tone: 'info' as const },
     { key: 'alumni_no_school', label: 'Absolventi bez školy', count: data.alumni.total - data.alumni.schoolKnown, tone: 'info' as const },
     { key: 'pending_old', label: 'Neověřeno > 3 dny', count: data.queues.pendingOlderThan3Days, tone: 'muted' as const },
+    { key: 'imported', label: 'Importovaní z kontaktů (nepozvaní)', count: data.queues.importedNotInvited, tone: 'info' as const },
   ];
 
   const monthEntries = Object.entries(data.months);
@@ -152,14 +154,15 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
         <div className="rounded-2xl border border-gray-100 bg-white p-5">
           <p className="mb-3 text-[13px] font-bold text-[#001161]">Co je potřeba udělat</p>
           <div className="space-y-2">
-            {data.queues.facultiesNeedingExtension.length > 0 && (
+            {data.queues.studentsNeedingExtension.length > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <p className="mb-1 flex items-center gap-1.5 text-[12px] font-bold text-amber-800"><KeyRound className="h-3.5 w-3.5" /> Prodloužit kódy v legacy adminu</p>
+                <p className="mb-1 flex items-center gap-1.5 text-[12px] font-bold text-amber-800"><KeyRound className="h-3.5 w-3.5" /> Prodloužit trial v legacy adminu ({data.queues.extensionDue})</p>
                 <ul className="space-y-0.5 text-[12px] text-amber-900">
-                  {data.queues.facultiesNeedingExtension.map((f) => (
-                    <li key={f.id}>{f.facultyShort} — platí do {f.codesValidUntil ? formatCzDate(f.codesValidUntil) : 'neuvedeno'}, {f.activeStudents} aktivních</li>
+                  {data.queues.studentsNeedingExtension.slice(0, 8).map((st) => (
+                    <li key={st.id}>{st.name} ({st.facultyShort || '?'}) — kódy do {st.codesValidUntil ? formatCzDate(st.codesValidUntil) : 'neuvedeno'}, nárok do {st.accessValidUntil ? formatCzDate(st.accessValidUntil) : '?'}</li>
                   ))}
                 </ul>
+                <p className="mt-1 text-[11px] text-amber-800/80">Po prodloužení zapište nové datum do „Kódy platí do“ v detailu studenta.</p>
               </div>
             )}
             {queues.map((q) => (
@@ -188,7 +191,6 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
                 <th className="py-2 pr-3 text-right">Celkem</th>
                 <th className="py-2 pr-3 text-right">Absolventi</th>
                 <th className="py-2 pr-3 text-right">Používá</th>
-                <th className="py-2 pr-3">Kódy</th>
               </tr>
             </thead>
             <tbody>
@@ -201,7 +203,6 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
                   <td className="py-2 pr-3 text-right text-gray-600">{f.total}</td>
                   <td className="py-2 pr-3 text-right text-gray-600">{f.alumni}</td>
                   <td className="py-2 pr-3 text-right text-gray-600">{f.responded ? `${f.usesYes}/${f.responded}` : '—'}</td>
-                  <td className="py-2 pr-3">{f.hasCodes ? <span className="text-emerald-700">do {f.codesValidUntil ? formatCzDate(f.codesValidUntil) : '?'}</span> : <span className="text-gray-300">—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -319,6 +320,10 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
             <label className="text-[11px] font-semibold text-gray-500">Kód žáka
               <input value={merged.student_code || ''} onChange={(e) => set('student_code', e.target.value)} className={cn(INPUT, 'font-mono')} />
             </label>
+            <label className="col-span-2 text-[11px] font-semibold text-gray-500">Kódy platí do (legacy admin)
+              <input type="date" value={merged.codes_valid_until || ''} onChange={(e) => set('codes_valid_until', e.target.value || null)} className={INPUT} />
+              <span className="mt-1 block text-[10px] font-normal text-gray-400">Po založení je to 14 dní. Když trial v legacy adminu prodloužíte, zapište sem nové datum — nárok studenta je do {formatCzDate(merged.access_extended_until && merged.access_extended_until > (merged.access_valid_until || '') ? merged.access_extended_until : merged.access_valid_until)}.</span>
+            </label>
             <label className="text-[11px] font-semibold text-gray-500">Po škole
               <select value={merged.employer_status} onChange={(e) => set('employer_status', e.target.value)} className={INPUT}>
                 <option value="unknown">nevíme</option>
@@ -347,7 +352,13 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
 
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void save()} disabled={busy !== null || Object.keys(form).length === 0} className={BTN_PRIMARY}>{busy === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Uložit</button>
-            <button type="button" onClick={() => void act('codes', () => studentProgramAdmin.resendCodes(student.id), 'Kódy odeslány')} disabled={busy !== null || student.status === 'pending'} className={BTN_SECONDARY}><KeyRound className="h-3.5 w-3.5" /> Poslat kódy znovu</button>
+            {student.status === 'pending' && (
+              <button type="button" onClick={() => void act('invite', () => studentProgramAdmin.invite(student.id), 'Pozvánka odeslána')} disabled={busy !== null} className={BTN_PRIMARY}><Send className="h-4 w-4" /> {student.verification_sent_at ? 'Poslat ověřovací e-mail znovu' : 'Pozvat (ověřovací e-mail)'}</button>
+            )}
+            {!student.teacher_code && student.status !== 'pending' && (
+              <button type="button" onClick={() => void act('issue', async () => { const r = await studentProgramAdmin.issueCodes(student.id); if (r.ok) onChanged(r.item); return { ok: r.ok, detail: r.legacyReason || r.legacyResult }; }, 'Kódy založeny')} disabled={busy !== null} className={cn(BTN_PRIMARY, 'bg-amber-600 hover:bg-amber-700')}><KeyRound className="h-4 w-4" /> Založit kódy (legacy API)</button>
+            )}
+            <button type="button" onClick={() => void act('codes', () => studentProgramAdmin.resendCodes(student.id), 'Kódy odeslány')} disabled={busy !== null || student.status === 'pending' || !student.teacher_code} className={BTN_SECONDARY}><KeyRound className="h-3.5 w-3.5" /> Poslat kódy znovu</button>
             <button type="button" onClick={() => void act('checkin', () => studentProgramAdmin.sendCheckin(student.id), 'Check-in odeslán')} disabled={busy !== null || student.status === 'pending'} className={BTN_SECONDARY}><Mail className="h-3.5 w-3.5" /> Poslat check-in</button>
             <button type="button" onClick={() => void remove()} disabled={busy !== null} className={cn(BTN_SECONDARY, 'text-rose-600')}><Trash2 className="h-3.5 w-3.5" /> Smazat</button>
           </div>
@@ -356,7 +367,8 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
             <div className="grid grid-cols-2 gap-y-1">
               <span>Registrace</span><span className="text-[#001161]">{formatCzDate(student.created_at, true)}</span>
               <span>Ověřeno</span><span className="text-[#001161]">{formatCzDate(student.verified_at, true)}</span>
-              <span>Přístup do</span><span className="text-[#001161]">{formatCzDate(student.access_extended_until && student.access_extended_until > (student.access_valid_until || '') ? student.access_extended_until : student.access_valid_until)}</span>
+              <span>Nárok do</span><span className="text-[#001161]">{formatCzDate(student.access_extended_until && student.access_extended_until > (student.access_valid_until || '') ? student.access_extended_until : student.access_valid_until)}</span>
+              <span>Kódy platí do</span><span className={cn('text-[#001161]', student.teacher_code && (!student.codes_valid_until || student.codes_valid_until < (student.access_valid_until || '')) && 'text-amber-700 font-semibold')}>{formatCzDate(student.codes_valid_until)}{student.codes_issued_at ? ` (založeno ${formatCzDate(student.codes_issued_at)})` : ''}</span>
               <span>Další check-in</span><span className="text-[#001161]">{formatCzDate(student.next_checkin_at)} (odesláno {student.checkin_count}×)</span>
               <span>Poslední odpověď</span><span className="text-[#001161]">{formatCzDate(student.last_response_at, true)}</span>
               <span>Legacy</span><span className="text-[#001161]">{student.legacy_result || '—'}{student.legacy_reason ? ` · ${student.legacy_reason}` : ''}</span>
@@ -457,10 +469,12 @@ function StudentsTab({ faculties, initialQueue, onQueueConsumed }: { faculties: 
         <select value={queue} onChange={(e) => { setQueue(e.target.value); setOffset(0); }} className={cn(INPUT, 'w-auto')}>
           <option value="">Bez fronty</option>
           <option value="no_codes">Bez kódů</option>
+          <option value="extension_due">Prodloužit trial v legacy adminu</option>
           <option value="checkin_due">Check-in po termínu</option>
           <option value="graduating_soon">Končí do 90 dnů</option>
           <option value="alumni_no_school">Absolventi bez školy</option>
           <option value="pending_old">Neověřeno &gt; 3 dny</option>
+          <option value="imported">Importovaní z kontaktů (nepozvaní)</option>
         </select>
         <button type="button" onClick={() => void load()} className={BTN_SECONDARY}><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /></button>
         <button type="button" onClick={() => void exportCsv()} className={BTN_SECONDARY}><Download className="h-3.5 w-3.5" /> CSV</button>
@@ -690,8 +704,6 @@ function FacultyCard({ faculty, templates, onReload }: { faculty: StudentProgram
     }
   };
 
-  const codesExpiring = faculty.teacher_code && (!faculty.codes_valid_until || faculty.codes_valid_until <= new Date(Date.now() + 21 * 864e5).toISOString().slice(0, 10));
-
   return (
     <div className="rounded-2xl border border-gray-100 bg-white">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-3 px-4 py-3 text-left">
@@ -704,7 +716,6 @@ function FacultyCard({ faculty, templates, onReload }: { faculty: StudentProgram
           {faculty.kind === 'pedf' && <Pill className="bg-violet-50 text-violet-700">PedF</Pill>}
           <Pill className={OUTREACH_COLORS[faculty.outreach_status]}>{FACULTY_OUTREACH_LABELS[faculty.outreach_status]}</Pill>
           <span className={cn('rounded-full px-2.5 py-0.5 text-[12px] font-bold', faculty.stats.active > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-400')}>{faculty.stats.active} aktivních</span>
-          {codesExpiring && <Pill className="bg-amber-50 text-amber-700"><KeyRound className="mr-1 h-3 w-3" /> prodloužit</Pill>}
           {faculty.next_followup_at && faculty.next_followup_at <= new Date().toISOString() && faculty.outreach_status === 'contacted' && <Pill className="bg-amber-50 text-amber-700"><Clock className="mr-1 h-3 w-3" /> follow-up</Pill>}
         </div>
       </button>
@@ -734,27 +745,6 @@ function FacultyCard({ faculty, templates, onReload }: { faculty: StudentProgram
             <label className="col-span-2 text-[11px] font-semibold text-gray-500">Poznámky
               <input value={merged.notes || ''} onChange={(e) => set('notes', e.target.value)} className={INPUT} />
             </label>
-          </div>
-
-          <div className="rounded-xl border border-violet-100 bg-violet-50/50 p-4">
-            <p className="mb-2 flex items-center gap-1.5 text-[12px] font-bold text-violet-900"><KeyRound className="h-3.5 w-3.5" /> Přístupové kódy fakulty (jedna „škola“ v legacy adminu)</p>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <label className="text-[11px] font-semibold text-gray-500">Kód učitele
-                <input value={merged.teacher_code || ''} onChange={(e) => set('teacher_code', e.target.value)} className={cn(INPUT, 'font-mono')} />
-              </label>
-              <label className="text-[11px] font-semibold text-gray-500">Kód žáka
-                <input value={merged.student_code || ''} onChange={(e) => set('student_code', e.target.value)} className={cn(INPUT, 'font-mono')} />
-              </label>
-              <label className="text-[11px] font-semibold text-gray-500">Platí do
-                <input type="date" value={merged.codes_valid_until || ''} onChange={(e) => set('codes_valid_until', e.target.value || null)} className={INPUT} />
-              </label>
-              <label className="text-[11px] font-semibold text-gray-500">Poznámka ke kódům
-                <input value={merged.codes_note || ''} onChange={(e) => set('codes_note', e.target.value)} className={INPUT} />
-              </label>
-            </div>
-            <p className="mt-2 text-[11px] text-violet-800/80">
-              {faculty.codes_source === 'legacy_trial' ? `Založeno automaticky přes free-trial API ${formatCzDate(faculty.codes_issued_at)} — 14denní trial, prodlužte v legacy adminu a zapište datum.` : faculty.codes_source === 'manual' ? 'Zadáno ručně.' : 'Zatím bez kódů — první ověřený student je založí automaticky (nebo je sem vložte z legacy adminu předem).'}
-            </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
@@ -904,20 +894,21 @@ function GoalsTab() {
       </div>
       <div className="rounded-2xl border border-gray-100 bg-white p-5">
         <p className="mb-1 text-[14px] font-bold text-[#001161]">Nastavení programu</p>
-        <p className="mb-4 text-[12px] text-gray-500">Jak vznikají kódy, jak často píšeme studentům, kam chodí denní přehled.</p>
+        <p className="mb-4 text-[12px] text-gray-500">Každý student má vlastní kódy z legacy free-trial API (organizace „Jméno – student Fakulta“). Tady se nastavuje, jak se volá, jak často píšeme studentům a kam chodí denní přehled.</p>
         <div className="grid grid-cols-2 gap-3">
-          <label className="text-[11px] font-semibold text-gray-500">Kódy z legacy API
-            <select value={settings.legacyMode} onChange={(e) => setSettings({ ...settings, legacyMode: e.target.value as StudentProgramSettings['legacyMode'] })} className={INPUT}>
-              <option value="per_faculty">Jedna škola na fakultu (doporučeno)</option>
-              <option value="per_student">Vlastní trial pro každého studenta</option>
-            </select>
-          </label>
           <label className="text-[11px] font-semibold text-gray-500">Zakládat kódy automaticky
             <select value={settings.autoIssueCodes ? '1' : '0'} onChange={(e) => setSettings({ ...settings, autoIssueCodes: e.target.value === '1' })} className={INPUT}>
-              <option value="1">Ano (free-trial API)</option>
-              <option value="0">Ne, vkládám ručně</option>
+              <option value="1">Ano — každý student vlastní trial přes free-trial API</option>
+              <option value="0">Ne, kódy vkládám ručně</option>
             </select>
           </label>
+          <label className="text-[11px] font-semibold text-gray-500">IČO v legacy volání
+            <select value={settings.legacyVatMode} onChange={(e) => setSettings({ ...settings, legacyVatMode: e.target.value as StudentProgramSettings['legacyVatMode'] })} className={INPUT}>
+              <option value="none">Neposílat (vlastní organizace na studenta)</option>
+              <option value="university_ico">IČO univerzity</option>
+            </select>
+          </label>
+          <label className="text-[11px] font-semibold text-gray-500">Délka trialu z API (dny)<input type="number" min={1} max={3650} value={settings.legacyTrialDays} onChange={(e) => setSettings({ ...settings, legacyTrialDays: Number(e.target.value) })} className={INPUT} /></label>
           <label className="text-[11px] font-semibold text-gray-500">Interval check-inu (dny)<input type="number" min={30} max={365} value={settings.checkinIntervalDays} onChange={(e) => setSettings({ ...settings, checkinIntervalDays: Number(e.target.value) })} className={INPUT} /></label>
           <label className="text-[11px] font-semibold text-gray-500">Varovat před koncem kódů (dny)<input type="number" min={1} max={90} value={settings.extensionWarnDays} onChange={(e) => setSettings({ ...settings, extensionWarnDays: Number(e.target.value) })} className={INPUT} /></label>
           <label className="col-span-2 text-[11px] font-semibold text-gray-500">Denní přehled a upozornění na e-mail<input value={settings.digestEmail} onChange={(e) => setSettings({ ...settings, digestEmail: e.target.value })} placeholder="prázdné = neposílat" className={INPUT} /></label>
@@ -965,8 +956,8 @@ function MethodologyTab() {
         <p><strong>Nepoužívá / neodpovídá</strong>: check-in dál chodí (max. 2× ročně), ale bez dalších aktivit. Po dvou nezodpovězených check-inech je engagement <em>inactive</em> — signál pro fakultu (nestačí odkaz, je potřeba workshop) a pro nás (co v aplikaci chybí). Přístup se kvůli nečinnosti neruší, ruší se jen po vypršení nebo na žádost.</p>
       </Block>
       <Block title="Kódy a legacy admin">
-        <p>Přístup do aplikace stále řídí legacy Vividbooks (kódy školy). Program používá princip <strong>jedna fakulta = jedna škola</strong>: první ověřený student založí přes free-trial API 14denní trial na fakultu (IČO univerzity), kódy se uloží k fakultě a dostane je každý další student.</p>
-        <p>Obchod pak v legacy adminu prodlouží platnost fakultní školy (ideálně na celý akademický rok) a zapíše datum do <em>Platí do</em>. Cron hlídá konec a 21 dní předem to dá do denního přehledu. Kódy jde také vložit ručně (bez volání API).</p>
+        <p>Přístup do aplikace stále řídí legacy Vividbooks (kódy školy). <strong>Každý student má vlastní kódy</strong>: při ověření e-mailu se zavolá free-trial API pod jménem studenta (Position „Student“, organizace „Jméno – student Fakulta“) a vznikne 14denní trial s vlastní dvojicí kódů.</p>
+        <p>Obchod pak v legacy adminu prodlouží studentův trial (ideálně do konce studia + 6 měsíců) a zapíše datum do <em>Kódy platí do</em> v detailu studenta. Cron hlídá konec 21 dní předem — fronta <em>Prodloužit trial v legacy adminu</em> a denní přehled. Když API kódy nevrátí, student je ve frontě <em>Bez kódů</em>: „Založit kódy“ zkusí API znovu, nebo se kódy vloží ručně.</p>
       </Block>
       <Block title="Fakulty: oslovení a pokrytí">
         <p>Seznam = 9 pedagogických fakult (jádro) + fakulty s učitelskými programy. U každé sledujeme stav oslovení (neosloveno → osloveno → v jednání → partner/odmítli), kontakty (proděkan pro studium, vedoucí kateder didaktiky, studijní oddělení) a follow-up.</p>
