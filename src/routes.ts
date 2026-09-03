@@ -176,6 +176,11 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/NovinkaDetailRoute'), 'NovinkaDetailRoute'),
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            { path: 'studenti', lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramPage') },
+            {
+              path: 'studenti/aktualizace',
+              lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramUpdatePage'),
+            },
             { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
             {
               path: 'dalsi-produkty',
@@ -258,6 +263,7 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/MarketingContactsPage')),
         },
         { path: 'skoly', lazy: lazyDefault(() => import('./components/admin/SchoolsUploadPage')) },
+        { path: 'studenti', lazy: lazyDefault(() => import('./components/admin/StudentProgramAdminPage')) },
         {
           path: 'growth-agent',
           lazy: lazyDefault(() => import('./components/admin/GrowthAgentPage')),

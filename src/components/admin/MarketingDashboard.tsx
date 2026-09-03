@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Radio, Megaphone, Users, School, Sparkles, Brain,
-  ArrowRight, BarChart3, Mail, Target, Image, Search,
+  ArrowRight, BarChart3, Mail, Target, Image, Search, GraduationCap,
 } from 'lucide-react';
 import { fetchCollection } from '../../utils/adminApi';
 import { projectId } from '../../utils/supabase/info';
@@ -42,6 +42,7 @@ export default function MarketingDashboard() {
         setStats([
           { label: 'Webináře', icon: Radio, count: webinare.length, path: '/marketing/webinare', color: '#10b981', bgColor: '#ecfdf5' },
           { label: 'Kontakty', icon: Users, count: '\u2192', path: '/marketing/kontakty', color: '#6366f1', bgColor: '#eef2ff' },
+          { label: 'Studenti učitelství', icon: GraduationCap, count: '\u2192', path: '/marketing/studenti', color: '#d97706', bgColor: '#fffbeb' },
           { label: 'E-maily', icon: Mail, count: '\u2192', path: '/mailing/emaily', color: '#7C3AED', bgColor: '#f5f3ff' },
           { label: 'Galerie', icon: Image, count: '\u2192', path: '/marketing/galerie', color: '#f97316', bgColor: '#fff7ed' },
           { label: 'Popup Manager', icon: Megaphone, count: '\u2192', path: '/marketing/popupy', color: '#f59e0b', bgColor: '#fffbeb' },

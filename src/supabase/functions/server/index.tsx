@@ -23,6 +23,7 @@ import {
   resolveAudienceSubscriberIds,
 } from './audienceFilter.ts';
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
+import { registerStudentProgramRoutes } from './studentProgram.ts';
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { runEngagementAudienceRecompute } from './engagementAudienceRecompute.ts';
 import { runWebinarAudienceRecompute } from './webinarAudienceRecompute.ts';
@@ -8857,6 +8858,7 @@ app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
     { url: '/dalsi-produkty', changefreq: 'monthly', priority: '0.7' },
     { url: '/kontakt',     changefreq: 'monthly', priority: '0.6' },
     { url: '/vyzkousejte', changefreq: 'monthly', priority: '0.9' },
+    { url: '/studenti',    changefreq: 'monthly', priority: '0.8' },
     { url: '/objednat',    changefreq: 'monthly', priority: '0.7' },
   ];
 
@@ -10293,6 +10295,14 @@ app.post('/make-server-93a20b6f/cron/automation-runner', async (c) => {
   } catch (e: any) {
     return c.json({ ok: false, error: e?.message || String(e) }, 500);
   }
+});
+
+/* ── Studentský program (studenti učitelství, /studenti + admin Marketing → Studenti) ── */
+registerStudentProgramRoutes(app, {
+  serviceClient: mailingServiceClient,
+  publicSiteOrigin: getPublicSiteOrigin,
+  assertEmailDeliverable,
+  upsertSubscriber: (sb, input) => upsertSubscriber(sb, input as Parameters<typeof upsertSubscriber>[1]),
 });
 
 /* ── Tracking: open pixel + click redirect ── */

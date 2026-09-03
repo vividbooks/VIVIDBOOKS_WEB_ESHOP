@@ -98,6 +98,14 @@ import {
   mergeMcpServers,
 } from './mcp/install-cursor-mcp.mjs';
 import { saveWebinarSurveyPartialAnswer } from '../src/utils/webinarSurveyPartialSave.ts';
+import {
+  accessValidUntilFromGraduation,
+  graduationMonthToDate,
+  matchUniversityEmail,
+  STUDENT_PROGRAM_FACULTIES,
+  STUDENT_PROGRAM_PEDF_COUNT,
+} from '../supabase/functions/_shared/student-program-faculties.ts';
+import { resolveWebflowLegacyRedirect } from '../src/config/webflowLegacyRedirects.ts';
 
 type UnitTest = {
   name: string;
@@ -1758,6 +1766,63 @@ registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí 
       Reflect.set(globalThis, 'fetch', originalFetch);
     }
   }
+});
+
+/* ── Studentský program: fakulty, univerzitní e-maily, konec studia ─────────── */
+
+registerTest('studentský program: seznam fakult má 9 pedagogických fakult a unikátní id', () => {
+  assert.equal(STUDENT_PROGRAM_PEDF_COUNT, 9);
+  const ids = STUDENT_PROGRAM_FACULTIES.map((f) => f.id);
+  assert.equal(new Set(ids).size, ids.length, 'id fakult musí být unikátní');
+  for (const f of STUDENT_PROGRAM_FACULTIES) {
+    assert.match(f.ico, /^\d{8}$/, `${f.id}: IČO musí mít 8 číslic`);
+    assert.ok(f.emailDomains.length > 0, `${f.id}: chybí doména`);
+  }
+});
+
+registerTest('studentský program: univerzitní e-mail se pozná i na subdoméně, pedagogická fakulta je první', () => {
+  const uk = matchUniversityEmail('jan.novak@student.pedf.cuni.cz');
+  assert.ok(uk);
+  assert.equal(uk.universityShort, 'UK');
+  assert.equal(uk.faculties[0].id, 'uk-pedf');
+  assert.ok(uk.faculties.some((f) => f.id === 'uk-mff'));
+
+  const mu = matchUniversityEmail('123456@mail.muni.cz');
+  assert.ok(mu);
+  assert.equal(mu.faculties[0].kind, 'pedf');
+
+  const zcu = matchUniversityEmail('SOVA@students.zcu.cz');
+  assert.ok(zcu);
+  assert.equal(zcu.faculties[0].id, 'zcu-fpe');
+});
+
+registerTest('studentský program: soukromé a cizí domény univerzitní nejsou', () => {
+  assert.equal(matchUniversityEmail('někdo@gmail.com'), null);
+  assert.equal(matchUniversityEmail('ucitel@zsnovak.cz'), null);
+  assert.equal(matchUniversityEmail('bezzavinace'), null);
+  /** Podobná doména nesmí projít jen kvůli koncovce. */
+  assert.equal(matchUniversityEmail('x@notcuni.cz'), null);
+});
+
+registerTest('studentský program: konec studia → poslední den měsíce a přístup +6 měsíců', () => {
+  assert.equal(graduationMonthToDate('2027-06'), '2027-06-30');
+  assert.equal(graduationMonthToDate('2028-02'), '2028-02-29');
+  assert.equal(graduationMonthToDate('2027-13'), null);
+  assert.equal(graduationMonthToDate('nesmysl'), null);
+  assert.equal(accessValidUntilFromGraduation('2027-06-30'), '2027-12-30');
+  assert.equal(accessValidUntilFromGraduation('2027-08-31'), '2028-02-29');
+  assert.equal(accessValidUntilFromGraduation('2027-12-31'), '2028-06-30');
+});
+
+registerTest('studentský program: staré adresy /studenti vedou na novou microsite, ne na starý web', () => {
+  const cs = resolveWebflowLegacyRedirect('/cs/studenti');
+  assert.equal(cs.kind, 'internal');
+  assert.equal(cs.kind === 'internal' && cs.target, '/studenti');
+  const thanks = resolveWebflowLegacyRedirect('/cs/studenti-ucitelstvi/dekujeme');
+  assert.equal(thanks.kind, 'internal');
+  assert.equal(thanks.kind === 'internal' && thanks.target, '/studenti');
+  const direct = resolveWebflowLegacyRedirect('/studenti');
+  assert.notEqual(direct.kind, 'external', '/studenti je nová stránka webu, nesmí přesměrovat na old.vividbooks.com');
 });
 
 await run();
