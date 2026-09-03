@@ -2,9 +2,11 @@ import React, { useEffect } from 'react';
 import { useParams, Navigate, useSearchParams } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarLivePage } from './WebinarLivePage';
+import { WebinarLiveRedirectPage } from './WebinarLiveRedirectPage';
 import { Loader2 } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
 import { recallLiveUrl, rememberLiveUrl } from '../utils/webinarLiveFallback';
+import { liveStreamUrlOf, resolveLiveDelivery } from '../utils/webinarLiveDelivery';
 import { WebinarUnavailableNotice } from './WebinarUnavailableNotice';
 
 function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
@@ -14,15 +16,6 @@ function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   if (diffMin < -60) return 'upcoming';
   if (diffMin < 150) return 'live';
   return 'ended';
-}
-
-function streamUrlOf(w: Webinar): string {
-  return (
-    (w as { liveUrl?: string }).liveUrl ||
-    w.youtubeUrl ||
-    (w as { recordingUrl?: string }).recordingUrl ||
-    ''
-  );
 }
 
 export function WebinarLiveRoute() {
@@ -39,7 +32,7 @@ export function WebinarLiveRoute() {
    */
   useEffect(() => {
     if (!webinar) return;
-    const url = streamUrlOf(webinar);
+    const url = liveStreamUrlOf(webinar);
     if (url) rememberLiveUrl(webinar, url);
   }, [webinar]);
 
@@ -74,15 +67,27 @@ export function WebinarLiveRoute() {
     return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}/live${searchSuffix}`} replace />;
   }
 
+  /**
+   * Režim „zapsat příchod a přesměrovat na YouTube" — vlastní přehrávač, chat
+   * ani reakce se nezobrazují, takže výpadek webu nemůže divákovi zavřít stream.
+   * Bez vyplněné URL streamu není kam přesměrovat → padáme na běžnou live stránku.
+   */
+  const delivery = resolveLiveDelivery(webinar);
+  const redirectUrl = delivery.kind === 'youtube_redirect' ? delivery.streamUrl : '';
+
   // Preview z adminu (tlačítko „Náhled") → vždy zobrazit live stránku fullscreen
   if (isPreview) {
-    return <WebinarLivePage webinar={webinar} />;
+    return redirectUrl
+      ? <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />
+      : <WebinarLivePage webinar={webinar} />;
   }
 
   // Dev switch → přímý vstup bez čekání na live
   const devImminentId = typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null;
   if (devImminentId === webinar.id || devImminentId === webinar.slug) {
-    return <WebinarLivePage webinar={webinar} />;
+    return redirectUrl
+      ? <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />
+      : <WebinarLivePage webinar={webinar} />;
   }
 
   // Webinář ještě nezačal → přesměrovat na detail stránku (má sidebar, registraci atd.)
@@ -91,6 +96,11 @@ export function WebinarLiveRoute() {
     return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
   }
 
-  // Live nebo skončený → fullscreen live stránka
+  // Probíhá a je v režimu přesměrování → zapsat příchod a poslat na YouTube
+  if (status === 'live' && redirectUrl) {
+    return <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />;
+  }
+
+  // Live nebo skončený → fullscreen live stránka (po skončení i se záznamem)
   return <WebinarLivePage webinar={webinar} />;
 }

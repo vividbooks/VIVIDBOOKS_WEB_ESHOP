@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
+import { attendeesCountLabel, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
 import {
   appEntryTargetUrl,
   forgetAppEntryChoice,
@@ -134,6 +135,47 @@ async function run() {
     process.exitCode = 1;
   }
 }
+
+registerTest('režim přesměrování pustí diváka na YouTube, jen když je kam', () => {
+  const yt = 'https://www.youtube.com/watch?v=yeh86gzG_zo';
+
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: yt }),
+    { kind: 'youtube_redirect', streamUrl: yt },
+  );
+
+  /** Bez odkazu nemá kam přesměrovat → běžná live stránka s čekárnou na stream. */
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: '' }),
+    { kind: 'live_stream' },
+  );
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: '   ' }),
+    { kind: 'live_stream' },
+  );
+
+  /** Cizí schéma diváka nikam neposílá. */
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: 'javascript:alert(1)' }),
+    { kind: 'live_stream' },
+  );
+
+  /** Ostatní režimy zůstávají beze změny. */
+  assert.deepEqual(resolveLiveDelivery({ liveDeliveryMode: 'google_meet', youtubeUrl: yt }), { kind: 'google_meet' });
+  assert.deepEqual(resolveLiveDelivery({ liveDeliveryMode: 'live_stream', youtubeUrl: yt }), { kind: 'live_stream' });
+  assert.deepEqual(resolveLiveDelivery({ youtubeUrl: yt }), { kind: 'live_stream' }, 'bez nastavení platí dosavadní chování');
+
+  /** Počet přihlášených na mezistránce musí být česky správně. */
+  assert.equal(attendeesCountLabel(1), '1 účastník');
+  assert.equal(attendeesCountLabel(3), '3 účastníci');
+  assert.equal(attendeesCountLabel(5), '5 účastníků');
+  assert.equal(attendeesCountLabel(124), '124 účastníků');
+  assert.equal(attendeesCountLabel(0), '0 účastníků');
+
+  /** Živý odkaz má přednost před záznamem — po webináři se sem doplňuje recordingUrl. */
+  assert.equal(liveStreamUrlOf({ liveUrl: yt, recordingUrl: 'https://youtu.be/aaaaaaaaaaa' }), yt);
+  assert.equal(liveStreamUrlOf({ recordingUrl: 'https://youtu.be/aaaaaaaaaaa' }), 'https://youtu.be/aaaaaaaaaaa');
+});
 
 registerTest('computeOrderTrackingToken is deterministic', async () => {
   const secret = 'test-secret';
