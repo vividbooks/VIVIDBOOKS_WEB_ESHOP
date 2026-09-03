@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
+import { useDvppVideos, type DvppVideo } from '../contexts/DvppVideosContext';
 import type { Webinar } from '../data/webinars';
 
 const FF = "'Fenomen Sans', sans-serif";
@@ -128,19 +129,31 @@ function matchHowToWebinar(card: HowToCard, webinars: Webinar[]): Webinar | unde
   });
 }
 
+/** Párování stejné jako u WebinarDetailPage/DvppVideoDetailPage — server doplní `webinarSlugForSurvey`. */
+function matchDvppVideoForCard(webinar: Webinar, videos: DvppVideo[]): DvppVideo | undefined {
+  const wSlug = String(webinar.slug || webinar.id || '');
+  return videos.find((v) => v.webinarSlugForSurvey === wSlug);
+}
+
 export function SubjectHowToWebinarsSection() {
   const navigate = useNavigate();
   const { webinars } = useWebinars();
+  const { videos: dvppVideos } = useDvppVideos();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrolled, setScrolled] = useState(0);
 
   const cards = useMemo(() => {
     const series = HOW_TO_CARDS.map((card) => {
       const live = matchHowToWebinar(card, webinars);
+      const recording = live?.isPast ? matchDvppVideoForCard(live, dvppVideos) : undefined;
       return {
         ...card,
         live,
-        href: live ? `/webinar/${live.slug || live.id}` : '/webinare',
+        href: recording
+          ? `/webinare/zaznam/${recording.id}`
+          : live
+          ? `/webinar/${live.slug || live.id}`
+          : '/webinare',
       };
     });
 
@@ -177,7 +190,7 @@ export function SubjectHowToWebinarsSection() {
       },
       ...series,
     ];
-  }, [webinars]);
+  }, [webinars, dvppVideos]);
 
   const scrollByDir = (dir: -1 | 1) => {
     scrollerRef.current?.scrollBy({ left: dir * CARD_SCROLL, behavior: 'smooth' });
