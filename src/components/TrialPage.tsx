@@ -18,6 +18,7 @@ import {
   DEPUTY_SCHOOL_STAGES,
   TEACHER_SUBJECTS_1ST,
   TEACHER_SUBJECTS_2ND,
+  givenNameWithoutTitles,
 } from '../utils/trialSubjectOptions';
 import { SubjectCheckbox } from './TrialSubjectCheckbox';
 
@@ -611,11 +612,27 @@ export function SchoolSearch({
   );
 }
 
+export type TrialFormPrefill = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  position?: string;
+  schoolName?: string;
+  ico?: string;
+  subjects1st?: string[];
+  subjects2nd?: string[];
+  schoolStages?: string[];
+  gdpr?: boolean;
+  newsletter?: boolean;
+};
+
 export interface TrialRegistrationFormProps {
   /** Vložený formulář bez stránkového layoutu */
   embedded?: boolean;
   /** Předvybrané předměty 2. stupeň (např. Mathematics-2) */
   defaultSubjects2nd?: string[];
+  /** Předvyplnění z webináře / trial tokenu — člověk jen doplní chybějící pole. */
+  initial?: TrialFormPrefill;
 }
 
 /* ══════════════════════════════════════════
@@ -624,10 +641,11 @@ export interface TrialRegistrationFormProps {
 export function TrialRegistrationForm({
   embedded: _embedded = false,
   defaultSubjects2nd,
+  initial,
 }: TrialRegistrationFormProps = {}) {
   // School + Pipedrive
-  const [schoolName, setSchoolName] = useState('');
-  const [ico, setIco] = useState('');
+  const [schoolName, setSchoolName] = useState(initial?.schoolName || '');
+  const [ico, setIco] = useState(initial?.ico || '');
   const [pdStatus, setPdStatus] = useState<PipedriveStatus>(null);
   const [pdMessage, setPdMessage] = useState('');
   const [pdLoading, setPdLoading] = useState(false);
@@ -639,14 +657,25 @@ export function TrialRegistrationForm({
   const [pdCheckDebugOpen, setPdCheckDebugOpen] = useState(false);
 
   // Form
-  const [form, setForm] = useState({ name: '', email: '', phone: '', position: '' });
+  const [form, setForm] = useState({
+    name: initial?.name || '',
+    email: initial?.email || '',
+    phone: initial?.phone || '',
+    position: initial?.position || '',
+  });
   /** Kódy předmětů (Webflow data-value), např. Mathematics-1 */
-  const [subjects2nd, setSubjects2nd] = useState<string[]>(() => defaultSubjects2nd ?? []);
-  const [subjects1st, setSubjects1st] = useState<string[]>([]);
+  const [subjects2nd, setSubjects2nd] = useState<string[]>(() =>
+    initial?.subjects2nd?.length ? [...initial.subjects2nd] : (defaultSubjects2nd ?? []),
+  );
+  const [subjects1st, setSubjects1st] = useState<string[]>(() =>
+    initial?.subjects1st?.length ? [...initial.subjects1st] : [],
+  );
   /** Zástupce ředitele: SchoolStage-1 | SchoolStage-2 */
-  const [schoolStages, setSchoolStages] = useState<string[]>([]);
-  const [gdprConsent, setGdprConsent] = useState(false);
-  const [newsletterConsent, setNewsletterConsent] = useState(false);
+  const [schoolStages, setSchoolStages] = useState<string[]>(() =>
+    initial?.schoolStages?.length ? [...initial.schoolStages] : [],
+  );
+  const [gdprConsent, setGdprConsent] = useState(!!initial?.gdpr);
+  const [newsletterConsent, setNewsletterConsent] = useState(!!initial?.newsletter);
   const [submitted, setSubmitted] = useState(false);
   /** Po úspěchu z API: přístupové kódy (žák / učitel) */
   const [trialResult, setTrialResult] = useState<FreeTrialSubmitResult | null>(null);
@@ -769,6 +798,12 @@ export function TrialRegistrationForm({
       finally { setEmailChecking(false); }
     }, 700);
   };
+
+  useEffect(() => {
+    if (initial?.email) checkEmail(initial.email);
+    // jen při otevření předvyplněného odkazu
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
@@ -1082,9 +1117,9 @@ export function TrialRegistrationForm({
                 <span className="absolute left-[3px] top-[3px] w-[18px] h-[18px] bg-white rounded-full shadow-sm transition-transform peer-checked:translate-x-[18px]" />
               </span>
               <span style={FF} className="text-[13px] text-[#001161]/80 leading-[1.5]">
-                <span className="font-bold text-[#001161]">{'📚 Chci dostávat novinky a tipy do výuky'}</span>
+                <span className="font-bold text-[#001161]">{'Souhlasím se zasíláním pozvánek na DVPP webináře a slevových akcí Vividbooks.'}</span>
                 <br />
-                {'Novinky, tipy do v\u00fduky a akce \u2014 pos\u00edl\u00e1me je jen tehdy, kdy\u017e stoj\u00ed za p\u0159e\u010dten\u00ed. Bez spamu.'}
+                {'Posíláme je jen tehdy, když stojí za to. Bez spamu.'}
               </span>
             </label>
 
@@ -1134,8 +1169,11 @@ export function TrialPage() {
   const [identity, setIdentity] = useState<VvbIdentity | null>(null);
   const [tokenLoading, setTokenLoading] = useState(!!tokenParam);
   const [tokenError, setTokenError] = useState('');
+  const [tokenPrefill, setTokenPrefill] = useState<TrialFormPrefill | null>(null);
+  const [tokenWebinarTitle, setTokenWebinarTitle] = useState('');
 
   useEffect(() => {
+    if (tokenParam) return;
     const saved = localStorage.getItem('vvb_identity');
     if (saved) {
       try {
@@ -1144,7 +1182,7 @@ export function TrialPage() {
         else setIdentity(parsed);
       } catch {}
     }
-  }, []);
+  }, [tokenParam]);
 
   useEffect(() => {
     if (!tokenParam) return;
@@ -1153,8 +1191,20 @@ export function TrialPage() {
       .then(r => r.json())
       .then(data => {
         if (data.valid) {
-          const id: VvbIdentity = { email: data.email, name: data.name, webinarId: data.webinarId, webinarTitle: data.webinarTitle, trialActivated: true, since: new Date().toISOString(), expires: data.expires };
-          setIdentity(id); localStorage.setItem('vvb_identity', JSON.stringify(id));
+          setTokenPrefill({
+            name: String(data.name || ''),
+            email: String(data.email || ''),
+            phone: String(data.phone || ''),
+            position: String(data.trialPosition || ''),
+            schoolName: String(data.schoolName || ''),
+            ico: String(data.ico || ''),
+            subjects1st: Array.isArray(data.subjects1st) ? data.subjects1st : [],
+            subjects2nd: Array.isArray(data.subjects2nd) ? data.subjects2nd : [],
+            schoolStages: Array.isArray(data.schoolStages) ? data.schoolStages : [],
+            gdpr: !!data.gdpr,
+            newsletter: !!data.newsletter,
+          });
+          setTokenWebinarTitle(String(data.webinarTitle || ''));
         } else setTokenError(data.error || 'Neplatn\u00fd odkaz.');
       })
       .catch(() => setTokenError('Nepoda\u0159ilo se ov\u011b\u0159it odkaz.'))
@@ -1172,6 +1222,31 @@ export function TrialPage() {
     );
   }
 
+  if (tokenParam && tokenPrefill) {
+    return (
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}
+        className="min-h-[80vh] flex items-center justify-center px-4 py-12">
+        <SEOHead title="Dokončete zkušební přístup" path="/vyzkousejte" description="Dokončete registraci a získejte přístup k materiálům Vividbooks." />
+        <div className="w-full max-w-[520px]">
+          <div className="text-center mb-10">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#E8942A]/10 mb-5">
+              <BookOpen className="w-8 h-8 text-[#E8942A]" />
+            </div>
+            <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] md:text-[36px] leading-[1.2] mb-4">
+              {'Dokon\u010dete registraci \u2014 p\u0159\u00edstup budete m\u00edt hned.'}
+            </h1>
+            <p style={FF} className="text-[#001161]/60 text-[15px] md:text-[16px] leading-relaxed">
+              {tokenWebinarTitle
+                ? `\u00dadaje z p\u0159ihl\u00e1\u0161ky na webin\u00e1\u0159 ${tokenWebinarTitle} jsme p\u0159edvyplnili. Zkontrolujte je, dopl\u0148te chyb\u011bj\u00edc\u00ed a ode\u0161lete.`
+                : '\u00dadaje z p\u0159ihl\u00e1\u0161ky jsme p\u0159edvyplnili. Zkontrolujte je, dopl\u0148te chyb\u011bj\u00edc\u00ed a ode\u0161lete.'}
+            </p>
+          </div>
+          <TrialRegistrationForm initial={tokenPrefill} />
+        </div>
+      </motion.div>
+    );
+  }
+
   if (identity && identity.trialActivated) {
     const expiresDate = identity.expires ? new Date(identity.expires).toLocaleDateString('cs-CZ', { day: 'numeric', month: 'long', year: 'numeric' }) : null;
     return (
@@ -1184,7 +1259,7 @@ export function TrialPage() {
               <Sparkles className="w-8 h-8 text-[#7C3AED]" />
             </div>
             <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[28px] leading-[1.2] mb-2">
-              {'V\u00edt\u00e1me v\u00e1s, '}{identity.name.split(' ')[0]}{'!'}
+              {'V\u00edt\u00e1me v\u00e1s, '}{givenNameWithoutTitles(identity.name)}{'!'}
             </h1>
             {identity.webinarTitle && (
               <p style={FF} className="text-[#7C3AED] text-[14px] font-bold mb-4">{'Po registraci na: '}{identity.webinarTitle}</p>
@@ -1203,7 +1278,16 @@ export function TrialPage() {
               </div>
             </div>
             <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'T\u00fdm Vividbooks v\u00e1m brzy po\u0161le p\u0159\u00edstupov\u00e9 \u00fadaje.'}</p>
-            <a href="/" className="inline-flex items-center gap-2 bg-[#001161] hover:bg-[#001161]/90 text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline" style={FF}>
+            <Link
+              to={APP_ENTRY_PATH}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline"
+              style={FF}>
+              <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
+              {'Otev\u0159\u00edt aplikaci'}
+            </Link>
+            <a href="/" className="block mx-auto mt-3 text-[13px] text-[#001161]/45 hover:text-[#001161]/70 transition-colors no-underline" style={FF}>
               {'Prohl\u00e9dnout u\u010debnice'}
             </a>
             <button onClick={() => { localStorage.removeItem('vvb_identity'); setIdentity(null); }}

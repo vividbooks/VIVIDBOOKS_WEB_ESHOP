@@ -48,6 +48,42 @@ export const DEPUTY_SCHOOL_STAGES: TrialSelectOption[] = [
  */
 export type TrialSubjectQuestion = 'subjects' | 'stages' | 'none';
 
+const ACADEMIC_TITLE_RE =
+  /^(mgr|ing|phdr|rndr|paeddr|mudr|judr|mvdr|thdr|bc|bca|mba|doc|prof|dr|rsdr|phd|ph\.d)\.?$/i;
+const TRAILING_DEGREE_RE = /,?\s*(mba|phd|ph\.d|dr)\.?\s*$/i;
+
+/** „Mgr. Lenka Bakulová, MBA“ → „Lenka Bakulová“ */
+export function displayNameWithoutTitles(full: string): string {
+  const parts = String(full || '')
+    .replace(TRAILING_DEGREE_RE, '')
+    .replace(/[,\s]+$/g, '')
+    .trim()
+    .split(/\s+/)
+    .filter((p) => p && !ACADEMIC_TITLE_RE.test(p.replace(/\.$/, '')));
+  return parts.join(' ').trim() || String(full || '').trim();
+}
+
+/** Křestní jméno bez titulů — „Mgr. Lenka Bakulová, MBA“ → „Lenka“ */
+export function givenNameWithoutTitles(full: string): string {
+  const clean = displayNameWithoutTitles(full);
+  return clean.split(/\s+/)[0] || clean;
+}
+
+/**
+ * Webinářová pozice („Učitel/ka na ZŠ“) → hodnota v trial selectu („Učitel/ka“).
+ * Bez toho se na /vyzkousejte neotevře výběr předmětů.
+ */
+export function mapWebinarPositionToTrialPosition(position: string): string {
+  const p = normalizePositionLabel(position);
+  if (/ucitel/.test(p)) return 'Učitel/ka';
+  if (/zastupc/.test(p)) return 'Zástupce/kyně ředitele';
+  if (/reditel/.test(p)) return 'Ředitel/ka';
+  if (/metodik/.test(p)) return 'Metodik/čka';
+  if (/rodic/.test(p)) return 'Rodič';
+  if (!p) return '';
+  return 'Jiné';
+}
+
 function normalizePositionLabel(position: string): string {
   return String(position || '')
     .normalize('NFD')
