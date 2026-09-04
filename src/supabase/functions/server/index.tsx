@@ -1,4 +1,5 @@
 import { Hono } from 'npm:hono';
+import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
 import type { Context } from 'npm:hono';
 import { cors } from 'npm:hono/cors';
 import { logger } from 'npm:hono/logger';
@@ -1351,6 +1352,12 @@ const corsOptions = {
 };
 
 app.use('*', cors(corsOptions));
+
+// Hlídač produkční databáze Vividbooks Ultra (e-mail při výpadku), volá ho pg_cron každou minutu.
+app.post('/make-server-93a20b6f/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.post('/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.get('/make-server-93a20b6f/ultra-watchdog/status', handleUltraWatchdogStatus);
+app.get('/ultra-watchdog/status', handleUltraWatchdogStatus);
 app.use('/*', cors(corsOptions));
 app.options('*', cors(corsOptions));
 app.use('/*', logger(console.log));
