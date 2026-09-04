@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
+import { attendeesCountLabel, isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
 import {
   appEntryTargetUrl,
   forgetAppEntryChoice,
@@ -47,6 +48,13 @@ import {
   buildTrialDealNoteText,
   TRIAL_PIPEDRIVE_LABEL_NAME,
 } from '../supabase/functions/_shared/trial-pipedrive-note.ts';
+import {
+  mapSchoolInquiryToPipedriveOrderItems,
+  parseSchoolBundleLineQuantity,
+  schoolInquiryPickupPointName,
+  schoolInquiryShippingMethod,
+  schoolInquiryShippingPriceHaler,
+} from '../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
 import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
@@ -97,6 +105,7 @@ import {
   interpolateWorkspaceFolder,
   mergeMcpServers,
 } from './mcp/install-cursor-mcp.mjs';
+import { saveWebinarSurveyPartialAnswer } from '../src/utils/webinarSurveyPartialSave.ts';
 
 type UnitTest = {
   name: string;
@@ -133,6 +142,54 @@ async function run() {
     process.exitCode = 1;
   }
 }
+
+registerTest('režim přesměrování pustí diváka na YouTube, jen když je kam', () => {
+  const yt = 'https://www.youtube.com/watch?v=yeh86gzG_zo';
+
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: yt }),
+    { kind: 'youtube_redirect', streamUrl: yt },
+  );
+
+  /** Bez odkazu nemá kam přesměrovat → běžná live stránka s čekárnou na stream. */
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: '' }),
+    { kind: 'live_stream' },
+  );
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: '   ' }),
+    { kind: 'live_stream' },
+  );
+
+  /** Cizí schéma diváka nikam neposílá. */
+  assert.deepEqual(
+    resolveLiveDelivery({ liveDeliveryMode: 'youtube_redirect', youtubeUrl: 'javascript:alert(1)' }),
+    { kind: 'live_stream' },
+  );
+
+  /** Ostatní režimy zůstávají beze změny. */
+  assert.deepEqual(resolveLiveDelivery({ liveDeliveryMode: 'google_meet', youtubeUrl: yt }), { kind: 'google_meet' });
+  assert.deepEqual(resolveLiveDelivery({ liveDeliveryMode: 'live_stream', youtubeUrl: yt }), { kind: 'live_stream' });
+  assert.deepEqual(resolveLiveDelivery({ youtubeUrl: yt }), { kind: 'live_stream' }, 'bez nastavení platí dosavadní chování');
+
+  /** Počet přihlášených na mezistránce musí být česky správně. */
+  assert.equal(attendeesCountLabel(1), '1 účastník');
+  assert.equal(attendeesCountLabel(3), '3 účastníci');
+  assert.equal(attendeesCountLabel(5), '5 účastníků');
+  assert.equal(attendeesCountLabel(124), '124 účastníků');
+  assert.equal(attendeesCountLabel(0), '0 účastníků');
+
+  /** Den konání = kalendářní den, ne „hodina před“. */
+  const w = { day: 3, monthNum: 9, year: 2026 };
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 3, 8, 0).getTime()), true, 'ráno v den konání');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 3, 23, 59).getTime()), true, 'večer v den konání');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 2, 23, 59).getTime()), false, 'den před');
+  assert.equal(isWebinarDay(w, new Date(2026, 8, 4, 0, 1).getTime()), false, 'den po');
+
+  /** Živý odkaz má přednost před záznamem — po webináři se sem doplňuje recordingUrl. */
+  assert.equal(liveStreamUrlOf({ liveUrl: yt, recordingUrl: 'https://youtu.be/aaaaaaaaaaa' }), yt);
+  assert.equal(liveStreamUrlOf({ recordingUrl: 'https://youtu.be/aaaaaaaaaaa' }), 'https://youtu.be/aaaaaaaaaaa');
+});
 
 registerTest('computeOrderTrackingToken is deterministic', async () => {
   const secret = 'test-secret';
@@ -1703,6 +1760,191 @@ registerTest('MCP instalátor: zápis do ~/.cursor/mcp.json zálohuje a nepřep�
   assert.equal(JSON.parse(readFileSync(written.backupPath, 'utf8')).mcpServers.pipedrive, undefined);
 
   rmSync(tmpHome, { recursive: true, force: true });
+});
+
+/**
+ * Zaseknuté spojení dřív uvěznilo účastnici na posledním kroku dotazníku: `fetch` bez
+ * timeoutu se nikdy nevyřešil, tlačítko „dál“ zůstalo zablokované a certifikát nevznikl.
+ */
+registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí chybu, ne věčné čekání', async () => {
+  const originalFetch = Reflect.get(globalThis, 'fetch');
+  const originalSetTimeout = globalThis.setTimeout;
+  const args = { webinarId: 'matematika-2026', email: 'ucitelka@skola.cz', questionId: 'q1', value: 'A' };
+
+  try {
+    /** Timeout je 12 s — ať test neběží 12 s, necháme časovač doběhnout hned. */
+    Reflect.set(globalThis, 'setTimeout', ((fn: () => void) =>
+      originalSetTimeout(fn, 0)) as unknown as typeof setTimeout);
+
+    /** Server, který nikdy neodpoví: přesně případ kolísavé Wi-Fi nebo proxy. */
+    Reflect.set(globalThis, 'fetch', ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      })) as unknown as typeof fetch);
+
+    /** Bez timeoutu by se níže uvedený `await` nikdy nevrátil — ať test selže, ne visí. */
+    let guardTimer: ReturnType<typeof originalSetTimeout> | undefined;
+    const guard = new Promise<never>((_resolve, reject) => {
+      guardTimer = originalSetTimeout(
+        () => reject(new Error('ukládání odpovědi zůstalo viset — chybí timeout')),
+        3000,
+      );
+    });
+
+    try {
+      const stalled = await Promise.race([saveWebinarSurveyPartialAnswer(args), guard]);
+      assert.equal(stalled.ok, false, 'zaseknuté spojení se musí vzdát, ne viset donekonečna');
+    } finally {
+      if (guardTimer) clearTimeout(guardTimer);
+    }
+
+    /** Výpadek sítě nesmí vyhodit výjimku — průvodce by ji vyhodnotil jako blokující chybu. */
+    Reflect.set(globalThis, 'fetch', (() =>
+      Promise.reject(new TypeError('Failed to fetch'))) as unknown as typeof fetch);
+
+    const offline = await saveWebinarSurveyPartialAnswer(args);
+    assert.equal(offline.ok, false);
+  } finally {
+    Reflect.set(globalThis, 'setTimeout', originalSetTimeout);
+    if (originalFetch === undefined) {
+      Reflect.deleteProperty(globalThis, 'fetch');
+    } else {
+      Reflect.set(globalThis, 'fetch', originalFetch);
+    }
+  }
+});
+
+registerTest('parseSchoolBundleLineQuantity reads n× from name or explicit quantity', () => {
+  assert.equal(parseSchoolBundleLineQuantity({ name: '2× Fyzika PS' }), 2);
+  assert.equal(parseSchoolBundleLineQuantity({ name: '10x Chemie' }), 10);
+  assert.equal(parseSchoolBundleLineQuantity({ name: 'Fyzika PS' }), 1);
+  assert.equal(parseSchoolBundleLineQuantity({ name: '3× Matematika', quantity: 5 }), 5);
+  assert.equal(parseSchoolBundleLineQuantity({}), 1);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems maps catalog products and skips empty', () => {
+  const catalog = new Map<string, unknown>([
+    ['prod-fyzika', { id: 'prod-fyzika', price: '199,-' }],
+    ['prod-chemie', { id: 'prod-chemie', priceAmount: 149 }],
+  ]);
+
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(null, catalog),
+    [],
+  );
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems({ workbooks: { items: [] } }, catalog),
+    [],
+  );
+
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'prod-fyzika', name: 'Fyzika PS', price: '199,-', quantity: 3 },
+          { id: 'prod-chemie', name: 'Chemie PS', quantity: 1 },
+          { id: 'prod-fyzika', name: 'skip', quantity: 0 },
+          { name: 'bez id', quantity: 2 },
+        ],
+      },
+    },
+    catalog,
+  );
+  assert.deepEqual(lines, [
+    { product_id: 'prod-fyzika', quantity: 3, unit_price: 19900 },
+    { product_id: 'prod-chemie', quantity: 1, unit_price: 14900 },
+  ]);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems expands bundle lines with set qty × inner qty', () => {
+  const catalog = {
+    'prod-fyzika': { id: 'prod-fyzika', price: '120,-' },
+    'prod-chemie': { id: 'prod-chemie', price: '80,-' },
+  };
+
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'bundle:pack-10plus1', name: 'Balíček 10+1', price: '1000,-', quantity: 2, bundleId: 'pack-10plus1' },
+        ],
+        bundles: [
+          {
+            bundleId: 'pack-10plus1',
+            quantity: 2,
+            lines: [
+              { id: 'prod-fyzika', name: '11× Fyzika PS' },
+              { id: 'prod-chemie', name: 'Chemie PS' },
+              { id: 'subject:Fyzika', name: 'Fyzika' },
+            ],
+          },
+        ],
+      },
+    },
+    catalog,
+  );
+
+  assert.deepEqual(lines, [
+    { product_id: 'prod-fyzika', quantity: 22, unit_price: 12000 },
+    { product_id: 'prod-chemie', quantity: 2, unit_price: 8000 },
+  ]);
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems keeps catalog item next to expanded bundle', () => {
+  const catalog = new Map<string, unknown>([
+    ['solo', { id: 'solo', price: '50,-' }],
+    ['in-pack', { id: 'in-pack', price: '90,-' }],
+  ]);
+  const lines = mapSchoolInquiryToPipedriveOrderItems(
+    {
+      workbooks: {
+        items: [
+          { id: 'solo', name: 'Samostatný sešit', price: '50,-', quantity: 4 },
+          { id: 'bundle:abc', name: 'Sada', quantity: 1 },
+        ],
+        bundles: [
+          {
+            bundleId: 'abc',
+            lines: [{ id: 'in-pack', name: 'Sešit v sadě' }],
+          },
+        ],
+      },
+      shipping: { method: 'ppl', price: 9900, pickupPointName: 'Z-Point Praha' },
+    },
+    catalog,
+  );
+  assert.deepEqual(lines, [
+    { product_id: 'solo', quantity: 4, unit_price: 5000 },
+    { product_id: 'in-pack', quantity: 1, unit_price: 9000 },
+  ]);
+  assert.equal(schoolInquiryShippingMethod({ shipping: { method: 'ppl', price: 9900 } }), 'ppl');
+  assert.equal(schoolInquiryShippingPriceHaler({ shipping: { method: 'ppl', price: 9900 } }), 9900);
+  assert.equal(
+    schoolInquiryPickupPointName({ shipping: { method: 'zasilkovna', pickupPointName: 'Z-Point Praha' } }),
+    'Z-Point Praha',
+  );
+  assert.equal(schoolInquiryShippingMethod({}), '');
+});
+
+registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí cenu z formuláře', () => {
+  const catalog = new Map<string, unknown>([['ps-mat-6-1', { id: 'ps-mat-6-1', price: '125,-' }]]);
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(
+      { workbooks: { items: [{ id: 'ps-mat-6-1', name: 'MAT 6 – 1. díl', price: '1,-', quantity: 58 }] } },
+      catalog,
+    ),
+    [{ product_id: 'ps-mat-6-1', quantity: 58, unit_price: 12500 }],
+  );
+  // Položka mimo katalog spadne zpět na cenu z formuláře.
+  assert.deepEqual(
+    mapSchoolInquiryToPipedriveOrderItems(
+      { workbooks: { items: [{ id: 'mimo-katalog', name: 'Neznámý', price: '90 Kč', quantity: 2 }] } },
+      catalog,
+    ),
+    [{ product_id: 'mimo-katalog', quantity: 2, unit_price: 9000 }],
+  );
 });
 
 await run();

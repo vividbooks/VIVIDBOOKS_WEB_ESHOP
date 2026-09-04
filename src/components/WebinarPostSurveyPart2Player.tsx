@@ -81,32 +81,26 @@ export function WebinarPostSurveyPart2Player({
     if (navBusyRef.current || partialSaving) return;
     navBusyRef.current = true;
     setNavBusy(true);
-    void (async () => {
-      try {
-        if (onSavePartialAnswer && current.type !== 'intro') {
-          let v = '';
-          if (current.type === 'open' || current.type === 'abc') {
-            v = (answers[current.id] || '').trim();
-          }
-          if (v) {
-            try {
-              await onSavePartialAnswer(current.id, v);
-            } catch (e) {
-              setPartialErr(e instanceof Error ? e.message : 'Uložení se nezdařilo');
-              return;
-            }
-          }
+    try {
+      if (onSavePartialAnswer && current.type !== 'intro') {
+        let v = '';
+        if (current.type === 'open' || current.type === 'abc') {
+          v = (answers[current.id] || '').trim();
         }
-        if (step >= total - 1) {
-          onComplete();
-          return;
-        }
-        setStep((s) => s + 1);
-      } finally {
-        navBusyRef.current = false;
-        setNavBusy(false);
+        // Průběžné uložení je jen pojistka pro nedokončené dotazníky — kompletní sadu
+        // odpovědí posílá závěrečné odeslání. Nečekáme na něj, aby zaseknuté spojení
+        // nezablokovalo průchod dotazníkem (a na posledním kroku i vznik certifikátu).
+        if (v) void Promise.resolve(onSavePartialAnswer(current.id, v)).catch(() => {});
       }
-    })();
+      if (step >= total - 1) {
+        onComplete();
+        return;
+      }
+      setStep((s) => s + 1);
+    } finally {
+      navBusyRef.current = false;
+      setNavBusy(false);
+    }
   }, [current, answers, step, total, onComplete, onSavePartialAnswer, partialSaving]);
 
   const handleSavePartial = useCallback(async () => {

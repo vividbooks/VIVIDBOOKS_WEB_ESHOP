@@ -66,6 +66,12 @@ import {
   parsePipedrivePersonOptionIds,
   sortSubjectOptionIdsOtherLast,
 } from '../../../../supabase/functions/_shared/pipedrive-person-subject.ts';
+import {
+  mapSchoolInquiryToPipedriveOrderItems,
+  schoolInquiryPickupPointName,
+  schoolInquiryShippingMethod,
+  schoolInquiryShippingPriceHaler,
+} from '../../../../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
@@ -20965,6 +20971,45 @@ async function syncSchoolOrderToPipedrive(
 
   const dealId = parsePipedriveNumericId(deal?.id);
   const personId = parsePipedriveNumericId(person?.id);
+
+  /** Stejné produktové řádky jako u e-shopu (`POST /deals/:id/products`). Selhání nesmí shodit deal. */
+  if (dealId) {
+    try {
+      const catalogProducts = await getAllProducts();
+      const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p] as [string, any]));
+      const lineItems = mapSchoolInquiryToPipedriveOrderItems(body, catalogMap);
+      let codeToPdIdShared: Map<string, number | null> = new Map();
+      let nextLineOrder = 0;
+      if (lineItems.length) {
+        const result = await addPipedriveDealLineItemsFromOrder(
+          apiToken,
+          dealId,
+          lineItems,
+          catalogMap,
+        );
+        codeToPdIdShared = result.codeToPdId;
+        nextLineOrder = result.lastOrder;
+        console.log(
+          `[Pipedrive school order] deal ${dealId}: ${lineItems.length} product line(s) mapped`,
+        );
+      }
+      const shippingMethod = schoolInquiryShippingMethod(body);
+      if (shippingMethod && shippingMethod !== 'none') {
+        await addPipedriveDealShippingLineItem(
+          apiToken,
+          dealId,
+          shippingMethod,
+          schoolInquiryShippingPriceHaler(body),
+          schoolInquiryPickupPointName(body),
+          nextLineOrder + 1,
+          codeToPdIdShared,
+        );
+      }
+    } catch (productErr: any) {
+      console.log(`[Pipedrive school order] deal products: ${productErr?.message || productErr}`);
+    }
+  }
+
   const note = await createPipedriveNote(apiToken, {
     content: buildSchoolOrderNoteContent(order, body),
     dealId,

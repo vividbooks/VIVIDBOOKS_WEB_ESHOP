@@ -125,14 +125,15 @@ export function WebinarDvppQuizPlayer({
     }
     if (step >= 0 && step < total) {
       if (!selectedForCurrent) return;
-      if (partialErr) return;
+      // Neúspěšné průběžné uložení nesmí zablokovat postup — jinak tlačítko „dál“
+      // jen tiše nereaguje. Odpověď se stejně odešle v závěrečném odeslání.
       if (step === total - 1) {
         onComplete();
         return;
       }
       setStep((s) => s + 1);
     }
-  }, [step, total, selectedForCurrent, partialErr, onComplete]);
+  }, [step, total, selectedForCurrent, onComplete]);
 
   if (total === 0) return null;
 
@@ -161,7 +162,7 @@ export function WebinarDvppQuizPlayer({
               step === -1
                 ? false
                 : step >= 0 && step < total
-                  ? !selectedForCurrent || !!partialErr
+                  ? !selectedForCurrent
                   : true
             }
             className="pointer-events-auto z-10 flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-white shadow-md transition hover:opacity-95 disabled:opacity-35"
@@ -288,7 +289,7 @@ export function WebinarDvppQuizPlayer({
 
                 {partialErr ? (
                   <p style={FF} className="mt-4 text-center text-[12px] text-red-600">
-                    {partialErr}
+                    {partialErr}{' \u2014 m\u016f\u017eete pokra\u010dovat d\u00e1l, odpov\u011bdi se ulo\u017e\u00ed na konci.'}
                   </p>
                 ) : null}
 
@@ -333,7 +334,7 @@ export function WebinarDvppQuizPlayer({
             step === -1
               ? false
               : step >= 0 && step < total
-                ? !selectedForCurrent || !!partialErr
+                ? !selectedForCurrent
                 : true
           }
           className="pointer-events-auto flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/30 transition hover:bg-indigo-600 disabled:opacity-35"
@@ -472,7 +473,7 @@ export function WebinarDvppQuizPlayer({
 
                     {partialErr ? (
                       <p style={FF} className="mt-4 text-center text-[12px] text-red-600 sm:mt-5">
-                        {partialErr}
+                        {partialErr}{' \u2014 m\u016f\u017eete pokra\u010dovat d\u00e1l, odpov\u011bdi se ulo\u017e\u00ed na konci.'}
                       </p>
                     ) : null}
 

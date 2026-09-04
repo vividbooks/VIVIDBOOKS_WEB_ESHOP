@@ -9,6 +9,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { absoluteAppUrl } from '../utils/appBaseUrl';
 import { privacyPolicyUrl } from '../utils/publicSiteUrl';
+import { extractYoutubeId } from '../utils/youtube';
 
 const ff = "'Fenomen Sans', sans-serif";
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -23,23 +24,6 @@ const POSITIONS = [
   'Rodi\u010d',
   'Jin\u00e9',
 ];
-
-function extractYoutubeId(url: string): string | null {
-  if (!url) return null;
-  const patterns = [
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/,
-  ];
-  for (const p of patterns) {
-    const m = url.match(p);
-    if (m) return m[1];
-  }
-  if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) return url.trim();
-  return null;
-}
 
 const STORAGE_KEY = 'dvpp_registered_videos';
 function getRegisteredVideos(): string[] {
