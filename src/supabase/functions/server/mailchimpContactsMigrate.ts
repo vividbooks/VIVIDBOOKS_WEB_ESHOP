@@ -140,8 +140,8 @@ function mapActivityToEvent(
 ): 'send' | 'open' | 'click' | 'bounce' | 'complaint' | 'unsubscribe' | 'resubscribe' | null {
   const a = (action || '').toLowerCase();
   if (a === 'sent' || a === 'send') return 'send';
-  if (a === 'open') return 'open';
-  if (a === 'click') return 'click';
+  if (a === 'open' || a === 'opened') return 'open';
+  if (a === 'click' || a === 'clicked') return 'click';
   if (a === 'bounce' || a === 'soft_bounce' || a === 'hard_bounce') return 'bounce';
   if (a === 'unsub' || a === 'unsubscribe') return 'unsubscribe';
   if (a === 'abuse' || a === 'spam') return 'complaint';
@@ -583,7 +583,8 @@ export async function runMailchimpContactsMigrate(
     await mapLimit(allHashes, ACTIVITY_CONCURRENCY, async hash => {
       let feed: McActivityFeed;
       try {
-        feed = await mcFetch<McActivityFeed>(server, apiKey, `/lists/${listIdMc}/members/${hash}/activity-feed`);
+        // activity-feed vrací bez `count` jen 10 posledních položek.
+        feed = await mcFetch<McActivityFeed>(server, apiKey, `/lists/${listIdMc}/members/${hash}/activity-feed?count=1000`);
       } catch (e) {
         activityErrors++;
         console.warn(`[mailchimp-migrate] activity ${hash}:`, (e as Error).message);
@@ -594,14 +595,19 @@ export async function runMailchimpContactsMigrate(
 
       const emailEvents: Record<string, unknown>[] = [];
       for (const a of activities) {
-        const ev = mapActivityToEvent(a.action || (a.type as string) || '');
+        // activity-feed (v3) má `activity_type` + `created_at_timestamp`, starší /activity `action` + `timestamp`.
+        const actionRaw = a.action || (a.activity_type as string) || (a.type as string) || '';
+        const ev = mapActivityToEvent(actionRaw);
         if (!ev) continue;
-        const ts = a.timestamp ? new Date(a.timestamp).toISOString() : new Date().toISOString();
+        // „Odesláno“ tvoří většinu feedu a pro engagement nic neříká — historicky se neimportuje.
+        if (ev === 'send') continue;
+        const tsRaw = a.timestamp || (a.created_at_timestamp as string) || '';
+        const ts = tsRaw ? new Date(tsRaw).toISOString() : new Date().toISOString();
         const mcCampRaw = a.campaign_id;
         const mcCamp =
           typeof mcCampRaw === 'string' ? mcCampRaw : mcCampRaw != null ? String(mcCampRaw) : null;
         const campUuid = mcCamp ? campaignUuidByMc.get(mcCamp) : null;
-        const url = typeof a.url === 'string' ? a.url : null;
+        const url = typeof a.url === 'string' ? a.url : typeof a.link_clicked === 'string' ? a.link_clicked : null;
 
         let linkId: string | null = null;
         if (ev === 'click' && url && campUuid) {

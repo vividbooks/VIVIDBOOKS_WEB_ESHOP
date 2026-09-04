@@ -20,6 +20,103 @@ function edgeFunctionBase(): string {
   return `${url}/functions/v1/make-server-93a20b6f`;
 }
 
+export type NonOpenerPreview = {
+  sent: number;
+  uniqueOpens: number;
+  nonOpeners: number;
+  engagedNonOpeners: number;
+  alreadyResent: boolean;
+  existingResendCampaignId: string | null;
+};
+
+/** Počty pro dialog „Znovu neotevíračům“. */
+export async function previewNonOpeners(
+  supabase: SupabaseClient,
+  parentCampaignId: string,
+): Promise<{ ok: true; preview: NonOpenerPreview } | { ok: false; error: string }> {
+  try {
+    const { data: stRows, error: stErr } = await supabase.rpc('mailing_campaign_stats', {
+      p_campaign_ids: [parentCampaignId],
+    });
+    if (stErr) return { ok: false, error: stErr.message };
+    const st = Array.isArray(stRows) ? stRows[0] : null;
+    const sent = Number(st?.sent || 0);
+    const uniqueOpens = Number(st?.unique_opens || 0);
+
+    const { data: allNon, error: nErr } = await supabase.rpc('mailing_non_opener_subscriber_ids', {
+      p_parent_campaign_id: parentCampaignId,
+      p_engaged_only: false,
+    });
+    if (nErr) return { ok: false, error: nErr.message };
+
+    const { data: engNon, error: eErr } = await supabase.rpc('mailing_non_opener_subscriber_ids', {
+      p_parent_campaign_id: parentCampaignId,
+      p_engaged_only: true,
+    });
+    if (eErr) return { ok: false, error: eErr.message };
+
+    const { data: existing } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('parent_campaign_id', parentCampaignId)
+      .eq('resend_kind', 'non_openers')
+      .not('status', 'eq', 'cancelled')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return {
+      ok: true,
+      preview: {
+        sent,
+        uniqueOpens,
+        nonOpeners: (allNon || []).length,
+        engagedNonOpeners: (engNon || []).length,
+        alreadyResent: Boolean(existing?.id),
+        existingResendCampaignId: (existing?.id as string) || null,
+      },
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+async function resolveNonOpenerIds(
+  supabase: SupabaseClient,
+  parentCampaignId: string,
+  engagedOnly: boolean,
+): Promise<string[]> {
+  const { data, error } = await supabase.rpc('mailing_non_opener_subscriber_ids', {
+    p_parent_campaign_id: parentCampaignId,
+    p_engaged_only: engagedOnly,
+  });
+  if (error) throw new Error(error.message);
+  return (data || []).map((r: { subscriber_id: string }) => r.subscriber_id as string);
+}
+
+async function upsertRecipientQueue(
+  supabase: SupabaseClient,
+  campaignId: string,
+  targetIds: string[],
+): Promise<number> {
+  let added = 0;
+  const CHUNK = 500;
+  for (let i = 0; i < targetIds.length; i += CHUNK) {
+    const rows = targetIds.slice(i, i + CHUNK).map((subscriber_id) => ({
+      campaign_id: campaignId,
+      subscriber_id,
+      status: 'pending',
+    }));
+    const { data: inserted, error: insErr } = await supabase
+      .from('campaign_recipients')
+      .upsert(rows, { onConflict: 'campaign_id,subscriber_id', ignoreDuplicates: true })
+      .select('id');
+    if (insErr) throw new Error(insErr.message);
+    added += (inserted || []).length;
+  }
+  return added;
+}
+
 export async function prepareCampaignRecipients(
   supabase: SupabaseClient,
   campaignId: string,
@@ -27,7 +124,7 @@ export async function prepareCampaignRecipients(
   try {
     const { data: campaign, error: cErr } = await supabase
       .from('campaigns')
-      .select('id, audience_filter, status')
+      .select('id, audience_filter, status, resend_kind, parent_campaign_id')
       .eq('id', campaignId)
       .maybeSingle();
     if (cErr) return { ok: false, error: cErr.message };
@@ -39,29 +136,20 @@ export async function prepareCampaignRecipients(
       if (delErr) return { ok: false, error: delErr.message };
     }
 
-    /* Jen subscribed — unsubscribed/cleaned/pending nikdy nedostanou kampaň. */
-    const targetIds = await resolveAudienceSubscriberIds(supabase, {
-      ...(campaign.audience_filter as AudienceFilter),
-      subscribedOnly: true,
-    });
-
-    /* Naplň frontu (ignoruj už existující řádky — prepare lze volat opakovaně). */
-    let added = 0;
-    const CHUNK = 500;
-    for (let i = 0; i < targetIds.length; i += CHUNK) {
-      const rows = targetIds.slice(i, i + CHUNK).map((subscriber_id) => ({
-        campaign_id: campaignId,
-        subscriber_id,
-        status: 'pending',
-      }));
-      const { data: inserted, error: insErr } = await supabase
-        .from('campaign_recipients')
-        .upsert(rows, { onConflict: 'campaign_id,subscriber_id', ignoreDuplicates: true })
-        .select('id');
-      if (insErr) return { ok: false, error: insErr.message };
-      added += (inserted || []).length;
+    let targetIds: string[];
+    if (campaign.resend_kind === 'non_openers' && campaign.parent_campaign_id) {
+      const filter = (campaign.audience_filter || {}) as AudienceFilter & { engagedOnly?: boolean };
+      const engagedOnly = filter.engagedOnly !== false;
+      targetIds = await resolveNonOpenerIds(supabase, String(campaign.parent_campaign_id), engagedOnly);
+    } else {
+      /* Jen subscribed — unsubscribed/cleaned/pending nikdy nedostanou kampaň. */
+      targetIds = await resolveAudienceSubscriberIds(supabase, {
+        ...(campaign.audience_filter as AudienceFilter),
+        subscribedOnly: true,
+      });
     }
 
+    const added = await upsertRecipientQueue(supabase, campaignId, targetIds);
     return { ok: true, total: targetIds.length, added };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -297,4 +385,124 @@ export function scheduleSendContinuation(): void {
     headers: { 'Content-Type': 'application/json', 'x-cron-secret': secret },
     body: '{}',
   }).catch(() => {});
+}
+
+export type CreateResendNonOpenersOpts = {
+  subjectLine?: string;
+  scheduledAt?: string | null;
+  /** default true — Mailchimp „Recently engaged non-openers“ */
+  engagedOnly?: boolean;
+  /** default false — jedna aktivní resend kampaň na rodiče */
+  allowMultiple?: boolean;
+  sendNow?: boolean;
+};
+
+/** Založí child kampaň, naplní neotevírače, volitelně rovnou pošle / naplánuje. */
+export async function createResendNonOpenersCampaign(
+  supabase: SupabaseClient,
+  parentCampaignId: string,
+  opts: CreateResendNonOpenersOpts = {},
+): Promise<
+  | {
+      ok: true;
+      campaignId: string;
+      total: number;
+      status: string;
+      send?: SendBatchResult;
+    }
+  | { ok: false; error: string; status?: number }
+> {
+  try {
+    const { data: parent, error: pErr } = await supabase
+      .from('campaigns')
+      .select('id, name, subject_line, preview_text, html_body, draft_id, status')
+      .eq('id', parentCampaignId)
+      .maybeSingle();
+    if (pErr) return { ok: false, error: pErr.message };
+    if (!parent) return { ok: false, error: 'Rodičovská kampaň neexistuje.', status: 404 };
+    if (parent.status !== 'sent') {
+      return { ok: false, error: 'Resend jde jen u odeslané kampaně.', status: 409 };
+    }
+    if (!parent.html_body) {
+      return { ok: false, error: 'Rodičovská kampaň nemá HTML tělo.', status: 400 };
+    }
+
+    if (!opts.allowMultiple) {
+      const { data: existing } = await supabase
+        .from('campaigns')
+        .select('id, status')
+        .eq('parent_campaign_id', parentCampaignId)
+        .eq('resend_kind', 'non_openers')
+        .not('status', 'eq', 'cancelled')
+        .limit(1)
+        .maybeSingle();
+      if (existing?.id) {
+        return {
+          ok: false,
+          error: `Resend už existuje (${existing.status}). Zruš ho, nebo povol allowMultiple.`,
+          status: 409,
+        };
+      }
+    }
+
+    const engagedOnly = opts.engagedOnly !== false;
+    const targetIds = await resolveNonOpenerIds(supabase, parentCampaignId, engagedOnly);
+    if (targetIds.length === 0) {
+      return {
+        ok: false,
+        error: engagedOnly
+          ? 'Žádní recently engaged neotevírači (otevřeli něco za 90 dní, ale ne tuto kampaň).'
+          : 'Všichni příjemci už otevřeli, nebo už nejsou subscribed.',
+        status: 400,
+      };
+    }
+
+    const parentSubject = String(parent.subject_line || parent.name || 'Vividbooks');
+    const subjectLine = (opts.subjectLine || '').trim() || parentSubject;
+    const scheduledAt =
+      opts.scheduledAt && !Number.isNaN(Date.parse(opts.scheduledAt))
+        ? new Date(opts.scheduledAt).toISOString()
+        : null;
+    const sendNow = opts.sendNow === true && !scheduledAt;
+
+    const row = {
+      name: `Resend: ${String(parent.name || parentSubject).slice(0, 280)}`,
+      subject_line: subjectLine.slice(0, 500),
+      preview_text: String(parent.preview_text || '').slice(0, 500),
+      html_body: parent.html_body,
+      draft_id: parent.draft_id,
+      campaign_type: 'resend_non_openers',
+      parent_campaign_id: parentCampaignId,
+      resend_kind: 'non_openers',
+      audience_filter: { engagedOnly, parentCampaignId },
+      scheduled_at: sendNow ? null : scheduledAt,
+      status: sendNow ? 'sending' : scheduledAt ? 'scheduled' : 'draft',
+    };
+
+    const { data: child, error: insErr } = await supabase.from('campaigns').insert(row).select('id, status').single();
+    if (insErr || !child) return { ok: false, error: insErr?.message || 'Insert kampaně selhal.' };
+
+    await upsertRecipientQueue(supabase, child.id as string, targetIds);
+
+    if (sendNow) {
+      const send = await runCampaignSendBatches(supabase, child.id as string, { timeBudgetMs: 45_000 });
+      if (send.remaining > 0) scheduleSendContinuation();
+      return {
+        ok: true,
+        campaignId: child.id as string,
+        total: targetIds.length,
+        status: send.remaining === 0 ? 'sent' : 'sending',
+        send,
+      };
+    }
+
+    return {
+      ok: true,
+      campaignId: child.id as string,
+      total: targetIds.length,
+      status: String(child.status),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
