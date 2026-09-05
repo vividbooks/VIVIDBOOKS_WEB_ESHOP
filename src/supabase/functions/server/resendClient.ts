@@ -4,16 +4,19 @@
  *
  * Secrets:
  * - RESEND_API_KEY        (povinný)
- * - RESEND_FROM_EMAIL     (default `news@news.vividbooks.com`)
- * - RESEND_FROM_NAME      (default `Vividbooks`)
- * - RESEND_REPLY_TO       (default `hello@vividbooks.com`)
+ * - RESEND_FROM_EMAIL     (default `vitek@vividbooks.com`)
+ * - RESEND_FROM_NAME      (default `Vítek z Vividbooks`)
+ * - RESEND_REPLY_TO       (default `vitek@vividbooks.com`)
  * - RESEND_MAX_RPS        (default 2 — limit Resend API; při vyšším tieru zvýšit)
  */
 
 export type ResendSendInput = {
   to: string;
   subject: string;
-  html: string;
+  /** HTML tělo. Nepovinné, pokud je vyplněný `text`. */
+  html?: string;
+  /** Tělo v prostém textu — e-mail pak vypadá jako běžná osobní zpráva. */
+  text?: string;
   /** Přepis defaultního odesílatele (`Jméno <adresa>`). */
   from?: string;
   replyTo?: string;
@@ -33,8 +36,8 @@ export function getResendApiKey(): string | null {
 }
 
 export function getResendDefaultFrom(): string {
-  const email = Deno.env.get('RESEND_FROM_EMAIL')?.trim() || 'news@news.vividbooks.com';
-  const name = Deno.env.get('RESEND_FROM_NAME')?.trim() || 'Vividbooks';
+  const email = Deno.env.get('RESEND_FROM_EMAIL')?.trim() || 'vitek@vividbooks.com';
+  const name = Deno.env.get('RESEND_FROM_NAME')?.trim() || 'Vítek z Vividbooks';
   return `${name} <${email}>`;
 }
 
@@ -65,12 +68,17 @@ export async function sendResendEmail(input: ResendSendInput): Promise<ResendSen
     return { ok: false, status: 0, error: 'RESEND_API_KEY není nastaven', retryable: false };
   }
 
+  if (!input.html && !input.text) {
+    return { ok: false, status: 0, error: 'Chybí html i text', retryable: false };
+  }
+
   const body = {
     from: input.from || getResendDefaultFrom(),
     to: [input.to],
     subject: input.subject,
-    html: input.html,
-    reply_to: input.replyTo || Deno.env.get('RESEND_REPLY_TO')?.trim() || 'hello@vividbooks.com',
+    ...(input.html ? { html: input.html } : {}),
+    ...(input.text ? { text: input.text } : {}),
+    reply_to: input.replyTo || Deno.env.get('RESEND_REPLY_TO')?.trim() || 'vitek@vividbooks.com',
     ...(input.headers ? { headers: input.headers } : {}),
     ...(input.tags?.length ? { tags: input.tags.slice(0, 10) } : {}),
   };

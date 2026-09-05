@@ -18,6 +18,34 @@ const COOPER = { fontFamily: "'Cooper Light', serif" } as const;
 const CERTIFICATE_PAGE_WIDTH_PX = 1122.52;
 const CERTIFICATE_PAGE_HEIGHT_PX = 793.7;
 
+/**
+ * Tisk bez nového okna — pro prohlížeče, které vyskakovací okna blokují. Rám musí zůstat
+ * v dokumentu, dokud uživatel tiskový dialog nezavře, jinak se tisk zruší.
+ */
+function printViaHiddenFrame(url: string) {
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:1px;height:1px;border:0;opacity:0;';
+  frame.src = url;
+  frame.addEventListener('load', () => {
+    try {
+      frame.contentWindow?.focus();
+      frame.contentWindow?.print();
+    } catch {
+      /* ignore */
+    }
+  });
+  document.body.appendChild(frame);
+  window.setTimeout(() => {
+    frame.remove();
+    try {
+      URL.revokeObjectURL(url);
+    } catch {
+      /* ignore */
+    }
+  }, 60_000);
+}
+
 /** Náhled certifikátu v přesné tiskové velikosti, zmenšený na šířku kontejneru. */
 function CertificatePreview({
   srcDoc,
@@ -130,7 +158,8 @@ export function WebinarDvppCertificateSuccess({
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
     if (!w) {
-      URL.revokeObjectURL(url);
+      /** Blokovaná vyskakovací okna jsou běžná — tisk z neviditelného rámu je nepotřebuje. */
+      printViaHiddenFrame(url);
       return;
     }
     let printed = false;
