@@ -130,8 +130,12 @@ export async function joinByCode(
   let movedFrom: string | null = null;
   if (!r.added && r.alreadyIn && r.alreadyIn !== sr.red_izo) {
     movedFrom = r.alreadyIn;
+    /* Aktivace (přehrání ≥ 3 min / osvědčení) patří učiteli, ne sborovně — při přesunu se zachová. */
+    const { data: oldRow } = await sb.from('staffroom_members').select('activated_at').eq('subscriber_id', subscriber.id).maybeSingle();
+    const activatedAt = (oldRow as { activated_at: string | null } | null)?.activated_at || null;
     await sb.from('staffroom_members').delete().eq('subscriber_id', subscriber.id);
     r = await addMember(sb, sr.red_izo, subscriber.id, invitedBy ? 'referral' : 'code', invitedBy || sr.founder_id);
+    if (r.added && activatedAt) await sb.from('staffroom_members').update({ activated_at: activatedAt }).eq('subscriber_id', subscriber.id);
   }
   await linkSubscriberToSchool(sb, subscriber.id, sr.red_izo, { force: true });
   if (movedFrom) { await recountOne(sb, movedFrom); await refreshSchoolStatus(sb, movedFrom); }
@@ -178,7 +182,8 @@ async function unlockByDirector(sb: SupabaseClient, school: SchoolRow, subscribe
 export type DirectorUnlockDeps = {
   sendEmail: (opts: { toEmail: string; toName: string; subject: string; html: string }) => Promise<unknown>;
   buildDirectorConfirmEmailHtml: (opts: { requesterName: string; requesterEmail: string; schoolName: string; confirmUrl: string }) => string;
-  functionBase: string;
+  /** Odkaz z e-mailu vede na web (stránka s tlačítkem), ne přímo na API — skenery pošty odkazy předem otevírají. */
+  publicOrigin: string;
 };
 
 /**
@@ -207,7 +212,7 @@ export async function directorUnlock(
   }
   const token = await createMailingToken('dvpp-director-unlock', schoolEmail, DIRECTOR_LINK_DAYS);
   await kv.set(DIRECTOR_INTENT_KEY(await sha256Hex(token)), { redIzo: school.red_izo, subscriberId: subscriber.id, createdAt: nowIso() });
-  const confirmUrl = `${deps.functionBase}/dvpp/staffroom/director-confirm?token=${encodeURIComponent(token)}`;
+  const confirmUrl = `${deps.publicOrigin}/pro-reditele?confirm=${encodeURIComponent(token)}`;
   await deps.sendEmail({
     toEmail: schoolEmail,
     toName: school.name,
@@ -223,7 +228,25 @@ export async function directorUnlock(
   return { ok: true, pending: true, sentTo: maskEmail(schoolEmail) };
 }
 
-/** Potvrzení z oficiálního e-mailu školy: odemkne sborovnu a označí žadatele jako ověřené vedení. */
+/** Potvrzení z oficiálního e-mailu školy (POST z tlačítka na webu, ne GET z odkazu): odemkne sborovnu a označí žadatele jako ověřené vedení. */
+/** Náhled potvrzení pro stránku /pro-reditele?confirm= (jen čtení, nic nemění). */
+export async function directorConfirmPreview(
+  sb: SupabaseClient,
+  token: string,
+): Promise<{ ok: true; schoolName: string; requesterName: string } | { ok: false; error: string; status: number }> {
+  const v = await verifyMailingToken('dvpp-director-unlock', token);
+  if (!v.ok) return { ok: false, error: v.error, status: 400 };
+  const intent = (await kv.get(DIRECTOR_INTENT_KEY(await sha256Hex(token))).catch(() => null)) as { redIzo?: string; subscriberId?: string } | null;
+  if (!intent?.redIzo || !intent.subscriberId) return { ok: false, error: 'Odkaz už byl použit nebo vypršel.', status: 410 };
+  const [school, { data: sub }] = await Promise.all([
+    findSchoolByRedIzo(sb, intent.redIzo),
+    sb.from('subscribers').select('first_name, last_name, email').eq('id', intent.subscriberId).maybeSingle(),
+  ]);
+  if (!school || !sub) return { ok: false, error: 'Škola nebo žadatel už neexistují.', status: 404 };
+  const u = sub as { first_name: string | null; last_name: string | null; email: string };
+  return { ok: true, schoolName: school.name, requesterName: [u.first_name, u.last_name].filter(Boolean).join(' ') || u.email };
+}
+
 export async function directorConfirm(
   sb: SupabaseClient,
   token: string,

@@ -19,7 +19,21 @@ export function DvppDirectorsPage() {
   const [error, setError] = useState('');
   const [pendingTo, setPendingTo] = useState('');
   const [sp] = useSearchParams();
-  const unlockParam = sp.get('unlock');
+  const confirmToken = sp.get('confirm') || '';
+  const [confirmInfo, setConfirmInfo] = useState<{ schoolName: string; requesterName: string } | null>(null);
+  const [confirmState, setConfirmState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
+  const [confirmError, setConfirmError] = useState('');
+  useEffect(() => {
+    if (!confirmToken) return;
+    dvppApi.directorConfirmPreview(confirmToken)
+      .then((r) => setConfirmInfo({ schoolName: r.schoolName, requesterName: r.requesterName }))
+      .catch((e) => { setConfirmState('error'); setConfirmError(e instanceof Error ? e.message : 'Odkaz neplatí.'); });
+  }, [confirmToken]);
+  const confirmUnlock = async () => {
+    setConfirmState('busy'); setConfirmError('');
+    try { await dvppApi.directorConfirm(confirmToken); setConfirmState('done'); await refresh(); await load(); }
+    catch (e) { setConfirmState('error'); setConfirmError(e instanceof Error ? e.message : 'Nepodařilo se potvrdit.'); }
+  };
 
   const load = async () => {
     if (!me?.school) return;
@@ -44,6 +58,30 @@ export function DvppDirectorsPage() {
 
   return (
     <DvppShell title="Pro ředitele" description="Knihovna záznamů DVPP zdarma pro celou sborovnu jedním školním kódem. Výkaz hodin pro výroční zprávu a šablony." path="/pro-reditele">
+      {confirmToken ? (
+        <DvppCard className="mb-8 border-[#001161]/20">
+          <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-[#E8942A]">Potvrzení z e-mailu školy</p>
+          {confirmState === 'done' ? (
+            <>
+              <h2 className="mb-1 text-[22px] font-extrabold text-[#001161]">Potvrzeno. Knihovna je odemčená pro celou školu.</h2>
+              <p className="text-[14px] text-[#3a4270]">{confirmInfo?.requesterName || 'Žadatel'} teď v sekci Pro ředitele najde školní kód pro sborovnu.</p>
+            </>
+          ) : confirmState === 'error' ? (
+            <>
+              <h2 className="mb-1 text-[22px] font-extrabold text-[#001161]">Odkaz se nepodařilo potvrdit</h2>
+              <p className="text-[14px] text-[#8a3a1f]">{confirmError}</p>
+            </>
+          ) : confirmInfo ? (
+            <>
+              <h2 className="mb-1 text-[22px] font-extrabold text-[#001161]">Odemknout knihovnu DVPP zdarma pro {confirmInfo.schoolName}?</h2>
+              <p className="mb-4 text-[14px] text-[#3a4270]">{confirmInfo.requesterName} požádal/a jako vedení školy o odemknutí knihovny záznamů webinářů s osvědčením DVPP pro celou sborovnu. Je to zdarma a bez závazků. Potvrzením odemknete knihovnu všem učitelům školy.</p>
+              <DvppButton onClick={() => void confirmUnlock()} disabled={confirmState === 'busy'}>{confirmState === 'busy' ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Potvrdit a odemknout pro školu</DvppButton>
+            </>
+          ) : (
+            <p className="text-[14px] text-[#6b7398]">Ověřujeme odkaz…</p>
+          )}
+        </DvppCard>
+      ) : null}
       <div className="mb-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div>
           <p className="mb-2 text-[12px] font-semibold uppercase tracking-wide text-[#F06632]">Pro vedení školy</p>
@@ -100,8 +138,6 @@ export function DvppDirectorsPage() {
               )}
             </>
           ) : null}
-          {unlockParam === 'confirmed' ? <p className="mt-3 rounded-xl bg-[#e8f5ee] px-3 py-2 text-[13px] text-[#1f5a3d]">Potvrzeno. Knihovna je odemčená pro celou školu.</p> : null}
-          {unlockParam === 'error' ? <p className="mt-3 text-[13px] text-[#b3261e]">Odkaz se nepodařilo potvrdit: {sp.get('reason') || 'zkuste to znovu'}.</p> : null}
           {error ? <p className="mt-3 text-[13px] text-[#b3261e]">{error}</p> : null}
         </DvppCard>
       </div>

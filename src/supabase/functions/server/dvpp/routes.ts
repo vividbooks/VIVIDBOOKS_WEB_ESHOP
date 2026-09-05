@@ -16,7 +16,7 @@ import {
   refreshSchoolStatus, resolveSchoolForContact, searchSchools, type RegistryRecord,
 } from './schools.ts';
 import {
-  confirmReferralForEmail, directorConfirm, directorUnlock, ensureStaffroom, getStaffroom, getStaffroomByCode, isDirectorVerified, joinByCode, recountAll, recountOne, sendColleagueMessage, staffroomView, type ColleagueMessageDeps,
+  confirmReferralForEmail, directorConfirm, directorConfirmPreview, directorUnlock, ensureStaffroom, getStaffroom, getStaffroomByCode, isDirectorVerified, joinByCode, recountAll, recountOne, sendColleagueMessage, staffroomView, type ColleagueMessageDeps,
 } from './staffroom.ts';
 import { buildCatalog, getSeries, resolveAccess, saveProgress, saveSeries, type CatalogVideo, type Series } from './catalog.ts';
 import { issueCertificate, listCertificates, schoolCertificateReport } from './certificates.ts';
@@ -387,18 +387,24 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
   both('post', '/dvpp/staffroom/director-unlock', async (c) => {
     const s = await needAuth(c);
     if (isResponse(s)) return s;
-    const r = await directorUnlock(sbService(), s, { sendEmail: deps.sendEmail, buildDirectorConfirmEmailHtml, functionBase: deps.functionBase() });
+    const r = await directorUnlock(sbService(), s, { sendEmail: deps.sendEmail, buildDirectorConfirmEmailHtml, publicOrigin: deps.publicOrigin() });
     if (!r.ok) return c.json({ error: r.error }, r.status as 403);
     if (r.pending) return c.json({ ok: true, pending: true, sentTo: r.sentTo });
     return c.json({ ok: true, pending: false, code: r.staffroom.code, status: r.staffroom.status });
   });
 
-  /* Odkaz z potvrzovacího e-mailu školy → odemkne a vrátí ředitele na /pro-reditele. */
+  /* Odkaz z e-mailu školy vede na /pro-reditele?confirm=…; stránka nejdřív zobrazí náhled (GET, bez změny)
+     a odemkne až tlačítkem (POST). Skenery pošty tak odkaz „nevyklikají“ a token zůstane platný. */
   both('get', '/dvpp/staffroom/director-confirm', async (c) => {
-    const r = await directorConfirm(sbService(), c.req.query('token') || '');
-    const origin = deps.publicOrigin();
-    if (!r.ok) return c.redirect(`${origin}/pro-reditele?unlock=error&reason=${encodeURIComponent(r.error)}`, 302);
-    return c.redirect(`${origin}/pro-reditele?unlock=confirmed`, 302);
+    const r = await directorConfirmPreview(sbService(), c.req.query('token') || '');
+    if (!r.ok) return c.json({ error: r.error }, r.status as 400);
+    return c.json({ ok: true, schoolName: r.schoolName, requesterName: r.requesterName });
+  });
+  both('post', '/dvpp/staffroom/director-confirm', async (c) => {
+    const body = await readJson(c.req.raw);
+    const r = await directorConfirm(sbService(), String(body.token || ''));
+    if (!r.ok) return c.json({ error: r.error }, r.status as 400);
+    return c.json({ ok: true });
   });
 
   both('get', '/dvpp/staffroom/report', async (c) => {

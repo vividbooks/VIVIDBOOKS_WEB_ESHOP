@@ -95,7 +95,7 @@ type Video = { id, name, slug, thumbnail, youtubeUrl, topicIds, description, sub
 ### `GET /dvpp/staffroom/preview?code=` (veřejné)
 → `{ code, status, confirmed, target, school: { name, city } | null, founderFirstName }` — pro stránku `/s/{code}` před přihlášením.
 
-### `POST /dvpp/staffroom/join` 🔐 `{ code }` → `{ ok, added, alreadyMember, school: { name }, status, confirmed, target }`. Kód je výslovná volba školy: kontakt se přepojí na tuto školu (`school_red_izo`) a případné členství v jiné sborovně se přesune (obě se přepočítají). Událost `invite_confirmed`.
+### `POST /dvpp/staffroom/join` 🔐 `{ code }` → `{ ok, added, alreadyMember, school: { name }, status, confirmed, target }`. Kód je výslovná volba školy: kontakt se přepojí na tuto školu (`school_red_izo`) a případné členství v jiné sborovně se přesune i s aktivací (obě se přepočítají). Událost `invite_confirmed`.
 
 ### `POST /dvpp/staffroom/message` 🔐 `{ email, message }` → `{ ok }`
 „Vzkaz kolegovi“ (WP29): jedna zpráva jménem odesílatele, bez marketingu, bez připomínky, limit 10/den, dedupe 30 dní, adresa se maže po 14 dnech. `429` limit, `409` duplicita.
@@ -105,8 +105,11 @@ Jen pozice ředitel/zástupce (`isDirectorPosition`), škola z profilu. Pozici s
 - e-mail ze školní domény z rejstříku (`schools.domain`, ne freemail) → odemkne hned: `{ ok, pending: false, code, status }`, událost `director_unlock`;
 - jinak jde potvrzovací odkaz na oficiální e-mail školy z rejstříku (`schools.email`, token `dvpp-director-unlock`, 7 dní): `{ ok, pending: true, sentTo: 're***@skola.cz' }`, událost `director_unlock_requested`; bez e-mailu v rejstříku `409`.
 
-### `GET /dvpp/staffroom/director-confirm?token=` (z e-mailu školy)
-Odemkne sborovnu, označí žadatele jako ověřené vedení (KV `dvpp_director_verified_{subscriberId}`) a přesměruje na `/pro-reditele?unlock=confirmed` (chyba: `?unlock=error&reason=`).
+### `GET /dvpp/staffroom/director-confirm?token=` (náhled, nic nemění)
+→ `{ ok, schoolName, requesterName }`. Odkaz z e-mailu školy vede na `/pro-reditele?confirm={token}`; stránka si tímto načte náhled. Skenery pošty odkazy předem otevírají, proto GET nic neodemyká.
+
+### `POST /dvpp/staffroom/director-confirm` `{ token }`
+Tlačítko na stránce: odemkne sborovnu, označí žadatele jako ověřené vedení (KV `dvpp_director_verified_{subscriberId}`) a token zneplatní. → `{ ok }`; `410` už použitý/vypršelý.
 
 ### `GET /dvpp/staffroom/report?since=` 🔐 (jen ověřené vedení školy, jinak `403 { code: 'director_unverified' }`)
 → `{ teachers: [{ name, email, certificates, hours }], totalHours, totalCertificates }`

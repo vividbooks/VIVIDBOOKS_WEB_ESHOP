@@ -179,6 +179,8 @@ export const dvppApi = {
     call<{ ok: true; added: boolean; alreadyMember?: boolean; school: { name: string }; status: string; confirmed: number; target: number }>('/dvpp/staffroom/join', { body: { code } }),
   messageColleague: (input: { email: string; message: string }) => call<{ ok: true }>('/dvpp/staffroom/message', { body: input }),
   directorUnlock: () => call<{ ok: true; pending: false; code: string; status: string } | { ok: true; pending: true; sentTo: string }>('/dvpp/staffroom/director-unlock', { body: {} }),
+  directorConfirmPreview: (token: string) => call<{ ok: true; schoolName: string; requesterName: string }>(`/dvpp/staffroom/director-confirm?token=${encodeURIComponent(token)}`),
+  directorConfirm: (token: string) => call<{ ok: true }>('/dvpp/staffroom/director-confirm', { body: { token } }),
   staffroomReport: (since?: string) =>
     call<{ teachers: Array<{ name: string; email: string; certificates: number; hours: number }>; totalHours: number; totalCertificates: number }>(
       `/dvpp/staffroom/report${since ? `?since=${encodeURIComponent(since)}` : ''}`,
