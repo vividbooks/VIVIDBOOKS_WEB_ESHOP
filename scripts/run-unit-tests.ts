@@ -15,6 +15,10 @@ import {
   rememberAppEntryChoice,
 } from '../src/lib/appEntryChoice.ts';
 
+import {
+  estimateTeachersFromPupils, isDirectorPosition, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom, resolveAccessLevel, schoolDomainFromEmail, schoolStatusFrom, staffroomCodeFromRandom, teacherTypeFromAnswers, domainFromWebOrEmail, directorTrustedByDomain, maskEmail,
+} from '../src/supabase/functions/server/dvpp/milestones.ts';
+import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName } from '../src/supabase/functions/server/dvpp/content.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
@@ -1815,6 +1819,110 @@ registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí 
       Reflect.set(globalThis, 'fetch', originalFetch);
     }
   }
+});
+
+/* ── DVPP zdarma: milníky sborovny, přístup, škola z domény (docs/dvpp/FLOWS.md) ─────────── */
+registerTest('dvpp: milník sborovny roste s velikostí sboru (4/8/12/16), neznámá velikost = 8', () => {
+  assert.equal(milestoneTargetForTeachers(null), 8);
+  assert.equal(milestoneTargetForTeachers(5), 4);
+  assert.equal(milestoneTargetForTeachers(25), 8);
+  assert.equal(milestoneTargetForTeachers(40), 12);
+  assert.equal(milestoneTargetForTeachers(80), 16);
+  assert.equal(estimateTeachersFromPupils(240), 20);
+  assert.equal(estimateTeachersFromPupils(20), 3, 'malotřídka má aspoň 3 pedagogy');
+});
+
+registerTest('dvpp: freemail neprozradí školu, školní doména a web ano', () => {
+  assert.equal(schoolDomainFromEmail('jana@seznam.cz'), '');
+  assert.equal(schoolDomainFromEmail('Jana@ZSMilovice.cz'), 'zsmilovice.cz');
+  assert.equal(domainFromWebOrEmail('https://www.zsmilovice.cz/kontakt'), 'zsmilovice.cz');
+  assert.equal(domainFromWebOrEmail('reditel@gmail.com'), '');
+});
+
+registerTest('dvpp: sborovna se odemkne milníkem, při poklesu má 30 dní, pak vyprší; ředitelské odemknutí drží', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  assert.deepEqual(
+    recountStaffroom({ status: 'building', target: 8, confirmed: 8, graceUntil: null, now, pinned: false }),
+    { status: 'unlocked', graceUntil: null, unlockedNow: true },
+  );
+  const grace = recountStaffroom({ status: 'unlocked', target: 8, confirmed: 7, graceUntil: null, now, pinned: false });
+  assert.equal(grace.status, 'grace');
+  assert.equal(grace.graceUntil, '2026-10-31T00:00:00.000Z');
+  assert.equal(
+    recountStaffroom({ status: 'grace', target: 8, confirmed: 7, graceUntil: '2026-10-31T00:00:00.000Z', now: new Date('2026-11-02T00:00:00Z'), pinned: false }).status,
+    'expired',
+  );
+  assert.equal(recountStaffroom({ status: 'expired', target: 8, confirmed: 9, graceUntil: null, now, pinned: false }).status, 'unlocked');
+  assert.equal(recountStaffroom({ status: 'unlocked', target: 8, confirmed: 0, graceUntil: null, now, pinned: true }).status, 'unlocked');
+});
+
+registerTest('dvpp: přístup — host nic, přihlášený 3 záznamy, sborovna/kolega/zákazník všechno', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  const base = { loggedIn: true, staffroomStatus: null, referredConfirmed: 0, isCustomer: false, personalAccessUntil: null, now } as const;
+  assert.equal(resolveAccessLevel({ ...base, loggedIn: false }), 'guest');
+  assert.equal(resolveAccessLevel({ ...base }), 'starter');
+  assert.equal(resolveAccessLevel({ ...base, staffroomStatus: 'grace' }), 'full');
+  assert.equal(resolveAccessLevel({ ...base, referredConfirmed: 1 }), 'full');
+  assert.equal(resolveAccessLevel({ ...base, isCustomer: true }), 'full');
+});
+
+registerTest('dvpp: školní kód bez zaměnitelných znaků, normalizace vstupu, role vedení školy', () => {
+  assert.match(staffroomCodeFromRandom(new Uint8Array([0, 1, 2, 3, 4, 5])), /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/);
+  assert.equal(normalizeStaffroomCode(' k7px-4m '), 'K7PX4M');
+  assert.equal(isDirectorPosition('Ředitel/ka školy'), true);
+  assert.equal(isDirectorPosition('Deputy director'), true);
+  assert.equal(isDirectorPosition('Učitel/ka na ZŠ'), false);
+});
+
+registerTest('dvpp: stav školy z počtu kontaktů a typ učitele z kvízu', () => {
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: null, activeContacts: 2, everHadContacts: true }), 'trace');
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: null, activeContacts: 0, everHadContacts: true }), 'lost');
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: 'unlocked', activeContacts: 9, everHadContacts: true }), 'staffroom');
+  assert.equal(teacherTypeFromAnswers({ style: 'objevovani', subjects: ['fyzika'] }), 'badatel');
+  assert.equal(teacherTypeFromAnswers({ style: 'planovani', pain_point: 'svp' }), 'architekt');
+});
+
+registerTest('dvpp: kapitoly z textu „mm:ss Název“, řazení, neplatné řádky ven, aktuální kapitola', () => {
+  const ch = parseChapters('12:30 Praktická část\n0:00 Úvod\nblbost\n1:02:05 - Otázky\n');
+  assert.deepEqual(ch.map((c) => c.t), [0, 750, 3725]);
+  assert.equal(ch[2].title, 'Otázky');
+  assert.equal(formatTime(3725), '1:02:05');
+  assert.equal(formatTime(750), '12:30');
+  assert.equal(currentChapterIndex(ch, 800), 1);
+  assert.equal(currentChapterIndex(ch, -1), -1);
+});
+
+registerTest('dvpp: digest vybere záznamy z posledních 7 dní, jinak první z katalogu; subject podle prvního', () => {
+  const now = new Date('2026-09-05T08:00:00Z');
+  const vids = [
+    { id: 'a', name: 'Starý', slug: 'a', addedAt: '2026-06-01T00:00:00Z' },
+    { id: 'b', name: 'Nový zlomky', slug: 'b', addedAt: '2026-09-03T00:00:00Z' },
+    { id: 'c', name: 'Bez data', slug: 'c' },
+  ];
+  assert.deepEqual(pickNewVideos(vids, 7, now).map((v) => v.id), ['b']);
+  assert.deepEqual(pickNewVideos([vids[0], vids[2]], 7, now, 1).map((v) => v.id), ['a']);
+  assert.equal(digestSubject([vids[1]], '5. 9.'), 'Nové v knihovně: Nový zlomky');
+  assert.match(digestSubject([], '5. 9.'), /co je nového/);
+});
+
+registerTest('dvpp: ředitel ověřený doménou jen ze školní domény z rejstříku; maskování e-mailu', () => {
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', 'zsmilovice.cz'), true);
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', 'www.zsmilovice.cz'), true);
+  assert.equal(directorTrustedByDomain('reditel@gmail.com', 'gmail.com'), false, 'freemail nikdy');
+  assert.equal(directorTrustedByDomain('reditel@zsjina.cz', 'zsmilovice.cz'), false);
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', null), false);
+  assert.equal(maskEmail('reditel@zsmilovice.cz'), 're***@zsmilovice.cz');
+});
+
+registerTest('dvpp: dedupeVideosByName sloučí duplicitní CMS záznamy, přednost má ten s datem vysílání', () => {
+  const dup = [
+    { id: 'w1', name: 'Jak na zlomky a desetinná čísla' },
+    { id: 'w2', name: 'Webinář:  Jak na zlomky a desetinná  čísla', airedAt: '2026-04-07' },
+    { id: 'x', name: 'Fyzika do hloubky' },
+    { id: 'y', name: 'Vividbooks Fyzika do hloubky' },
+  ];
+  assert.deepEqual(dedupeVideosByName(dup).map((v) => v.id), ['w2', 'x', 'y']);
+  assert.deepEqual(dedupeVideosByName([{ id: 'a', name: 'A' }, { id: 'b', name: 'a' }]).map((v) => v.id), ['a']);
 });
 
 registerTest('parseSchoolBundleLineQuantity reads n× from name or explicit quantity', () => {

@@ -7,7 +7,7 @@
  * exp = unix sekundy; 0 = bez expirace (unsubscribe linky v patičce).
  */
 
-export type MailingTokenPurpose = 'optin' | 'unsub';
+export type MailingTokenPurpose = 'optin' | 'unsub' | 'dvpp-login' | 'dvpp-director-unlock';
 
 function getSecret(): string {
   return (

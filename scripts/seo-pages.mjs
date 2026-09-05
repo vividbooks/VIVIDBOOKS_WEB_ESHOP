@@ -137,7 +137,7 @@ export const SEO_PAGES = [
     description:
       'Záznamy DVPP webinářů Vividbooks pro učitele — interaktivní výuka, digitální učebnice, metodické tipy a novinky ze světa vzdělávání.',
     h1: 'DVPP webináře Vividbooks',
-    h2: 'Akreditované webináře pro učitele',
+    h2: 'Webináře pro učitele s osvědčením DVPP',
     answer:
       'Vividbooks pořádá pravidelné DVPP webináře pro učitele zdarma s certifikátem. Najdete zde živé termíny i záznamy o interaktivní výuce a digitálních učebnicích.',
     jsonLd: [breadcrumb([{ name: 'Webináře', url: '/webinare' }])],
@@ -253,11 +253,11 @@ export const SEO_PAGES = [
     path: '/dvpp-webinare',
     title: 'DVPP webináře',
     description:
-      'Akreditované DVPP webináře Vividbooks pro učitele — zdarma, s certifikátem a praktickými tipy do výuky.',
+      'DVPP webináře Vividbooks pro učitele — zdarma, s osvědčením DVPP a praktickými tipy do výuky. Záznamy v knihovně pro celou sborovnu.',
     h1: 'DVPP webináře',
     h2: 'Vzdělávání učitelů zdarma',
     answer:
-      'Přihlaste se na akreditované DVPP webináře Vividbooks. Webináře jsou zdarma, s certifikátem a tipy pro interaktivní výuku.',
+      'Přihlaste se na DVPP webináře Vividbooks. Webináře jsou zdarma, s osvědčením DVPP a tipy pro interaktivní výuku; záznamy najdete v knihovně dvppzdarma.cz.',
     jsonLd: [breadcrumb([{ name: 'DVPP webináře', url: '/dvpp-webinare' }])],
   },
 
