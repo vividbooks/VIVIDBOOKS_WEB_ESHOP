@@ -16,6 +16,7 @@ import {
 } from '../src/lib/appEntryChoice.ts';
 
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
+import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
   enrichCzechAddressParts,
@@ -1926,6 +1927,93 @@ registerTest('mapSchoolInquiryToPipedriveOrderItems keeps catalog item next to e
     'Z-Point Praha',
   );
   assert.equal(schoolInquiryShippingMethod({}), '');
+});
+
+registerTest('párování záznamu nepřeskočí číslo v názvu (1. vs 2. stupeň)', () => {
+  /**
+   * Regrese ze 4. 9. 2026: účastníkům webináře „…na 1. stupni?“ odešel follow-up s odkazem
+   * na záznam „…na 2. stupni?“. Původní heuristika porovnávala jen prvních 70 % názvu
+   * a jediná odlišná číslice ležela až za tou hranicí. Záznam 1. stupně tou dobou ještě
+   * neexistoval, takže se párovalo právě přes název.
+   */
+  const druhyStupen = {
+    id: 'jak-nadchnout-zaky-pro-matematiku-na-2-stupni-2026',
+    slug: 'jak-nadchnout-zaky-pro-matematiku-na-2-stupni',
+    name: 'Jak nadchnout žáky pro matematiku na 2. stupni?',
+  };
+  const prvniStupen = {
+    id: 'jak-nadchnout-zaky-pro-matematiku-na-1-stupni-2026',
+    slug: 'jak-nadchnout-zaky-pro-matematiku-na-1-stupni',
+    name: 'Jak nadchnout žáky pro matematiku na 1. stupni?',
+  };
+  const webinar1 = {
+    id: 'jak-nadchnout-zaky-pro-matematiku-na-1-stupni-2026',
+    slug: 'jak-nadchnout-zaky-pro-matematiku-na-1-stupni',
+    title: 'Jak nadchnout žáky pro matematiku na 1. stupni?',
+  };
+
+  /** Dokud záznam 1. stupně neexistuje, nesmí se sáhnout po 2. stupni. */
+  assert.equal(matchDvppVideoForWebinar(webinar1, [druhyStupen]), null);
+
+  /** Jakmile záznam existuje, rozhodne přesná shoda slugu. */
+  assert.equal(
+    matchDvppVideoForWebinar(webinar1, [druhyStupen, prvniStupen])?.id,
+    'jak-nadchnout-zaky-pro-matematiku-na-1-stupni-2026',
+  );
+
+  /** Krátký název se nesmí schovat do delšího cizího — fyzika není matematika. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'fyzika-2026', slug: 'jak-nadchnout-zaky-pro-fyziku', title: 'Jak nadchnout žáky pro fyziku?' },
+      [druhyStupen],
+    ),
+    null,
+  );
+
+  /** Ročníky taky ne: 7. ročník není 8. ročník. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w8', slug: 'vividbooks-matematika-8-rocnik', title: 'Vividbooks matematika pro 8. ročník' },
+      [{ id: 'v7', slug: 'vividbooks-matematika-7-rocniku', name: 'Vividbooks matematika 7. ročníku' }],
+    ),
+    null,
+  );
+});
+
+registerTest('párování záznamu vybere nejpodobnější název, při remíze radši nic', () => {
+  /** Dřív vyhrál první v pořadí — fyzikový webinář se pároval na chemii. */
+  const videos = [
+    { id: 'chemie', slug: 'jak-rozmluvit-zaky-v-chemii', name: 'Jak rozmluvit žáky v chemii' },
+    { id: 'fyzika', slug: 'jak-rozmluvi-zaky-ve-fyzice', name: 'Jak rozmluvit žáky ve fyzice' },
+  ];
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'jak-rozmluvit-zaky-ve-fyzice', title: 'Jak rozmluvit žáky  ve fyzice' },
+      videos,
+    )?.id,
+    'fyzika',
+  );
+
+  /** Dva stejně dobré názvy = nejednoznačné, takže žádný odkaz (volající použije webinar.id). */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'uplne-jiny-slug', title: 'Jak na projektovou výuku' },
+      [
+        { id: 'a', slug: 'a', name: 'Jak na projektovou výuku' },
+        { id: 'b', slug: 'b', name: 'Jak na projektovou výuku' },
+      ],
+    ),
+    null,
+  );
+
+  /** Volnější varianty názvu se dál párují — zpřísnění se nesmí dotknout běžného provozu. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'stredobod-interaktivni-vyuky', title: 'Středobod interaktivní výuky' },
+      [{ id: 'v', slug: 'webinar-stredobod-interaktivni-vyuky', name: 'Webinář: Středobod interaktivní výuky' }],
+    )?.id,
+    'v',
+  );
 });
 
 registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí cenu z formuláře', () => {

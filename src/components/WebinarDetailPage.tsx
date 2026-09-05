@@ -11,6 +11,7 @@ import { isWebinarDay } from '../utils/webinarLiveDelivery';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
+import { matchDvppVideoForWebinar } from '../../supabase/functions/_shared/dvpp-video-match';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields, type WebinarRegSubjectField } from './WebinarRegistrationFormFields';
@@ -84,32 +85,6 @@ interface WebinarDetailPageProps {
 
 const USE_VIVIDBOOKS_QID = 'uses_vividbooks';
 
-function normDvppMatch(s: string) {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-/** Stejná heuristika jako v adminu — párování webináře k záznamu z `/dvpp-videos` (server doplní `surveyRequireFullRegistration` z KV). */
-function matchDvppVideoForWebinarDetail(webinar: Webinar, dvppVideos: { id: string; slug?: string; name?: string; title?: string }[]) {
-  if (!dvppVideos?.length) return null;
-  const wSlug = normDvppMatch(String(webinar.slug || webinar.id || ''));
-  const wTitle = normDvppMatch(String(webinar.title || ''));
-  const bySlug = dvppVideos.find((v) => normDvppMatch(String(v.slug || v.id || '')) === wSlug);
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find((v) => {
-    const vt = normDvppMatch(String(v.name || v.title || ''));
-    return (
-      wTitle.length > 5 &&
-      (vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-        wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7))))
-    );
-  });
-  return byTitle ?? null;
-}
-
 export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const webinarPathSeg = String(webinar.slug || webinar.id || '').trim() || webinar.id;
   const webinarPath = `/webinar/${webinarPathSeg}`;
@@ -122,7 +97,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const { videos: dvppVideos, loading: dvppVideosLoading } = useDvppVideos();
 
   const matchedDvppVideo = useMemo(
-    () => matchDvppVideoForWebinarDetail(webinar, dvppVideos),
+    () => matchDvppVideoForWebinar(webinar, dvppVideos),
     [webinar, dvppVideos],
   );
 

@@ -32,6 +32,7 @@ import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
+import { matchDvppVideoForWebinar } from '../../../../supabase/functions/_shared/dvpp-video-match.ts';
 import {
   buildVividbooksBrandCta,
   buildVividbooksBrandShell,
@@ -5511,33 +5512,6 @@ function buildWebinarDvppDotaznikUrl(baseUrl: string, w: any, cleanEmail: string
   const slug = String(w.slug || w.id || '').trim() || String(w.id);
   const origin = String(baseUrl || '').replace(/\/$/, '');
   return `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(cleanEmail)}`;
-}
-
-/** Stejné jako `matchDvppVideo` ve WebinaryPastPanel — párování webináře k záznamu v KV `dvpp-videos`. */
-function normWebinarDvppMatch(raw: string): string {
-  return String(raw || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function matchDvppVideoForWebinar(webinar: any, dvppVideos: any[]): any | null {
-  if (!dvppVideos?.length) return null;
-  const wSlug = normWebinarDvppMatch(String(webinar.slug || webinar.id || ''));
-  const wTitle = normWebinarDvppMatch(String(webinar.title || ''));
-  const bySlug = dvppVideos.find((v: any) =>
-    normWebinarDvppMatch(String(v.slug || v.id || '')) === wSlug,
-  );
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find((v: any) => {
-    const vt = normWebinarDvppMatch(String(v.name || v.title || ''));
-    return wTitle.length > 5 && (
-      vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-      wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7)))
-    );
-  });
-  return byTitle ?? null;
 }
 
 /** Který webinář patří k danému DVPP záznamu (pro ověření `webinar_reg_*`). */

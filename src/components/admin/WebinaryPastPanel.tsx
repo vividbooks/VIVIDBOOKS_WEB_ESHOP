@@ -17,28 +17,9 @@ import { WebinarSurveyResponsesPanel } from './WebinarSurveyResponsesPanel';
 import { parseJsonResponseBody } from '../../utils/parseJsonResponseBody';
 import { compareWebinarsBySchedule } from '../../utils/webinarEventTimestamp';
 import { extractYoutubeId } from '../../utils/youtube';
+import { matchDvppVideoForWebinar } from '../../../supabase/functions/_shared/dvpp-video-match';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
-
-function norm(s: string) {
-  return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
-}
-
-function matchDvppVideo(webinar: any, dvppVideos: any[]): any | null {
-  if (!dvppVideos?.length) return null;
-  const wSlug  = norm(webinar.slug || webinar.id || '');
-  const wTitle = norm(webinar.title || '');
-  const bySlug = dvppVideos.find(v => norm(v.slug || v.id || '') === wSlug);
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find(v => {
-    const vt = norm(v.name || v.title || '');
-    return wTitle.length > 5 && (
-      vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-      wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7)))
-    );
-  });
-  return byTitle ?? null;
-}
 
 const MONTH_NAMES = [
   'Leden','Únor','Březen','Duben','Květen','Červen',
@@ -668,7 +649,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
     setIsNew(false);
     setSelected(item);
     setPastPanelTab('uprava');
-    const dvpp = matchDvppVideo(item, dvppVideos);
+    const dvpp = matchDvppVideoForWebinar(item, dvppVideos);
     setMatchedDvpp(dvpp);
     setForm(itemToForm(item, dvpp));
     loadRagStatus(item.id);
@@ -1473,7 +1454,7 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             </div>
           ) : filtered.map(item => {
             const isSel     = !isNew && selected?.id === item.id;
-            const dvpp      = matchDvppVideo(item, dvppVideos);
+            const dvpp      = matchDvppVideoForWebinar(item, dvppVideos);
             const hasVideo  = !!(item.recordingUrl || item.youtubeUrl || dvpp?.youtubeUrl);
             const hasCert   = !!(
               item.certificateUrl || dvpp?.certificateUrl ||
