@@ -112,7 +112,7 @@ type Video = { id, name, slug, thumbnail, youtubeUrl, topicIds, description, sub
 ## Měření
 
 ### `POST /dvpp/events`
-`{ event: 'visit'|'trailer_play'|…, meta?, eventId?, email?, source?, medium?, campaign?, content?, sessionKey? }` → `{ ok }`
+`{ event: 'visit'|'trailer_play'|'preview_limit'|…, meta?, eventId?, email?, source?, medium?, campaign?, content?, sessionKey? }` → `{ ok }`
 Zapíše do `funnel_events`, kopie do Meta CAPI a GA4 (pokud jsou secrets). `eventId` slouží k deduplikaci s browser pixelem.
 
 ## Cron
@@ -126,6 +126,7 @@ Zapíše do `funnel_events`, kopie do Meta CAPI a GA4 (pokud jsou secrets). `eve
 |---|---|---|
 | POST | `/admin/dvpp/schools/import` | naplní `schools` z CSV rejstříku v Storage (`loadSchoolsCache`) → `{ upserted, skipped, withTeachers, total }` |
 | POST | `/admin/dvpp/schools/backfill` `{ limit? }` | dopáruje kontakty bez školy podle domény |
+| POST | `/admin/dvpp/schools/import-sizes` (tělo = CSV) | velikost sboru: sloupce `red_izo`/`ico`, `zaci`/`pupils`, `ucitele`/`teachers`; přepočítá milníky dosud neodemčených sboroven |
 | GET | `/admin/dvpp/schools?status=&q=` | seznam ZŠ (300) s velikostí, stavem, doménou |
 | PUT | `/admin/dvpp/schools/:redIzo` | `status_reason`, `status_note`, `teachers_count` (nastaví `teachers_estimated=false`), `domain`, `email`, `director_name` |
 | GET | `/admin/dvpp/dashboard?days=` | `{ funnel: { byEvent, byDay }, coverage: { byStatus, primarySchools, schoolsWithContacts, staffrooms }, subscribers: { active, withSchool }, certificates }` |

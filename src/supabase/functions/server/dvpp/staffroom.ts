@@ -14,6 +14,7 @@ import {
 import { findSchoolByRedIzo, linkSubscriberToSchool, refreshSchoolStatus, type SchoolRow } from './schools.ts';
 import { recordFunnelEvent } from './events.ts';
 import { addDaysIso, b64url, nowIso, randomBytes, sha256Hex, type SubscriberRow } from './shared.ts';
+import { enrollDvpp, enrollDvppMany } from './automations.ts';
 
 export type StaffroomRow = {
   red_izo: string;
@@ -132,6 +133,8 @@ export async function joinByCode(
       attribution: { referrerId: invitedBy || sr.founder_id },
       meta: { code: sr.code },
     });
+    const inviter = invitedBy || sr.founder_id;
+    if (inviter && inviter !== subscriber.id) await enrollDvpp(sb, 'dvpp_referral_confirmed', inviter);
     await recountOne(sb, sr.red_izo);
   }
   return { ok: true, staffroom: (await getStaffroom(sb, sr.red_izo)) ?? sr, school, added: r.added };
@@ -239,6 +242,8 @@ export async function recountOne(sb: SupabaseClient, redIzo: string, now = new D
   if (res.unlockedNow) {
     await sb.from('schools').update({ milestone_reached_at: nowIso() }).eq('red_izo', redIzo).is('milestone_reached_at', null);
     await recordFunnelEvent(sb, { event: 'staffroom_unlocked', redIzo, meta: { confirmed, target: sr.milestone_target } });
+    const { data: members } = await sb.from('staffroom_members').select('subscriber_id').eq('red_izo', redIzo).limit(500);
+    await enrollDvppMany(sb, 'dvpp_staffroom_unlocked', ((members || []) as Array<{ subscriber_id: string }>).map((m) => m.subscriber_id));
   } else if (res.status === 'grace' && sr.status !== 'grace') {
     await recordFunnelEvent(sb, { event: 'staffroom_grace', redIzo, meta: { confirmed, target: sr.milestone_target, graceDays: GRACE_DAYS } });
   }

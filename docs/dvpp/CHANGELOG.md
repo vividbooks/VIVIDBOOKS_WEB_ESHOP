@@ -2,6 +2,17 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-09-05 (odpoledne) · sekvence, cron, přehrávač, landing
+
+### ✅
+- `dvpp/automations.ts`: čtyři hotové e-mailové sekvence (uvítání D0/D2/D5, po osvědčení D0/D3, přibyl kolega, sborovna odemčena) v brand šabloně; seed přes existující `flows/seed-defaults`; spouštění z `verify`, `issueCertificate`, `joinByCode`, `recountOne`.
+- Migrace `20260905110000_schedule_dvpp_recount_cron.sql`: denní pg_cron na `/cron/dvpp-recount`.
+- `POST /admin/dvpp/schools/import-sizes`: CSV s počty žáků/učitelů → `schools`, přepočet milníků sboroven ve stavu `building`.
+- Přehrávač `DvppYouTubePlayer` (YouTube IFrame API): přesná pozice každých 30 s, dokončení při 90 %, **upoutávka pro nepřihlášené: prvních 10 minut** bez přihlášení, pak výzva (událost `preview_limit`).
+- Landing `DvppLeadMagnetPage`: karty vedou do `/knihovna/zaznam/:id`, hero má CTA „Otevřít knihovnu“ a „Pro ředitele“, text bez „akreditované“.
+- `webinar-survey-light-lead` nově zapisuje do `subscribers` (source `dvpp`) + škola a událost.
+- Texty: „akreditované DVPP“ nahrazeno „s osvědčením DVPP“ (SEO stránky, `llms.txt`); PDF certifikát cituje § 10 vyhlášky 317/2005 Sb.
+
 ## 2026-09-05 · Krok 1–4 backend, dokumentace
 
 ### ✅ Datový model
@@ -30,13 +41,12 @@ Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracová
 - `docs/dvpp/README.md`, `DATOVY_MODEL.md`, `API.md`, `FLOWS.md`, tento changelog.
 
 ### ⏳ Čeká (další kroky)
-- Nová landing dvppzdarma.cz s upoutávkami a řadami (dnes `DvppLeadMagnetPage`); přepojit její karty záznamů na `/knihovna/zaznam/:id`.
-- Přehrávač: přesná pozice z YouTube IFrame API (dnes čas na stránce), kapitoly, upoutávka před přihlášením (prvních 10 min).
-- Zapojení `enrollInFlows` pro spouštěče `dvpp_*` a obsah čtyř sekvencí (Resend automatizace).
+- Nová landing dvppzdarma.cz jako plnohodnotný katalog s řadami (dnes `DvppLeadMagnetPage` + odkazy do knihovny).
+- Přehrávač: kapitoly (pole `chapters` u videa v KV) a samostatné 60s upoutávky (`trailerUrl`) pro FB skupiny.
+- Týdenní digest „Nové v knihovně“ (kampaň z EmailBuilderu s blokem sborovny; není automatizace).
 - Import velikosti sboru (statistika MŠMT) — dnes odhad z počtu žáků, pokud CSV rejstříku nese `pupils`/`teachers`; jinak 8 jako výchozí milník.
 - Upoutávky a kapitoly u záznamů (pole `trailerUrl`, `durationMinutes` v KV videí).
-- pg_cron pro `/cron/dvpp-recount`, secrets pro Meta CAPI / GA4.
-- Odstranit „akreditované“ z SEO textů a `llms.txt`, doplnit odkaz na § 10 vyhl. 317/2005 do PDF certifikátu.
+- Secrets pro Meta CAPI / GA4; kontrola doručitelnosti (DKIM/DMARC, Seznam FBL) před spuštěním digestu.
 
 ### Známé kompromisy
 - Osvědčení za záznam se váže na existující DVPP dotazník (`webinar_survey_*` v KV); záznamy bez párovaného webináře zatím certifikát nevystaví (`409`).

@@ -154,8 +154,23 @@ export function DvppLeadMagnetPage() {
               zdarma pro pedagogy ZŠ
             </h1>
             <p className="mx-auto mt-8 max-w-[560px] text-[13px] font-bold leading-relaxed text-[#5B4FD8]/80 md:text-[14px]">
-              Rádi se učíte nové věci a zlepšujete svou práci ve výuce? Na našem portálu najdete kvalitní DVPP webináře, ke kterým lze získat certifikát jako doklad o dalším vzdělávání.
+              Knihovna záznamů webinářů o výuce na ZŠ. Ke každému záznamu si po krátkém ověření vystavíte osvědčení DVPP. Když se přidá třetina sborovny, má knihovnu zdarma celá škola.
             </p>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+              <Link
+                to="/knihovna"
+                className="inline-flex items-center gap-2 rounded-full bg-[#F06632] px-6 py-3 text-[14px] font-black text-white no-underline shadow-[0_8px_18px_rgba(240,102,50,0.25)] transition hover:bg-[#d9552a]"
+              >
+                Otevřít knihovnu
+                <ChevronRight className="h-4 w-4" />
+              </Link>
+              <Link
+                to="/pro-reditele"
+                className="inline-flex items-center gap-2 rounded-full border border-[#5B4FD8]/25 bg-white px-6 py-3 text-[14px] font-black text-[#5B4FD8] no-underline transition hover:border-[#5B4FD8]/50"
+              >
+                Pro ředitele: celá sborovna zdarma
+              </Link>
+            </div>
 
             <div className="mt-8">
               <p className="mb-3 text-[13px] font-bold text-[#5B4FD8]/75">Témata:</p>
@@ -220,7 +235,7 @@ export function DvppLeadMagnetPage() {
                 <DvppVideoCard
                   key={video.id}
                   video={video}
-                  onClick={() => navigate(`/webinare/zaznam/${video.id}`)}
+                  onClick={() => navigate(`/knihovna/zaznam/${encodeURIComponent(video.id)}`)}
                 />
               ))}
             </div>

@@ -6,7 +6,7 @@
  * (`loadSchoolsCache`) a doplňuje velikost sboru z volitelného druhého souboru (statistika MŠMT).
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { domainFromWebOrEmail, estimateTeachersFromPupils, schoolDomainFromEmail, schoolStatusFrom } from './milestones.ts';
+import { domainFromWebOrEmail, estimateTeachersFromPupils, milestoneTargetForTeachers, schoolDomainFromEmail, schoolStatusFrom } from './milestones.ts';
 import { icoDigits, nowIso } from './shared.ts';
 
 /** Záznam z CSV parseru v index.tsx (SchoolRecord) — jen pole, která potřebujeme. */
@@ -287,4 +287,43 @@ export async function coverageSummary(sb: SupabaseClient): Promise<{
     .filter(([k]) => k !== 'blank' && k !== 'lost')
     .reduce((a, [, v]) => a + v, 0);
   return { byStatus, primarySchools: primary || 0, schoolsWithContacts, staffrooms };
+}
+
+/**
+ * Import velikosti sboru z CSV (statistika MŠMT / vlastní tabulka). Klíč red_izo nebo IČO.
+ * Sloupce (bez diakritiky, libovolné pořadí): red_izo|redizo|ico, zaci|pupils, ucitele|teachers.
+ */
+export async function importSizes(sb: SupabaseClient, csv: string): Promise<{ updated: number; skipped: number }> {
+  const lines = csv.split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) return { updated: 0, skipped: 0 };
+  const delim = lines[0].includes(';') ? ';' : lines[0].includes('\t') ? '\t' : ',';
+  const norm = (h: string) => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z_]/g, '');
+  const headers = lines[0].split(delim).map((h) => norm(h.replace(/"/g, '')));
+  const col = (...names: string[]) => headers.findIndex((h) => names.some((n) => h === n || h.startsWith(n)));
+  const iRed = col('red_izo', 'redizo'); const iIco = col('ico'); const iPup = col('zaci', 'zaku', 'pupils', 'pocet_zaku'); const iTea = col('ucitele', 'ucitelu', 'teachers', 'pedagog');
+  if ((iRed < 0 && iIco < 0) || (iPup < 0 && iTea < 0)) return { updated: 0, skipped: lines.length - 1 };
+  let updated = 0, skipped = 0;
+  for (const line of lines.slice(1)) {
+    const cols = line.split(delim).map((c) => c.replace(/"/g, '').trim());
+    const red = iRed >= 0 ? cols[iRed]?.replace(/\D/g, '') : '';
+    const ico = iIco >= 0 ? icoDigits(cols[iIco]) : null;
+    const pupils = iPup >= 0 ? toInt(cols[iPup]) : null;
+    const teachers = iTea >= 0 ? toInt(cols[iTea]) : null;
+    if ((!red && !ico) || (!pupils && !teachers)) { skipped++; continue; }
+    const patch: Record<string, unknown> = {};
+    if (pupils) patch.pupils_count = pupils;
+    if (teachers) { patch.teachers_count = teachers; patch.teachers_estimated = false; }
+    else if (pupils) { patch.teachers_count = estimateTeachersFromPupils(pupils); patch.teachers_estimated = true; }
+    let q = sb.from('schools').update(patch);
+    q = /^\d{9}$/.test(red) ? q.eq('red_izo', red) : q.eq('ico', ico!);
+    const { data, error } = await q.select('red_izo');
+    if (error || !(data || []).length) { skipped++; continue; }
+    updated += (data || []).length;
+  }
+  /* Milník sboroven podle nové velikosti (jen dosud neodemčené). */
+  const { data: srs } = await sb.from('staffrooms').select('red_izo, status, schools!inner(teachers_count)').eq('status', 'building').limit(5000);
+  for (const r of (srs || []) as unknown as Array<{ red_izo: string; schools: { teachers_count: number | null } }>) {
+    await sb.from('staffrooms').update({ milestone_target: milestoneTargetForTeachers(r.schools?.teachers_count) }).eq('red_izo', r.red_izo);
+  }
+  return { updated, skipped };
 }

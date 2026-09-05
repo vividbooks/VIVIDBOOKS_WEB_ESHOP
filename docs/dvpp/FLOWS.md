@@ -147,4 +147,4 @@ Dedup s browser pixelem: stejný `eventId` v `/dvpp/events` a ve `fbq('track', �
 | `dvpp_referral_confirmed` | kolega potvrdil | zakladateli „přibyl vám kolega, chybí N“ |
 | `dvpp_staffroom_unlocked` | milník | celé sborovně „máte knihovnu zdarma“ |
 
-Zapojení do `enrollInFlows` je další krok (viz CHANGELOG); typy jsou v `automationEngine.ts` už připravené.
+Zapojeno: `dvpp/automations.ts` drží čtyři hotové sekvence (`DVPP_AUTOMATION_FLOWS`, seed přes `POST /admin/mailing/flows/seed-defaults`, vznikají neaktivní) a `enrollDvpp()` je volá z `verify` (první přihlášení), `issueCertificate`, `joinByCode` (zvoucí) a `recountOne` (všichni členové při odemknutí). Zapnutí sekvence: `/mailing/automatizace`.

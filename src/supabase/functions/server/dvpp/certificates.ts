@@ -10,6 +10,7 @@ import md5 from 'npm:md5';
 import * as kv from '../kv_store.tsx';
 import { recordFunnelEvent } from './events.ts';
 import { activateMember } from './staffroom.ts';
+import { enrollDvpp } from './automations.ts';
 import type { SubscriberRow } from './shared.ts';
 
 export type CertificateRow = {
@@ -100,6 +101,7 @@ export async function issueCertificate(
     meta: { number, kind, programId, hours: input.hours || 2 },
   });
   await activateMember(sb, subscriber.id);
+  await enrollDvpp(sb, 'dvpp_certificate', subscriber.id);
   return { ok: true, certificate: data as CertificateRow, created: true };
 }
 

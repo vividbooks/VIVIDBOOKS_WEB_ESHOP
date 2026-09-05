@@ -24,6 +24,7 @@ import {
 } from './audienceFilter.ts';
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
 import { registerDvppRoutes } from './dvpp/routes.ts';
+import { DVPP_AUTOMATION_FLOWS } from './dvpp/automations.ts';
 import type { RegistryRecord as DvppRegistryRecord } from './dvpp/schools.ts';
 import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
 import { attributionFrom as dvppAttributionFrom } from './dvpp/shared.ts';
@@ -4087,6 +4088,33 @@ app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
       savedAt: new Date().toISOString(),
     });
     console.log(`[Webinar] survey light lead: ${cleanEmail} webinar=${webinarId}`);
+    /** Dual-write do subscribers + škola/událost (DVPP zdarma) — neblokuje. */
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const nameParts = name.split(' ');
+        const up = await upsertSubscriber(sbMailing, {
+          email: cleanEmail,
+          firstName: nameParts[0] || null,
+          lastName: nameParts.slice(1).join(' ') || null,
+          phone: phone || null,
+          positionLabel: 'Kontakt (záznam bez plné registrace)',
+          source: 'dvpp',
+          contactType: 'teacher',
+          status: 'subscribed',
+          tags: ['dvpp-video', `webinar-light-${webinarId}`],
+        });
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId, email: cleanEmail, event: 'lead',
+            attribution: dvppAttributionFrom(body), meta: { webinarId, via: 'survey-light' }, request: dvppRequestContext(c.req.raw),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Subscribers] light lead upsert (neblokuje):', e instanceof Error ? e.message : e);
+    }
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Webinar] survey light lead: ${err.message}`);
@@ -8853,7 +8881,7 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 - Vividboard (nástroj pro interaktivní tabule)
 
 ## Webináře
-- [DVPP webináře](${marketingSitePath('/webinare')}): Pravidelné webináře pro učitele, akreditované DVPP, zdarma s certifikátem
+- [DVPP webináře](${marketingSitePath('/webinare')}): Pravidelné webináře pro učitele zdarma, s osvědčením DVPP; záznamy v knihovně dvppzdarma.cz
 
 ## Blog a novinky
 - [Blog](${marketingSitePath('/blog')}): Články o moderním vzdělávání, rozhovory s učiteli
@@ -10290,7 +10318,7 @@ app.post('/make-server-93a20b6f/admin/mailing/flows/seed-defaults', async (c) =>
     if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
     const { data: existing } = await supabase.from('automation_flows').select('slug');
     const have = new Set((existing || []).map((f) => f.slug as string));
-    const toInsert = DEFAULT_AUTOMATION_FLOWS.filter((f) => !have.has(f.slug)).map((f) => ({
+    const toInsert = [...DEFAULT_AUTOMATION_FLOWS, ...DVPP_AUTOMATION_FLOWS].filter((f) => !have.has(f.slug)).map((f) => ({
       name: f.name,
       slug: f.slug,
       definition: f.definition,

@@ -24,6 +24,8 @@ import { issueCertificate, listCertificates, schoolCertificateReport } from './c
 import { listTopics, toggleVote, upsertTopic } from './votes.ts';
 import { isDirectorPosition, teacherTypeFromAnswers } from './milestones.ts';
 import { activateMember } from './staffroom.ts';
+import { enrollDvpp } from './automations.ts';
+import { importSizes } from './schools.ts';
 
 export type DvppRouteDeps = {
   sendEmail: MagicLinkDeps['sendEmail'];
@@ -110,6 +112,7 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
       if (j.ok) joined = { code: j.staffroom.code, schoolName: j.school.name };
     }
     await Promise.allSettled(events);
+    if (r.firstLogin) await enrollDvpp(sb, 'dvpp_confirmed', sub.id);
     const fresh = (await getSubscriberById(sb, sub.id)) ?? sub;
     return c.json({
       ok: true,
@@ -388,6 +391,13 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
     const records = await deps.loadRegistryRecords();
     const r = await importRegistry(sb, records);
     return c.json({ ok: true, ...r, total: records.length });
+  });
+
+  /** CSV s velikostí sboru: sloupce red_izo|redizo|ico, zaci|pupils, ucitele|teachers (oddělovač ; , nebo tab). */
+  both('post', '/admin/dvpp/schools/import-sizes', async (c) => {
+    const text = await c.req.text();
+    if (!text || text.length < 10) return c.json({ error: 'Pošlete CSV v těle požadavku.' }, 400);
+    return c.json({ ok: true, ...(await importSizes(sbService(), text)) });
   });
 
   both('post', '/admin/dvpp/schools/backfill', async (c) => {

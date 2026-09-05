@@ -89,7 +89,9 @@ flowchart LR
 - [ ] Redeploy Edge funkce `make-server-93a20b6f`.
 - [ ] `POST /admin/dvpp/schools/import` (naplní `schools` z CSV rejstříku v Storage).
 - [ ] `POST /admin/dvpp/schools/backfill` opakovaně, dokud `linked > 0` (dopáruje 3 900 školních domén).
-- [ ] pg_cron: `POST /cron/dvpp-recount` 1× denně (hlavička `X-Cron-Secret: MAILING_CRON_SECRET`).
+- [ ] pg_cron: migrace `20260905110000_schedule_dvpp_recount_cron.sql` (denně 03:15, secret z `app.mailing_cron_secret`).
+- [ ] `POST /admin/mailing/flows/seed-defaults` → v `/mailing/automatizace` zapnout čtyři sekvence „DVPP · …“.
+- [ ] Velikost sborů: `POST /admin/dvpp/schools/import-sizes` s CSV ze statistiky MŠMT (jinak platí odhad z počtu žáků).
 - [ ] Secrets (volitelné): `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_TEST_EVENT_CODE`, `GA4_MEASUREMENT_ID`, `GA4_API_SECRET`.
 - [x] Frontend: routy `/knihovna`, `/knihovna/prihlaseni`, `/knihovna/zaznam/:id`, `/sborovna`, `/sborovna/letacek`, `/pro-reditele`, `/kviz`, `/s/:code`, admin `/marketing/dvpp` (nasazují se pushem do `main`).
 - [ ] SEO prerender nových stránek v `scripts/seo-pages.mjs` (knihovna, pro-reditele).
