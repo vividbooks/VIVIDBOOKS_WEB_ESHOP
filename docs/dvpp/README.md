@@ -85,11 +85,11 @@ flowchart LR
 
 ## Nasazení (checklist)
 
-- [ ] Migrace `20260905100000_dvpp_lead_magnet_core.sql` aplikovaná na produkci (`supabase db push`).
-- [ ] Redeploy Edge funkce `make-server-93a20b6f`.
-- [ ] `POST /admin/dvpp/schools/import` (naplní `schools` z CSV rejstříku v Storage).
+- [x] Migrace `20260905100000_dvpp_lead_magnet_core.sql` aplikovaná na produkci (5. 9. 2026 přes Supabase MCP).
+- [ ] Redeploy Edge funkce `make-server-93a20b6f` – proběhne workflow `deploy-edge-functions` po merge PR #104.
+- [ ] `POST /cron/dvpp-recount` jednou po nasazení (nebo počkat na 03:15): při prázdné tabulce `schools` naimportuje rejstřík a založí DVPP sekvence; ručně jde i `POST /admin/dvpp/schools/import`.
 - [ ] `POST /admin/dvpp/schools/backfill` opakovaně, dokud `linked > 0` (dopáruje 3 900 školních domén).
-- [ ] pg_cron: migrace `20260905110000_schedule_dvpp_recount_cron.sql` (denně 03:15, secret z `app.mailing_cron_secret`).
+- [x] pg_cron: migrace `20260905110000_schedule_dvpp_recount_cron.sql` aplikovaná (denně 03:15, secret z `app.mailing_cron_secret`).
 - [ ] `POST /admin/mailing/flows/seed-defaults` → v `/mailing/automatizace` zapnout čtyři sekvence „DVPP · …“.
 - [ ] Obsah: v `/marketing/dvpp` → Řady založit 4–5 řad, u 20 nejlepších záznamů doplnit délku, lektora, kapitoly a upoutávku.
 - [ ] Digest: každé pondělí `/marketing/dvpp` → „Vygenerovat digest“ → v EmailBuilderu zkontrolovat, testovací odeslání, kampaň na aktivní odběratele.
