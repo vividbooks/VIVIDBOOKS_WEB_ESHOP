@@ -175,6 +175,11 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/WebinarDvppDotaznikRedirectRoute'), 'WebinarDvppDotaznikRedirectRoute'),
             },
             {
+              // Znovuvydání certifikátu pro toho, kdo dotazník už vyplnil.
+              path: 'webinar/:id/certifikat',
+              lazy: lazyNamed(() => import('./components/WebinarCertificateReissueRoute'), 'WebinarCertificateReissueRoute'),
+            },
+            {
               path: 'webinar-dotaznik-vysledky/:token',
               lazy: lazyNamed(() => import('./components/WebinarSurveyPublicResultsPage'), 'WebinarSurveyPublicResultsPage'),
             },

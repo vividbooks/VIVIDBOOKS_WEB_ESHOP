@@ -520,6 +520,25 @@ export function ContactPage() {
           >
             {'Zavolejte: +420\u00a0602\u00a0227\u00a0674'}
           </h1>
+          <p
+            className="text-[#001161]/60 text-[14px] mt-3"
+            style={{ fontFamily: ff }}
+          >
+            {'Technick\u00fd probl\u00e9m? Napi\u0161te nebo zavolejte '}
+            <a
+              href="mailto:vitek@vividbooks.com"
+              className="text-[#4B48CC] underline hover:text-[#7C3AED] transition-colors"
+            >
+              {'V\u00edtkovi \u0160kopovi'}
+            </a>
+            {' \u2013 '}
+            <a
+              href="tel:+420728417279"
+              className="text-[#4B48CC] underline hover:text-[#7C3AED] transition-colors"
+            >
+              {'+420\u00a0728\u00a0417\u00a0279'}
+            </a>
+          </p>
         </div>
 
         <div className="flex items-center gap-2 mb-2 px-1">
