@@ -14,6 +14,19 @@ import {
   rememberAppEntryChoice,
 } from '../src/lib/appEntryChoice.ts';
 
+import {
+  estimateTeachersFromPupils,
+  isDirectorPosition,
+  milestoneTargetForTeachers,
+  normalizeStaffroomCode,
+  recountStaffroom,
+  resolveAccessLevel,
+  schoolDomainFromEmail,
+  schoolStatusFrom,
+  staffroomCodeFromRandom,
+  teacherTypeFromAnswers,
+  domainFromWebOrEmail,
+} from '../src/supabase/functions/server/dvpp/milestones.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
@@ -1758,6 +1771,67 @@ registerTest('zaseknuté ukládání odpovědi neuvězní dotazník — vrátí 
       Reflect.set(globalThis, 'fetch', originalFetch);
     }
   }
+});
+
+/* ── DVPP zdarma: milníky sborovny, přístup, škola z domény (docs/dvpp/FLOWS.md) ─────────── */
+registerTest('dvpp: milník sborovny roste s velikostí sboru (4/8/12/16), neznámá velikost = 8', () => {
+  assert.equal(milestoneTargetForTeachers(null), 8);
+  assert.equal(milestoneTargetForTeachers(5), 4);
+  assert.equal(milestoneTargetForTeachers(25), 8);
+  assert.equal(milestoneTargetForTeachers(40), 12);
+  assert.equal(milestoneTargetForTeachers(80), 16);
+  assert.equal(estimateTeachersFromPupils(240), 20);
+  assert.equal(estimateTeachersFromPupils(20), 3, 'malotřídka má aspoň 3 pedagogy');
+});
+
+registerTest('dvpp: freemail neprozradí školu, školní doména a web ano', () => {
+  assert.equal(schoolDomainFromEmail('jana@seznam.cz'), '');
+  assert.equal(schoolDomainFromEmail('Jana@ZSMilovice.cz'), 'zsmilovice.cz');
+  assert.equal(domainFromWebOrEmail('https://www.zsmilovice.cz/kontakt'), 'zsmilovice.cz');
+  assert.equal(domainFromWebOrEmail('reditel@gmail.com'), '');
+});
+
+registerTest('dvpp: sborovna se odemkne milníkem, při poklesu má 30 dní, pak vyprší; ředitelské odemknutí drží', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  assert.deepEqual(
+    recountStaffroom({ status: 'building', target: 8, confirmed: 8, graceUntil: null, now, pinned: false }),
+    { status: 'unlocked', graceUntil: null, unlockedNow: true },
+  );
+  const grace = recountStaffroom({ status: 'unlocked', target: 8, confirmed: 7, graceUntil: null, now, pinned: false });
+  assert.equal(grace.status, 'grace');
+  assert.equal(grace.graceUntil, '2026-10-31T00:00:00.000Z');
+  assert.equal(
+    recountStaffroom({ status: 'grace', target: 8, confirmed: 7, graceUntil: '2026-10-31T00:00:00.000Z', now: new Date('2026-11-02T00:00:00Z'), pinned: false }).status,
+    'expired',
+  );
+  assert.equal(recountStaffroom({ status: 'expired', target: 8, confirmed: 9, graceUntil: null, now, pinned: false }).status, 'unlocked');
+  assert.equal(recountStaffroom({ status: 'unlocked', target: 8, confirmed: 0, graceUntil: null, now, pinned: true }).status, 'unlocked');
+});
+
+registerTest('dvpp: přístup — host nic, přihlášený 3 záznamy, sborovna/kolega/zákazník všechno', () => {
+  const now = new Date('2026-10-01T00:00:00Z');
+  const base = { loggedIn: true, staffroomStatus: null, referredConfirmed: 0, isCustomer: false, personalAccessUntil: null, now } as const;
+  assert.equal(resolveAccessLevel({ ...base, loggedIn: false }), 'guest');
+  assert.equal(resolveAccessLevel({ ...base }), 'starter');
+  assert.equal(resolveAccessLevel({ ...base, staffroomStatus: 'grace' }), 'full');
+  assert.equal(resolveAccessLevel({ ...base, referredConfirmed: 1 }), 'full');
+  assert.equal(resolveAccessLevel({ ...base, isCustomer: true }), 'full');
+});
+
+registerTest('dvpp: školní kód bez zaměnitelných znaků, normalizace vstupu, role vedení školy', () => {
+  assert.match(staffroomCodeFromRandom(new Uint8Array([0, 1, 2, 3, 4, 5])), /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/);
+  assert.equal(normalizeStaffroomCode(' k7px-4m '), 'K7PX4M');
+  assert.equal(isDirectorPosition('Ředitel/ka školy'), true);
+  assert.equal(isDirectorPosition('Deputy director'), true);
+  assert.equal(isDirectorPosition('Učitel/ka na ZŠ'), false);
+});
+
+registerTest('dvpp: stav školy z počtu kontaktů a typ učitele z kvízu', () => {
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: null, activeContacts: 2, everHadContacts: true }), 'trace');
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: null, activeContacts: 0, everHadContacts: true }), 'lost');
+  assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: 'unlocked', activeContacts: 9, everHadContacts: true }), 'staffroom');
+  assert.equal(teacherTypeFromAnswers({ style: 'objevovani', subjects: ['fyzika'] }), 'badatel');
+  assert.equal(teacherTypeFromAnswers({ style: 'planovani', pain_point: 'svp' }), 'architekt');
 });
 
 await run();

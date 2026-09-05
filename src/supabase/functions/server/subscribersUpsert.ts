@@ -23,7 +23,7 @@ export type SubscriberUpsertInput = {
   /** Pozice / role (sloupec position_label — hodnota z formulářů, dřív Mailchimp SELECT). */
   positionLabel?: string | null;
   /** Jen při insertu. */
-  source?: 'newsletter' | 'trial' | 'webinar' | 'checkout' | 'mailchimp_import' | 'manual' | 'other';
+  source?: 'newsletter' | 'trial' | 'webinar' | 'checkout' | 'mailchimp_import' | 'manual' | 'other' | 'dvpp';
   /** Jen při insertu. */
   contactType?: 'teacher' | 'school_admin' | 'parent' | 'homeschool' | 'unknown';
   /** Výchozí `subscribed`; `pending` pro double opt-in (newsletter). Nikdy nedowngraduje existující `subscribed`. */

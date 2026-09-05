@@ -23,6 +23,12 @@ import {
   resolveAudienceSubscriberIds,
 } from './audienceFilter.ts';
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
+import { registerDvppRoutes } from './dvpp/routes.ts';
+import type { RegistryRecord as DvppRegistryRecord } from './dvpp/schools.ts';
+import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
+import { attributionFrom as dvppAttributionFrom } from './dvpp/shared.ts';
+import { requestContext as dvppRequestContext } from './dvpp/events.ts';
+import { buildColleagueEmailHtml as dvppBuildColleagueEmailHtml, buildLoginEmailHtml as dvppBuildLoginEmailHtml } from './dvpp/emails.ts';
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { runEngagementAudienceRecompute } from './engagementAudienceRecompute.ts';
 import { runWebinarAudienceRecompute } from './webinarAudienceRecompute.ts';
@@ -1363,6 +1369,7 @@ function isMailingAdminPath(pathname: string): boolean {
     p.startsWith('/admin/mailchimp/') ||
     p.startsWith('/admin/email-drafts') ||
     p.startsWith('/admin/marketing/contacts') ||
+    p.startsWith('/admin/dvpp/') ||
     p === '/admin/migrate-mailchimp-contacts' ||
     p === '/admin/mailchimp-tag-suggest'
   );
@@ -3733,6 +3740,18 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] Webinar upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        /* DVPP zdarma: škola (IČO/doména) + událost funnelu — neblokuje. */
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId,
+            email: cleanEmail,
+            ico: icoDigits || null,
+            event: 'webinar_registered',
+            attribution: dvppAttributionFrom(body),
+            meta: { webinarId, slug },
+            request: dvppRequestContext(c.req.raw),
+          }).catch((e) => console.warn('[dvpp] afterRegistration webinar', e instanceof Error ? e.message : e));
+        }
       }
     } catch (subErr) {
       console.warn('[Subscribers] Webinar upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -4340,6 +4359,17 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] DVPP upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        /* DVPP zdarma: škola z domény + událost funnelu — neblokuje. */
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId,
+            email: cleanEmail,
+            event: 'lead',
+            attribution: dvppAttributionFrom(body),
+            meta: { videoId, via: lightLead ? 'recording-light' : 'recording' },
+            request: dvppRequestContext(c.req.raw),
+          }).catch((e) => console.warn('[dvpp] afterRegistration recording', e instanceof Error ? e.message : e));
+        }
       }
     } catch (subErr) {
       console.warn('[Subscribers] DVPP upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -27031,6 +27061,31 @@ app.post('/make-server-93a20b6f/kv', async (c) => {
  * 2) Pokud zbývá cesta bez segmentu s názvem funkce (`/admin/…`, `/webhooks/…`,
  *    tracking, newsletter…), doplníme `/make-server-93a20b6f` — jinak Hono 404.
  */
+/* ── DVPP zdarma (knihovna, sborovna, certifikáty, měření) — docs/dvpp/ ─────── */
+registerDvppRoutes(app, {
+  sendEmail: (opts) => sendMandrillHtml(opts),
+  buildLoginEmailHtml: dvppBuildLoginEmailHtml,
+  buildColleagueEmailHtml: dvppBuildColleagueEmailHtml,
+  publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, ''),
+  functionBase: () => `${Deno.env.get('SUPABASE_URL') || ''}/functions/v1/make-server-93a20b6f`,
+  loadRegistryRecords: async () => (await loadSchoolsCache()) as unknown as DvppRegistryRecord[],
+  loadVideos: async () => {
+    let data: any = await kv.get(DVPP_VIDEOS_KEY);
+    if (!data?.topics?.length && !data?.videos?.length) {
+      try { data = await syncDvppVideos(); } catch { data = { topics: [], videos: [] }; }
+    }
+    const webinars = (await getCollection(WEBINARS_KEY)) as any[];
+    const rawVideos = mergePastWebinarsIntoDvppVideos(data.videos ?? [], webinars);
+    const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
+    return { topics: data.topics ?? [], videos };
+  },
+  cronSecretOk: (c) => {
+    const secret = Deno.env.get('MAILING_CRON_SECRET')?.trim();
+    const got = c.req.header('x-cron-secret')?.trim() || c.req.query('secret')?.trim() || '';
+    return !!secret && got === secret;
+  },
+});
+
 Deno.serve((incoming) => {
   const url = new URL(incoming.url);
   let p = url.pathname;
