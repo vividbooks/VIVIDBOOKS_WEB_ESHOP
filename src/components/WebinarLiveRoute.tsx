@@ -1,9 +1,13 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useParams, Navigate, useSearchParams } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarLivePage } from './WebinarLivePage';
+import { WebinarLiveRedirectPage } from './WebinarLiveRedirectPage';
 import { Loader2 } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
+import { recallLiveUrl, rememberLiveUrl } from '../utils/webinarLiveFallback';
+import { isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../utils/webinarLiveDelivery';
+import { WebinarUnavailableNotice } from './WebinarUnavailableNotice';
 
 function getLiveStatus(w: Webinar): 'upcoming' | 'live' | 'ended' {
   const [h, m] = (w.time || '18:00').split(':').map(Number);
@@ -20,6 +24,18 @@ export function WebinarLiveRoute() {
   const isPreview = searchParams.get('preview') === '1';
   const { webinars, loading } = useWebinars();
 
+  const webinar = webinars.find(w => w.id === id || w.slug === id);
+
+  /**
+   * Dokud web funguje, ukládáme si odkaz na stream. Když příště selže Edge API,
+   * máme kam diváka poslat místo toho, abychom mu zavřeli vysílání.
+   */
+  useEffect(() => {
+    if (!webinar) return;
+    const url = liveStreamUrlOf(webinar);
+    if (url) rememberLiveUrl(webinar, url);
+  }, [webinar]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center gap-3 py-32 text-[#001161]/40">
@@ -31,8 +47,16 @@ export function WebinarLiveRoute() {
     );
   }
 
-  const webinar = webinars.find(w => w.id === id || w.slug === id);
-  if (!webinar) return <Navigate to="/webinare" replace />;
+  /**
+   * Nedohledaný webinář je téměř vždy výpadek API, ne neplatná adresa.
+   * 1. 9. 2026 se tady přesměrovávalo na /webinare, což divákům uprostřed
+   * vysílání zavřelo stream. Nikdy neodnavigovat pryč — poslat na stream.
+   */
+  if (!webinar) {
+    const remembered = recallLiveUrl(id);
+    if (remembered && typeof window !== 'undefined') window.location.replace(remembered);
+    return <WebinarUnavailableNotice streamUrl={remembered} />;
+  }
 
   const canonicalSeg = String(webinar.slug || webinar.id || '').trim();
   const search = searchParams.toString();
@@ -43,23 +67,43 @@ export function WebinarLiveRoute() {
     return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}/live${searchSuffix}`} replace />;
   }
 
+  /**
+   * Režim „zapsat příchod a přesměrovat na YouTube" — vlastní přehrávač, chat
+   * ani reakce se nezobrazují, takže výpadek webu nemůže divákovi zavřít stream.
+   * Bez vyplněné URL streamu není kam přesměrovat → padáme na běžnou live stránku.
+   */
+  const delivery = resolveLiveDelivery(webinar);
+  const redirectUrl = delivery.kind === 'youtube_redirect' ? delivery.streamUrl : '';
+
   // Preview z adminu (tlačítko „Náhled") → vždy zobrazit live stránku fullscreen
   if (isPreview) {
-    return <WebinarLivePage webinar={webinar} />;
+    return redirectUrl
+      ? <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />
+      : <WebinarLivePage webinar={webinar} />;
   }
 
   // Dev switch → přímý vstup bez čekání na live
   const devImminentId = typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null;
   if (devImminentId === webinar.id || devImminentId === webinar.slug) {
-    return <WebinarLivePage webinar={webinar} />;
+    return redirectUrl
+      ? <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />
+      : <WebinarLivePage webinar={webinar} />;
   }
 
-  // Webinář ještě nezačal → přesměrovat na detail stránku (má sidebar, registraci atd.)
+  // Webinář je až jindy → přesměrovat na detail stránku (má sidebar, registraci atd.).
+  // V den konání pouštíme dál kdykoli — detail na něj odkazuje červeným pruhem.
   const status = getLiveStatus(webinar);
-  if (status === 'upcoming') {
+  const today = isWebinarDay(webinar);
+  if (status === 'upcoming' && !today) {
     return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
   }
 
-  // Live nebo skončený → fullscreen live stránka
+  // Den konání v režimu přesměrování → zapsat příchod a poslat na YouTube
+  // (i před začátkem — YouTube umí čekárnu, náš web nemusí nic držet).
+  if (status !== 'ended' && redirectUrl) {
+    return <WebinarLiveRedirectPage webinar={webinar} streamUrl={redirectUrl} />;
+  }
+
+  // Live nebo skončený → fullscreen live stránka (po skončení i se záznamem)
   return <WebinarLivePage webinar={webinar} />;
 }

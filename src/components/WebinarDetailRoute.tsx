@@ -1,12 +1,23 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useParams, Navigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { WebinarDetailPage } from './WebinarDetailPage';
 import { Loader2 } from 'lucide-react';
+import { recallLiveUrl, rememberLiveUrl } from '../utils/webinarLiveFallback';
+import { WebinarUnavailableNotice } from './WebinarUnavailableNotice';
 
 export function WebinarDetailRoute() {
   const { id } = useParams<{ id: string }>();
   const { webinars, loading } = useWebinars();
+
+  // Najdi podle id, nebo slug (pro Webflow importovaná data)
+  const webinar = webinars.find(w => w.id === id || w.slug === id);
+
+  /** Většina lidí projde detailem ještě před startem — tady se pojistka nabije. */
+  useEffect(() => {
+    const url = webinar?.youtubeUrl || (webinar as { liveUrl?: string } | undefined)?.liveUrl;
+    if (webinar && url) rememberLiveUrl(webinar, url);
+  }, [webinar]);
 
   if (loading) {
     return (
@@ -17,10 +28,14 @@ export function WebinarDetailRoute() {
     );
   }
 
-  // Najdi podle id, nebo slug (pro Webflow importovaná data)
-  const webinar = webinars.find(w => w.id === id || w.slug === id);
+  // Při výpadku API neposílat pryč — nabídnout stream, pokud ho známe.
+  if (!webinar) return <WebinarUnavailableNotice streamUrl={recallLiveUrl(id)} />;
 
-  if (!webinar) return <Navigate to="/webinare" replace />;
+  // Kanonická URL = slug (pokud existuje) — id URL přesměrujeme, ať Google nemá duplicity.
+  const canonicalSeg = String(webinar.slug || webinar.id || '').trim();
+  if (id && canonicalSeg && id !== canonicalSeg) {
+    return <Navigate to={`/webinar/${encodeURIComponent(canonicalSeg)}`} replace />;
+  }
 
   return <WebinarDetailPage webinar={webinar} />;
 }

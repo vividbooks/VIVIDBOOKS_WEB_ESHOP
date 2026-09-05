@@ -3,25 +3,10 @@ import { motion } from 'motion/react';
 import { Play } from 'lucide-react';
 import type { DvppVideo } from '../contexts/DvppVideosContext';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { extractYoutubeId } from '../utils/youtube';
+export { extractYoutubeId };
 
 const ff = "'Fenomen Sans', sans-serif";
-
-export function extractYoutubeId(url: string): string | null {
-  if (!url) return null;
-  const patterns = [
-    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
-    /youtube\.com\/watch\?.*v=([a-zA-Z0-9_-]{11})/,
-  ];
-  for (const p of patterns) {
-    const m = url.match(p);
-    if (m) return m[1];
-  }
-  if (/^[a-zA-Z0-9_-]{11}$/.test(url.trim())) return url.trim();
-  return null;
-}
 
 export function getYoutubeThumbnail(videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;

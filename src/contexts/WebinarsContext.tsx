@@ -5,6 +5,63 @@ import type { Webinar } from '../data/webinars';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
+/**
+ * Poslední úspěšně načtený seznam držíme v localStorage.
+ *
+ * 1. 9. 2026 selhal Edge endpoint /webinare uprostřed živého webináře. Kontext
+ * spadl na statická data v src/data/webinars.ts, ta ale obsahují jen několik
+ * starých akcí — probíhající webinář v nich nebyl, takže routy divákům zavřely
+ * stream. Cache tomu brání: při výpadku pracujeme s reálnými daty z minule.
+ */
+const CACHE_KEY = 'vvb_webinars_last_good_v1';
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 12_000;
+const RETRIES = 2;
+
+type Source = 'supabase' | 'cache' | 'static' | null;
+
+function readCache(): Webinar[] | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.at || !Array.isArray(parsed.items) || parsed.items.length === 0) return null;
+    if (Date.now() - parsed.at > CACHE_MAX_AGE_MS) return null;
+    return parsed.items as Webinar[];
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(items: Webinar[]): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), items }));
+  } catch {
+    /* plná nebo zakázaná storage — cache je jen pojistka, nesmí shodit render */
+  }
+}
+
+const startMsOf = (w: Webinar) => {
+  const [h, m] = String(w.time || '18:00').split(':').map(Number);
+  return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
+};
+
+/** Nejbližší nadcházející první, pak minulé sestupně. */
+function sortWebinars(items: Webinar[], nowMs: number): Webinar[] {
+  const stillOn = (w: Webinar) => startMsOf(w) + 150 * 60 * 1000 > nowMs;
+  return [...items].sort((a, b) => {
+    const da = startMsOf(a);
+    const db = startMsOf(b);
+    const aFuture = stillOn(a);
+    const bFuture = stillOn(b);
+    if (aFuture && bFuture) return da - db;
+    if (!aFuture && !bFuture) return db - da;
+    return aFuture ? -1 : 1;
+  });
+}
+
 interface WebinarsContextType {
   webinars: Webinar[];
   upcoming: Webinar[];
@@ -12,7 +69,7 @@ interface WebinarsContextType {
   loading: boolean;
   error: string | null;
   refresh: () => void;
-  source: 'supabase' | 'static' | null;
+  source: Source;
 }
 
 const WebinarsContext = createContext<WebinarsContextType>({
@@ -26,58 +83,77 @@ const WebinarsContext = createContext<WebinarsContextType>({
 });
 
 export function WebinarsProvider({ children }: { children: ReactNode }) {
-  const [webinars, setWebinars] = useState<Webinar[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Cache načteme hned při prvním renderu, ať stránka nikdy nestartuje naprázdno.
+  const [initialCache] = useState<Webinar[] | null>(() => readCache());
+  const [webinars, setWebinars] = useState<Webinar[]>(() =>
+    initialCache ? sortWebinars(initialCache, Date.now()) : [],
+  );
+  const [loading, setLoading] = useState(!initialCache);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<'supabase' | 'static' | null>(null);
+  const [source, setSource] = useState<Source>(initialCache ? 'cache' : null);
 
-  async function fetchWebinars() {
-    setLoading(true);
-    setError(null);
+  async function fetchOnce(): Promise<Webinar[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
       const res = await fetch(`${SERVER}/webinare`, {
         headers: { Authorization: `Bearer ${publicAnonKey}` },
         cache: 'no-store',
+        signal: controller.signal,
       });
       if (!res.ok) {
-        const txt = await res.text();
-        throw new Error(`HTTP ${res.status}: ${txt}`);
+        const txt = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${txt.slice(0, 200)}`);
       }
       const data = await res.json();
-      const items: Webinar[] = data.items || [];
-      if (items.length > 0) {
-        // Seřadit podle data — nejbližší nadcházející první, pak minulé sestupně
-        const nowMs = Date.now();
-        const startMs = (w: Webinar) => {
-          const [h, m] = String(w.time || '18:00').split(':').map(Number);
-          return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
-        };
-        const stillOn = (w: Webinar) => startMs(w) + 150 * 60 * 1000 > nowMs;
-        const sorted = [...items].sort((a, b) => {
-          const da = startMs(a);
-          const db = startMs(b);
-          const aFuture = stillOn(a);
-          const bFuture = stillOn(b);
-          if (aFuture && bFuture) return da - db;
-          if (!aFuture && !bFuture) return db - da;
-          return aFuture ? -1 : 1;
-        });
-        setWebinars(sorted);
-        setSource('supabase');
-        console.log(`[WebinarsContext] Nacten ${items.length} webinaru ze Supabase.`);
-      } else {
-        console.log('[WebinarsContext] Supabase je prazdne, pouzivam staticka data.');
-        setWebinars(WEBINARS);
-        setSource('static');
+      return (data.items || []) as Webinar[];
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchWebinars() {
+    // Dokud máme cache, nepřepínáme do loading stavu — jinak by komponenty
+    // zobrazily spinner a live stránka by se zbytečně přemountovala.
+    if (webinars.length === 0) setLoading(true);
+    setError(null);
+
+    let lastErr: unknown = null;
+    for (let attempt = 0; attempt <= RETRIES; attempt++) {
+      try {
+        const items = await fetchOnce();
+        if (items.length > 0) {
+          setWebinars(sortWebinars(items, Date.now()));
+          setSource('supabase');
+          setError(null);
+          writeCache(items);
+          setLoading(false);
+          return;
+        }
+        lastErr = new Error('Server vratil prazdny seznam.');
+      } catch (e) {
+        lastErr = e;
       }
-    } catch (e: any) {
-      console.error('[WebinarsContext] Chyba pri nacitani webinaru:', e.message);
-      setError(e.message);
+      if (attempt < RETRIES) {
+        await new Promise(r => setTimeout(r, 600 * 2 ** attempt));
+      }
+    }
+
+    const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+    console.error('[WebinarsContext] Nepodarilo se nacist webinare:', msg);
+    setError(msg);
+
+    const cached = readCache();
+    if (cached) {
+      setWebinars(sortWebinars(cached, Date.now()));
+      setSource('cache');
+      console.warn('[WebinarsContext] Pouzivam posledni ulozeny seznam webinaru.');
+    } else if (webinars.length === 0) {
       setWebinars(WEBINARS);
       setSource('static');
-    } finally {
-      setLoading(false);
+      console.warn('[WebinarsContext] Zadna cache, pouzivam staticka data.');
     }
+    setLoading(false);
   }
 
   useEffect(() => {
@@ -85,11 +161,7 @@ export function WebinarsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const nowMs = Date.now();
-  const startMs = (w: Webinar) => {
-    const [h, m] = String(w.time || '18:00').split(':').map(Number);
-    return new Date(w.year, (w.monthNum || 1) - 1, w.day || 1, h || 0, m || 0).getTime();
-  };
-  const stillOn = (w: Webinar) => startMs(w) + 150 * 60 * 1000 > nowMs;
+  const stillOn = (w: Webinar) => startMsOf(w) + 150 * 60 * 1000 > nowMs;
   const upcoming = webinars.filter(w => !w.isPast && stillOn(w));
   const past = webinars.filter(w => w.isPast || !stillOn(w));
 

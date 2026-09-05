@@ -1590,7 +1590,11 @@ export default function CatalogGrid() {
                           {/* CTA */}
                           <button
                             className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-                            onClick={e => { e.stopPropagation(); const w = (slideView as any)._webinar; navigate(`/webinar/${w?.slug || w?.id}`); }}
+                            onClick={e => {
+                              e.stopPropagation();
+                              const w = (slideView as any)._webinar;
+                              navigate(`/webinar/${w?.slug || w?.id}`);
+                            }}
                           >
                             {(slideView as any)._isLive ? 'Vstoupit' : 'P\u0159ihl\u00e1sit se'}
                           </button>

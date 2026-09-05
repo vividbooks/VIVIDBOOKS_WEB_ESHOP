@@ -9,6 +9,11 @@ import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
 import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
+import {
+  identityUpsertAuthorized,
+  recordIdentifiedWebEvent,
+  upsertIdentity,
+} from './identityUpsert.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
 import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
@@ -27,6 +32,7 @@ import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
+import { matchDvppVideoForWebinar } from '../../../../supabase/functions/_shared/dvpp-video-match.ts';
 import {
   buildVividbooksBrandCta,
   buildVividbooksBrandShell,
@@ -54,6 +60,12 @@ import {
   parsePipedrivePersonOptionIds,
   sortSubjectOptionIdsOtherLast,
 } from '../../../../supabase/functions/_shared/pipedrive-person-subject.ts';
+import {
+  mapSchoolInquiryToPipedriveOrderItems,
+  schoolInquiryPickupPointName,
+  schoolInquiryShippingMethod,
+  schoolInquiryShippingPriceHaler,
+} from '../../../../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
@@ -3399,6 +3411,9 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       webinarMotivation: bodyMotivation,
       webinarTopicInterest: bodyTopicInterest,
       usesVividbooks: bodyUsesVividbooks,
+      /** Předměty (učitel) a stupně (vedení / poradce) — kódy z trial formuláře. */
+      teacherSubjects: bodyTeacherSubjects,
+      schoolStages: bodySchoolStages,
     } = body;
 
     const notTeacher = !!bodyNotTeacher;
@@ -3409,6 +3424,13 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const webinarTopicInterest = String(bodyTopicInterest ?? '').trim();
     const usesVividbooksNorm =
       bodyUsesVividbooks === 'yes' || bodyUsesVividbooks === 'no' ? bodyUsesVividbooks : null;
+    /**
+     * Předmět / stupeň se od trial formuláře (`/vyzkousejte`) ptáme i tady, aby se
+     * pole osoby 9095 (předmět) a 9099 (stupeň) v Pipedrive vyplnila hned při
+     * registraci — a měl je i trial, který si člověk založí hned po ní.
+     */
+    const teacherSubjects = readTrialStringArrayField(body, 'teacherSubjects', 'subjects');
+    const schoolStages = readTrialStringArrayField(body, 'schoolStages');
 
     if (!webinarId || !name || !email || !position) {
       return c.json({ error: 'Chybí povinná pole (webinarId, name, email, position).' }, 400);
@@ -3450,6 +3472,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       schoolAddress,
       ico: icoDigits,
       usesVividbooks: usesVividbooksNorm,
+      teacherSubjects,
+      schoolStages,
       ...(webinarMotivation ? { webinarMotivation } : {}),
       ...(webinarTopicInterest ? { webinarTopicInterest } : {}),
     };
@@ -3759,6 +3783,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
           webinarMotivation,
           webinarTopicInterest,
           usesVividbooks: usesVividbooksNorm,
+          teacherSubjects,
+          schoolStages,
         });
         pipedriveSync = pdResult.ok
           ? { ok: true, skipped: false, leadId: pdResult.leadId }
@@ -3956,6 +3982,32 @@ app.get('/make-server-93a20b6f/webinar-registrace/:webinarId', async (c) => {
   }
 });
 
+/**
+ * Veřejný počet přihlášených — jen číslo pro mezistránku „Přepojujeme vás na vysílání“.
+ * Seznam registrací (s e-maily) zůstává jen v `/webinar-registrace/:webinarId`.
+ * Krátká paměťová cache: v hodině před webinářem sem chodí všichni diváci naráz.
+ */
+const webinarRegCountCache = new Map<string, { at: number; count: number }>();
+const WEBINAR_REG_COUNT_TTL_MS = 60_000;
+app.get('/make-server-93a20b6f/webinar-registrace-count/:webinarId', async (c) => {
+  try {
+    const webinarId = String(c.req.param('webinarId') || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+    const hit = webinarRegCountCache.get(webinarId);
+    let count = hit && Date.now() - hit.at < WEBINAR_REG_COUNT_TTL_MS ? hit.count : null;
+    if (count === null) {
+      const rows = await kv.getByPrefix(`webinar_reg_${webinarId}_`);
+      count = rows.length;
+      webinarRegCountCache.set(webinarId, { at: Date.now(), count });
+    }
+    return c.json({ webinarId, count }, 200, {
+      'Cache-Control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=600',
+    });
+  } catch (err: any) {
+    return c.json({ error: `Chyba počtu registrací: ${err.message}` }, 500);
+  }
+});
+
 /** Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení). */
 async function handleWebinarRegistrationCheckGet(c: Context) {
   try {
@@ -3984,6 +4036,37 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
 }
 app.get('/make-server-93a20b6f/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
 app.get('/public/webinar-registration-check', handleWebinarRegistrationCheckGet);
+
+async function handleIdentityUpsertPost(c: Context) {
+  if (!identityUpsertAuthorized(c.req.raw)) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+  const env = getServiceRoleEnv();
+  if (!env) return c.json({ error: 'Server není nakonfigurovaný' }, 500);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'Neplatné tělo' }, 400);
+  const sb = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+  const result = await upsertIdentity(sb, body as Parameters<typeof upsertIdentity>[1]);
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+}
+
+/** Identifikovaný pageview z cookie vb_id. Nesmí subscribe. Anon JWT stačí. */
+async function handleIdentityWebEventPost(c: Context) {
+  const env = getServiceRoleEnv();
+  if (!env) return c.json({ error: 'Server není nakonfigurovaný' }, 500);
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return c.json({ error: 'Neplatné tělo' }, 400);
+  const sb = createClient(env.url, env.serviceKey, { auth: { persistSession: false } });
+  const result = await recordIdentifiedWebEvent(sb, body as { email?: string; name?: string; path?: string });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+}
+
+app.post('/make-server-93a20b6f/identity/upsert', handleIdentityUpsertPost);
+app.post('/identity/upsert', handleIdentityUpsertPost);
+app.post('/make-server-93a20b6f/identity/web-event', handleIdentityWebEventPost);
+app.post('/identity/web-event', handleIdentityWebEventPost);
 
 /** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
 app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
@@ -4554,6 +4637,68 @@ app.post('/make-server-93a20b6f/webinar-checkin', async (c) => {
   } catch (err: any) {
     console.log(`[Checkin] Chyba: ${err.message}`);
     return c.json({ error: `Chyba check-in: ${err.message}` }, 500);
+  }
+});
+
+/* ── Příchod na stream (režim „přesměrovat na YouTube") ────────── */
+/**
+ * Zapíše jeden příchod na `/webinar/…/live`. Každý příchod má vlastní klíč,
+ * takže souběžné zápisy o sebe nezavadí (na rozdíl od jednoho počítadla).
+ * Když příchozího známe podle e-mailu, nastaví se u jeho registrace `attended`
+ * — stejně jako u běžného check-inu. Bez e-mailu se zapíše jen anonymní příchod.
+ */
+app.post('/make-server-93a20b6f/webinar-live-entry', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const webinarId = String(body?.webinarId || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+
+    const cleanEmail = String(body?.email || '').toLowerCase().trim();
+    const rawSource = String(body?.source || 'anonymous');
+    const source = ['lobby', 'identity', 'anonymous'].includes(rawSource) ? rawSource : 'anonymous';
+    const at = new Date().toISOString();
+
+    let attended = false;
+    if (cleanEmail) {
+      const applied = await runWebinarCheckInEffects(webinarId, cleanEmail);
+      attended = applied.ok;
+    }
+
+    const rand = Math.random().toString(36).slice(2, 8);
+    await kv.set(`webinar_live_entry_${webinarId}_${at}_${rand}`, {
+      webinarId,
+      webinarSlug: String(body?.webinarSlug || webinarId),
+      email: cleanEmail,
+      source,
+      attended,
+      at,
+    });
+    console.log(`[WebinarLive] Příchod na stream: ${cleanEmail || 'anonym'} (${source}) na ${webinarId}`);
+    return c.json({ success: true, attended });
+  } catch (err: any) {
+    console.log(`[WebinarLive] Chyba zápisu příchodu: ${err.message}`);
+    return c.json({ error: `Chyba zápisu příchodu: ${err.message}` }, 500);
+  }
+});
+
+/** Souhrn příchodů — kolik lidí prošlo na stream a kolik z nich známe jménem. */
+app.get('/make-server-93a20b6f/webinar-live-entries/:webinarId', async (c) => {
+  try {
+    const webinarId = String(c.req.param('webinarId'));
+    const rows = (await kv.getByPrefix(`webinar_live_entry_${webinarId}_`)) as Array<Record<string, unknown>>;
+    const mine = rows.filter((r) => String(r?.webinarId || '') === webinarId);
+    const emails = new Set(mine.map((r) => String(r?.email || '')).filter(Boolean));
+    return c.json({
+      webinarId,
+      total: mine.length,
+      identified: mine.filter((r) => Boolean(r?.email)).length,
+      anonymous: mine.filter((r) => !r?.email).length,
+      uniqueEmails: emails.size,
+      firstAt: mine.map((r) => String(r?.at || '')).sort()[0] || null,
+      lastAt: mine.map((r) => String(r?.at || '')).sort().slice(-1)[0] || null,
+    });
+  } catch (err: any) {
+    return c.json({ error: `Chyba čtení příchodů: ${err.message}` }, 500);
   }
 });
 
@@ -5367,33 +5512,6 @@ function buildWebinarDvppDotaznikUrl(baseUrl: string, w: any, cleanEmail: string
   const slug = String(w.slug || w.id || '').trim() || String(w.id);
   const origin = String(baseUrl || '').replace(/\/$/, '');
   return `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(cleanEmail)}`;
-}
-
-/** Stejné jako `matchDvppVideo` ve WebinaryPastPanel — párování webináře k záznamu v KV `dvpp-videos`. */
-function normWebinarDvppMatch(raw: string): string {
-  return String(raw || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function matchDvppVideoForWebinar(webinar: any, dvppVideos: any[]): any | null {
-  if (!dvppVideos?.length) return null;
-  const wSlug = normWebinarDvppMatch(String(webinar.slug || webinar.id || ''));
-  const wTitle = normWebinarDvppMatch(String(webinar.title || ''));
-  const bySlug = dvppVideos.find((v: any) =>
-    normWebinarDvppMatch(String(v.slug || v.id || '')) === wSlug,
-  );
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find((v: any) => {
-    const vt = normWebinarDvppMatch(String(v.name || v.title || ''));
-    return wTitle.length > 5 && (
-      vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-      wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7)))
-    );
-  });
-  return byTitle ?? null;
 }
 
 /** Který webinář patří k danému DVPP záznamu (pro ověření `webinar_reg_*`). */
@@ -14495,6 +14613,10 @@ async function syncWebinarRegistrationToPipedrive(params: {
   webinarMotivation: string;
   webinarTopicInterest: string;
   usesVividbooks: 'yes' | 'no';
+  /** Kódy předmětů (učitel) z registrace → pole osoby 9095; stupeň se z nich odvodí. */
+  teacherSubjects?: string[];
+  /** Kódy stupňů (`SchoolStage-1/2`) pro nevyučující role → pole osoby 9099. */
+  schoolStages?: string[];
 }): Promise<{ ok: boolean; detail?: string; leadId?: string }> {
   const apiToken = params.apiToken;
   let organizationId: number | null = null;
@@ -14513,6 +14635,37 @@ async function syncWebinarRegistrationToPipedrive(params: {
   let positionOptionId =
     mapWebinarRegistrationPositionToPipedriveOptionId(params.positionLabel) ??
     mapPipedrivePersonPositionToOptionId(params.positionLabel);
+
+  /**
+   * Předmět (9095) a stupeň (9099) z registračního formuláře — stejné mapování
+   * i stejná pravidla přepisu jako u trialu: u předmětu je výběr z formuláře
+   * autoritativní („Other" ustoupí konkrétnímu předmětu), stupeň se sjednocuje.
+   * U učitele se stupeň odvodí z vybraných předmětů.
+   */
+  const subjectCodes = Array.isArray(params.teacherSubjects) ? params.teacherSubjects : [];
+  const stageCodes = Array.isArray(params.schoolStages) ? params.schoolStages : [];
+  const subjectOptionIds = mapTrialSubjectsToPipedriveOptionIds(subjectCodes);
+  const stageOptionIds = mapTrialStageToPipedriveOptionIds(subjectCodes, stageCodes);
+  const subjectMeta = subjectOptionIds.length ? await getPipedrivePersonSubjectFieldMeta(apiToken) : null;
+  const stageMeta = stageOptionIds.length ? await getPipedrivePersonStageFieldMeta(apiToken) : null;
+
+  /** Předmět/stupeň vůči hodnotám, které osoba v CRM už má (`record` z `GET /persons/{id}`). */
+  const subjectStagePatch = (record: Record<string, any> | null | undefined): Record<string, unknown> => {
+    const patch: Record<string, unknown> = {};
+    const subj = buildPipedrivePersonSubjectFieldPayload(
+      subjectMeta,
+      subjectOptionIds,
+      record?.[subjectMeta?.key ?? ''],
+    );
+    if (subj) Object.assign(patch, subj);
+    const stage = buildPipedrivePersonMergedFieldPayload(
+      stageMeta,
+      stageOptionIds,
+      record?.[stageMeta?.key ?? ''],
+    );
+    if (stage) Object.assign(patch, stage);
+    return patch;
+  };
 
   const emailLower = params.email.toLowerCase().trim();
   const existing = await searchPipedrivePersonByEmailGlobal(apiToken, emailLower);
@@ -14539,6 +14692,12 @@ async function syncWebinarRegistrationToPipedrive(params: {
       (patch as Record<string, unknown>)[positionFieldKey] = positionOptionId;
     }
 
+    if (subjectMeta || stageMeta) {
+      /** Custom pole čteme z plného detailu — search odpověď je spolehlivě nemá. */
+      const full = (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data;
+      Object.assign(patch, subjectStagePatch(full || existing));
+    }
+
     if (Object.keys(patch).length > 0) {
       await pipedriveRequest(apiToken, `/persons/${personId}`, {
         method: 'PUT',
@@ -14554,6 +14713,7 @@ async function syncWebinarRegistrationToPipedrive(params: {
     if (positionFieldKey && positionOptionId != null) {
       payload[positionFieldKey] = positionOptionId;
     }
+    Object.assign(payload, subjectStagePatch(null));
     const created = await pipedriveRequest<any>(apiToken, '/persons', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -20507,6 +20667,45 @@ async function syncSchoolOrderToPipedrive(
 
   const dealId = parsePipedriveNumericId(deal?.id);
   const personId = parsePipedriveNumericId(person?.id);
+
+  /** Stejné produktové řádky jako u e-shopu (`POST /deals/:id/products`). Selhání nesmí shodit deal. */
+  if (dealId) {
+    try {
+      const catalogProducts = await getAllProducts();
+      const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p] as [string, any]));
+      const lineItems = mapSchoolInquiryToPipedriveOrderItems(body, catalogMap);
+      let codeToPdIdShared: Map<string, number | null> = new Map();
+      let nextLineOrder = 0;
+      if (lineItems.length) {
+        const result = await addPipedriveDealLineItemsFromOrder(
+          apiToken,
+          dealId,
+          lineItems,
+          catalogMap,
+        );
+        codeToPdIdShared = result.codeToPdId;
+        nextLineOrder = result.lastOrder;
+        console.log(
+          `[Pipedrive school order] deal ${dealId}: ${lineItems.length} product line(s) mapped`,
+        );
+      }
+      const shippingMethod = schoolInquiryShippingMethod(body);
+      if (shippingMethod && shippingMethod !== 'none') {
+        await addPipedriveDealShippingLineItem(
+          apiToken,
+          dealId,
+          shippingMethod,
+          schoolInquiryShippingPriceHaler(body),
+          schoolInquiryPickupPointName(body),
+          nextLineOrder + 1,
+          codeToPdIdShared,
+        );
+      }
+    } catch (productErr: any) {
+      console.log(`[Pipedrive school order] deal products: ${productErr?.message || productErr}`);
+    }
+  }
+
   const note = await createPipedriveNote(apiToken, {
     content: buildSchoolOrderNoteContent(order, body),
     dealId,
