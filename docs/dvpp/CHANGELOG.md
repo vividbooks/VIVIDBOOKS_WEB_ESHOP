@@ -10,6 +10,7 @@ Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracová
 - Admin `/marketing/dvpp` má záložky: Přehled (KPI, údržba, CSV velikostí sborů, sborovny) · Záznamy (délka, lektor, upoutávka, kapitoly, předměty, datum přidání) · Řady (CRUD s výběrem dílů) · Témata (hlasování).
 - Digest „Nové v knihovně“: `POST /admin/dvpp/digest/draft` složí e-mail (nové záznamy, řady, naživo tento týden, hlasování, blok sborovny) a uloží ho jako draft do EmailBuilderu; odesílá se ručně jako kampaň.
 - `dvpp/content.ts` (čistá logika: kapitoly, výběr nových záznamů, subject digestu) + 2 testy.
+- Oprava: startovní čistič localStorage v `main.tsx` mazal `vividbooks_dvpp_session_v1` (učitel by byl po každém načtení odhlášen); klíč přidán do `vividbooksLocalStoragePreserve.ts`. Odhaleno lokálním náhledem s mockovaným API (`scratchpad/preview`).
 
 ## 2026-09-05 (odpoledne) · sekvence, cron, přehrávač, landing
 
