@@ -58,3 +58,24 @@ export function digestSubject(newVideos: DigestVideo[], weekLabel: string): stri
   if (first) return `Nové v knihovně: ${first.name}`.slice(0, 90);
   return `Knihovna DVPP zdarma: co je nového (${weekLabel})`;
 }
+
+/** Klíč pro sloučení duplicit ve Webflow CMS: bez prefixu „Webinář:“, bez vícenásobných mezer, malými písmeny. */
+export function videoNameKey(name: string): string {
+  return String(name || '').replace(/^webinář:\s*/i, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/**
+ * Stejný záznam bývá v CMS dvakrát (dva CMS záznamy se stejným názvem, jiný náhled).
+ * Nechá jeden: přednost má ten s datem vysílání (`airedAt`), jinak první v pořadí.
+ */
+export function dedupeVideosByName<T extends { name: string; airedAt?: string }>(videos: T[]): T[] {
+  const kept = new Map<string, T>();
+  for (const v of videos) {
+    const k = videoNameKey(v.name);
+    if (!k) continue;
+    const prev = kept.get(k);
+    if (!prev || (v.airedAt && !prev.airedAt)) kept.set(k, v);
+  }
+  const keptSet = new Set(kept.values());
+  return videos.filter((v) => keptSet.has(v));
+}

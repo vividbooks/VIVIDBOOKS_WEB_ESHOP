@@ -27,7 +27,7 @@ import {
   teacherTypeFromAnswers,
   domainFromWebOrEmail,
 } from '../src/supabase/functions/server/dvpp/milestones.ts';
-import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject } from '../src/supabase/functions/server/dvpp/content.ts';
+import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName } from '../src/supabase/functions/server/dvpp/content.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
@@ -1856,6 +1856,17 @@ registerTest('dvpp: digest vybere záznamy z posledních 7 dní, jinak první z 
   assert.deepEqual(pickNewVideos([vids[0], vids[2]], 7, now, 1).map((v) => v.id), ['a']);
   assert.equal(digestSubject([vids[1]], '5. 9.'), 'Nové v knihovně: Nový zlomky');
   assert.match(digestSubject([], '5. 9.'), /co je nového/);
+});
+
+registerTest('dvpp: dedupeVideosByName sloučí duplicitní CMS záznamy, přednost má ten s datem vysílání', () => {
+  const dup = [
+    { id: 'w1', name: 'Jak na zlomky a desetinná čísla' },
+    { id: 'w2', name: 'Webinář:  Jak na zlomky a desetinná  čísla', airedAt: '2026-04-07' },
+    { id: 'x', name: 'Fyzika do hloubky' },
+    { id: 'y', name: 'Vividbooks Fyzika do hloubky' },
+  ];
+  assert.deepEqual(dedupeVideosByName(dup).map((v) => v.id), ['w2', 'x', 'y']);
+  assert.deepEqual(dedupeVideosByName([{ id: 'a', name: 'A' }, { id: 'b', name: 'a' }]).map((v) => v.id), ['a']);
 });
 
 await run();

@@ -6,6 +6,7 @@
  * Podle tématu. Řady jsou v KV `vividbooks_dvpp_series_v1` (editace v adminu).
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { dedupeVideosByName } from './content.ts';
 import * as kv from '../kv_store.tsx';
 import { resolveAccessLevel, STARTER_RECORDINGS_LIMIT, type AccessLevel } from './milestones.ts';
 import { getStaffroom } from './staffroom.ts';
@@ -146,7 +147,7 @@ export async function buildCatalog(
   for (const p of (plays || []) as Array<{ video_id: string }>) playCount.set(p.video_id, (playCount.get(p.video_id) || 0) + 1);
 
   const startedIds = new Set(progress.keys());
-  const decorated: CatalogVideo[] = videos.map((v) => {
+  const decorated: CatalogVideo[] = dedupeVideosByName(videos).map((v) => {
     const pr = progress.get(v.id) || null;
     const locked = access.level === 'guest'
       ? true

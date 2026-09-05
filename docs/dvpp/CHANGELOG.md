@@ -10,6 +10,8 @@ Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracová
 - Server: `GET /dvpp-videos` a `/dvpp/catalog` doplňují z propojeného webináře `coverBg`, `airedAt` (datum vysílání), `lecturer` a `thumbnail` (`enrichDvppVideosWithWebinarCertificateFields`, `buildDvppVideoFromPastWebinar`).
 - `DvppShell` umí `tone="dark"` (knihovna, přehrávač) a `flush` (bez vnitřního rámu); barvy rámu jsou CSS proměnné `--dvpp-*`, takže karty a hlasování fungují na tmavé i světlé ploše (landing zůstává světlý).
 - Přehrávač `/knihovna/zaznam/:id` je také tmavý (kapitoly jako průsvitné čipy, panely osvědčení a sborovny průsvitné).
+- Katalog slučuje duplicitní záznamy z Webflow CMS (stejný název dvakrát, např. „Jak na zlomky a desetinná čísla“, „Jak tvořit ŠVP … Z pohledu učitele“): `dedupeVideosByName` v `dvpp/content.ts`, přednost má záznam s datem vysílání. Test v `run-unit-tests.ts`.
+- Náhled (`scratchpad/preview`) běží nad skutečným katalogem z produkčního KV (79 záznamů, obrázky webinářů, lektoři, data vysílání).
 
 ## 2026-09-05 (večer) · řady na landing page, kapitoly a upoutávky, digest
 
