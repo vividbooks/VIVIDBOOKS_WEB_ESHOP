@@ -102,6 +102,20 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/DvppLeadMagnetPage'), 'DvppLeadMagnetPage'),
         },
         {
+          /** DVPP zdarma — knihovna pro sborovny (docs/dvpp). Session přihlášeného drží DvppRoot. */
+          lazy: lazyDefault(() => import('./components/dvpp/DvppRoot')),
+          children: [
+            { path: 'knihovna', lazy: lazyNamed(() => import('./components/dvpp/DvppLibraryPage'), 'DvppLibraryPage') },
+            { path: 'knihovna/prihlaseni', lazy: lazyNamed(() => import('./components/dvpp/DvppLoginPage'), 'DvppLoginPage') },
+            { path: 'knihovna/zaznam/:id', lazy: lazyNamed(() => import('./components/dvpp/DvppPlayerPage'), 'DvppPlayerPage') },
+            { path: 'sborovna', lazy: lazyNamed(() => import('./components/dvpp/DvppStaffroomPage'), 'DvppStaffroomPage') },
+            { path: 'sborovna/letacek', lazy: lazyNamed(() => import('./components/dvpp/DvppLeafletPage'), 'DvppLeafletPage') },
+            { path: 's/:code', lazy: lazyNamed(() => import('./components/dvpp/DvppJoinPage'), 'DvppJoinPage') },
+            { path: 'pro-reditele', lazy: lazyNamed(() => import('./components/dvpp/DvppDirectorsPage'), 'DvppDirectorsPage') },
+            { path: 'kviz', lazy: lazyNamed(() => import('./components/dvpp/DvppQuizPage'), 'DvppQuizPage') },
+          ],
+        },
+        {
           path: 'app-uvod',
           lazy: lazyNamed(() => import('./components/AppUvodPage'), 'AppUvodPage'),
         },
@@ -244,6 +258,7 @@ export const router = createBrowserRouter(
           index: true,
           lazy: lazyDefault(() => import('./components/admin/MarketingDashboard')),
         },
+        { path: 'dvpp', lazy: lazyDefault(() => import('./components/admin/DvppDashboardPage')) },
         { path: 'webinare', lazy: lazyDefault(() => import('./components/admin/AdminWebinarPanel')) },
         { path: 'emaily', lazy: lazyDefault(() => import('./components/admin/EmailBuilder')) },
         { path: 'kalendar', lazy: lazyDefault(() => import('./components/admin/MarketingCalendar')) },

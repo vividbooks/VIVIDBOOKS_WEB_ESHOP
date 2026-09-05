@@ -20,14 +20,18 @@ Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracová
 - `hooks.ts` napojení na `/webinar-registrace` a `/dvpp-video-registrace` (škola + událost).
 - `routes.ts` 30 endpointů, registrace v `index.tsx` před `Deno.serve`; `/admin/dvpp/*` v JWT guardu.
 
-### ✅ Frontend základ
+### ✅ Frontend
 - `src/utils/dvppApi.ts` typovaný klient, session v localStorage, UTM capture.
+- `src/components/dvpp/`: `DvppRoot` (session provider jako layout routa), `DvppShell` (rám, navigace, tlačítka), `DvppLoginPage` (/knihovna/prihlaseni: magic link + ověření tokenu), `DvppLibraryPage` (/knihovna: řádky, police certifikátů, hlasování), `DvppPlayerPage` (/knihovna/zaznam/:id: přehrávač, progress po 30 s, zámek, osvědčení), `DvppStaffroomPage` (/sborovna: milník, členové, sdílení, vzkaz kolegovi, ředitelské odemknutí), `SchoolPicker` (našeptávač nad `schools`), `DvppJoinPage` (/s/:code), `DvppDirectorsPage` (/pro-reditele: školní kód, výkaz DVPP), `DvppQuizPage` (/kviz: 8 otázek → typ učitele), `DvppLeafletPage` (/sborovna/letacek: A4 s QR k tisku).
+- Admin `src/components/admin/DvppDashboardPage.tsx` na `/marketing/dvpp` (KPI, pokrytí, sborovny, import rejstříku, dopárování) + položka v menu Marketing.
+- Routy v `src/routes.ts` pod `Root` (bez katalogového layoutu, fungují i na dvppzdarma.cz). `vite build` prochází.
 
 ### ✅ Dokumentace
 - `docs/dvpp/README.md`, `DATOVY_MODEL.md`, `API.md`, `FLOWS.md`, tento changelog.
 
 ### ⏳ Čeká (další kroky)
-- Frontend stránky: `/knihovna` (řádky, přehrávač s progressem, police certifikátů), `/knihovna/prihlaseni`, `/sborovna`, `/s/:code`, `/pro-reditele`, `/kviz`, nová landing dvppzdarma.cz, admin `/marketing/dvpp`.
+- Nová landing dvppzdarma.cz s upoutávkami a řadami (dnes `DvppLeadMagnetPage`); přepojit její karty záznamů na `/knihovna/zaznam/:id`.
+- Přehrávač: přesná pozice z YouTube IFrame API (dnes čas na stránce), kapitoly, upoutávka před přihlášením (prvních 10 min).
 - Zapojení `enrollInFlows` pro spouštěče `dvpp_*` a obsah čtyř sekvencí (Resend automatizace).
 - Import velikosti sboru (statistika MŠMT) — dnes odhad z počtu žáků, pokud CSV rejstříku nese `pupils`/`teachers`; jinak 8 jako výchozí milník.
 - Upoutávky a kapitoly u záznamů (pole `trailerUrl`, `durationMinutes` v KV videí).

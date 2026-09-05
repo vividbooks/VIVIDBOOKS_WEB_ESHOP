@@ -91,7 +91,8 @@ flowchart LR
 - [ ] `POST /admin/dvpp/schools/backfill` opakovaně, dokud `linked > 0` (dopáruje 3 900 školních domén).
 - [ ] pg_cron: `POST /cron/dvpp-recount` 1× denně (hlavička `X-Cron-Secret: MAILING_CRON_SECRET`).
 - [ ] Secrets (volitelné): `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_TEST_EVENT_CODE`, `GA4_MEASUREMENT_ID`, `GA4_API_SECRET`.
-- [ ] Frontend: routy `/knihovna`, `/knihovna/prihlaseni`, `/sborovna`, `/pro-reditele`, `/kviz`, `/s/:code`.
+- [x] Frontend: routy `/knihovna`, `/knihovna/prihlaseni`, `/knihovna/zaznam/:id`, `/sborovna`, `/sborovna/letacek`, `/pro-reditele`, `/kviz`, `/s/:code`, admin `/marketing/dvpp` (nasazují se pushem do `main`).
+- [ ] SEO prerender nových stránek v `scripts/seo-pages.mjs` (knihovna, pro-reditele).
 
 ## Jak se testuje
 
