@@ -18,20 +18,26 @@ export function DvppDirectorsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [pendingTo, setPendingTo] = useState('');
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   const confirmToken = sp.get('confirm') || '';
   const [confirmInfo, setConfirmInfo] = useState<{ schoolName: string; requesterName: string } | null>(null);
   const [confirmState, setConfirmState] = useState<'idle' | 'busy' | 'done' | 'error'>('idle');
   const [confirmError, setConfirmError] = useState('');
   useEffect(() => {
-    if (!confirmToken) return;
+    if (!confirmToken || confirmState === 'done') return;
     dvppApi.directorConfirmPreview(confirmToken)
       .then((r) => setConfirmInfo({ schoolName: r.schoolName, requesterName: r.requesterName }))
       .catch((e) => { setConfirmState('error'); setConfirmError(e instanceof Error ? e.message : 'Odkaz neplatí.'); });
   }, [confirmToken]);
   const confirmUnlock = async () => {
     setConfirmState('busy'); setConfirmError('');
-    try { await dvppApi.directorConfirm(confirmToken); setConfirmState('done'); await refresh(); await load(); }
+    try {
+      await dvppApi.directorConfirm(confirmToken);
+      setConfirmState('done');
+      /* Token je spotřebovaný: pryč z URL, ať reload nebo druhý klik z e-mailu neukáže „odkaz neplatí“. */
+      setSp({}, { replace: true });
+      await refresh(); await load();
+    }
     catch (e) { setConfirmState('error'); setConfirmError(e instanceof Error ? e.message : 'Nepodařilo se potvrdit.'); }
   };
 
@@ -58,7 +64,7 @@ export function DvppDirectorsPage() {
 
   return (
     <DvppShell title="Pro ředitele" description="Knihovna záznamů DVPP zdarma pro celou sborovnu jedním školním kódem. Výkaz hodin pro výroční zprávu a šablony." path="/pro-reditele">
-      {confirmToken ? (
+      {confirmToken || confirmState === 'done' ? (
         <DvppCard className="mb-8 border-[#001161]/20">
           <p className="mb-1 text-[12px] font-semibold uppercase tracking-wide text-[#E8942A]">Potvrzení z e-mailu školy</p>
           {confirmState === 'done' ? (
