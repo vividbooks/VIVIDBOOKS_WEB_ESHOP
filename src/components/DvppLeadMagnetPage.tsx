@@ -15,6 +15,7 @@ import { DvppVideoCard } from './DvppVideoCard';
 import { WebinarCard } from './WebinarCard';
 import { NewsletterBanner } from './NewsletterBanner';
 import { BlogSection } from './BlogSection';
+import { DvppSeriesShowcase } from './dvpp/DvppSeriesShowcase';
 import logoPaths from '../imports/svg-fupfguvmdt';
 
 const ff = "'Fenomen Sans', sans-serif";
@@ -258,6 +259,8 @@ export function DvppLeadMagnetPage() {
           </>
         )}
       </section>
+
+      <DvppSeriesShowcase />
 
       <section id="certifikat" className="bg-white">
         <div className="mx-auto grid max-w-7xl gap-8 px-5 py-14 md:grid-cols-[0.9fr_1.1fr] md:px-8">

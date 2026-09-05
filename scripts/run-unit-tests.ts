@@ -27,6 +27,7 @@ import {
   teacherTypeFromAnswers,
   domainFromWebOrEmail,
 } from '../src/supabase/functions/server/dvpp/milestones.ts';
+import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject } from '../src/supabase/functions/server/dvpp/content.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
@@ -1832,6 +1833,29 @@ registerTest('dvpp: stav školy z počtu kontaktů a typ učitele z kvízu', () 
   assert.equal(schoolStatusFrom({ isCustomer: false, staffroomStatus: 'unlocked', activeContacts: 9, everHadContacts: true }), 'staffroom');
   assert.equal(teacherTypeFromAnswers({ style: 'objevovani', subjects: ['fyzika'] }), 'badatel');
   assert.equal(teacherTypeFromAnswers({ style: 'planovani', pain_point: 'svp' }), 'architekt');
+});
+
+registerTest('dvpp: kapitoly z textu „mm:ss Název“, řazení, neplatné řádky ven, aktuální kapitola', () => {
+  const ch = parseChapters('12:30 Praktická část\n0:00 Úvod\nblbost\n1:02:05 - Otázky\n');
+  assert.deepEqual(ch.map((c) => c.t), [0, 750, 3725]);
+  assert.equal(ch[2].title, 'Otázky');
+  assert.equal(formatTime(3725), '1:02:05');
+  assert.equal(formatTime(750), '12:30');
+  assert.equal(currentChapterIndex(ch, 800), 1);
+  assert.equal(currentChapterIndex(ch, -1), -1);
+});
+
+registerTest('dvpp: digest vybere záznamy z posledních 7 dní, jinak první z katalogu; subject podle prvního', () => {
+  const now = new Date('2026-09-05T08:00:00Z');
+  const vids = [
+    { id: 'a', name: 'Starý', slug: 'a', addedAt: '2026-06-01T00:00:00Z' },
+    { id: 'b', name: 'Nový zlomky', slug: 'b', addedAt: '2026-09-03T00:00:00Z' },
+    { id: 'c', name: 'Bez data', slug: 'c' },
+  ];
+  assert.deepEqual(pickNewVideos(vids, 7, now).map((v) => v.id), ['b']);
+  assert.deepEqual(pickNewVideos([vids[0], vids[2]], 7, now, 1).map((v) => v.id), ['a']);
+  assert.equal(digestSubject([vids[1]], '5. 9.'), 'Nové v knihovně: Nový zlomky');
+  assert.match(digestSubject([], '5. 9.'), /co je nového/);
 });
 
 await run();

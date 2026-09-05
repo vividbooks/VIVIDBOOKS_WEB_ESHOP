@@ -27112,6 +27112,8 @@ registerDvppRoutes(app, {
     const got = c.req.header('x-cron-secret')?.trim() || c.req.query('secret')?.trim() || '';
     return !!secret && got === secret;
   },
+  loadWebinars: async () => ((await getCollection(WEBINARS_KEY)) as Array<Record<string, unknown>>) || [],
+  buildEmailTemplate: (d) => vividbooksEmailTemplate({ headline: d.headline, body: d.body, ctaText: d.ctaText, ctaUrl: d.ctaUrl, preheader: d.preheader }),
 });
 
 Deno.serve((incoming) => {

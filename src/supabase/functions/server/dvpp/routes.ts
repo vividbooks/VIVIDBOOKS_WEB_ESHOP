@@ -26,6 +26,9 @@ import { isDirectorPosition, teacherTypeFromAnswers } from './milestones.ts';
 import { activateMember } from './staffroom.ts';
 import { enrollDvpp } from './automations.ts';
 import { importSizes } from './schools.ts';
+import { buildDigestDraft, saveDigestDraft } from './digest.ts';
+import { parseChapters } from './content.ts';
+import * as kv from '../kv_store.tsx';
 
 export type DvppRouteDeps = {
   sendEmail: MagicLinkDeps['sendEmail'];
@@ -38,7 +41,15 @@ export type DvppRouteDeps = {
   /** Existující sloučený katalog (index.tsx GET /dvpp-videos). */
   loadVideos: () => Promise<{ topics: Array<{ id: string; name: string; slug: string; order?: number }>; videos: CatalogVideo[] }>;
   cronSecretOk: (c: Context) => boolean;
+  /** Webináře z KV (admin kolekce) — pro „naživo tento týden“ v digestu. */
+  loadWebinars: () => Promise<Array<Record<string, unknown>>>;
+  /** Šablona e-mailu EmailBuilderu (index.tsx vividbooksEmailTemplate) pro fullHtml draftu. */
+  buildEmailTemplate: (d: { headline: string; body: string; ctaText: string; ctaUrl: string; preheader: string }) => string;
 };
+
+const DVPP_VIDEOS_KV_KEY = 'vividbooks_dvpp_videos_v2';
+/** Pole metadat záznamu, která admin spravuje v /marketing/dvpp (ostatní přichází z Webflow / webináře). */
+const VIDEO_META_FIELDS = ['durationMinutes', 'lecturer', 'trailerUrl', 'chapters', 'subjects', 'addedAt', 'description', 'name', 'thumbnail', 'topicIds'] as const;
 
 const PREFIX = '/make-server-93a20b6f';
 
@@ -440,6 +451,51 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
 
   both('post', '/admin/dvpp/staffrooms/:redIzo/recount', async (c) => {
     return c.json({ ok: true, staffroom: await recountOne(sbService(), String(c.req.param('redIzo') || '')) });
+  });
+
+  /* ── Záznamy: metadata (kapitoly, upoutávka, délka, lektor) ─────────── */
+  both('get', '/admin/dvpp/videos', async (c) => {
+    const { topics, videos } = await deps.loadVideos();
+    return c.json({ topics, videos: videos.map((v) => ({ ...v })) });
+  });
+
+  both('put', '/admin/dvpp/videos/:id', async (c) => {
+    const id = String(c.req.param('id') || '');
+    if (!id) return c.json({ error: 'Chybí id.' }, 400);
+    const body = await readJson(c.req.raw);
+    const patch: Record<string, unknown> = {};
+    for (const k of VIDEO_META_FIELDS) if (k in body) patch[k] = body[k];
+    if (typeof body.chaptersText === 'string') patch.chapters = parseChapters(body.chaptersText);
+    if ('durationMinutes' in patch) patch.durationMinutes = Number(patch.durationMinutes) > 0 ? Math.round(Number(patch.durationMinutes)) : null;
+    if (Array.isArray(patch.subjects)) patch.subjects = (patch.subjects as unknown[]).map(String).filter(Boolean);
+    const data = ((await kv.get(DVPP_VIDEOS_KV_KEY)) as { topics?: unknown[]; videos?: Array<Record<string, unknown>> } | null) ?? { topics: [], videos: [] };
+    const videos = Array.isArray(data.videos) ? data.videos : [];
+    const idx = videos.findIndex((v) => String(v.id) === id);
+    if (idx === -1) {
+      /* Záznam z minulého webináře (není v KV seznamu) — založí se ručně spravovaná položka s daty z katalogu. */
+      const { videos: merged } = await deps.loadVideos();
+      const base = merged.find((v) => v.id === id);
+      if (!base) return c.json({ error: 'Záznam nenalezen.' }, 404);
+      videos.push({ ...(base as unknown as Record<string, unknown>), ...patch, _manual: true, updatedAt: new Date().toISOString() });
+    } else {
+      videos[idx] = { ...videos[idx], ...patch, updatedAt: new Date().toISOString() };
+    }
+    await kv.set(DVPP_VIDEOS_KV_KEY, { ...data, videos, updatedAt: new Date().toISOString() });
+    return c.json({ ok: true, video: videos[idx === -1 ? videos.length - 1 : idx] });
+  });
+
+  /* ── Digest „Nové v knihovně“ → draft do EmailBuilderu ────────────────── */
+  both('post', '/admin/dvpp/digest/draft', async (c) => {
+    const body = await readJson(c.req.raw);
+    const [{ videos }, webinars] = await Promise.all([deps.loadVideos(), deps.loadWebinars()]);
+    const draft = await buildDigestDraft(sbService(), {
+      videos: videos as unknown as Parameters<typeof buildDigestDraft>[1]['videos'],
+      webinars,
+      sinceDays: Number(body.sinceDays) || 7,
+    });
+    const fullHtml = deps.buildEmailTemplate({ headline: draft.headline, body: draft.bodyHtml, ctaText: draft.ctaText, ctaUrl: draft.ctaUrl, preheader: draft.previewText });
+    await saveDigestDraft(draft as unknown as Record<string, unknown>, fullHtml);
+    return c.json({ ok: true, draftId: draft.id, subject: draft.subject, editUrl: `/mailing/emaily?draft=${encodeURIComponent(draft.id)}` });
   });
 
   both('get', '/admin/dvpp/series', async (c) => c.json({ series: await getSeries() }));

@@ -11,7 +11,8 @@ import { extractYoutubeId } from '../../utils/youtube';
 import { DvppButton, DvppCard, DvppShell } from './DvppShell';
 import { useDvppSession } from './DvppSession';
 import { VideoRow } from './DvppLibraryPage';
-import { DvppYouTubePlayer } from './DvppYouTubePlayer';
+import { DvppYouTubePlayer, type DvppPlayerHandle } from './DvppYouTubePlayer';
+import { currentChapterIndex, formatTime } from '../../supabase/functions/server/dvpp/content';
 
 const PROGRESS_SAVE_EVERY_S = 30;
 const GUEST_PREVIEW_SECONDS = 600;
@@ -27,6 +28,8 @@ export function DvppPlayerPage() {
   const [certBusy, setCertBusy] = useState(false);
   const lastSaved = useRef<number>(0);
   const [previewEnded, setPreviewEnded] = useState(false);
+  const playerRef = useRef<DvppPlayerHandle | null>(null);
+  const [position, setPosition] = useState(0);
 
   useEffect(() => {
     if (loading) return;
@@ -49,6 +52,11 @@ export function DvppPlayerPage() {
 
   const canPlay = !!video && !video.locked && !!me;
   const ytId = video ? extractYoutubeId(video.youtubeUrl) : null;
+  const trailerId = video?.trailerUrl ? extractYoutubeId(video.trailerUrl) : null;
+  /* Host: upoutávka (pokud je), jinak prvních 10 minut záznamu. */
+  const guestVideoId = trailerId || ytId;
+  const chapters = Array.isArray(video?.chapters) ? video!.chapters! : [];
+  const activeChapter = currentChapterIndex(chapters, position);
 
   /* Progress: první zápis hned po startu (= událost play + kontrola limitu), pak každých 30 s podle skutečné pozice v přehrávači. */
   const saveProgress = async (position: number, duration: number | null, completed = false) => {
@@ -68,6 +76,7 @@ export function DvppPlayerPage() {
   }, [canPlay, video?.id]);
 
   const onProgress = (position: number, duration: number) => {
+    setPosition(position);
     if (!canPlay) return;
     if (position - lastSaved.current >= PROGRESS_SAVE_EVERY_S) {
       lastSaved.current = position;
@@ -98,14 +107,15 @@ export function DvppPlayerPage() {
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div>
             <div className="relative mb-4 aspect-video overflow-hidden rounded-[18px] bg-[#0d1440] shadow-[0_6px_24px_rgba(0,17,97,0.18)]">
-              {ytId && !lockedMsg && (canPlay || (!me && !previewEnded)) ? (
+              {guestVideoId && !lockedMsg && (canPlay || (!me && !previewEnded)) ? (
                 <DvppYouTubePlayer
-                  videoId={ytId}
+                  ref={playerRef}
+                  videoId={canPlay ? ytId! : guestVideoId}
                   startSeconds={canPlay ? (video.progress?.position || 0) : 0}
-                  limitSeconds={canPlay ? null : GUEST_PREVIEW_SECONDS}
+                  limitSeconds={canPlay || trailerId ? null : GUEST_PREVIEW_SECONDS}
                   onProgress={onProgress}
                   onLimitReached={() => { setPreviewEnded(true); void dvppApi.event('preview_limit', { videoId: video.id }); }}
-                  onEnded={() => { if (canPlay) void saveProgress(video.durationMinutes ? video.durationMinutes * 60 : 0, null, true); }}
+                  onEnded={() => { if (canPlay) void saveProgress(video.durationMinutes ? video.durationMinutes * 60 : 0, null, true); else setPreviewEnded(true); }}
                   autoplay={canPlay}
                 />
               ) : (
@@ -114,7 +124,7 @@ export function DvppPlayerPage() {
                   <span className="relative inline-flex h-12 w-12 items-center justify-center rounded-full bg-white/15"><Lock className="h-6 w-6" /></span>
                   {!me ? (
                     <>
-                      <p className="relative text-[18px] font-extrabold">{previewEnded ? 'Prvních 10 minut máte za sebou' : 'Záznam otevřete po přihlášení e-mailem'}</p>
+                      <p className="relative text-[18px] font-extrabold">{previewEnded ? (trailerId ? 'Celý záznam po přihlášení' : 'Prvních 10 minut máte za sebou') : 'Záznam otevřete po přihlášení e-mailem'}</p>
                       <p className="relative max-w-[440px] text-[14px] text-white/80">Bez hesla. Tři záznamy zdarma, po ověření osvědčení DVPP. Celá sborovna zdarma, když se přidá třetina sboru.</p>
                       <DvppButton to={`/knihovna/prihlaseni?next=${encodeURIComponent(`/knihovna/zaznam/${id}`)}`} className="relative">Přihlásit se</DvppButton>
                     </>
@@ -128,7 +138,23 @@ export function DvppPlayerPage() {
                 </div>
               )}
             </div>
-            {!me && !previewEnded && ytId ? <p className="mb-3 rounded-xl bg-[#efe8ff] px-3 py-2 text-[13px] text-[#3a2470]">Prvních 10 minut je bez přihlášení. Celý záznam a osvědčení DVPP máte po přihlášení e-mailem, bez hesla.</p> : null}
+            {!me && !previewEnded && guestVideoId ? <p className="mb-3 rounded-xl bg-[#efe8ff] px-3 py-2 text-[13px] text-[#3a2470]">{trailerId ? 'Tohle je upoutávka.' : 'Prvních 10 minut je bez přihlášení.'} Celý záznam a osvědčení DVPP máte po přihlášení e-mailem, bez hesla.</p> : null}
+            {chapters.length ? (
+              <div className="mb-4 flex flex-wrap gap-2">
+                {chapters.map((c, i) => (
+                  <button
+                    key={`${c.t}-${i}`}
+                    type="button"
+                    disabled={!canPlay}
+                    onClick={() => playerRef.current?.seekTo(c.t)}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition disabled:opacity-50 ${i === activeChapter ? 'border-[#001161] bg-[#001161] text-white' : 'border-[#001161]/15 bg-white text-[#001161] hover:bg-[#f0f2f8]'}`}
+                    title={canPlay ? 'Skočit na kapitolu' : 'Kapitoly fungují po přihlášení'}
+                  >
+                    <span className="tabular-nums opacity-70">{formatTime(c.t)}</span> {c.title}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             <h1 className="mb-1 text-[26px] font-extrabold leading-tight text-[#001161]">{video.name}</h1>
             <p className="mb-4 text-[13px] text-[#6b7398]">{[video.lecturer, video.durationMinutes ? `${video.durationMinutes} min` : null, ...(video.subjects || [])].filter(Boolean).join(' · ')}</p>
             {video.description ? <div className="prose prose-sm max-w-none text-[15px] text-[#3a4270]" dangerouslySetInnerHTML={{ __html: video.description }} /> : null}

@@ -1,13 +1,15 @@
 /**
  * Přehrávač záznamu přes YouTube IFrame API: přesná pozice, obnovení pozice, volitelný limit (upoutávka
- * pro nepřihlášené: prvních N sekund) a callback po dokončení.
+ * pro nepřihlášené: prvních N sekund), callback po dokončení a `seekTo` pro kapitoly (přes ref).
  */
-import React, { useEffect, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 
 type YTPlayer = {
   getCurrentTime: () => number;
   getDuration: () => number;
   pauseVideo: () => void;
+  playVideo: () => void;
+  seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   destroy: () => void;
 };
 type YTNamespace = {
@@ -18,6 +20,8 @@ type YTNamespace = {
 declare global {
   interface Window { YT?: YTNamespace; onYouTubeIframeAPIReady?: () => void }
 }
+
+export type DvppPlayerHandle = { seekTo: (seconds: number) => void; getPosition: () => number };
 
 let apiPromise: Promise<YTNamespace> | null = null;
 function loadYouTubeApi(): Promise<YTNamespace> {
@@ -35,15 +39,7 @@ function loadYouTubeApi(): Promise<YTNamespace> {
   return apiPromise;
 }
 
-export function DvppYouTubePlayer({
-  videoId,
-  startSeconds = 0,
-  limitSeconds,
-  onProgress,
-  onLimitReached,
-  onEnded,
-  autoplay = true,
-}: {
+export const DvppYouTubePlayer = forwardRef<DvppPlayerHandle, {
   videoId: string;
   startSeconds?: number;
   /** Upoutávka: po tolika sekundách přehrávání zastavit a zavolat onLimitReached. */
@@ -53,13 +49,18 @@ export function DvppYouTubePlayer({
   onLimitReached?: () => void;
   onEnded?: () => void;
   autoplay?: boolean;
-}) {
+}>(function DvppYouTubePlayer({ videoId, startSeconds = 0, limitSeconds, onProgress, onLimitReached, onEnded, autoplay = true }, ref) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const timerRef = useRef<number | null>(null);
   const limitHit = useRef(false);
   const cbs = useRef({ onProgress, onLimitReached, onEnded });
   cbs.current = { onProgress, onLimitReached, onEnded };
+
+  useImperativeHandle(ref, () => ({
+    seekTo: (seconds: number) => { try { playerRef.current?.seekTo(Math.max(0, seconds), true); playerRef.current?.playVideo(); } catch { /* ignore */ } },
+    getPosition: () => { try { return playerRef.current?.getCurrentTime() || 0; } catch { return 0; } },
+  }), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +98,7 @@ export function DvppYouTubePlayer({
           },
         },
       });
-    }).catch(() => { /* API se nenačetlo — fallback níže */ });
+    }).catch(() => { /* API se nenačetlo — noscript fallback níže */ });
 
     return () => {
       cancelled = true;
@@ -115,4 +116,4 @@ export function DvppYouTubePlayer({
       </noscript>
     </div>
   );
-}
+});

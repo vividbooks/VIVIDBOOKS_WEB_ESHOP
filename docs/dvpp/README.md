@@ -91,6 +91,8 @@ flowchart LR
 - [ ] `POST /admin/dvpp/schools/backfill` opakovaně, dokud `linked > 0` (dopáruje 3 900 školních domén).
 - [ ] pg_cron: migrace `20260905110000_schedule_dvpp_recount_cron.sql` (denně 03:15, secret z `app.mailing_cron_secret`).
 - [ ] `POST /admin/mailing/flows/seed-defaults` → v `/mailing/automatizace` zapnout čtyři sekvence „DVPP · …“.
+- [ ] Obsah: v `/marketing/dvpp` → Řady založit 4–5 řad, u 20 nejlepších záznamů doplnit délku, lektora, kapitoly a upoutávku.
+- [ ] Digest: každé pondělí `/marketing/dvpp` → „Vygenerovat digest“ → v EmailBuilderu zkontrolovat, testovací odeslání, kampaň na aktivní odběratele.
 - [ ] Velikost sborů: `POST /admin/dvpp/schools/import-sizes` s CSV ze statistiky MŠMT (jinak platí odhad z počtu žáků).
 - [ ] Secrets (volitelné): `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_TEST_EVENT_CODE`, `GA4_MEASUREMENT_ID`, `GA4_API_SECRET`.
 - [x] Frontend: routy `/knihovna`, `/knihovna/prihlaseni`, `/knihovna/zaznam/:id`, `/sborovna`, `/sborovna/letacek`, `/pro-reditele`, `/kviz`, `/s/:code`, admin `/marketing/dvpp` (nasazují se pushem do `main`).

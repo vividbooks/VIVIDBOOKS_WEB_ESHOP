@@ -92,6 +92,7 @@ export type DvppMe = {
 export type DvppCatalogVideo = {
   id: string; name: string; slug: string; thumbnail: string; youtubeUrl: string; topicIds: string[]; description: string;
   durationMinutes?: number; lecturer?: string; subjects?: string[]; trailerUrl?: string;
+  chapters?: Array<{ t: number; title: string }>; addedAt?: string;
   locked?: boolean;
   progress?: { position: number; duration: number | null; completed: boolean; updatedAt: string } | null;
   certificate?: { number: string; issuedAt: string } | null;

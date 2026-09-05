@@ -133,6 +133,9 @@ Zapíše do `funnel_events`, kopie do Meta CAPI a GA4 (pokud jsou secrets). `eve
 | GET | `/admin/dvpp/staffrooms?status=` | sborovny se školou |
 | POST | `/admin/dvpp/staffrooms/:redIzo/unlock` | ruční odemknutí (unlocked_by = manual) |
 | POST | `/admin/dvpp/staffrooms/:redIzo/recount` | přepočet jedné sborovny |
+| GET | `/admin/dvpp/videos` | sloučený katalog záznamů s metadaty (délka, lektor, upoutávka, kapitoly, předměty, addedAt) |
+| PUT | `/admin/dvpp/videos/:id` | metadata záznamu do KV: `durationMinutes`, `lecturer`, `trailerUrl`, `chaptersText` („mm:ss Název“ na řádek → `chapters`), `subjects[]`, `addedAt` |
+| POST | `/admin/dvpp/digest/draft` `{ sinceDays? }` | vygeneruje draft „Nové v knihovně“ do EmailBuilderu (KV `vb:email-draft:dvpp-digest-{datum}`, HTML mód) → `{ draftId, subject, editUrl }`; odeslání zůstává ruční |
 | GET / PUT | `/admin/dvpp/series` | řady v KV `{ series: [...] }` |
 | PUT | `/admin/dvpp/topics` | založit/upravit téma k hlasování |
 

@@ -2,6 +2,15 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-09-05 (večer) · řady na landing page, kapitoly a upoutávky, digest
+
+### ✅
+- `DvppSeriesShowcase` na landing dvppzdarma.cz: řady, nejsledovanější, tři argumenty, hlasování (bez přihlášení, z `/dvpp/catalog`).
+- Kapitoly u záznamů (`chapters`, „mm:ss Název“) s klikem na čas v přehrávači (`seekTo` přes ref) a zvýrazněním aktuální kapitoly; upoutávka (`trailerUrl`) se hraje nepřihlášeným místo prvních 10 minut.
+- Admin `/marketing/dvpp` má záložky: Přehled (KPI, údržba, CSV velikostí sborů, sborovny) · Záznamy (délka, lektor, upoutávka, kapitoly, předměty, datum přidání) · Řady (CRUD s výběrem dílů) · Témata (hlasování).
+- Digest „Nové v knihovně“: `POST /admin/dvpp/digest/draft` složí e-mail (nové záznamy, řady, naživo tento týden, hlasování, blok sborovny) a uloží ho jako draft do EmailBuilderu; odesílá se ručně jako kampaň.
+- `dvpp/content.ts` (čistá logika: kapitoly, výběr nových záznamů, subject digestu) + 2 testy.
+
 ## 2026-09-05 (odpoledne) · sekvence, cron, přehrávač, landing
 
 ### ✅
@@ -41,9 +50,8 @@ Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracová
 - `docs/dvpp/README.md`, `DATOVY_MODEL.md`, `API.md`, `FLOWS.md`, tento changelog.
 
 ### ⏳ Čeká (další kroky)
-- Nová landing dvppzdarma.cz jako plnohodnotný katalog s řadami (dnes `DvppLeadMagnetPage` + odkazy do knihovny).
-- Přehrávač: kapitoly (pole `chapters` u videa v KV) a samostatné 60s upoutávky (`trailerUrl`) pro FB skupiny.
-- Týdenní digest „Nové v knihovně“ (kampaň z EmailBuilderu s blokem sborovny; není automatizace).
+- Upoutávky natočit/sestříhat (obsahová práce): 20 nejlepších záznamů, 45–90 s, nahrát na YouTube a vložit do metadat.
+- Digest: personalizovaný blok sborovny (stav školy per příjemce) vyžaduje merge pole v kampani; dnes je blok obecný.
 - Import velikosti sboru (statistika MŠMT) — dnes odhad z počtu žáků, pokud CSV rejstříku nese `pupils`/`teachers`; jinak 8 jako výchozí milník.
 - Upoutávky a kapitoly u záznamů (pole `trailerUrl`, `durationMinutes` v KV videí).
 - Secrets pro Meta CAPI / GA4; kontrola doručitelnosti (DKIM/DMARC, Seznam FBL) před spuštěním digestu.
