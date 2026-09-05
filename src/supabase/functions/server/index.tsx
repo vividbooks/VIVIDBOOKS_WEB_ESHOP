@@ -4008,7 +4008,73 @@ app.get('/make-server-93a20b6f/webinar-registrace-count/:webinarId', async (c) =
   }
 });
 
-/** Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení). */
+/* ── Ochrana veřejného ověření e-mailu ──────────────────────────────
+ * Endpoint prozradí, jestli daná adresa byla na webináři — sám o sobě nic citlivého,
+ * ale procházet s ním seznam adres nikomu neumožníme. Isolate žije krátce, takže je to
+ * tlumič, ne bezpečnostní hranice: brzdí procházení seznamu, ne jednoho člověka,
+ * který si znovu otevírá svůj certifikát. */
+const REG_CHECK_WINDOW_MS = 60_000;
+const REG_CHECK_MAX_PER_WINDOW = 20;
+const REG_CHECK_EMAILS_WINDOW_MS = 10 * 60_000;
+const REG_CHECK_MAX_EMAILS = 40;
+const REG_CHECK_MAX_TRACKED_IPS = 5_000;
+
+type RegCheckBucket = {
+  windowStart: number;
+  count: number;
+  emailsWindowStart: number;
+  emails: Set<string>;
+};
+const regCheckBuckets = new Map<string, RegCheckBucket>();
+
+function clientIpForRateLimit(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for') || '';
+  const first = fwd.split(',')[0]?.trim();
+  return first || c.req.header('cf-connecting-ip')?.trim() || 'unknown';
+}
+
+/** `false` = odmítnout (429). Počítá zvlášť dotazy a zvlášť počet různých adres. */
+function allowWebinarRegistrationCheck(ip: string, email: string): boolean {
+  const now = Date.now();
+  if (regCheckBuckets.size > REG_CHECK_MAX_TRACKED_IPS) regCheckBuckets.clear();
+
+  const b = regCheckBuckets.get(ip);
+  if (!b) {
+    regCheckBuckets.set(ip, {
+      windowStart: now,
+      count: 1,
+      emailsWindowStart: now,
+      emails: new Set([email]),
+    });
+    return true;
+  }
+
+  if (now - b.windowStart >= REG_CHECK_WINDOW_MS) {
+    b.windowStart = now;
+    b.count = 0;
+  }
+  if (now - b.emailsWindowStart >= REG_CHECK_EMAILS_WINDOW_MS) {
+    b.emailsWindowStart = now;
+    b.emails.clear();
+  }
+
+  b.count += 1;
+  if (b.count > REG_CHECK_MAX_PER_WINDOW) return false;
+  /** Opakovaný dotaz na vlastní adresu se do limitu různých adres nepřičítá. */
+  if (!b.emails.has(email)) {
+    if (b.emails.size >= REG_CHECK_MAX_EMAILS) return false;
+    b.emails.add(email);
+  }
+  return true;
+}
+
+/**
+ * Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení).
+ * `surveySubmitted` odlišuje odeslaný dotazník od rozepsaného — podle něj se na
+ * `/webinar/:slug/certifikat` rozhoduje, jestli se certifikát smí vystavit znovu.
+ * Osobní údaje z certifikátu (jméno, datum narození) se **nevracejí** — jinak by
+ * z toho byla veřejná vyhledávačka data narození podle e-mailu.
+ */
 async function handleWebinarRegistrationCheckGet(c: Context) {
   try {
     const webinarId = normalizeWebinarIdFromBody(c.req.query('webinarId'));
@@ -4017,12 +4083,20 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
     if (!webinarId || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return c.json({ registered: false, error: 'Chybí platné webinarId nebo email.' }, 400);
     }
+    if (!allowWebinarRegistrationCheck(clientIpForRateLimit(c), email)) {
+      return c.json({ error: 'Příliš mnoho dotazů. Zkuste to prosím za minutu.' }, 429);
+    }
     const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
     const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
-    const survey = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as { answers?: Record<string, string> } | null;
+    const survey = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as {
+      answers?: Record<string, string>;
+      submittedAt?: string;
+    } | null;
     const partial = (await kv.get(webinarSurveyPartialKey(webinarId, email))) as { answers?: Record<string, string> } | null;
     return c.json({
       registered: !!(reg || light),
+      surveySubmitted: !!survey,
+      surveySubmittedAt: typeof survey?.submittedAt === 'string' ? survey.submittedAt : undefined,
       answers: {
         ...answersFromWebinarRegistration(reg),
         ...(partial?.answers || {}),
@@ -5514,6 +5588,17 @@ function buildWebinarDvppDotaznikUrl(baseUrl: string, w: any, cleanEmail: string
   return `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(cleanEmail)}`;
 }
 
+/**
+ * Znovuvydání certifikátu: `/webinar/.../certifikat`. Certifikát se nikam neukládá —
+ * vzniká v prohlížeči po dotazníku. Kdo si okno zavřel, dostane ho tady znovu,
+ * aniž by musel psát na podporu.
+ */
+function buildWebinarCertificateReissueUrl(baseUrl: string, w: any, cleanEmail: string): string {
+  const slug = String(w?.slug || w?.id || '').trim() || String(w?.id ?? '');
+  const origin = String(baseUrl || '').replace(/\/$/, '');
+  return `${origin}/webinar/${encodeURIComponent(slug)}/certifikat?email=${encodeURIComponent(cleanEmail)}`;
+}
+
 /** Který webinář patří k danému DVPP záznamu (pro ověření `webinar_reg_*`). */
 function findWebinarIdForDvppVideoId(videoId: string, webinars: any[], dvppVideos: any[]): string | null {
   const vid = String(videoId).trim();
@@ -5832,6 +5917,45 @@ ${learningsBlock}
 ${webinarEmailDvppPromoBannerRow()}
 <tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">${esc(footerNote)}<br>
+&copy; ${new Date().getFullYear()} Vividbooks</p>
+</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+/**
+ * Potvrzení po odeslání dotazníku — hlavně kvůli odkazu na znovuvydání certifikátu.
+ * Certifikát se generuje v prohlížeči a nikam neukládá, takže bez tohohle odkazu
+ * lidem, co okno zavřeli, nezbývá než napsat na podporu.
+ */
+function buildWebinarSurveyConfirmationEmailHtml(opts: {
+  webinarTitle: string;
+  certificateUrl: string;
+  certificateKind: 'dvpp' | 'feedback';
+}): string {
+  const esc = remEscHtmlReminder;
+  const titleEsc = esc(opts.webinarTitle);
+  const isDvpp = opts.certificateKind === 'dvpp';
+  const lead = isDvpp
+    ? `Děkujeme za vyplnění dotazníku k webináři <strong>${titleEsc}</strong>. Certifikát DVPP si můžete kdykoli otevřít a vytisknout znovu — stačí kliknout níž.`
+    : `Děkujeme za vyplnění dotazníku k webináři <strong>${titleEsc}</strong>. Potvrzení o účasti si můžete kdykoli otevřít a vytisknout znovu — stačí kliknout níž.`;
+  const buttonLabel = isDvpp ? 'Otevřít certifikát DVPP' : 'Otevřít potvrzení o účasti';
+
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
+<!-- vb-survey-confirmation-email-template: v1 (deploy make-server-93a20b6f) -->
+<body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
+<table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
+${webinarEmailBrandedHeaderRow(isDvpp ? 'Certifikát DVPP' : 'Potvrzení o účasti')}
+<tr><td class="dm-rem-content" style="padding:26px 26px 8px;">
+<p style="margin:0 0 22px;font-size:15px;color:#334155;line-height:1.65;">${lead}</p>
+<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;">
+<tr><td align="center" style="padding:0;">
+<a href="${esc(opts.certificateUrl)}" style="display:inline-block;background:#001161;color:#ffffff;font-weight:800;font-size:15px;padding:16px 28px;border-radius:100px;text-decoration:none;">${esc(buttonLabel)}</a>
+</td></tr></table>
+<p style="margin:0 0 8px;font-size:13px;color:#64748b;line-height:1.6;">Odkaz si uložte — funguje opakovaně. V okně tisku zvolte „Uložit jako PDF“ a stránku nechte na A4 na šířku.</p>
+</td></tr>
+<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
+<p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">Tento e-mail vám posíláme, protože jste vyplnili dotazník k webináři Vividbooks.<br>
 &copy; ${new Date().getFullYear()} Vividbooks</p>
 </td></tr>
 </table></td></tr></table></body></html>`;
@@ -7130,14 +7254,60 @@ const webinarSurveySubmitHandler = async (c: Context) => {
 
     /** Přepsat předchozí finální odeslání — opakované vyplnění je povolené. */
 
-    await kv.set(webinarSurveyAnswerKey(webinarId, email), {
+    /**
+     * Odpovědi ukládáme dřív, než se sáhne na Mandrill. Potvrzovací e-mail je příjemnost
+     * navíc; výpadek pošty nesmí shodit uložení dotazníku, na kterém visí certifikát.
+     */
+    const prevConfirmationSentAt =
+      typeof (existingDoc as { confirmationEmailSentAt?: unknown } | null)?.confirmationEmailSentAt === 'string'
+        ? String((existingDoc as { confirmationEmailSentAt?: string }).confirmationEmailSentAt)
+        : '';
+    const surveyDoc: Record<string, unknown> = {
       webinarId,
       email,
       name: storedName,
       answers: out,
       submittedAt: new Date().toISOString(),
-    });
+      ...(prevConfirmationSentAt ? { confirmationEmailSentAt: prevConfirmationSentAt } : {}),
+    };
+    await kv.set(webinarSurveyAnswerKey(webinarId, email), surveyDoc);
     await kv.del(partialKey).catch(() => {});
+
+    /**
+     * Potvrzení s odkazem na znovuvydání certifikátu posíláme jen jednou za webinář
+     * a e-mail — opakované vyplnění dotazníku nemá zaplavit schránku.
+     */
+    if (!prevConfirmationSentAt && webinar && webinar.certificateLinkMode === 'survey') {
+      try {
+        /** Pomalá pošta nesmí držet odpověď dotazníku — po 8 s to vzdáme a jen zalogujeme. */
+        const sent = await Promise.race([
+          sendMandrillHtmlResult({
+            toEmail: email,
+            toName: storedName || email.split('@')[0],
+            subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Certifikát z webináře: ${String(webinar.title || 'Webinář').slice(0, 60)}`,
+            html: buildWebinarSurveyConfirmationEmailHtml({
+              webinarTitle: String(webinar.title || 'Webinář'),
+              certificateUrl: buildWebinarCertificateReissueUrl(getPublicSiteOrigin(), webinar, email),
+              certificateKind: mapPostWebinarQuizQuestionsForSurvey(webinar).length > 0 ? 'dvpp' : 'feedback',
+            }),
+            metadata: { webinar_id: String(webinarId), vb_kind: 'survey_confirmation' },
+          }),
+          new Promise<{ ok: boolean; detail?: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, detail: 'timeout 8s' }), 8_000),
+          ),
+        ]);
+        if (sent.ok) {
+          await kv.set(webinarSurveyAnswerKey(webinarId, email), {
+            ...surveyDoc,
+            confirmationEmailSentAt: new Date().toISOString(),
+          });
+        } else {
+          console.log(`[Survey] potvrzeni neodeslano ${email} webinar=${webinarId}: ${sent.detail || ''}`);
+        }
+      } catch (e: any) {
+        console.log(`[Survey] potvrzeni selhalo ${email} webinar=${webinarId}: ${e?.message || e}`);
+      }
+    }
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Survey] Chyba: ${err.message}`);
