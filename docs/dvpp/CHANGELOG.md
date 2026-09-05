@@ -2,6 +2,15 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-09-05 (noc) · knihovna jako Netflix, karty jako na homepage
+
+### ✅
+- `/knihovna` má rozvržení jako Netflix: tmavá plocha, nahoře billboard s vybraným záznamem (rozkoukaný → doporučený → nejsledovanější → první z řady) s CTA „Přehrát / Pokračovat“ a „Více informací“ (host: „Přehrát ukázku“ + „Přihlásit se e-mailem“), pod ním řádky přes celou šířku se šipkami na okrajích (zobrazí se při najetí), bez viditelného scrollbaru, karty se při najetí zvětší.
+- Karty záznamů (`VideoTile`, landing `DvppVideoCard`) vypadají jako karty webinářů na homepage (`SubjectHowToWebinarsSection`): obrázek webináře (`coverImage`) na podkladu v jeho barvě (`coverImageBgColor`), zaoblení 20 px, dole lišta „datum vysílání · délka“ a tlačítko (Přehrát / Pokračovat / Ukázka / Pro sborovnu / Osvědčení). Bez barvy z webináře se podklad odvodí z předmětu stejnou paletou jako na homepage.
+- Server: `GET /dvpp-videos` a `/dvpp/catalog` doplňují z propojeného webináře `coverBg`, `airedAt` (datum vysílání), `lecturer` a `thumbnail` (`enrichDvppVideosWithWebinarCertificateFields`, `buildDvppVideoFromPastWebinar`).
+- `DvppShell` umí `tone="dark"` (knihovna, přehrávač) a `flush` (bez vnitřního rámu); barvy rámu jsou CSS proměnné `--dvpp-*`, takže karty a hlasování fungují na tmavé i světlé ploše (landing zůstává světlý).
+- Přehrávač `/knihovna/zaznam/:id` je také tmavý (kapitoly jako průsvitné čipy, panely osvědčení a sborovny průsvitné).
+
 ## 2026-09-05 (večer) · řady na landing page, kapitoly a upoutávky, digest
 
 ### ✅

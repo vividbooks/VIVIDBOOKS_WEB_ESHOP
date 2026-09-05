@@ -25,6 +25,10 @@ export type CatalogVideo = {
   lecturer?: string;
   subjects?: string[];
   trailerUrl?: string;
+  /** Barva podkladu karty (z `coverImageBgColor` webináře), jako na homepage. */
+  coverBg?: string;
+  /** Datum živého vysílání (YYYY-MM-DD) z propojeného webináře. */
+  airedAt?: string;
   /** Doplní server podle přístupu. */
   locked?: boolean;
   progress?: { position: number; duration: number | null; completed: boolean; updatedAt: string } | null;

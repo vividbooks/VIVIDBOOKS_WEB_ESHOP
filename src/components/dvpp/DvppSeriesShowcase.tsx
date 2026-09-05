@@ -6,6 +6,7 @@ import { Link } from 'react-router';
 import { Award, ChevronRight } from 'lucide-react';
 import { dvppApi, type DvppCatalog } from '../../utils/dvppApi';
 import { DvppSessionProvider } from './DvppSession';
+import { dvppToneVars } from './DvppShell';
 import { TopicsVoting, VideoRow } from './DvppLibraryPage';
 
 function Inner() {
@@ -16,7 +17,7 @@ function Inner() {
   const top = catalog.rows.find((r) => r.key === 'top');
   if (!seriesRows.length && !top) return null;
   return (
-    <section id="rady" className="mx-auto max-w-7xl px-5 py-14 md:px-8" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
+    <section id="rady" className="mx-auto max-w-7xl px-5 py-14 md:px-8" style={{ ...dvppToneVars('light'), fontFamily: "'Fenomen Sans', sans-serif" }}>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="mb-1 text-[12px] font-black uppercase tracking-[0.18em] text-[#E8942A]">Knihovna pro sborovny</p>
@@ -24,8 +25,10 @@ function Inner() {
         </div>
         <Link to="/knihovna" className="inline-flex items-center gap-1 rounded-full bg-[#001161] px-5 py-2.5 text-[13px] font-black text-white no-underline">Otevřít celou knihovnu <ChevronRight className="h-4 w-4" /></Link>
       </div>
-      {seriesRows.map((r) => <VideoRow key={r.key} title={r.title} subtitle={r.subtitle} videos={r.videos} />)}
-      {top ? <VideoRow title={top.title} videos={top.videos} /> : null}
+      <div className="-mx-4 md:-mx-10">
+        {seriesRows.map((r) => <VideoRow key={r.key} title={r.title} subtitle={r.subtitle} videos={r.videos} guest />)}
+        {top ? <VideoRow title={top.title} videos={top.videos} guest /> : null}
+      </div>
       <div className="mt-2 grid gap-4 md:grid-cols-3">
         {[
           ['Tři záznamy hned', 'Přihlášení e-mailem, bez hesla. Prvních 10 minut každého záznamu je bez přihlášení.'],
@@ -39,7 +42,7 @@ function Inner() {
           </div>
         ))}
       </div>
-      <div className="mt-10"><TopicsVoting /></div>
+      <div className="mt-10"><TopicsVoting padded={false} /></div>
     </section>
   );
 }

@@ -65,6 +65,7 @@ type Me = {
   series: Series[], topics: Topic[], access: Access, me: Me | null
 }
 type Video = { id, name, slug, thumbnail, youtubeUrl, topicIds, description, subjects, locked,
+               coverBg?: '#rrggbb' /* coverImageBgColor webináře */, airedAt?: 'YYYY-MM-DD' /* datum vysílání */, lecturer?, durationMinutes?,
                progress: { position, duration, completed, updatedAt } | null,
                certificate: { number, issuedAt } | null, plays30d,
                certificateLinkMode, webinarSlugForSurvey }

@@ -5554,6 +5554,11 @@ function enrichDvppVideosWithWebinarCertificateFields(videos: any[], webinars: a
       greyButtonText: String(w.greyButtonText || v.greyButtonText || 'Certifikát DVPP'),
       webinarSlugForSurvey: String(w.slug || w.id),
       surveyRequireFullRegistration: w.surveyRequireFullRegistration === true,
+      /* Karta jako na homepage: obrázek webináře na podkladu v jeho barvě + datum vysílání. */
+      thumbnail: String(v.thumbnail || w.coverImage || ''),
+      coverBg: String(v.coverBg || w.coverImageBgColor || ''),
+      lecturer: String(v.lecturer || w.lecturer || ''),
+      airedAt: v.airedAt || (w.year && w.monthNum && w.day ? `${w.year}-${String(w.monthNum).padStart(2, '0')}-${String(w.day).padStart(2, '0')}` : undefined),
     };
   });
 }
@@ -5569,6 +5574,9 @@ function buildDvppVideoFromPastWebinar(w: any): any | null {
     name: String(w.title || w.name || 'Webinář').trim() || 'Webinář',
     slug: String(w.slug || id).trim() || id,
     thumbnail: String(w.coverImage || w.thumbnail || ''),
+    coverBg: String(w.coverImageBgColor || ''),
+    lecturer: String(w.lecturer || ''),
+    airedAt: w.year && w.monthNum && w.day ? `${w.year}-${String(w.monthNum).padStart(2, '0')}-${String(w.day).padStart(2, '0')}` : undefined,
     youtubeUrl,
     certificateUrl: String(w.certificateUrl || ''),
     certificateLinkMode: w.certificateLinkMode === 'survey' ? 'survey' : 'external',

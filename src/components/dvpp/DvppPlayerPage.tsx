@@ -8,7 +8,7 @@ import { Link, useParams } from 'react-router';
 import { Award, ChevronLeft, Lock, Users } from 'lucide-react';
 import { dvppApi, type DvppCatalog, type DvppCatalogVideo, type DvppCertificate } from '../../utils/dvppApi';
 import { extractYoutubeId } from '../../utils/youtube';
-import { DvppButton, DvppCard, DvppShell } from './DvppShell';
+import { DVPP_SERIF, DvppButton, DvppCard, DvppShell } from './DvppShell';
 import { useDvppSession } from './DvppSession';
 import { VideoRow } from './DvppLibraryPage';
 import { DvppYouTubePlayer, type DvppPlayerHandle } from './DvppYouTubePlayer';
@@ -98,15 +98,15 @@ export function DvppPlayerPage() {
   const surveyHref = video?.webinarSlugForSurvey ? `/webinar/${encodeURIComponent(video.webinarSlugForSurvey)}/dvpp-dotaznik` : null;
 
   return (
-    <DvppShell title={video ? video.name : 'Záznam'} description={video?.description?.slice(0, 160) || 'Záznam webináře s osvědčením DVPP.'} path={`/knihovna/zaznam/${id}`} wide>
-      <Link to="/knihovna" className="mb-4 inline-flex items-center gap-1 text-[13px] font-semibold text-[#001161] no-underline"><ChevronLeft className="h-4 w-4" /> Zpět do knihovny</Link>
+    <DvppShell title={video ? video.name : 'Záznam'} description={video?.description?.slice(0, 160) || 'Záznam webináře s osvědčením DVPP.'} path={`/knihovna/zaznam/${id}`} wide tone="dark">
+      <Link to="/knihovna" className="mb-4 inline-flex items-center gap-1 text-[13px] font-semibold text-white/80 no-underline hover:text-white"><ChevronLeft className="h-4 w-4" /> Zpět do knihovny</Link>
       {error ? <p className="rounded-xl bg-[#fde9df] px-4 py-3 text-[14px] text-[#8a3a1f]">{error}</p> : null}
-      {!catalog && !error ? <p className="text-[#6b7398]">Načítáme…</p> : null}
-      {catalog && !video ? <p className="text-[#6b7398]">Tenhle záznam v knihovně není.</p> : null}
+      {!catalog && !error ? <p style={{ color: 'var(--dvpp-muted)' }}>Načítáme…</p> : null}
+      {catalog && !video ? <p style={{ color: 'var(--dvpp-muted)' }}>Tenhle záznam v knihovně není.</p> : null}
       {video ? (
         <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div>
-            <div className="relative mb-4 aspect-video overflow-hidden rounded-[18px] bg-[#0d1440] shadow-[0_6px_24px_rgba(0,17,97,0.18)]">
+            <div className="relative mb-4 aspect-video overflow-hidden rounded-[18px] bg-black shadow-[0_18px_60px_rgba(0,0,0,0.45)]">
               {guestVideoId && !lockedMsg && (canPlay || (!me && !previewEnded)) ? (
                 <DvppYouTubePlayer
                   ref={playerRef}
@@ -138,7 +138,7 @@ export function DvppPlayerPage() {
                 </div>
               )}
             </div>
-            {!me && !previewEnded && guestVideoId ? <p className="mb-3 rounded-xl bg-[#efe8ff] px-3 py-2 text-[13px] text-[#3a2470]">{trailerId ? 'Tohle je upoutávka.' : 'Prvních 10 minut je bez přihlášení.'} Celý záznam a osvědčení DVPP máte po přihlášení e-mailem, bez hesla.</p> : null}
+            {!me && !previewEnded && guestVideoId ? <p className="mb-3 rounded-xl bg-white/10 px-3 py-2 text-[13px] text-white/85">{trailerId ? 'Tohle je upoutávka.' : 'Prvních 10 minut je bez přihlášení.'} Celý záznam a osvědčení DVPP máte po přihlášení e-mailem, bez hesla.</p> : null}
             {chapters.length ? (
               <div className="mb-4 flex flex-wrap gap-2">
                 {chapters.map((c, i) => (
@@ -147,7 +147,7 @@ export function DvppPlayerPage() {
                     type="button"
                     disabled={!canPlay}
                     onClick={() => playerRef.current?.seekTo(c.t)}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition disabled:opacity-50 ${i === activeChapter ? 'border-[#001161] bg-[#001161] text-white' : 'border-[#001161]/15 bg-white text-[#001161] hover:bg-[#f0f2f8]'}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-semibold transition disabled:opacity-50 ${i === activeChapter ? 'border-transparent bg-white text-[#001161]' : 'border-white/15 bg-white/8 text-white hover:bg-white/15'}`}
                     title={canPlay ? 'Skočit na kapitolu' : 'Kapitoly fungují po přihlášení'}
                   >
                     <span className="tabular-nums opacity-70">{formatTime(c.t)}</span> {c.title}
@@ -155,38 +155,38 @@ export function DvppPlayerPage() {
                 ))}
               </div>
             ) : null}
-            <h1 className="mb-1 text-[26px] font-extrabold leading-tight text-[#001161]">{video.name}</h1>
-            <p className="mb-4 text-[13px] text-[#6b7398]">{[video.lecturer, video.durationMinutes ? `${video.durationMinutes} min` : null, ...(video.subjects || [])].filter(Boolean).join(' · ')}</p>
-            {video.description ? <div className="prose prose-sm max-w-none text-[15px] text-[#3a4270]" dangerouslySetInnerHTML={{ __html: video.description }} /> : null}
+            <h1 className="mb-1 text-[28px] leading-tight text-white md:text-[34px]" style={{ fontFamily: DVPP_SERIF }}>{video.name}</h1>
+            <p className="mb-4 text-[13px] font-semibold text-white/65">{[video.lecturer, video.durationMinutes ? `${video.durationMinutes} min` : null, ...(video.subjects || [])].filter(Boolean).join(' · ')}</p>
+            {video.description ? <div className="prose prose-sm prose-invert max-w-none text-[15px] text-white/85" dangerouslySetInnerHTML={{ __html: video.description }} /> : null}
           </div>
           <aside className="space-y-4">
             <DvppCard id="osvedceni">
-              <div className="mb-2 flex items-center gap-2"><Award className="h-5 w-5 text-[#F06632]" /><h2 className="text-[16px] font-extrabold text-[#001161]">Osvědčení DVPP</h2></div>
+              <div className="mb-2 flex items-center gap-2"><Award className="h-5 w-5 text-[#F06632]" /><h2 className="text-[16px] font-extrabold text-white">Osvědčení DVPP</h2></div>
               {video.certificate || cert ? (
                 <>
-                  <p className="mb-3 text-[14px] text-[#3a4270]">Osvědčení <strong>{(cert || video.certificate)?.number}</strong> máte na polici. PDF si stáhnete v dotazníku k záznamu.</p>
-                  {surveyHref ? <DvppButton to={surveyHref} variant="secondary" className="w-full">Otevřít PDF</DvppButton> : null}
+                  <p className="mb-3 text-[14px] text-white/80">Osvědčení <strong>{(cert || video.certificate)?.number}</strong> máte na polici. PDF si stáhnete v dotazníku k záznamu.</p>
+                  {surveyHref ? <DvppButton to={surveyHref} className="w-full">Otevřít PDF</DvppButton> : null}
                 </>
               ) : (
                 <>
-                  <p className="mb-3 text-[14px] text-[#3a4270]">Po zhlédnutí odpovíte na 4 otázky k obsahu. Osvědčení má číslo, rozsah hodin a lektora, uznávají ho ředitelé i šablony OP JAK.</p>
-                  {surveyHref ? <DvppButton to={surveyHref} variant="secondary" className="mb-2 w-full" disabled={!canPlay}>Vyplnit ověřovací dotazník</DvppButton> : <p className="text-[13px] text-[#6b7398]">K tomuto záznamu zatím dotazník nemáme.</p>}
-                  {surveyHref && me ? <DvppButton onClick={() => void issue()} variant="ghost" className="w-full" disabled={certBusy}>Mám dotazník hotový, uložit osvědčení</DvppButton> : null}
-                  {certError ? <p className="mt-2 text-[13px] text-[#b3261e]">{certError}</p> : null}
+                  <p className="mb-3 text-[14px] text-white/80">Po zhlédnutí odpovíte na 4 otázky k obsahu. Osvědčení má číslo, rozsah hodin a lektora, uznávají ho ředitelé i šablony OP JAK.</p>
+                  {surveyHref ? <DvppButton to={surveyHref} className="mb-2 w-full" disabled={!canPlay}>Vyplnit ověřovací dotazník</DvppButton> : <p className="text-[13px] text-white/60">K tomuto záznamu zatím dotazník nemáme.</p>}
+                  {surveyHref && me ? <DvppButton onClick={() => void issue()} variant="glass" className="w-full" disabled={certBusy}>Mám dotazník hotový, uložit osvědčení</DvppButton> : null}
+                  {certError ? <p className="mt-2 text-[13px] text-[#ff9a8a]">{certError}</p> : null}
                 </>
               )}
             </DvppCard>
             {me ? (
               <DvppCard>
-                <div className="mb-2 flex items-center gap-2"><Users className="h-5 w-5 text-[#001161]" /><h2 className="text-[16px] font-extrabold text-[#001161]">Kolegům se bude hodit</h2></div>
-                <p className="mb-3 text-[14px] text-[#3a4270]">Pošlete jim odkaz na sborovnu. Za prvního kolegu máte rok záznamů, za třetinu sboru celou školu.</p>
-                <DvppButton to="/sborovna" variant="ghost" className="w-full">Otevřít sborovnu</DvppButton>
+                <div className="mb-2 flex items-center gap-2"><Users className="h-5 w-5 text-white" /><h2 className="text-[16px] font-extrabold text-white">Kolegům se bude hodit</h2></div>
+                <p className="mb-3 text-[14px] text-white/80">Pošlete jim odkaz na sborovnu. Za prvního kolegu máte rok záznamů, za třetinu sboru celou školu.</p>
+                <DvppButton to="/sborovna" variant="glass" className="w-full">Otevřít sborovnu</DvppButton>
               </DvppCard>
             ) : null}
           </aside>
         </div>
       ) : null}
-      {related.length ? <div className="mt-10"><VideoRow title="Ze stejného tématu" videos={related} /></div> : null}
+      {related.length ? <div className="-mx-4 mt-10 md:-mx-8"><VideoRow title="Ze stejného tématu" videos={related} guest={!me} /></div> : null}
     </DvppShell>
   );
 }

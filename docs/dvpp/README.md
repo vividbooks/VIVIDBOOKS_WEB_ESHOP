@@ -96,6 +96,7 @@ flowchart LR
 - [ ] Velikost sborů: `POST /admin/dvpp/schools/import-sizes` s CSV ze statistiky MŠMT (jinak platí odhad z počtu žáků).
 - [ ] Secrets (volitelné): `META_PIXEL_ID`, `META_CAPI_TOKEN`, `META_TEST_EVENT_CODE`, `GA4_MEASUREMENT_ID`, `GA4_API_SECRET`.
 - [x] Frontend: routy `/knihovna`, `/knihovna/prihlaseni`, `/knihovna/zaznam/:id`, `/sborovna`, `/sborovna/letacek`, `/pro-reditele`, `/kviz`, `/s/:code`, admin `/marketing/dvpp` (nasazují se pushem do `main`).
+- [ ] Obsah: u záznamů z Webflow (bez propojeného webináře v adminu) chybí `coverImageBgColor`; karta pak bere barvu z předmětu. Pro stejný vzhled jako na homepage doplnit obrázek a barvu u webináře v adminu (`/admin/webinare`).
 - [ ] SEO prerender nových stránek v `scripts/seo-pages.mjs` (knihovna, pro-reditele).
 
 ## Jak se testuje
