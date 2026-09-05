@@ -26,7 +26,7 @@ const root = path.resolve(__dirname, '..');
 const outDir = process.env.DOCS_BUILD === '1' ? path.join(root, 'docs') : path.join(root, 'build');
 
 /** Prefixy ze sitemap, které prerenderujeme (kromě ručního katalogu SEO_PAGES). */
-const SITEMAP_PREFIXES = ['/blog/', '/novinky/', '/produkt/', '/webinar/'];
+const SITEMAP_PREFIXES = ['/blog/', '/novinky/', '/produkt/', '/webinar/', '/webinare/zaznam/', '/balicek/'];
 
 /** Drž v souladu s src/utils/supabase/info.tsx — veřejný anon klíč pro načtení katalogu při buildu. */
 const PROJECT_ID = 'iekkundgizzdbmkzatdl';
@@ -38,6 +38,11 @@ const EDGE_BASE = `https://${PROJECT_ID}.supabase.co/functions/v1/make-server-93
 const PRODUCTS_URL = `${EDGE_BASE}/products`;
 const HERO_SLIDES_URL = `${EDGE_BASE}/public/hero-slidy`;
 const LIVE_SITEMAP_URL = `${EDGE_BASE}/sitemap.xml`;
+const WEBINARS_URL = `${EDGE_BASE}/webinare`;
+const BLOG_URL = `${EDGE_BASE}/admin/blog`;
+const NOVINKY_URL = `${EDGE_BASE}/admin/novinky`;
+const DVPP_VIDEOS_URL = `${EDGE_BASE}/dvpp-videos`;
+const BUNDLES_URL = `${EDGE_BASE}/product-bundles`;
 
 function authHeaders() {
   return { Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY };
@@ -269,11 +274,8 @@ function assignProductSlugs(products) {
   return slugById;
 }
 
-function parseProductPriceKc(product) {
-  if (typeof product?.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
-    return Math.max(0, product.priceAmount);
-  }
-  const text = String(product?.price ?? '').trim();
+function parsePriceTextToKc(raw) {
+  const text = String(raw ?? '').trim();
   if (!text) return null;
   if (/zdarma/i.test(text)) return 0;
   const compact = text.replace(/\s/g, '');
@@ -285,6 +287,37 @@ function parseProductPriceKc(product) {
     .replace(/[^\d.]/g, '');
   const parsed = Number.parseFloat(normalized);
   return Number.isFinite(parsed) ? Math.max(0, parsed) : null;
+}
+
+function parseMerchVariantPriceToKc(variant) {
+  const fromText = parsePriceTextToKc(variant?.price);
+  if (fromText !== null) return fromText;
+  if (typeof variant?.priceAmount === 'number' && Number.isFinite(variant.priceAmount)) {
+    return Math.max(0, variant.priceAmount);
+  }
+  return null;
+}
+
+/** Stejná pravidla jako src/utils/productPrice.ts `getProductOfferPriceKc`. */
+function parseProductPriceKc(product) {
+  const fromText = parsePriceTextToKc(product?.price);
+  if (fromText !== null) return fromText;
+
+  const merch = product?.merchVariants;
+  if (Array.isArray(merch)) {
+    for (const variant of merch) {
+      const variantKc = parseMerchVariantPriceToKc(variant);
+      if (variantKc !== null) return variantKc;
+    }
+  }
+
+  const priceText = String(product?.price ?? '').trim();
+  if (priceText) return null;
+
+  if (typeof product?.priceAmount === 'number' && Number.isFinite(product.priceAmount)) {
+    return Math.max(0, product.priceAmount);
+  }
+  return null;
 }
 
 function formatOfferPrice(priceKc) {
@@ -315,6 +348,95 @@ async function fetchProductsCatalog() {
     console.warn(`[prerender-seo] products fetch error: ${err?.message || err}`);
     return { bySlug: new Map(), count: 0 };
   }
+}
+
+/** OG obrázek musí být absolutní URL — relativní cesty Slack ani Facebook nenačtou. */
+function absoluteImageUrl(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('//')) return `https:${value}`;
+  if (value.startsWith('/')) return `${SITE_URL}${value}`;
+  return null;
+}
+
+/**
+ * Obsahové kolekce pro OG náhledy (webináře, blog, novinky, záznamy, balíčky).
+ * Bez nich by `page.image` zůstalo prázdné a `buildHeadInjection` by spadlo na DEFAULT_OG_IMAGE.
+ */
+async function fetchCollection(url, pick, label) {
+  try {
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) {
+      console.warn(`[prerender-seo] ${label} fetch failed: HTTP ${res.status}`);
+      return [];
+    }
+    const data = await res.json();
+    const items = pick(data);
+    return Array.isArray(items) ? items.filter(Boolean) : [];
+  } catch (err) {
+    console.warn(`[prerender-seo] ${label} fetch error: ${err?.message || err}`);
+    return [];
+  }
+}
+
+/**
+ * Mapa pro vyhledání podle libovolného klíče (slug i id — obojí je platná URL),
+ * plus `canonical` = jen jeden klíč na položku, aby se stránka nezapsala dvakrát.
+ */
+function indexBy(items, keys) {
+  const map = new Map();
+  const canonical = [];
+  for (const item of items) {
+    let first = null;
+    for (const key of keys) {
+      const value = String(item?.[key] ?? '').trim();
+      if (!value) continue;
+      if (!first) first = value;
+      if (!map.has(value)) map.set(value, item);
+    }
+    if (first) canonical.push(first);
+  }
+  return { map, canonical: [...new Set(canonical)] };
+}
+
+async function fetchContentCatalogs() {
+  const [webinars, blog, novinky, dvpp, bundles] = await Promise.all([
+    fetchCollection(WEBINARS_URL, (d) => d?.items, 'webinare'),
+    fetchCollection(BLOG_URL, (d) => d?.items, 'blog'),
+    fetchCollection(NOVINKY_URL, (d) => d?.items, 'novinky'),
+    fetchCollection(DVPP_VIDEOS_URL, (d) => d?.videos, 'dvpp-videos'),
+    fetchCollection(BUNDLES_URL, (d) => d?.bundles, 'product-bundles'),
+  ]);
+
+  // Koncepty nemají veřejnou stránku — prerenderovat je znamená nabídnout crawlerům 404.
+  const webinarIdx = indexBy(webinars, ['slug', 'id']);
+  const blogIdx = indexBy(blog.filter((p) => p?.published !== false), ['slug', 'id']);
+  const novinkyIdx = indexBy(novinky.filter((p) => p?.published !== false), ['slug', 'id']);
+  const dvppIdx = indexBy(dvpp, ['id']);
+  const bundlesIdx = indexBy(bundles.filter((b) => b?.isActive !== false), ['id']);
+
+  return {
+    webinarsBySlug: webinarIdx.map,
+    blogBySlug: blogIdx.map,
+    novinkyBySlug: novinkyIdx.map,
+    dvppById: dvppIdx.map,
+    bundlesById: bundlesIdx.map,
+    canonical: {
+      '/webinar/': webinarIdx.canonical,
+      '/blog/': blogIdx.canonical,
+      '/novinky/': novinkyIdx.canonical,
+      '/webinare/zaznam/': dvppIdx.canonical,
+      '/balicek/': bundlesIdx.canonical,
+    },
+    counts: {
+      webinare: webinars.length,
+      blog: blogIdx.canonical.length,
+      novinky: novinkyIdx.canonical.length,
+      zaznamy: dvpp.length,
+      balicky: bundlesIdx.canonical.length,
+    },
+  };
 }
 
 /** První aktivní hero slide (CMS) — OG náhled homepage. */
@@ -392,6 +514,41 @@ async function syncLiveSitemap() {
   }
 }
 
+/** Posun Prahy vůči UTC v daný okamžik (`+02:00` v létě, `+01:00` v zimě) — kvůli Event JSON-LD. */
+function pragueUtcOffset(utcMillis) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Prague',
+    timeZoneName: 'longOffset',
+  }).formatToParts(new Date(utcMillis));
+  const name = parts.find((p) => p.type === 'timeZoneName')?.value || 'GMT+01:00';
+  const match = name.match(/GMT([+-]\d{2}:\d{2})/);
+  return match ? match[1] : '+01:00';
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+/** `2026-09-30T18:00:00+02:00` z polí webináře (day/monthNum/year/time), jinak null. */
+function webinarStartDateIso(webinar, addMinutes = 0) {
+  const year = Number(webinar?.year);
+  const month = Number(webinar?.monthNum);
+  const day = Number(webinar?.day);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const [rawHour, rawMinute] = String(webinar?.time || '').split(':');
+  const hour = Number.isFinite(Number(rawHour)) ? Number(rawHour) : 0;
+  const minute = Number.isFinite(Number(rawMinute)) ? Number(rawMinute) : 0;
+
+  const utc = Date.UTC(year, month - 1, day, hour, minute) + addMinutes * 60_000;
+  const shifted = new Date(utc);
+  return (
+    `${shifted.getUTCFullYear()}-${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}` +
+    `T${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}:00${pragueUtcOffset(utc)}`
+  );
+}
+
 function breadcrumbJsonLd(items) {
   return {
     '@context': 'https://schema.org',
@@ -405,18 +562,36 @@ function breadcrumbJsonLd(items) {
   };
 }
 
-/** Odvozený SEO záznam ze slug path (blog / novinky / produkt / webinar). */
-function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
+/** Odvozený SEO záznam ze slug path (blog / novinky / produkt / webinář / záznam / balíček). */
+function pageFromSitemapPath(pathname, catalogs = {}) {
+  const {
+    productsBySlug = new Map(),
+    webinarsBySlug = new Map(),
+    blogBySlug = new Map(),
+    novinkyBySlug = new Map(),
+    dvppById = new Map(),
+    bundlesById = new Map(),
+  } = catalogs;
+
   if (pathname.startsWith('/blog/')) {
-    const slug = pathname.slice('/blog/'.length);
-    const title = slugToTitle(slug);
+    const slug = decodeURIComponent(pathname.slice('/blog/'.length));
+    const post = blogBySlug.get(slug) || null;
+    const title = String(post?.title || '').trim() || slugToTitle(slug);
+    const description =
+      plainText(post?.excerpt || post?.contentHtml || '', 300) ||
+      `${title} — článek na blogu Vividbooks o moderním vzdělávání a digitálních učebnicích.`;
+    const image = absoluteImageUrl(post?.coverImage);
+    const author = String(post?.author || '').trim();
+
     return {
       path: pathname,
       title,
-      description: `${title} — článek na blogu Vividbooks o moderním vzdělávání a digitálních učebnicích.`,
+      description,
       h1: title,
-      h2: 'Blog Vividbooks',
-      answer: `${title}. Článek Vividbooks o vzdělávání, výuce a digitálních učebnicích pro české základní školy.`,
+      h2: String(post?.category || '').trim() || 'Blog Vividbooks',
+      answer: `${title}. ${description}`.slice(0, 400),
+      ...(image ? { image, imageAlt: `${title} — ${SITE_NAME}` } : {}),
+      ogType: 'article',
       jsonLd: [
         breadcrumbJsonLd([
           { name: 'Blog', url: '/blog' },
@@ -426,8 +601,12 @@ function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
           '@context': 'https://schema.org',
           '@type': 'Article',
           headline: title,
-          description: `${title} — blog Vividbooks`,
-          author: { '@type': 'Organization', name: SITE_NAME },
+          description: description.slice(0, 500),
+          ...(image ? { image } : {}),
+          author: {
+            '@type': author ? 'Person' : 'Organization',
+            name: author || SITE_NAME,
+          },
           publisher: {
             '@type': 'Organization',
             name: SITE_NAME,
@@ -440,15 +619,23 @@ function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
   }
 
   if (pathname.startsWith('/novinky/')) {
-    const slug = pathname.slice('/novinky/'.length);
-    const title = slugToTitle(slug);
+    const slug = decodeURIComponent(pathname.slice('/novinky/'.length));
+    const post = novinkyBySlug.get(slug) || null;
+    const title = String(post?.title || '').trim() || slugToTitle(slug);
+    const description =
+      plainText(post?.excerpt || post?.contentHtml || '', 300) ||
+      `${title} — novinka z Vividbooks o produktech a digitálních učebnicích.`;
+    const image = absoluteImageUrl(post?.coverImage);
+
     return {
       path: pathname,
       title,
-      description: `${title} — novinka z Vividbooks o produktech a digitálních učebnicích.`,
+      description,
       h1: title,
-      h2: 'Novinky Vividbooks',
-      answer: `${title}. Aktuální novinka z Vividbooks — informace o produktech, aktualizacích a dění ve firmě.`,
+      h2: String(post?.category || '').trim() || 'Novinky Vividbooks',
+      answer: `${title}. ${description}`.slice(0, 400),
+      ...(image ? { image, imageAlt: `${title} — ${SITE_NAME}` } : {}),
+      ogType: 'article',
       jsonLd: [
         breadcrumbJsonLd([
           { name: 'Novinky', url: '/novinky' },
@@ -524,29 +711,140 @@ function pageFromSitemapPath(pathname, productsBySlug = new Map()) {
     };
   }
 
-  if (pathname.startsWith('/webinar/')) {
-    const rest = pathname.slice('/webinar/'.length);
-    // /webinar/:id nebo /webinar/:id/live — bereme jen detail, ne /live /dotaznik
-    const id = rest.split('/').filter(Boolean)[0];
-    if (!id || rest.includes('/')) {
-      // přeskoč nested jako /webinar/x/live pokud path má víc segmentů kromě id
-      const parts = rest.split('/').filter(Boolean);
-      if (parts.length !== 1) return null;
-    }
-    const title = `Webinář ${slugToTitle(id)}`;
+  if (pathname.startsWith('/webinare/zaznam/')) {
+    const id = decodeURIComponent(pathname.slice('/webinare/zaznam/'.length)).split('/')[0];
+    if (!id) return null;
+    const video = dvppById.get(id) || null;
+    const name = String(video?.name || '').trim() || slugToTitle(id);
+    const title = `Záznam webináře: ${name}`;
+    const description =
+      plainText(video?.description || '', 300) ||
+      `Záznam webináře ${name} — DVPP video Vividbooks zdarma pro učitele, včetně certifikátu o absolvování.`;
+    const image = absoluteImageUrl(video?.thumbnail);
+
     return {
       path: pathname,
       title,
-      description: `${title} — DVPP webinář Vividbooks pro učitele. Interaktivní výuka a digitální učebnice.`,
+      description,
       h1: title,
-      h2: 'DVPP webinář Vividbooks',
-      answer: `${title}. Webinář Vividbooks pro učitele — tipy k interaktivní výuce a digitálním učebnicím, často akreditované DVPP.`,
+      h2: 'Záznam DVPP webináře',
+      answer: `${name} — záznam webináře Vividbooks. ${description}`.slice(0, 400),
+      ...(image ? { image, imageAlt: `${name} — ${SITE_NAME}` } : {}),
+      ogType: 'video.other',
       jsonLd: [
         breadcrumbJsonLd([
           { name: 'Webináře', url: '/webinare' },
           { name: title, url: pathname },
         ]),
+        {
+          '@context': 'https://schema.org',
+          '@type': 'VideoObject',
+          name,
+          description: description.slice(0, 500),
+          ...(image ? { thumbnailUrl: image } : {}),
+          ...(video?.youtubeUrl ? { embedUrl: String(video.youtubeUrl) } : {}),
+          publisher: { '@type': 'Organization', name: SITE_NAME },
+        },
       ],
+    };
+  }
+
+  if (pathname.startsWith('/balicek/')) {
+    const id = decodeURIComponent(pathname.slice('/balicek/'.length)).split('/')[0];
+    if (!id) return null;
+    const bundle = bundlesById.get(id) || null;
+    const title = String(bundle?.title || '').trim() || slugToTitle(id);
+    const description =
+      plainText(bundle?.description || '', 300) ||
+      `${title} — zvýhodněný balíček pracovních sešitů Vividbooks pro základní školy.`;
+
+    return {
+      path: pathname,
+      title,
+      description,
+      h1: title,
+      h2: 'Balíček Vividbooks',
+      answer: `${title}. ${description}`.slice(0, 400),
+      jsonLd: [
+        breadcrumbJsonLd([
+          { name: 'Katalog', url: '/katalog' },
+          { name: title, url: pathname },
+        ]),
+      ],
+    };
+  }
+
+  if (pathname.startsWith('/webinar/')) {
+    const rest = pathname.slice('/webinar/'.length);
+    // Jen detail /webinar/:id — ne /live, /dotaznik ani /dvpp-dotaznik.
+    const parts = rest.split('/').filter(Boolean);
+    if (parts.length !== 1) return null;
+    const id = decodeURIComponent(parts[0]);
+
+    const webinar = webinarsBySlug.get(id) || null;
+    const title = String(webinar?.title || '').trim() || `Webinář ${slugToTitle(id)}`;
+    const image = absoluteImageUrl(webinar?.coverImage);
+    const audience = String(webinar?.targetAudience || '').trim();
+    const dateLabel =
+      webinar?.day && webinar?.monthName && webinar?.year
+        ? `${webinar.day}. ${String(webinar.monthName).toLowerCase()} ${webinar.year}${webinar.time ? ` v ${webinar.time}` : ''}`
+        : '';
+
+    const bodyText = plainText(webinar?.description || '', 220);
+    const description =
+      [
+        dateLabel ? `DVPP webinář zdarma ${dateLabel}.` : '',
+        audience ? `${audience}.` : '',
+        bodyText,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .trim() ||
+      `${title} — DVPP webinář Vividbooks pro učitele. Interaktivní výuka a digitální učebnice.`;
+
+    const jsonLd = [
+      breadcrumbJsonLd([
+        { name: 'Webináře', url: '/webinare' },
+        { name: title, url: pathname },
+      ]),
+    ];
+
+    // Event snippet dává smysl jen s reálným datem — u neznámého webináře ho vynecháme.
+    const startDate = webinarStartDateIso(webinar);
+    if (startDate) {
+      jsonLd.push({
+        '@context': 'https://schema.org',
+        '@type': 'Event',
+        name: title,
+        description: description.slice(0, 500),
+        startDate,
+        ...(Number(webinar?.durationMinutes) > 0
+          ? { endDate: webinarStartDateIso(webinar, Number(webinar.durationMinutes)) }
+          : {}),
+        eventAttendanceMode: 'https://schema.org/OnlineEventAttendanceMode',
+        eventStatus: 'https://schema.org/EventScheduled',
+        location: { '@type': 'VirtualLocation', url: `${SITE_URL}${pathname}` },
+        ...(image ? { image } : {}),
+        organizer: { '@type': 'Organization', name: SITE_NAME, url: SITE_URL },
+        offers: {
+          '@type': 'Offer',
+          price: '0',
+          priceCurrency: 'CZK',
+          availability: 'https://schema.org/InStock',
+          url: `${SITE_URL}${pathname}`,
+        },
+      });
+    }
+
+    return {
+      path: pathname,
+      title,
+      description: description.slice(0, 300),
+      h1: title,
+      h2: audience || 'DVPP webinář Vividbooks',
+      answer: `${title}. ${description}`.slice(0, 400),
+      ...(image ? { image, imageAlt: `${title} — ${SITE_NAME}` } : {}),
+      jsonLd,
     };
   }
 
@@ -587,7 +885,8 @@ function loadSitemapPaths() {
   return [...new Set(paths)];
 }
 
-async function collectPages(productsBySlug, homepageHeroOg = null) {
+async function collectPages(catalogs, homepageHeroOg = null) {
+  const { productsBySlug } = catalogs;
   const byPath = new Map();
   for (const page of SEO_PAGES) {
     byPath.set(page.path, { ...page });
@@ -611,20 +910,31 @@ async function collectPages(productsBySlug, homepageHeroOg = null) {
   let fromSitemap = 0;
   for (const pathname of loadSitemapPaths()) {
     if (byPath.has(pathname)) continue;
-    const page = pageFromSitemapPath(pathname, productsBySlug);
+    const page = pageFromSitemapPath(pathname, catalogs);
     if (!page) continue;
     byPath.set(pathname, page);
     fromSitemap += 1;
   }
 
-  // Produkty vždy z živého katalogu — static sitemap často zaostává za novými SKU.
+  /*
+   * Obsah vždy z živých kolekcí — sitemap zaostává za novými produkty, webináři
+   * i články, a právě ty se sdílejí nejčastěji. Klíč mapy je slug/id, ne celá cesta,
+   * takže tady se z něj skládá URL.
+   */
   let fromCatalog = 0;
-  for (const [slug, product] of productsBySlug) {
-    const pathname = `/produkt/${slug}`;
-    const page = pageFromSitemapPath(pathname, productsBySlug);
-    if (!page) continue;
-    if (!byPath.has(pathname)) fromCatalog += 1;
-    byPath.set(pathname, page);
+  const catalogRoutes = [
+    ['/produkt/', [...productsBySlug.keys()]],
+    ...Object.entries(catalogs.canonical || {}),
+  ];
+
+  for (const [prefix, keys] of catalogRoutes) {
+    for (const key of keys || []) {
+      const pathname = `${prefix}${key}`;
+      const page = pageFromSitemapPath(pathname, catalogs);
+      if (!page) continue;
+      if (!byPath.has(pathname)) fromCatalog += 1;
+      byPath.set(pathname, page);
+    }
   }
 
   return { pages: [...byPath.values()], fromSitemap, fromCatalog };
@@ -649,6 +959,15 @@ async function main() {
   const { bySlug: productsBySlug, count: productCount } = await fetchProductsCatalog();
   console.log(`[prerender-seo] Loaded ${productCount} products for Product OG + JSON-LD`);
 
+  const contentCatalogs = await fetchContentCatalogs();
+  const c = contentCatalogs.counts;
+  console.log(
+    `[prerender-seo] Loaded content for OG: ${c.webinare} webinářů, ${c.blog} článků, ` +
+      `${c.novinky} novinek, ${c.zaznamy} záznamů, ${c.balicky} balíčků`,
+  );
+
+  const catalogs = { ...contentCatalogs, productsBySlug };
+
   const homepageHeroOg = await fetchHomepageHeroOg();
   if (homepageHeroOg?.image) {
     console.log(`[prerender-seo] Homepage OG from hero: ${homepageHeroOg.h1}`);
@@ -656,11 +975,13 @@ async function main() {
     console.warn('[prerender-seo] Homepage hero OG unavailable — using curated defaults');
   }
 
-  const { pages, fromSitemap, fromCatalog } = await collectPages(productsBySlug, homepageHeroOg);
+  const { pages, fromSitemap, fromCatalog } = await collectPages(catalogs, homepageHeroOg);
   let written = 0;
   let productsWithPrice = 0;
+  let withOwnImage = 0;
 
   for (const page of pages) {
+    if (page.image) withOwnImage += 1;
     if (page.path.startsWith('/produkt/') && Array.isArray(page.jsonLd)) {
       if (page.jsonLd.some((ld) => ld?.['@type'] === 'Product' && ld?.offers?.price != null)) {
         productsWithPrice += 1;
@@ -689,7 +1010,8 @@ async function main() {
   writeFileSync(path.join(outDir, '404.html'), fallbackHtml, 'utf8');
 
   console.log(
-    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} sitemap + ${fromCatalog} new from catalog; ${productsWithPrice} products with price) + 404.html → ${outDir}`,
+    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} sitemap + ${fromCatalog} new from catalog; ` +
+      `${productsWithPrice} products with price; ${withOwnImage}/${written} with own OG image) + 404.html → ${outDir}`,
   );
 }
 

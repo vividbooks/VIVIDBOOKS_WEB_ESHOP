@@ -1,4 +1,478 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "vividbooks.com"
+        }
+      ],
+      "destination": "https://www.vividbooks.com/",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "vividbooks.com"
+        }
+      ],
+      "destination": "https://www.vividbooks.com/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/cs/cenik",
+      "destination": "/objednat",
+      "permanent": true
+    },
+    {
+      "source": "/cs/blog",
+      "destination": "/blog",
+      "permanent": true
+    },
+    {
+      "source": "/cs/webinare",
+      "destination": "/dvpp-webinare",
+      "permanent": true
+    },
+    {
+      "source": "/en/webinars",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/es/seminarios-web",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/cs/kontakt",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/en/contact",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/es/contacto",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/en/pricing",
+      "destination": "/objednat",
+      "permanent": true
+    },
+    {
+      "source": "/es/precios",
+      "destination": "/objednat",
+      "permanent": true
+    },
+    {
+      "source": "/en",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/es",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/domskola",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/domskola-dekujeme",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/katalog-jeden-krok",
+      "destination": "/objednat",
+      "permanent": true
+    },
+    {
+      "source": "/cs/katalog-registrace",
+      "destination": "/objednat",
+      "permanent": true
+    },
+    {
+      "source": "/cs/mobilni-aplikace",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/cs/podporovana-zarizeni-cz",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/cs/poptat-mentoring-program",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/cs/rozsirena-realita",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/cs/testing",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/otevrit-ucebnice",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/about",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/augmented-reality",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/en/mobile-apps",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/en/supported-devices",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/es/carrera",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/es/dispositivos-compatibles",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/es/mobile-apps-es",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/es/realidad-aumentada",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/es/sobre-nosotros",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/es/webinars-ty-es",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/cs/interaktivni-licence",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/jak-zacit-s-vividbooks",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/cs/dvpp-akreditovany-kurz",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/cs/dvpp-webinare",
+      "destination": "/dvpp-webinare",
+      "permanent": true
+    },
+    {
+      "source": "/cs/didakticke-obrazy-a-plakaty",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/cs/unikatni-tistene-pracovni-sesity-a-ucebnice",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/cs/vividboard",
+      "destination": "/vividboard",
+      "permanent": true
+    },
+    {
+      "source": "/en/vividboard",
+      "destination": "/vividboard",
+      "permanent": true
+    },
+    {
+      "source": "/cs/pisanky",
+      "destination": "/predmet/cesky-jazyk",
+      "permanent": true
+    },
+    {
+      "source": "/cs/skolni-sesity",
+      "destination": "/dalsi-produkty",
+      "permanent": true
+    },
+    {
+      "source": "/cs/minihry",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/cs/ziva-ukazka",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/hviezda-vyucby",
+      "destination": "/akce",
+      "permanent": true
+    },
+    {
+      "source": "/hvezda-vyuky",
+      "destination": "/akce",
+      "permanent": true
+    },
+    {
+      "source": "/privacy-policy",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/kariera",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/cs/nasi-zakaznici",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/proc-to-delame",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/mobile-menu",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/mobile-menu",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/es/mobile-menu-es",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/odhlaseni-z-newsletteru",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/studenti",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/cs/webinar-ty",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/en/physics",
+      "destination": "/predmet/fyzika",
+      "permanent": true
+    },
+    {
+      "source": "/en/chemistry",
+      "destination": "/predmet/chemie",
+      "permanent": true
+    },
+    {
+      "source": "/en/mathematics",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/es/fisica",
+      "destination": "/predmet/fyzika",
+      "permanent": true
+    },
+    {
+      "source": "/es/quimica",
+      "destination": "/predmet/chemie",
+      "permanent": true
+    },
+    {
+      "source": "/es/matematicas",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/matematika",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/matematika-1-stupen",
+      "destination": "/predmet/matematika-1-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/matematika-2-stupen-new",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/matematika---2-stupen-old",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/dokonceni-matematiky",
+      "destination": "/predmet/matematika-2-stupen",
+      "permanent": true
+    },
+    {
+      "source": "/cs/fyzika",
+      "destination": "/predmet/fyzika",
+      "permanent": true
+    },
+    {
+      "source": "/cs/chemie",
+      "destination": "/predmet/chemie",
+      "permanent": true
+    },
+    {
+      "source": "/cs/prirodopis",
+      "destination": "/predmet/prirodopis",
+      "permanent": true
+    },
+    {
+      "source": "/cs/prvouka",
+      "destination": "/predmet/prvouka",
+      "permanent": true
+    },
+    {
+      "source": "/cs/cesky-jazyk",
+      "destination": "/predmet/cesky-jazyk",
+      "permanent": true
+    },
+    {
+      "source": "/cs/blog/:path*",
+      "destination": "/blog",
+      "permanent": true
+    },
+    {
+      "source": "/en/blog/:path*",
+      "destination": "/blog/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/es/blog/:path*",
+      "destination": "/blog/:path*",
+      "permanent": true
+    },
+    {
+      "source": "/cs/vividboard/:path*",
+      "destination": "/vividboard",
+      "permanent": true
+    },
+    {
+      "source": "/cs/ukazky/:path*",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/cs/ukazky",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/app-news/:path*",
+      "destination": "/novinky",
+      "permanent": true
+    },
+    {
+      "source": "/app-news",
+      "destination": "/novinky",
+      "permanent": true
+    },
+    {
+      "source": "/dvpp-webinare/:path*",
+      "destination": "/webinare",
+      "permanent": true
+    },
+    {
+      "source": "/jobs/:path*",
+      "destination": "/kontakt",
+      "permanent": true
+    },
+    {
+      "source": "/cs/kampan/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/studenti-ucitelstvi/:path*",
+      "destination": "/vyzkousejte",
+      "permanent": true
+    },
+    {
+      "source": "/docs/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/school/cz/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/school/sk/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/cs/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/en/:path*",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/es/:path*",
+      "destination": "/",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/edge/:path*",
@@ -7,6 +481,61 @@
     {
       "source": "/(.*\\..*)",
       "destination": "/$1"
+    },
+    {
+      "source": "/webinar/:slug",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Slackbot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Iframely|vkShare|Signal|Mastodon|Pinterest).*"
+        }
+      ],
+      "destination": "/api/share?path=/webinar/:slug"
+    },
+    {
+      "source": "/webinare/zaznam/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Slackbot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Iframely|vkShare|Signal|Mastodon|Pinterest).*"
+        }
+      ],
+      "destination": "/api/share?path=/webinare/zaznam/:id"
+    },
+    {
+      "source": "/blog/:slug",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Slackbot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Iframely|vkShare|Signal|Mastodon|Pinterest).*"
+        }
+      ],
+      "destination": "/api/share?path=/blog/:slug"
+    },
+    {
+      "source": "/novinky/:slug",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Slackbot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Iframely|vkShare|Signal|Mastodon|Pinterest).*"
+        }
+      ],
+      "destination": "/api/share?path=/novinky/:slug"
+    },
+    {
+      "source": "/balicek/:id",
+      "has": [
+        {
+          "type": "header",
+          "key": "user-agent",
+          "value": ".*(Slackbot|facebookexternalhit|Facebot|Twitterbot|WhatsApp|LinkedInBot|TelegramBot|Discordbot|SkypeUriPreview|redditbot|Iframely|vkShare|Signal|Mastodon|Pinterest).*"
+        }
+      ],
+      "destination": "/api/share?path=/balicek/:id"
     },
     {
       "source": "/(.*)",

@@ -63,6 +63,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg?v=2" type="image/svg+xml" />
     <meta name="description" content="Učení, které inspiruje a baví." />
+    <!--
+      Záložní OG sada pro cesty bez prerenderu. Bez ní si crawler bez JS nemá z čeho
+      náhled poskládat. `stripShareMeta` v scripts/prerender-seo.mjs je při buildu
+      odstraní, takže s per-URL tagy nekolidují.
+    -->
+    <meta property="og:title" content="Vividbooks – Učení, které inspiruje a baví." />
+    <meta property="og:description" content="Digitální učebnice a pracovní sešity Vividbooks pro české základní školy." />
+    <meta property="og:image" content="https://www.vividbooks.com/og-image.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vividbooks" />
+    <meta property="og:locale" content="cs_CZ" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Vividbooks – Učení, které inspiruje a baví." />
+    <meta name="twitter:description" content="Digitální učebnice a pracovní sešity Vividbooks pro české základní školy." />
+    <meta name="twitter:image" content="https://www.vividbooks.com/og-image.png" />
     <!-- Hero slider / CMS nadpisy: dřívější načtení fontů (mobilní Safari + transform na rodiči) -->
     <link rel="preconnect" href="https://iekkundgizzdbmkzatdl.supabase.co" crossorigin />
     <link
