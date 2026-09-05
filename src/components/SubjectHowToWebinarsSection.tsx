@@ -117,6 +117,11 @@ function washTextClass(hex: string): string {
   return (r * 299 + g * 587 + b * 114) / 1000 < 150 ? 'text-white/90' : 'text-[#001161]/65';
 }
 
+function webinarCardHref(w: Pick<Webinar, 'id' | 'slug' | 'isPast' | 'recordingUrl'>): string {
+  if (w.isPast && w.recordingUrl) return `/webinare/zaznam/${w.id}`;
+  return `/webinar/${w.slug || w.id}`;
+}
+
 function matchHowToWebinar(card: HowToCard, webinars: Webinar[]): Webinar | undefined {
   const slugHit = webinars.find((w) => (w.slug || w.id) === card.slug);
   if (slugHit) return slugHit;
@@ -140,7 +145,7 @@ export function SubjectHowToWebinarsSection() {
       return {
         ...card,
         live,
-        href: live ? `/webinar/${live.slug || live.id}` : '/webinare',
+        href: live ? webinarCardHref(live) : '/webinare',
       };
     });
 
@@ -173,7 +178,7 @@ export function SubjectHowToWebinarsSection() {
         wash: today.coverImageBgColor || '#FFE4E6',
         featuredToday: true,
         live: today,
-        href: `/webinar/${todaySlug}`,
+        href: webinarCardHref(today),
       },
       ...series,
     ];
@@ -253,6 +258,7 @@ export function SubjectHowToWebinarsSection() {
           const cover = card.live?.coverImage;
           const title = card.live?.title || `Jak nadchnout žáky pro ${card.subjectFor}`;
           const isPast = Boolean(card.live?.isPast);
+          const hasRecording = Boolean(card.live?.recordingUrl);
           const barColor = card.wash;
 
           return (
@@ -299,10 +305,10 @@ export function SubjectHowToWebinarsSection() {
                   {card.featuredToday ? `Dnes · ${time}` : `${day}. ${monthName} · ${time}`}
                 </span>
                 <span
-                  className="shrink-0 bg-[#001161] group-hover:bg-[#5B4FD8] text-white text-[12px] font-bold px-3 py-1.5 rounded-xl transition-colors"
+                  className="shrink-0 bg-[#001161] group-hover:bg-[#5B4FD8] text-white text-[12px] font-bold px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap"
                   style={{ fontFamily: FF }}
                 >
-                  {isPast ? 'Záznam' : 'Přihlásit se'}
+                  {!isPast ? 'Přihlásit se' : hasRecording ? 'Záznam' : 'Čekáme na záznam'}
                 </span>
               </div>
             </button>
