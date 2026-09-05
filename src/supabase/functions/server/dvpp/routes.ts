@@ -16,8 +16,7 @@ import {
   refreshSchoolStatus, resolveSchoolForContact, searchSchools, type RegistryRecord,
 } from './schools.ts';
 import {
-  confirmReferralForEmail, directorUnlock, ensureStaffroom, getStaffroom, getStaffroomByCode, joinByCode, recountAll,
-  recountOne, sendColleagueMessage, staffroomView, type ColleagueMessageDeps,
+  confirmReferralForEmail, directorConfirm, directorUnlock, ensureStaffroom, getStaffroom, getStaffroomByCode, isDirectorVerified, joinByCode, recountAll, recountOne, sendColleagueMessage, staffroomView, type ColleagueMessageDeps,
 } from './staffroom.ts';
 import { buildCatalog, getSeries, resolveAccess, saveProgress, saveSeries, type CatalogVideo, type Series } from './catalog.ts';
 import { issueCertificate, listCertificates, schoolCertificateReport } from './certificates.ts';
@@ -25,6 +24,7 @@ import { listTopics, toggleVote, upsertTopic } from './votes.ts';
 import { isDirectorPosition, teacherTypeFromAnswers } from './milestones.ts';
 import { activateMember } from './staffroom.ts';
 import { DVPP_AUTOMATION_FLOWS, enrollDvpp } from './automations.ts';
+import { buildDirectorConfirmEmailHtml } from './emails.ts';
 import { importSizes } from './schools.ts';
 import { buildDigestDraft, saveDigestDraft } from './digest.ts';
 import { parseChapters } from './content.ts';
@@ -187,6 +187,7 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
       lastName: s.last_name,
       position: s.position_label,
       isDirector: isDirectorPosition(s.position_label),
+      directorVerified: await isDirectorVerified(s, school),
       teacherType: s.teacher_type,
       profile: s.dvpp_profile || {},
       profileDone: !!(s.dvpp_profile && (s.dvpp_profile as Record<string, unknown>).completed_at),
@@ -276,6 +277,16 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
     const r = await saveProgress(sb, s.id, {
       videoId, position: Number(body.position) || 0, duration: body.duration ? Number(body.duration) : null, completed: body.completed === true,
     });
+    if (access.level === 'starter') {
+      /* Souběžné otevření více záznamů: po zápisu platí jen prvních N podle času začátku, ostatní se vrátí. */
+      const { data: rows } = await sb.from('dvpp_progress').select('video_id, started_at').eq('subscriber_id', s.id)
+        .order('started_at', { ascending: true }).order('video_id', { ascending: true });
+      const allowed = new Set(((rows || []) as Array<{ video_id: string }>).slice(0, access.starterLimit).map((x) => x.video_id));
+      if (!allowed.has(videoId)) {
+        await sb.from('dvpp_progress').delete().eq('subscriber_id', s.id).eq('video_id', videoId);
+        return c.json({ error: 'Tři záznamy zdarma jste už otevřeli. Pozvěte kolegu, nebo požádejte ředitele o školní kód.', code: 'starter_limit' }, 403);
+      }
+    }
     if (r.firstPlay) {
       await recordFunnelEvent(sb, { event: 'play', subscriberId: s.id, email: s.email, redIzo: s.school_red_izo, meta: { videoId } });
     }
@@ -359,7 +370,7 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
     const body = await readJson(c.req.raw);
     const r = await joinByCode(sbService(), s, String(body.code || ''), null);
     if (!r.ok) return c.json({ error: r.error }, r.status as 404);
-    return c.json({ ok: true, added: r.added, school: { name: r.school.name }, status: r.staffroom.status, confirmed: r.staffroom.confirmed_count, target: r.staffroom.milestone_target });
+    return c.json({ ok: true, added: r.added, alreadyMember: r.alreadyMember, school: { name: r.school.name }, status: r.staffroom.status, confirmed: r.staffroom.confirmed_count, target: r.staffroom.milestone_target });
   });
 
   both('post', '/dvpp/staffroom/message', async (c) => {
@@ -376,9 +387,18 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
   both('post', '/dvpp/staffroom/director-unlock', async (c) => {
     const s = await needAuth(c);
     if (isResponse(s)) return s;
-    const r = await directorUnlock(sbService(), s);
+    const r = await directorUnlock(sbService(), s, { sendEmail: deps.sendEmail, buildDirectorConfirmEmailHtml, functionBase: deps.functionBase() });
     if (!r.ok) return c.json({ error: r.error }, r.status as 403);
-    return c.json({ ok: true, code: r.staffroom.code, status: r.staffroom.status });
+    if (r.pending) return c.json({ ok: true, pending: true, sentTo: r.sentTo });
+    return c.json({ ok: true, pending: false, code: r.staffroom.code, status: r.staffroom.status });
+  });
+
+  /* Odkaz z potvrzovacího e-mailu školy → odemkne a vrátí ředitele na /pro-reditele. */
+  both('get', '/dvpp/staffroom/director-confirm', async (c) => {
+    const r = await directorConfirm(sbService(), c.req.query('token') || '');
+    const origin = deps.publicOrigin();
+    if (!r.ok) return c.redirect(`${origin}/pro-reditele?unlock=error&reason=${encodeURIComponent(r.error)}`, 302);
+    return c.redirect(`${origin}/pro-reditele?unlock=confirmed`, 302);
   });
 
   both('get', '/dvpp/staffroom/report', async (c) => {
@@ -386,6 +406,9 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
     if (isResponse(s)) return s;
     if (!s.school_red_izo) return c.json({ error: 'Nejdřív vyberte školu v profilu.' }, 400);
     if (!isDirectorPosition(s.position_label)) return c.json({ error: 'Výkaz DVPP sboru je pro vedení školy.' }, 403);
+    if (!(await isDirectorVerified(s, await findSchoolByRedIzo(sbService(), s.school_red_izo)))) {
+      return c.json({ error: 'Výkaz uvidíte po ověření vedení školy (školní e-mail, nebo potvrzení z oficiálního e-mailu školy).', code: 'director_unverified' }, 403);
+    }
     const since = c.req.query('since') || `${new Date().getFullYear()}-01-01T00:00:00.000Z`;
     return c.json(await schoolCertificateReport(sbService(), s.school_red_izo, since));
   });

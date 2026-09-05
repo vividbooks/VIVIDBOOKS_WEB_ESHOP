@@ -66,7 +66,8 @@ export function DvppQuizPage() {
       setAnswers({ ...answers, [q.key]: cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value] });
     } else {
       setAnswers({ ...answers, [q.key]: value });
-      window.setTimeout(() => setStep((s) => Math.min(s + 1, questions.length)), 180);
+      /* Automaticky dál jen mezi otázkami; u poslední zůstane karta s tlačítkem „Ukázat výsledek“. */
+      if (step < questions.length - 1) window.setTimeout(() => setStep((s) => Math.min(s + 1, questions.length - 1)), 180);
     }
   };
 

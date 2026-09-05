@@ -81,6 +81,8 @@ export type DvppMe = {
   lastName: string | null;
   position: string | null;
   isDirector: boolean;
+  /** Vedení školy ověřené školní doménou nebo potvrzením z oficiálního e-mailu školy (výkaz, odemknutí). */
+  directorVerified: boolean;
   teacherType: string | null;
   profile: Record<string, unknown>;
   profileDone: boolean;
@@ -174,9 +176,9 @@ export const dvppApi = {
       `/dvpp/staffroom/preview?code=${encodeURIComponent(code)}`,
     ),
   joinStaffroom: (code: string) =>
-    call<{ ok: true; added: boolean; school: { name: string }; status: string; confirmed: number; target: number }>('/dvpp/staffroom/join', { body: { code } }),
+    call<{ ok: true; added: boolean; alreadyMember?: boolean; school: { name: string }; status: string; confirmed: number; target: number }>('/dvpp/staffroom/join', { body: { code } }),
   messageColleague: (input: { email: string; message: string }) => call<{ ok: true }>('/dvpp/staffroom/message', { body: input }),
-  directorUnlock: () => call<{ ok: true; code: string; status: string }>('/dvpp/staffroom/director-unlock', { body: {} }),
+  directorUnlock: () => call<{ ok: true; pending: false; code: string; status: string } | { ok: true; pending: true; sentTo: string }>('/dvpp/staffroom/director-unlock', { body: {} }),
   staffroomReport: (since?: string) =>
     call<{ teachers: Array<{ name: string; email: string; certificates: number; hours: number }>; totalHours: number; totalCertificates: number }>(
       `/dvpp/staffroom/report${since ? `?since=${encodeURIComponent(since)}` : ''}`,

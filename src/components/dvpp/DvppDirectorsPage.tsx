@@ -2,6 +2,7 @@
  * /pro-reditele — školní kód pro celou sborovnu, výkaz hodin DVPP, BOZP (připravujeme).
  */
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { Award, FileText, KeyRound, Loader2, ShieldCheck } from 'lucide-react';
 import { dvppApi } from '../../utils/dvppApi';
 import { DvppButton, DvppCard, DvppShell } from './DvppShell';
@@ -16,11 +17,14 @@ export function DvppDirectorsPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [pendingTo, setPendingTo] = useState('');
+  const [sp] = useSearchParams();
+  const unlockParam = sp.get('unlock');
 
   const load = async () => {
     if (!me?.school) return;
     try { setStaffroom(await dvppApi.staffroom()); } catch { /* ignore */ }
-    if (me.isDirector) { try { setReport(await dvppApi.staffroomReport()); } catch { /* ignore */ } }
+    if (me.isDirector && me.directorVerified) { try { setReport(await dvppApi.staffroomReport()); } catch { /* ignore */ } }
   };
   useEffect(() => { if (!loading && me) void load(); }, [loading, me?.id, me?.school?.redIzo, me?.isDirector]);
 
@@ -30,7 +34,10 @@ export function DvppDirectorsPage() {
   };
   const unlock = async () => {
     setBusy(true); setError('');
-    try { await dvppApi.directorUnlock(); await refresh(); await load(); } catch (e) { setError(e instanceof Error ? e.message : 'Nepodařilo se.'); } finally { setBusy(false); }
+    try {
+      const r = await dvppApi.directorUnlock();
+      if (r.pending) setPendingTo(r.sentTo); else { await refresh(); await load(); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Nepodařilo se.'); } finally { setBusy(false); }
   };
 
   const unlocked = staffroom?.staffroom?.status === 'unlocked' || staffroom?.staffroom?.status === 'grace';
@@ -81,18 +88,25 @@ export function DvppDirectorsPage() {
                   <DvppButton to="/sborovna" variant="ghost" className="w-full">Sdílet a sledovat sborovnu</DvppButton>
                 </>
               ) : (
-                <>
-                  <p className="mb-3 text-[14px] text-[#3a4270]">Odemkněte knihovnu celé škole. Kód pak rozešlete sborovně sami, my kolegům nic neposíláme.</p>
-                  <DvppButton onClick={() => void unlock()} disabled={busy} className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Odemknout pro celou školu</DvppButton>
-                </>
+                pendingTo ? (
+                  <p className="rounded-xl bg-[#e8f5ee] px-3 py-3 text-[14px] text-[#1f5a3d]">Poslali jsme potvrzovací odkaz na oficiální e-mail školy z rejstříku ({pendingTo}). Jakmile ho někdo z vedení otevře, je knihovna odemčená pro celou školu. Odkaz platí 7 dní.</p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-[14px] text-[#3a4270]">Odemkněte knihovnu celé škole. Kód pak rozešlete sborovně sami, my kolegům nic neposíláme.</p>
+                    {!me.directorVerified ? <p className="mb-3 text-[13px] text-[#6b7398]">Píšete ze soukromého e-mailu, proto pošleme potvrzovací odkaz na oficiální adresu školy z rejstříku. Se školním e-mailem se odemyká hned.</p> : null}
+                    <DvppButton onClick={() => void unlock()} disabled={busy} className="w-full">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Odemknout pro celou školu</DvppButton>
+                  </>
+                )
               )}
             </>
           ) : null}
+          {unlockParam === 'confirmed' ? <p className="mt-3 rounded-xl bg-[#e8f5ee] px-3 py-2 text-[13px] text-[#1f5a3d]">Potvrzeno. Knihovna je odemčená pro celou školu.</p> : null}
+          {unlockParam === 'error' ? <p className="mt-3 text-[13px] text-[#b3261e]">Odkaz se nepodařilo potvrdit: {sp.get('reason') || 'zkuste to znovu'}.</p> : null}
           {error ? <p className="mt-3 text-[13px] text-[#b3261e]">{error}</p> : null}
         </DvppCard>
       </div>
 
-      {me?.isDirector && report ? (
+      {me?.isDirector && me.directorVerified && report ? (
         <DvppCard>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-[20px] font-extrabold text-[#001161]">Výkaz DVPP sboru za {new Date().getFullYear()}</h2>

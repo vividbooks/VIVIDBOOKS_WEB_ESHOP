@@ -2,6 +2,15 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-09-05 (PR #104, review) · opravy z Cursor Bugbot
+
+### ✅
+- Kvíz: jednovýběrová odpověď u poslední otázky už nepřeskočí za konec; zůstane karta s „Ukázat výsledek“.
+- `refreshSchoolStatus` četl počet zákazníků z `data` místo `count`; školy s licencí teď dostanou stav `customer`.
+- Ředitelské odemknutí se ověřuje (pozici si nastaví každý sám): školní doména z rejstříku odemkne hned, jinak potvrzovací odkaz na oficiální e-mail školy z rejstříku (`director-confirm`, 7 dní). Výkaz s e-maily kolegů vidí jen ověřené vedení.
+- Vstup přes kód přepojí kontakt na školu z kódu a přesune členství z případné jiné sborovny (obě se přepočítají); stránka `/s/:code` rozlišuje „už jste členem“.
+- Limit tří záznamů drží i při souběžném otevření více videí: po zápisu platí jen první tři podle času začátku, ostatní se vrátí s `starter_limit`.
+
 ## 2026-09-05 (noc) · knihovna jako Netflix, karty jako na homepage
 
 ### ✅

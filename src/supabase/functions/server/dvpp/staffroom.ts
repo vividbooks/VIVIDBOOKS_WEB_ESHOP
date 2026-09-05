@@ -8,9 +8,11 @@
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import {
-  GRACE_DAYS, isDirectorPosition, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom,
+  GRACE_DAYS, directorTrustedByDomain, isDirectorPosition, maskEmail, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom,
   staffroomCodeFromRandom, type StaffroomStatus,
 } from './milestones.ts';
+import * as kv from '../kv_store.tsx';
+import { createMailingToken, verifyMailingToken } from '../mailingTokens.ts';
 import { findSchoolByRedIzo, linkSubscriberToSchool, refreshSchoolStatus, type SchoolRow } from './schools.ts';
 import { recordFunnelEvent } from './events.ts';
 import { addDaysIso, b64url, nowIso, randomBytes, sha256Hex, type SubscriberRow } from './shared.ts';
@@ -88,9 +90,9 @@ export async function addMember(
   via: 'founder' | 'link' | 'code' | 'director' | 'domain' | 'registration' | 'referral' | 'manual',
   invitedBy: string | null,
   activatedNow = false,
-): Promise<{ added: boolean }> {
+): Promise<{ added: boolean; alreadyIn?: string }> {
   const { data: existing } = await sb.from('staffroom_members').select('red_izo').eq('subscriber_id', subscriberId).maybeSingle();
-  if (existing) return { added: false };
+  if (existing) return { added: false, alreadyIn: (existing as { red_izo: string }).red_izo };
   const { error } = await sb.from('staffroom_members').insert({
     red_izo: redIzo,
     subscriber_id: subscriberId,
@@ -118,12 +120,21 @@ export async function joinByCode(
   subscriber: SubscriberRow,
   code: string,
   invitedBy: string | null,
-): Promise<{ ok: true; staffroom: StaffroomRow; school: SchoolRow; added: boolean } | { ok: false; error: string; status: number }> {
+): Promise<{ ok: true; staffroom: StaffroomRow; school: SchoolRow; added: boolean; alreadyMember: boolean } | { ok: false; error: string; status: number }> {
   const sr = await getStaffroomByCode(sb, code);
   if (!sr) return { ok: false, error: 'Tenhle školní kód neznáme. Zkontrolujte ho s kolegou.', status: 404 };
   const school = await findSchoolByRedIzo(sb, sr.red_izo);
   if (!school) return { ok: false, error: 'Škola k tomuto kódu chybí v rejstříku.', status: 404 };
-  const r = await addMember(sb, sr.red_izo, subscriber.id, invitedBy ? 'referral' : 'code', invitedBy || sr.founder_id);
+  /* Kód je výslovná volba školy: když byl učitel dřív automaticky zařazen jinam (doména, IČO), přesune se. */
+  let r = await addMember(sb, sr.red_izo, subscriber.id, invitedBy ? 'referral' : 'code', invitedBy || sr.founder_id);
+  let movedFrom: string | null = null;
+  if (!r.added && r.alreadyIn && r.alreadyIn !== sr.red_izo) {
+    movedFrom = r.alreadyIn;
+    await sb.from('staffroom_members').delete().eq('subscriber_id', subscriber.id);
+    r = await addMember(sb, sr.red_izo, subscriber.id, invitedBy ? 'referral' : 'code', invitedBy || sr.founder_id);
+  }
+  await linkSubscriberToSchool(sb, subscriber.id, sr.red_izo, { force: true });
+  if (movedFrom) { await recountOne(sb, movedFrom); await refreshSchoolStatus(sb, movedFrom); }
   if (r.added) {
     if (invitedBy || sr.founder_id) {
       await sb.from('subscribers').update({ referred_by: invitedBy || sr.founder_id }).eq('id', subscriber.id).is('referred_by', null);
@@ -137,28 +148,100 @@ export async function joinByCode(
     if (inviter && inviter !== subscriber.id) await enrollDvpp(sb, 'dvpp_referral_confirmed', inviter);
     await recountOne(sb, sr.red_izo);
   }
-  return { ok: true, staffroom: (await getStaffroom(sb, sr.red_izo)) ?? sr, school, added: r.added };
+  return { ok: true, staffroom: (await getStaffroom(sb, sr.red_izo)) ?? sr, school, added: r.added, alreadyMember: !r.added && r.alreadyIn === sr.red_izo };
 }
 
-/** Ředitel/zástupce odemkne sborovnu své školy bez milníku. */
+const DIRECTOR_VERIFIED_KEY = (subscriberId: string) => `dvpp_director_verified_${subscriberId}`;
+const DIRECTOR_INTENT_KEY = (tokenHash: string) => `dvpp_director_intent_${tokenHash}`;
+const DIRECTOR_LINK_DAYS = 7;
+
+/** Ředitel je ověřený pro školu: doménou školního e-mailu, nebo potvrzením z oficiálního e-mailu školy. */
+export async function isDirectorVerified(subscriber: SubscriberRow, school: SchoolRow | null): Promise<boolean> {
+  if (!school || !isDirectorPosition(subscriber.position_label)) return false;
+  if (directorTrustedByDomain(subscriber.email, school.domain)) return true;
+  const v = (await kv.get(DIRECTOR_VERIFIED_KEY(subscriber.id)).catch(() => null)) as { redIzo?: string } | null;
+  return v?.redIzo === school.red_izo;
+}
+
+async function unlockByDirector(sb: SupabaseClient, school: SchoolRow, subscriber: SubscriberRow, via: 'domain' | 'email'): Promise<StaffroomRow> {
+  const { staffroom } = await ensureStaffroom(sb, school, subscriber, 'director');
+  await sb.from('staffrooms').update({
+    status: 'unlocked', unlocked_by: 'director', unlocked_at: nowIso(), grace_until: null,
+  }).eq('red_izo', staffroom.red_izo);
+  await sb.from('schools').update({ milestone_reached_at: nowIso() }).eq('red_izo', staffroom.red_izo).is('milestone_reached_at', null);
+  await kv.set(DIRECTOR_VERIFIED_KEY(subscriber.id), { redIzo: school.red_izo, via, at: nowIso() });
+  await recordFunnelEvent(sb, { event: 'director_unlock', subscriberId: subscriber.id, email: subscriber.email, redIzo: staffroom.red_izo, meta: { via } });
+  await refreshSchoolStatus(sb, staffroom.red_izo);
+  return (await getStaffroom(sb, staffroom.red_izo))!;
+}
+
+export type DirectorUnlockDeps = {
+  sendEmail: (opts: { toEmail: string; toName: string; subject: string; html: string }) => Promise<unknown>;
+  buildDirectorConfirmEmailHtml: (opts: { requesterName: string; requesterEmail: string; schoolName: string; confirmUrl: string }) => string;
+  functionBase: string;
+};
+
+/**
+ * Ředitel/zástupce odemkne sborovnu své školy bez milníku.
+ * Pozici si každý může nastavit sám, proto se ověřuje: školní doména z rejstříku odemkne hned,
+ * jinak jde potvrzovací odkaz na oficiální e-mail školy z rejstříku (7 dní).
+ */
 export async function directorUnlock(
   sb: SupabaseClient,
   subscriber: SubscriberRow,
-): Promise<{ ok: true; staffroom: StaffroomRow } | { ok: false; error: string; status: number }> {
+  deps: DirectorUnlockDeps,
+): Promise<{ ok: true; pending: false; staffroom: StaffroomRow } | { ok: true; pending: true; sentTo: string } | { ok: false; error: string; status: number }> {
   if (!isDirectorPosition(subscriber.position_label)) {
     return { ok: false, error: 'Odemknutí školním kódem je pro vedení školy. Změňte si pozici v profilu, pokud jste ředitel/ka nebo zástupce.', status: 403 };
   }
   if (!subscriber.school_red_izo) return { ok: false, error: 'Nejdřív vyberte školu v profilu.', status: 400 };
   const school = await findSchoolByRedIzo(sb, subscriber.school_red_izo);
   if (!school) return { ok: false, error: 'Škola chybí v rejstříku.', status: 404 };
-  const { staffroom } = await ensureStaffroom(sb, school, subscriber, 'director');
-  await sb.from('staffrooms').update({
-    status: 'unlocked', unlocked_by: 'director', unlocked_at: nowIso(), grace_until: null,
-  }).eq('red_izo', staffroom.red_izo);
-  await sb.from('schools').update({ milestone_reached_at: nowIso() }).eq('red_izo', staffroom.red_izo).is('milestone_reached_at', null);
-  await recordFunnelEvent(sb, { event: 'director_unlock', subscriberId: subscriber.id, email: subscriber.email, redIzo: staffroom.red_izo });
-  await refreshSchoolStatus(sb, staffroom.red_izo);
-  return { ok: true, staffroom: (await getStaffroom(sb, staffroom.red_izo))! };
+
+  if (await isDirectorVerified(subscriber, school)) {
+    return { ok: true, pending: false, staffroom: await unlockByDirector(sb, school, subscriber, directorTrustedByDomain(subscriber.email, school.domain) ? 'domain' : 'email') };
+  }
+  const schoolEmail = String(school.email || '').trim().toLowerCase();
+  if (!schoolEmail.includes('@')) {
+    return { ok: false, error: 'U této školy nemáme v rejstříku e-mail, na který bychom poslali potvrzení. Napište nám na hello@vividbooks.com, odemkneme ji ručně.', status: 409 };
+  }
+  const token = await createMailingToken('dvpp-director-unlock', schoolEmail, DIRECTOR_LINK_DAYS);
+  await kv.set(DIRECTOR_INTENT_KEY(await sha256Hex(token)), { redIzo: school.red_izo, subscriberId: subscriber.id, createdAt: nowIso() });
+  const confirmUrl = `${deps.functionBase}/dvpp/staffroom/director-confirm?token=${encodeURIComponent(token)}`;
+  await deps.sendEmail({
+    toEmail: schoolEmail,
+    toName: school.name,
+    subject: `Potvrzení: knihovna DVPP zdarma pro ${school.name}`,
+    html: deps.buildDirectorConfirmEmailHtml({
+      requesterName: [subscriber.first_name, subscriber.last_name].filter(Boolean).join(' '),
+      requesterEmail: subscriber.email,
+      schoolName: school.name,
+      confirmUrl,
+    }),
+  });
+  await recordFunnelEvent(sb, { event: 'director_unlock_requested', subscriberId: subscriber.id, email: subscriber.email, redIzo: school.red_izo });
+  return { ok: true, pending: true, sentTo: maskEmail(schoolEmail) };
+}
+
+/** Potvrzení z oficiálního e-mailu školy: odemkne sborovnu a označí žadatele jako ověřené vedení. */
+export async function directorConfirm(
+  sb: SupabaseClient,
+  token: string,
+): Promise<{ ok: true; redIzo: string } | { ok: false; error: string; status: number }> {
+  const v = await verifyMailingToken('dvpp-director-unlock', token);
+  if (!v.ok) return { ok: false, error: v.error, status: 400 };
+  const key = DIRECTOR_INTENT_KEY(await sha256Hex(token));
+  const intent = (await kv.get(key).catch(() => null)) as { redIzo?: string; subscriberId?: string } | null;
+  if (!intent?.redIzo || !intent.subscriberId) return { ok: false, error: 'Odkaz už byl použit nebo vypršel.', status: 410 };
+  const [school, { data: sub }] = await Promise.all([
+    findSchoolByRedIzo(sb, intent.redIzo),
+    sb.from('subscribers').select('*').eq('id', intent.subscriberId).maybeSingle(),
+  ]);
+  if (!school || !sub) return { ok: false, error: 'Škola nebo žadatel už neexistují.', status: 404 };
+  if (String(school.email || '').trim().toLowerCase() !== v.email) return { ok: false, error: 'Odkaz nepatří k této škole.', status: 400 };
+  await unlockByDirector(sb, school, sub as SubscriberRow, 'email');
+  await kv.del(key).catch(() => {});
+  return { ok: true, redIzo: school.red_izo };
 }
 
 export type MemberView = { firstName: string; lastInitial: string; activated: boolean; via: string; joinedAt: string; isMe: boolean };

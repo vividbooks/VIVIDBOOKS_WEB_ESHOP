@@ -16,17 +16,7 @@ import {
 } from '../src/lib/appEntryChoice.ts';
 
 import {
-  estimateTeachersFromPupils,
-  isDirectorPosition,
-  milestoneTargetForTeachers,
-  normalizeStaffroomCode,
-  recountStaffroom,
-  resolveAccessLevel,
-  schoolDomainFromEmail,
-  schoolStatusFrom,
-  staffroomCodeFromRandom,
-  teacherTypeFromAnswers,
-  domainFromWebOrEmail,
+  estimateTeachersFromPupils, isDirectorPosition, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom, resolveAccessLevel, schoolDomainFromEmail, schoolStatusFrom, staffroomCodeFromRandom, teacherTypeFromAnswers, domainFromWebOrEmail, directorTrustedByDomain, maskEmail,
 } from '../src/supabase/functions/server/dvpp/milestones.ts';
 import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName } from '../src/supabase/functions/server/dvpp/content.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
@@ -1913,6 +1903,15 @@ registerTest('dvpp: digest vybere záznamy z posledních 7 dní, jinak první z 
   assert.deepEqual(pickNewVideos([vids[0], vids[2]], 7, now, 1).map((v) => v.id), ['a']);
   assert.equal(digestSubject([vids[1]], '5. 9.'), 'Nové v knihovně: Nový zlomky');
   assert.match(digestSubject([], '5. 9.'), /co je nového/);
+});
+
+registerTest('dvpp: ředitel ověřený doménou jen ze školní domény z rejstříku; maskování e-mailu', () => {
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', 'zsmilovice.cz'), true);
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', 'www.zsmilovice.cz'), true);
+  assert.equal(directorTrustedByDomain('reditel@gmail.com', 'gmail.com'), false, 'freemail nikdy');
+  assert.equal(directorTrustedByDomain('reditel@zsjina.cz', 'zsmilovice.cz'), false);
+  assert.equal(directorTrustedByDomain('reditel@zsmilovice.cz', null), false);
+  assert.equal(maskEmail('reditel@zsmilovice.cz'), 're***@zsmilovice.cz');
 });
 
 registerTest('dvpp: dedupeVideosByName sloučí duplicitní CMS záznamy, přednost má ten s datem vysílání', () => {

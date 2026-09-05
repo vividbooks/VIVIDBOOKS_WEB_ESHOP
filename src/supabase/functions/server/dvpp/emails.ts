@@ -58,3 +58,17 @@ export function buildMilestoneEmailHtml(opts: { firstName: string; schoolName: s
       `<p style="margin:0;">${buildVividbooksBrandCta(opts.libraryUrl, 'Otevřít knihovnu')}</p>`,
   });
 }
+
+/** Potvrzení ředitelského odemknutí — jde na oficiální e-mail školy z rejstříku, ne žadateli. */
+export function buildDirectorConfirmEmailHtml(opts: { requesterName: string; requesterEmail: string; schoolName: string; confirmUrl: string }): string {
+  return buildVividbooksBrandShell({
+    title: 'Potvrzení: knihovna DVPP zdarma pro celou školu',
+    headerSubtitle: 'DVPP zdarma · pro vedení školy',
+    headExtra: EMAIL_FORCE_LIGHT_HEAD,
+    content:
+      `<p style="margin:0 0 8px;font-size:24px;font-weight:800;color:#001161;line-height:1.25;">Odemknout knihovnu záznamů pro ${esc(opts.schoolName)}?</p>` +
+      `<p style="margin:0 0 12px;font-size:16px;color:#4a5568;line-height:1.6;">${esc(opts.requesterName || opts.requesterEmail)} (${esc(opts.requesterEmail)}) požádal/a jako vedení školy o odemknutí knihovny záznamů webinářů s osvědčením DVPP pro celou sborovnu. Je to zdarma a bez závazků.</p>` +
+      `<p style="margin:0 0 18px;font-size:16px;color:#4a5568;line-height:1.6;">Tento e-mail jsme poslali na adresu školy z rejstříku MŠMT, aby o odemknutí rozhodlo vedení školy. Pokud žádost neznáte, nic nedělejte; odkaz platí 7 dní.</p>` +
+      `<p style="margin:0;">${buildVividbooksBrandCta(opts.confirmUrl, 'Potvrdit a odemknout pro školu')}</p>`,
+  });
+}

@@ -35,7 +35,7 @@ Potvrdí kontakt (`pending → subscribed`; `unsubscribed → subscribed` jen s 
 → `{ me: Me | null, access? }`
 ```ts
 type Me = {
-  id, email, firstName, lastName, position, isDirector, teacherType,
+  id, email, firstName, lastName, position, isDirector, directorVerified, teacherType,
   profile: Record<string, unknown>, profileDone: boolean,
   school: { redIzo, name, city, teachersCount } | null,
   access: { level: 'guest'|'starter'|'full', starterUsed, starterLimit, reason, staffroomStatus },
@@ -73,7 +73,7 @@ type Video = { id, name, slug, thumbnail, youtubeUrl, topicIds, description, sub
 `locked`: host vždy; starter po vyčerpání 3 záznamů (rozkoukané zůstávají otevřené); full nikdy.
 
 ### `POST /dvpp/progress` 🔐
-`{ videoId, position, duration?, completed? }` → `{ ok, activated }`. První zápis = událost `play`; překročení 180 s poprvé = aktivace člena sborovny (počítá se do milníku). Starter nad limit → `403 { code: 'starter_limit' }`.
+`{ videoId, position, duration?, completed? }` → `{ ok, activated }`. První zápis = událost `play`; překročení 180 s poprvé = aktivace člena sborovny (počítá se do milníku). Starter nad limit → `403 { code: 'starter_limit' }`; limit se kontroluje před zápisem i po něm (při souběžném otevření více záznamů platí jen první tři podle času začátku, ostatní se smažou).
 
 ## Certifikáty
 
@@ -95,14 +95,20 @@ type Video = { id, name, slug, thumbnail, youtubeUrl, topicIds, description, sub
 ### `GET /dvpp/staffroom/preview?code=` (veřejné)
 → `{ code, status, confirmed, target, school: { name, city } | null, founderFirstName }` — pro stránku `/s/{code}` před přihlášením.
 
-### `POST /dvpp/staffroom/join` 🔐 `{ code }` → `{ ok, added, school: { name }, status, confirmed, target }`. Událost `invite_confirmed`, přepočet.
+### `POST /dvpp/staffroom/join` 🔐 `{ code }` → `{ ok, added, alreadyMember, school: { name }, status, confirmed, target }`. Kód je výslovná volba školy: kontakt se přepojí na tuto školu (`school_red_izo`) a případné členství v jiné sborovně se přesune (obě se přepočítají). Událost `invite_confirmed`.
 
 ### `POST /dvpp/staffroom/message` 🔐 `{ email, message }` → `{ ok }`
 „Vzkaz kolegovi“ (WP29): jedna zpráva jménem odesílatele, bez marketingu, bez připomínky, limit 10/den, dedupe 30 dní, adresa se maže po 14 dnech. `429` limit, `409` duplicita.
 
-### `POST /dvpp/staffroom/director-unlock` 🔐 → `{ ok, code, status }` — jen pozice ředitel/zástupce (`isDirectorPosition`), škola z profilu. Událost `director_unlock`.
+### `POST /dvpp/staffroom/director-unlock` 🔐
+Jen pozice ředitel/zástupce (`isDirectorPosition`), škola z profilu. Pozici si každý nastaví sám, proto se vedení **ověřuje**:
+- e-mail ze školní domény z rejstříku (`schools.domain`, ne freemail) → odemkne hned: `{ ok, pending: false, code, status }`, událost `director_unlock`;
+- jinak jde potvrzovací odkaz na oficiální e-mail školy z rejstříku (`schools.email`, token `dvpp-director-unlock`, 7 dní): `{ ok, pending: true, sentTo: 're***@skola.cz' }`, událost `director_unlock_requested`; bez e-mailu v rejstříku `409`.
 
-### `GET /dvpp/staffroom/report?since=` 🔐 (vedení školy)
+### `GET /dvpp/staffroom/director-confirm?token=` (z e-mailu školy)
+Odemkne sborovnu, označí žadatele jako ověřené vedení (KV `dvpp_director_verified_{subscriberId}`) a přesměruje na `/pro-reditele?unlock=confirmed` (chyba: `?unlock=error&reason=`).
+
+### `GET /dvpp/staffroom/report?since=` 🔐 (jen ověřené vedení školy, jinak `403 { code: 'director_unverified' }`)
 → `{ teachers: [{ name, email, certificates, hours }], totalHours, totalCertificates }`
 
 ## Hlasování

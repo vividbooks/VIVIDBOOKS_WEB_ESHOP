@@ -28,6 +28,7 @@ export type FunnelEventName =
   | 'staffroom_grace'
   | 'vote'
   | 'director_unlock'
+  | 'director_unlock_requested'
   | 'webinar_registered';
 
 export type FunnelEventInput = {

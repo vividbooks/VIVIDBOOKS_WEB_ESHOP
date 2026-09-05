@@ -27,6 +27,7 @@ export function DvppJoinPage() {
     try {
       const r = await dvppApi.joinStaffroom(code);
       await refresh();
+      if (r.alreadyMember) { navigate('/sborovna'); return; }
       navigate('/knihovna', { state: { joined: { code, schoolName: r.school.name } } });
     } catch (e) { setError(e instanceof Error ? e.message : 'Nepodařilo se přidat.'); } finally { setJoining(false); }
   };

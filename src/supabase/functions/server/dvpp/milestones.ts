@@ -209,3 +209,20 @@ export function teacherTypeFromAnswers(answers: Record<string, string | string[]
   const order: TeacherType[] = ['badatel', 'trener', 'vypravec', 'architekt'];
   return order.reduce((best, t) => (score[t] > score[best] ? t : best), 'badatel');
 }
+
+/**
+ * Ředitel je ověřený doménou, když píše ze školní domény z rejstříku (ne freemail).
+ * Jinak se odemknutí potvrzuje odkazem na oficiální e-mail školy z rejstříku.
+ */
+export function directorTrustedByDomain(email: string, schoolDomain: string | null | undefined): boolean {
+  const d = schoolDomainFromEmail(email);
+  const sd = String(schoolDomain || '').trim().toLowerCase().replace(/^www\./, '');
+  return !!d && !!sd && d === sd;
+}
+
+/** Zamaskuje e-mail pro zobrazení: „re***@zsmilovice.cz“. */
+export function maskEmail(email: string): string {
+  const [user, domain] = String(email || '').split('@');
+  if (!user || !domain) return '';
+  return `${user.slice(0, 2)}***@${domain}`;
+}

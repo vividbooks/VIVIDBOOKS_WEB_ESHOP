@@ -221,14 +221,14 @@ export async function linkSubscriberToSchool(
 
 /** Přepočet stavu jedné školy (customer / staffroom / active / trace / blank / lost). */
 export async function refreshSchoolStatus(sb: SupabaseClient, redIzo: string): Promise<string | null> {
-  const [{ count: active }, { count: any }, { data: sr }, { data: cust }] = await Promise.all([
+  const [{ count: active }, { count: any }, { data: sr }, { count: cust }] = await Promise.all([
     sb.from('subscribers').select('id', { count: 'exact', head: true }).eq('school_red_izo', redIzo).eq('status', 'subscribed'),
     sb.from('subscribers').select('id', { count: 'exact', head: true }).eq('school_red_izo', redIzo),
     sb.from('staffrooms').select('status').eq('red_izo', redIzo).maybeSingle(),
     sb.from('subscribers').select('id', { count: 'exact', head: true }).eq('school_red_izo', redIzo).eq('is_customer', true),
   ]);
   const status = schoolStatusFrom({
-    isCustomer: (cust as unknown as { count?: number } | null)?.count ? true : false,
+    isCustomer: (cust || 0) > 0,
     staffroomStatus: ((sr as { status?: string } | null)?.status as 'building' | 'unlocked' | 'grace' | 'expired' | undefined) ?? null,
     activeContacts: active || 0,
     everHadContacts: (any || 0) > 0,
