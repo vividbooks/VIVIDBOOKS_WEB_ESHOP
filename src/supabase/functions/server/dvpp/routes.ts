@@ -24,7 +24,7 @@ import { issueCertificate, listCertificates, schoolCertificateReport } from './c
 import { listTopics, toggleVote, upsertTopic } from './votes.ts';
 import { isDirectorPosition, teacherTypeFromAnswers } from './milestones.ts';
 import { activateMember } from './staffroom.ts';
-import { enrollDvpp } from './automations.ts';
+import { DVPP_AUTOMATION_FLOWS, enrollDvpp } from './automations.ts';
 import { importSizes } from './schools.ts';
 import { buildDigestDraft, saveDigestDraft } from './digest.ts';
 import { parseChapters } from './content.ts';
@@ -52,6 +52,39 @@ const DVPP_VIDEOS_KV_KEY = 'vividbooks_dvpp_videos_v2';
 const VIDEO_META_FIELDS = ['durationMinutes', 'lecturer', 'trailerUrl', 'chapters', 'subjects', 'addedAt', 'description', 'name', 'thumbnail', 'topicIds'] as const;
 
 const PREFIX = '/make-server-93a20b6f';
+
+/**
+ * První spuštění po nasazení: naplní `schools` z rejstříku a založí DVPP sekvence (vypnuté),
+ * aby web fungoval bez ručního klikání v adminu. Volá se z denního cronu, opakovaně je to no-op.
+ */
+async function ensureProvisioned(
+  sb: ReturnType<typeof sbService>,
+  deps: { loadRegistryRecords: () => Promise<RegistryRecord[]> },
+): Promise<{ schoolsImported?: number; flowsSeeded?: number }> {
+  const out: { schoolsImported?: number; flowsSeeded?: number } = {};
+  try {
+    const { count } = await sb.from('schools').select('red_izo', { count: 'exact', head: true });
+    if (!count) {
+      const records = await deps.loadRegistryRecords();
+      const r = await importRegistry(sb, records);
+      out.schoolsImported = r.upserted;
+    }
+  } catch (e) {
+    console.warn('[dvpp] provisioning schools failed', e);
+  }
+  try {
+    const { data } = await sb.from('automation_flows').select('slug');
+    const have = new Set(((data || []) as Array<{ slug: string }>).map((f) => f.slug));
+    const missing = DVPP_AUTOMATION_FLOWS.filter((f) => !have.has(f.slug));
+    if (missing.length) {
+      await sb.from('automation_flows').insert(missing.map((f) => ({ name: f.name, slug: f.slug, definition: f.definition, is_active: false })));
+      out.flowsSeeded = missing.length;
+    }
+  } catch (e) {
+    console.warn('[dvpp] provisioning flows failed', e);
+  }
+  return out;
+}
 
 export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
   const both = (method: 'get' | 'post' | 'put' | 'delete', path: string, handler: (c: Context) => Promise<Response> | Response) => {
@@ -391,9 +424,10 @@ export function registerDvppRoutes(app: Hono, deps: DvppRouteDeps): void {
   both('post', '/cron/dvpp-recount', async (c) => {
     if (!deps.cronSecretOk(c)) return c.json({ error: 'Unauthorized' }, 401);
     const sb = sbService();
+    const provisioned = await ensureProvisioned(sb, deps);
     const r = await recountAll(sb);
     const bf = await backfillSchoolsByDomain(sb, { limit: 300 });
-    return c.json({ ok: true, ...r, backfill: bf });
+    return c.json({ ok: true, ...r, backfill: bf, provisioned });
   });
 
   /* ── Admin ───────────────────────────────────────────────────────────── */
