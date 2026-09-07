@@ -14,6 +14,9 @@ import {
   recordIdentifiedWebEvent,
   upsertIdentity,
 } from './identityUpsert.ts';
+import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
+import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
+import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
 import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
@@ -4141,6 +4144,19 @@ app.post('/make-server-93a20b6f/identity/upsert', handleIdentityUpsertPost);
 app.post('/identity/upsert', handleIdentityUpsertPost);
 app.post('/make-server-93a20b6f/identity/web-event', handleIdentityWebEventPost);
 app.post('/identity/web-event', handleIdentityWebEventPost);
+
+app.get('/make-server-93a20b6f/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
+app.get('/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
+app.get('/make-server-93a20b6f/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
+app.get('/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
+app.post('/make-server-93a20b6f/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.post('/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.get('/make-server-93a20b6f/ultra-watchdog/status', handleUltraWatchdogStatus);
+app.get('/ultra-watchdog/status', handleUltraWatchdogStatus);
+app.post('/make-server-93a20b6f/admin/webinar-access-nudge', adminWebinarAccessNudgeHandler);
+app.post('/admin/webinar-access-nudge', adminWebinarAccessNudgeHandler);
+app.post('/make-server-93a20b6f/admin/webinar-reply-send', adminPersonalReplySendHandler);
+app.post('/admin/webinar-reply-send', adminPersonalReplySendHandler);
 
 /** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
 app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
