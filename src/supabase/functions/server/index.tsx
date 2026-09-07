@@ -66,6 +66,21 @@ import {
   schoolInquiryShippingMethod,
   schoolInquiryShippingPriceHaler,
 } from '../../../../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
+import {
+  canReuseOrgMatchedByName,
+  icoValuesMatch,
+  isValidCzechIco,
+  normalizePipedriveIco,
+  pipedriveIcoSearchTerms,
+  shouldWriteIcoToOrg,
+} from '../../../../supabase/functions/_shared/pipedrive-org-ico.ts';
+import {
+  claimOrgCreationByIco,
+  lookupOrgIdByIco,
+  releaseOrgClaim,
+  rememberOrgIdForIco,
+  resolveOrgClaim,
+} from './pipedriveOrgRegistry.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
@@ -14185,7 +14200,9 @@ function formatPipedriveColleagueName(name: string) {
 
 function buildPipedriveLookupCacheKey(params: { ico?: string; name?: string; includePipedriveRaw?: boolean }) {
   const raw = params.includePipedriveRaw ? 'raw1' : 'raw0';
-  return `${String(params.ico || '').trim()}::${normalizePipedriveSearchText(String(params.name || ''))}::${raw}`;
+  /** Klíč z normalizovaného IČO — jinak by `CZ12345678` a `12345678` měly dva různé
+   *  záznamy a `invalidatePipedriveSchoolLookupCache` po založení organizace by jeden z nich minulo. */
+  return `${normalizePipedriveIco(params.ico)}::${normalizePipedriveSearchText(String(params.name || ''))}::${raw}`;
 }
 
 /** Po POST /organizations: smazat cache pro `{ico, name}` (raw0/raw1), ať `lookupSchoolInPipedrive` neopakuje
@@ -15334,14 +15351,85 @@ async function findPipedrivePersonByEmailInRecentList(
 async function searchPipedriveOrganizations(
   apiToken: string,
   term: string,
-  opts?: { fields?: string },
+  opts?: { fields?: string; exactMatch?: boolean },
 ) {
   const cleanTerm = String(term || '').trim();
   if (!cleanTerm) return [];
   const query: Record<string, string | number> = { term: cleanTerm, limit: 10 };
   if (opts?.fields) query.fields = opts.fields;
+  if (opts?.exactMatch) query.exact_match = 'true';
   const data = await pipedriveRequest<any>(apiToken, '/organizations/search', {}, query);
   return Array.isArray(data?.data?.items) ? data.data.items : [];
+}
+
+/** Cache orgId → hodnota pole CIN, ať se ověřování shody IČO neptá Pipedrive pořád dokola. */
+const pipedriveOrgIcoValueCache = new Map<number, { expiresAt: number; value: string }>();
+const PIPEDRIVE_ORG_ICO_CACHE_MAX = 500;
+
+function setPipedriveOrgIcoValueCache(orgId: number, value: string) {
+  /** Instance edge funkce žije dlouho — bez stropu by mapa rostla přes celou bázi organizací. */
+  if (pipedriveOrgIcoValueCache.size >= PIPEDRIVE_ORG_ICO_CACHE_MAX) {
+    for (const [key, entry] of pipedriveOrgIcoValueCache) {
+      if (entry.expiresAt <= Date.now()) pipedriveOrgIcoValueCache.delete(key);
+    }
+    if (pipedriveOrgIcoValueCache.size >= PIPEDRIVE_ORG_ICO_CACHE_MAX) {
+      pipedriveOrgIcoValueCache.delete(pipedriveOrgIcoValueCache.keys().next().value as number);
+    }
+  }
+  pipedriveOrgIcoValueCache.set(orgId, { expiresAt: Date.now() + PIPEDRIVE_LOOKUP_CACHE_TTL_MS, value });
+}
+
+/** Přečte skutečnou hodnotu pole CIN (4033) z organizace. Search výstup ji nenese spolehlivě. */
+async function getPipedriveOrganizationIcoValue(apiToken: string, orgId: number): Promise<string> {
+  const cached = pipedriveOrgIcoValueCache.get(orgId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  let value = '';
+  try {
+    const icoFieldKey = await getPipedriveOrganizationIcoFieldKey(apiToken);
+    if (icoFieldKey) {
+      const data = await pipedriveRequest<any>(apiToken, `/organizations/${orgId}`);
+      const raw = data?.data?.[icoFieldKey];
+      value = raw == null ? '' : String(raw).trim();
+    }
+  } catch (error: any) {
+    console.log(`[Pipedrive] CIN read failed for org ${orgId}: ${error.message}`);
+    return '';
+  }
+  setPipedriveOrgIcoValueCache(orgId, value);
+  return value;
+}
+
+/**
+ * Dohledá organizaci, jejíž pole CIN se **opravdu** rovná zadanému IČO.
+ *
+ * Search se ptá i na variantu s doplněnými vedoucími nulami (`1228251` ↔ `01228251`)
+ * a každého kandidáta ověří proti poli CIN — bez toho stačilo, aby se číslo trefilo
+ * do jiného textového pole organizace, a objednávka se přilepila k cizí škole.
+ */
+async function findPipedriveOrganizationByIco(
+  apiToken: string,
+  ico: string,
+): Promise<{ item: any; orgId: number } | null> {
+  for (const term of pipedriveIcoSearchTerms(ico)) {
+    let items: any[] = [];
+    try {
+      items = await searchPipedriveOrganizations(apiToken, term, { fields: 'custom_fields', exactMatch: true });
+      if (!items.length) {
+        items = await searchPipedriveOrganizations(apiToken, term, { fields: 'custom_fields' });
+      }
+    } catch (error: any) {
+      console.log(`[Pipedrive] Org search by ICO ${term} failed: ${error.message}`);
+      continue;
+    }
+    /** Ověřuje se jen několik nejlepších kandidátů — každý stojí jeden GET organizace. */
+    for (const entry of items.slice(0, 5)) {
+      const orgId = parsePipedriveNumericId(entry?.item?.id);
+      if (!orgId) continue;
+      const orgIco = await getPipedriveOrganizationIcoValue(apiToken, orgId);
+      if (icoValuesMatch(orgIco, ico)) return { item: entry.item, orgId };
+    }
+  }
+  return null;
 }
 
 async function getPipedriveUserSummary(apiToken: string, userRef: any): Promise<PipedriveOwnerSummary | null> {
@@ -15406,12 +15494,19 @@ async function getPipedriveDealProducts(apiToken: string, dealId: number) {
   return Array.isArray(data?.data) ? data.data : [];
 }
 
-function pickBestPipedriveOrganizationMatch(items: any[], expectedName: string) {
+/**
+ * `requireExact`: shoda jen na přesný (bez diakritiky, bez vícenásobných mezer) název.
+ * Používá se u zákaznických formulářů — fuzzy „obsahuje“ a fallback na první výsledek
+ * jsou tam nebezpečné: název „ZŠ“ z formuláře by se trefil do libovolné školy.
+ * Admin nástroje si fuzzy hledání ponechávají.
+ */
+function pickBestPipedriveOrganizationMatch(items: any[], expectedName: string, opts?: { requireExact?: boolean }) {
   if (!items.length) return null;
   const expected = normalizePipedriveSearchText(expectedName);
-  if (!expected) return items[0];
+  if (!expected) return opts?.requireExact ? null : items[0];
   const exact = items.find((entry: any) => normalizePipedriveSearchText(entry?.item?.name || '') === expected);
   if (exact) return exact;
+  if (opts?.requireExact) return null;
   const includes = items.find((entry: any) => normalizePipedriveSearchText(entry?.item?.name || '').includes(expected));
   return includes || items[0];
 }
@@ -15427,28 +15522,78 @@ async function lookupSchoolInPipedrive(
   }
 
   const includePipedriveRaw = !!params.includePipedriveRaw;
-  const ico = String(params.ico || '').trim();
+  /** Jeden normalizovaný tvar IČO pro všechny cesty (eshop, trial, webinář, poptávka,
+   *  admin). Bez toho se `CZ45238782`, `123 456 78` a `12345678` chovaly jako tři různé
+   *  školy a pro každou vznikla vlastní organizace. */
+  const ico = normalizePipedriveIco(params.ico);
   const name = String(params.name || '').trim();
-  /** strictIcoMatch: když je IČO zadané a v Pipedrive žádná organizace s tímhle IČO není,
-   *  vrátí se prázdný výsledek (status `new`) — zabrání to chybnému spárování s jinou
-   *  organizací stejného jména, jejíž IČO by se navíc v upsertu přepsalo novou hodnotou. */
+  /** strictIcoMatch: IČO je autoritativní identifikátor — organizace stejného jména,
+   *  ale s **jiným platným** IČO, se nepoužije (jsou to opravdu dvě různé školy).
+   *  Neplatí to pro IČO s vadným kontrolním součtem (překlep ve formuláři) ani pro
+   *  organizace, které CIN vyplněné nemají — tam by strict režim jen tvořil duplicity. */
   const strictIcoMatch = !!params.strictIcoMatch;
-  let items: any[] = [];
+  let org: any = null;
   let matchedBy: 'ico' | 'name' | null = null;
 
+  /** 1) Trvalý rejstřík IČO → orgId. Přemostí zpoždění search indexu, kvůli kterému
+   *     druhá objednávka téže školy zakládala druhou organizaci (#39822 / #39823). */
   if (ico) {
-    items = await searchPipedriveOrganizations(apiToken, ico, { fields: 'custom_fields' });
-    if (items.length > 0) matchedBy = 'ico';
-  }
-  if (!items.length && name && !(strictIcoMatch && ico)) {
-    items = await searchPipedriveOrganizations(apiToken, name);
-    if (items.length > 0) matchedBy = 'name';
+    const registryOrgId = await lookupOrgIdByIco(ico);
+    if (registryOrgId) {
+      const registryOrg = await getPipedriveOrganization(apiToken, registryOrgId).catch(() => null);
+      if (registryOrg?.id) {
+        org = registryOrg;
+        matchedBy = 'ico';
+        console.log(`[Pipedrive] Org matched from ICO registry: id=${registryOrgId} ico=${ico}`);
+      }
+    }
   }
 
-  const bestMatch = matchedBy === 'name' ? pickBestPipedriveOrganizationMatch(items, name) : items[0];
-  const org = bestMatch?.item || null;
+  /** 2) Vyhledání podle IČO s ověřením proti poli CIN. */
+  if (!org && ico) {
+    const byIco = await findPipedriveOrganizationByIco(apiToken, ico);
+    if (byIco) {
+      org = byIco.item;
+      matchedBy = 'ico';
+    }
+  }
+
+  /** 3) Vyhledání podle názvu. Běží i ve strict režimu — jinak by se pro každou školu,
+   *     která v CRM CIN vyplněné nemá (většina starší báze), zakládala duplicitní
+   *     organizace. Nález se ale ověří: převezme se jen organizace, která buď CIN nemá,
+   *     nebo má shodné (`canReuseOrgMatchedByName`). */
+  if (!org && name) {
+    let nameItems: any[] = [];
+    try {
+      nameItems = await searchPipedriveOrganizations(apiToken, name);
+    } catch (error: any) {
+      console.log(`[Pipedrive] Org search by name failed: ${error.message}`);
+    }
+    const bestMatch = pickBestPipedriveOrganizationMatch(nameItems, name, { requireExact: strictIcoMatch });
+    const candidate = bestMatch?.item || null;
+    const candidateId = parsePipedriveNumericId(candidate?.id);
+    if (candidateId) {
+      const candidateIco = ico ? await getPipedriveOrganizationIcoValue(apiToken, candidateId) : '';
+      if (!ico || canReuseOrgMatchedByName(candidateIco, ico)) {
+        org = candidate;
+        matchedBy = 'name';
+      } else {
+        console.log(
+          `[Pipedrive] Org "${name}" #${candidateId} má jiné IČO (${candidateIco}) než objednávka (${ico}) — zakládá se nová organizace.`,
+        );
+      }
+    }
+  }
+
   const orgId = parsePipedriveNumericId(org?.id);
   const orgName = org?.name ? String(org.name) : null;
+
+  /** Do rejstříku ukládáme jen shodu ověřenou proti poli CIN. Shoda podle názvu
+   *  (u admin nástrojů i fuzzy) je odhad — jako trvalé mapování IČO → orgId by
+   *  dokázala připsat objednávky cizí škole. */
+  if (orgId && ico && matchedBy === 'ico') {
+    await rememberOrgIdForIco(ico, orgId, orgName || name);
+  }
 
   if (!orgId) {
     const result = {
@@ -15546,31 +15691,39 @@ async function upsertPipedriveSchoolOrganization(
   apiToken: string,
   params: {
     schoolName: string;
+    /** Libovolný zápis IČO (`12345678`, `123 456 78`, `CZ12345678`) — normalizuje se uvnitř. */
     ico?: string;
     address?: string;
+    /** Zákaznické formuláře (eshop, trial, webinář, poptávka): shoda podle názvu musí být
+     *  přesná. Fuzzy hledání by u ručně psaných názvů („ZŠ“) trefilo cizí školu.
+     *  Admin nástroje ho nechávají vypnuté a hledají fuzzy. */
     strictIcoMatch?: boolean;
     /** Distributorské objednávky: adresa z ARES slouží jen k založení nové organizace,
      *  do už existující (spárované podle IČO) se nezapisuje, ať nepřepíše data z CRM. */
     keepExistingAddress?: boolean;
   },
 ) {
-  const ico = String(params.ico || '').trim();
+  /** Jednotná normalizace IČO — `CZ45238782`, `123 456 78` i `12345678` musí vést
+   *  na tutéž organizaci. Zjevné výplně (`0`, `9999`) normalizace zahodí a chovají se
+   *  jako „IČO nezadáno“, aby podle nich nevznikaly organizace lepené na jednu hromadu. */
+  const ico = normalizePipedriveIco(params.ico);
   const schoolName = String(params.schoolName || '').trim();
   const address = String(params.address || '').trim();
-  /** strictIcoMatch: pro objednávky z eshopu — když má objednávka IČO a v Pipedrive není
-   *  organizace s tímhle IČO, založí se nová z údajů objednávky (IČO + název školy + adresa),
-   *  místo aby se připlácla k existující organizaci stejného jména s jiným IČO. */
   const strictIcoMatch = !!params.strictIcoMatch;
   const lookup = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName, strictIcoMatch });
   if (lookup.orgId) {
     const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
     const updatePayload: Record<string, any> = {};
     if (address && !params.keepExistingAddress) updatePayload.address = address;
-    /** IČO na existující organizaci doplníme jen pokud byla spárovaná podle jména
-     *  a strictIcoMatch je vypnutý (admin tooly). U strictIcoMatch by se sem ani
-     *  nemělo dostat — když IČO nematchne, lookup vrátí orgId=null a založí se nová. */
-    if (icoFieldKey && lookup.matchedBy !== 'ico' && !strictIcoMatch) {
-      updatePayload[icoFieldKey] = ico;
+    /** IČO doplníme do organizace, které v CRM chybí (většina starší báze) — tím se
+     *  škola napříště najde rovnou podle CIN. Existující hodnotu nikdy nepřepisujeme:
+     *  data z CRM mají přednost před tím, co kdo napsal do formuláře. */
+    if (icoFieldKey && ico) {
+      const currentIco = await getPipedriveOrganizationIcoValue(apiToken, lookup.orgId);
+      if (shouldWriteIcoToOrg(currentIco, ico)) {
+        updatePayload[icoFieldKey] = ico;
+        pipedriveOrgIcoValueCache.delete(lookup.orgId);
+      }
     }
     if (Object.keys(updatePayload).length > 0) {
       try {
@@ -15585,17 +15738,38 @@ async function upsertPipedriveSchoolOrganization(
     return lookup;
   }
 
+  /** Atomický claim na IČO. Souběžné požadavky téže školy (dvě objednávky během pár
+   *  sekund) tudy projdou jen jednou — ostatní dostanou `reuse` a organizaci nezaloží.
+   *  Bez toho vznikaly duplicity typu #39822 / #39823 (stejný název i CIN `01228251`). */
+  const claim = ico
+    ? await claimOrgCreationByIco(ico, { name: schoolName })
+    : ({ mode: 'create', key: null } as const);
+  if (claim.mode === 'reuse') {
+    console.log(`[Pipedrive] Org create přeskočen — IČO ${ico} mezitím založil jiný požadavek (id=${claim.orgId}).`);
+    invalidatePipedriveSchoolLookupCache({ ico, name: schoolName });
+    const concurrent = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName, strictIcoMatch });
+    if (concurrent.orgId) return concurrent;
+  }
+
   const icoFieldKey = ico ? await getPipedriveOrganizationIcoFieldKey(apiToken) : null;
   const payload: Record<string, any> = { name: schoolName };
   if (address) payload.address = address;
   if (icoFieldKey && ico) payload[icoFieldKey] = ico;
   console.log(
-    `[Pipedrive] Org create (strictIco=${strictIcoMatch}): name="${schoolName}" ico="${ico || '(none)'}" address="${address || '(none)'}"`,
+    `[Pipedrive] Org create (strictIco=${strictIcoMatch}, icoValid=${ico ? isValidCzechIco(ico) : false}): ` +
+      `name="${schoolName}" ico="${ico || '(none)'}" address="${address || '(none)'}"`,
   );
-  const created = await pipedriveRequest<any>(apiToken, '/organizations', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  let created: any;
+  try {
+    created = await pipedriveRequest<any>(apiToken, '/organizations', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    /** Bez uvolnění claimu by IČO zůstalo „rozdělané“ a další pokus by na něj čekal. */
+    await releaseOrgClaim(claim.key);
+    throw error;
+  }
   /** Nutné — jinak by druhý `lookupSchoolInPipedrive` vrátil starý `orgId: null` z 5min cache. */
   invalidatePipedriveSchoolLookupCache({ ico, name: schoolName });
 
@@ -15604,6 +15778,10 @@ async function upsertPipedriveSchoolOrganization(
   const createdOrgId = parsePipedriveNumericId(created?.data?.id);
   if (createdOrgId) {
     console.log(`[Pipedrive] Org created id=${createdOrgId} name="${schoolName}"`);
+    /** Zápis do rejstříku hned po založení — další požadavek školu najde i dřív,
+     *  než se objeví ve vyhledávacím indexu Pipedrive. */
+    await resolveOrgClaim(claim.key, createdOrgId, schoolName);
+    if (ico) setPipedriveOrgIcoValueCache(createdOrgId, ico);
     return {
       status: 'new',
       message: '',
@@ -15623,6 +15801,7 @@ async function upsertPipedriveSchoolOrganization(
   }
 
   /** Fallback: ID z odpovědi není (chyba v API) — zkus znovu lookup (cache už vyprázdněná). */
+  await releaseOrgClaim(claim.key);
   return lookupSchoolInPipedrive(apiToken, { ico, name: schoolName });
 }
 

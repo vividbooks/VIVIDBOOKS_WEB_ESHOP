@@ -57,6 +57,16 @@ import {
   schoolInquiryShippingPriceHaler,
 } from '../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
 import {
+  canReuseOrgMatchedByName,
+  icoValuesMatch,
+  isValidCzechIco,
+  normalizePipedriveIco,
+  pipedriveIcoSearchTerms,
+  pipedriveOrgIcoRegistryKey,
+  pickPipedriveOrgMatchedByIco,
+  shouldWriteIcoToOrg,
+} from '../supabase/functions/_shared/pipedrive-org-ico.ts';
+import {
   allocateSubjectBundleQuantities,
   subjectBundleQtySummary,
   subjectBundleSelectionPaidListSumHaler,
@@ -1318,6 +1328,110 @@ registerTest('poznámka aktivity je kratší, ale důvod i další krok obsahuje
   assert.match(activityNote, /Zákazník žádal o trial znovu/);
   /** Aktivita nenese celý blok o labelu — ten je v poznámce obchodu. */
   assert.ok(!activityNote.includes('Proč je obchod označený'));
+});
+
+/**
+ * Párování organizací podle IČO. Případy jsou vytažené z produkčního auditu
+ * 1 300 nejnovějších organizací v Pipedrive (10/2024–09/2026).
+ */
+registerTest('normalizace IČO sjednotí zápisy z formulářů a zahodí výplně', () => {
+  assert.equal(normalizePipedriveIco('12345678'), '12345678');
+  /** #39739 „Základní škola Litovel" má v CIN uložené `CZ45238782` — search podle `45238782` ji nenajde. */
+  assert.equal(normalizePipedriveIco('CZ45238782'), '45238782');
+  assert.equal(normalizePipedriveIco(' 123 456 78 '), '12345678');
+  assert.equal(normalizePipedriveIco('123-456-78'), '12345678');
+  assert.equal(normalizePipedriveIco('01228251'), '01228251');
+
+  /** Výplně z reálných dat: 13 organizací má CIN `0`, další `9999`. Nesmí sloužit jako identifikátor. */
+  assert.equal(normalizePipedriveIco('0'), '');
+  assert.equal(normalizePipedriveIco('0000'), '');
+  assert.equal(normalizePipedriveIco('9999'), '');
+  /** Text v poli IČO (`Doplň IČO`, e‑mail, jméno) — bez číslic nezbyde nic. */
+  assert.equal(normalizePipedriveIco('Doplň IČO'), '');
+  assert.equal(normalizePipedriveIco('zanetasaldova@gmail.com'), '');
+  assert.equal(normalizePipedriveIco(''), '');
+  assert.equal(normalizePipedriveIco(null), '');
+});
+
+registerTest('kontrolní součet IČO odhalí překlepy, kvůli kterým vznikly duplicity', () => {
+  assert.equal(isValidCzechIco('45238782'), true);
+  assert.equal(isValidCzechIco('01228251'), true);
+  assert.equal(isValidCzechIco('19133243'), true);
+  assert.equal(isValidCzechIco('CZ45238782'), true);
+
+  /** #39879 vs #39912 „ZŠ U Červených domků Hodonín" — přehozené číslice, obě hodnoty neplatné. */
+  assert.equal(isValidCzechIco('41498835'), false);
+  assert.equal(isValidCzechIco('49418835'), false);
+  /** #39845 vs #39848 „VOŠ, SŠ, ZŠ, MŠ Štefánikova 549 Hradec Králové". */
+  assert.equal(isValidCzechIco('62990361'), false);
+  assert.equal(isValidCzechIco('62390661'), false);
+
+  /** Špatná délka (`606030263`, `754654`) ani výplně kontrolou neprojdou. */
+  assert.equal(isValidCzechIco('606030263'), false);
+  assert.equal(isValidCzechIco('754654'), false);
+  assert.equal(isValidCzechIco('0'), false);
+});
+
+registerTest('hledání IČO zkouší i variantu s vedoucími nulami', () => {
+  assert.deepEqual(pipedriveIcoSearchTerms('1228251'), ['1228251', '01228251']);
+  assert.deepEqual(pipedriveIcoSearchTerms('01228251'), ['01228251', '1228251']);
+  assert.deepEqual(pipedriveIcoSearchTerms('45238782'), ['45238782']);
+  assert.deepEqual(pipedriveIcoSearchTerms('0'), []);
+
+  assert.equal(icoValuesMatch('1228251', '01228251'), true);
+  assert.equal(icoValuesMatch('CZ45238782', '45238782'), true);
+  assert.equal(icoValuesMatch('45238782', '19133243'), false);
+  /** Prázdná hodnota není shoda — jinak by se objednávka přilepila k libovolné organizaci bez CIN. */
+  assert.equal(icoValuesMatch('', '45238782'), false);
+});
+
+registerTest('kandidát ze search se přijme jen při skutečné shodě pole CIN', () => {
+  const candidates = [
+    { id: 111, icoValue: '70987700' },
+    { id: 222, icoValue: 'CZ45238782' },
+  ];
+  assert.equal(pickPipedriveOrgMatchedByIco(candidates, '45238782').matched?.id, 222);
+
+  /** Číslo se trefilo do jiného textového pole organizace → žádná shoda, nesmí se sloučit. */
+  assert.equal(pickPipedriveOrgMatchedByIco([{ id: 111, icoValue: '70987700' }], '45238782').matched, null);
+
+  /** Kandidát bez načteného CIN se nezahazuje — vrátí se k dohledání přes GET organizace. */
+  const unknown = pickPipedriveOrgMatchedByIco([{ id: 333, icoValue: '' }], '45238782');
+  assert.equal(unknown.matched, null);
+  assert.deepEqual(unknown.unverified.map((o) => o.id), [333]);
+});
+
+registerTest('organizace nalezená podle názvu se převezme, dokud IČO neříká, že jde o jinou školu', () => {
+  /** Většina starší báze CIN vyplněné nemá — tohle je hlavní zdroj duplicit. */
+  assert.equal(canReuseOrgMatchedByName('', '45238782'), true);
+  assert.equal(canReuseOrgMatchedByName(null, '45238782'), true);
+  assert.equal(canReuseOrgMatchedByName('CZ45238782', '45238782'), true);
+
+  /** Dvě opravdu různé školy stejného jména (#39707 vs #39972 „ZŠ, Skuteč, Komenského 150"). */
+  assert.equal(canReuseOrgMatchedByName('75016346', '19133243'), false);
+
+  /** Překlep ve formuláři (neplatný kontrolní součet) nesmí založit druhou organizaci téže
+   *  školy — přesně tak vznikla dvojice #39879 / #39912 „ZŠ U Červených domků Hodonín". */
+  assert.equal(canReuseOrgMatchedByName('49418835', '41498835'), true);
+  assert.equal(canReuseOrgMatchedByName('75016346', '41498835'), true);
+
+  /** Bez IČO se rozhoduje jen podle názvu. */
+  assert.equal(canReuseOrgMatchedByName('75016346', ''), true);
+});
+
+registerTest('IČO se do organizace zapisuje jen když tam žádné použitelné není', () => {
+  assert.equal(shouldWriteIcoToOrg('', '45238782'), true);
+  assert.equal(shouldWriteIcoToOrg('0', '45238782'), true);
+  /** Existující hodnotu z CRM nikdy nepřepisujeme daty z formuláře. */
+  assert.equal(shouldWriteIcoToOrg('75016346', '45238782'), false);
+  assert.equal(shouldWriteIcoToOrg('45238782', ''), false);
+});
+
+registerTest('klíč rejstříku IČO → orgId je nezávislý na zápisu', () => {
+  assert.equal(pipedriveOrgIcoRegistryKey('1228251'), 'pipedrive_org_by_ico_01228251');
+  assert.equal(pipedriveOrgIcoRegistryKey('01228251'), 'pipedrive_org_by_ico_01228251');
+  assert.equal(pipedriveOrgIcoRegistryKey('CZ45238782'), 'pipedrive_org_by_ico_45238782');
+  assert.equal(pipedriveOrgIcoRegistryKey('0'), null);
 });
 
 registerTest('trial předměty se mapují na option ID pole 9095 a „Jiné" jde na konec', () => {
