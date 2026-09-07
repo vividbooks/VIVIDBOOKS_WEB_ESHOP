@@ -13978,6 +13978,9 @@ type PipedriveSchoolLookup = {
   org?: any | null;
   deals?: any[];
   ownerUserId?: number | null;
+  /** `true` jen když organizaci právě založil `upsertPipedriveSchoolOrganization`.
+   *  Volající (Make, notifikace o nové škole) to nemá jak poznat ze `status`. */
+  justCreated?: boolean;
   /**
    * Jen při `lookupSchoolInPipedrive(..., { includePipedriveRaw: true })` —
    * skutečná JSON těla z Pipedrive (dealy org., hit z search), ne náš souhrn.
@@ -15362,6 +15365,21 @@ async function searchPipedriveOrganizations(
   return Array.isArray(data?.data?.items) ? data.data.items : [];
 }
 
+/**
+ * ID vlastníka organizace napříč tvary, které Pipedrive vrací:
+ * `/organizations/search` dává `owner.id`, `GET /organizations/{id}` dává
+ * `owner_id` jako objekt `{ id, value }` nebo rovnou číslo.
+ */
+function readPipedriveOrganizationOwnerId(org: any): number | null {
+  if (!org || typeof org !== 'object') return null;
+  const candidates = [org?.owner?.id, org?.owner_id?.id, org?.owner_id?.value, org?.owner_id];
+  for (const candidate of candidates) {
+    const parsed = parsePipedriveNumericId(candidate);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
 /** Cache orgId → hodnota pole CIN, ať se ověřování shody IČO neptá Pipedrive pořád dokola. */
 const pipedriveOrgIcoValueCache = new Map<number, { expiresAt: number; value: string }>();
 const PIPEDRIVE_ORG_ICO_CACHE_MAX = 500;
@@ -15797,6 +15815,7 @@ async function upsertPipedriveSchoolOrganization(
       org: created?.data || null,
       deals: [],
       ownerUserId: null,
+      justCreated: true,
     } as PipedriveSchoolLookup;
   }
 
@@ -17173,6 +17192,112 @@ app.post('/make-server-93a20b6f/trial-open-deal-pipedrive', (c) =>
  */
 app.post('/make-server-93a20b6f/trial-person-fields-pipedrive', (c) =>
   handleTrialPersonFieldsEndpoint(c));
+
+/**
+ * POST /pipedrive/resolve-organization
+ *
+ * „Najdi nebo založ organizaci“ pro **Make scénáře** (formuláře trial / objednávka /
+ * webinář / katalog). Scénáře si dřív hledaly organizaci samy — `itemSearch` na pole
+ * CIN se syrovou hodnotou z formuláře a při nenalezení rovnou `CreateOrganization`.
+ * To je zdroj duplicit popsaných v `docs/PIPEDRIVE_ORG_DEDUP.md`; 23 scénářů mělo
+ * 23 kopií téhle logiky. Tenhle endpoint je jediné místo, kde pravidla žijí:
+ * normalizace IČO, kontrolní součet, shoda podle CIN i podle názvu, trvalý rejstřík
+ * IČO → orgId a ochrana proti souběhu.
+ *
+ * Autorizace: hlavička `x-vividbooks-secret` = `PIPEDRIVE_ORG_RESOLVE_SECRET`.
+ * Bez nastaveného tajemství endpoint **nic nedělá** (503) — zakládá záznamy v CRM,
+ * takže se nesmí omylem vystavit veřejně.
+ *
+ * Tělo: `{ ico?, schoolName?, address?, strictIcoMatch?, createIfMissing? }`
+ * Odpověď: `{ orgId, orgName, matchedBy, created, ico, status }`
+ * `createIfMissing: false` udělá jen vyhledání (vrátí `orgId: null`, když nenajde).
+ */
+app.post('/make-server-93a20b6f/pipedrive/resolve-organization', async (c) => {
+  const expectedSecret = (Deno.env.get('PIPEDRIVE_ORG_RESOLVE_SECRET') || '').trim();
+  if (!expectedSecret) {
+    console.warn('[Pipedrive resolve-org] PIPEDRIVE_ORG_RESOLVE_SECRET není nastavené — endpoint je vypnutý.');
+    return c.json({ error: 'Endpoint není nakonfigurovaný.' }, 503);
+  }
+  if ((c.req.header('x-vividbooks-secret') || '').trim() !== expectedSecret) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
+  const apiToken = getPipedriveApiToken();
+  if (!apiToken) return c.json({ error: 'Pipedrive není nakonfigurován.' }, 500);
+
+  try {
+    /** Make posílá parametry v query stringu (Make je sám URL‑enkóduje, takže apostrof
+     *  ani uvozovka v názvu školy nic nerozbijí); z webu a z curl chodí JSON tělo.
+     *  Bereme obojí — query má přednost, když je vyplněné. */
+    const jsonBody = (await c.req.json().catch(() => ({}))) as Record<string, any>;
+    const query = c.req.query();
+    const read = (...keys: string[]) => {
+      for (const key of keys) {
+        const fromQuery = query[key];
+        if (fromQuery !== undefined && String(fromQuery).trim() !== '') return String(fromQuery);
+        const fromBody = jsonBody[key];
+        if (fromBody !== undefined && String(fromBody).trim() !== '') return String(fromBody);
+      }
+      return '';
+    };
+    const body: Record<string, any> = {
+      ...jsonBody,
+      schoolName: read('schoolName', 'school', 'name'),
+      ico: read('ico', 'vat'),
+      address: read('address', 'region'),
+    };
+    if (query.strictIcoMatch !== undefined) body.strictIcoMatch = query.strictIcoMatch !== 'false';
+    if (query.createIfMissing !== undefined) body.createIfMissing = query.createIfMissing !== 'false';
+
+    const schoolName = String(body.schoolName ?? '').trim();
+    const icoRaw = String(body.ico ?? '');
+    const ico = normalizePipedriveIco(icoRaw);
+    const address = String(body.address ?? '').trim();
+    /** Formuláře posílají ručně psané názvy — přesná shoda názvu je pro ně výchozí. */
+    const strictIcoMatch = body.strictIcoMatch === undefined ? true : !!body.strictIcoMatch;
+    const createIfMissing = body.createIfMissing !== false;
+
+    if (!schoolName && !ico) {
+      return c.json({ error: 'Zadejte schoolName nebo ico.' }, 400);
+    }
+
+    if (!createIfMissing) {
+      const found = await lookupSchoolInPipedrive(apiToken, { ico, name: schoolName, strictIcoMatch });
+      return c.json({
+        orgId: found.orgId,
+        orgName: found.orgName,
+        matchedBy: found.matchedBy,
+        created: false,
+        ico,
+        status: found.status,
+      });
+    }
+
+    const result = await upsertPipedriveSchoolOrganization(apiToken, {
+      schoolName,
+      ico,
+      address,
+      strictIcoMatch,
+    });
+    const created = result.justCreated === true;
+    console.log(
+      `[Pipedrive resolve-org] ico=${ico || '-'} name="${schoolName}" → orgId=${result.orgId} matchedBy=${result.matchedBy || '-'}`,
+    );
+    return c.json({
+      orgId: result.orgId,
+      orgName: result.orgName,
+      /** Vlastník **organizace** (ne dealu) — Make scénáře z něj nastavovaly ownera leadu. */
+      ownerId: readPipedriveOrganizationOwnerId(result.org),
+      matchedBy: result.matchedBy,
+      created,
+      ico,
+      status: result.status,
+    });
+  } catch (error: any) {
+    console.log(`[Pipedrive resolve-org] chyba: ${error.message}`);
+    return c.json({ error: error.message }, 500);
+  }
+});
 
 app.post('/make-server-93a20b6f/admin/pipedrive/ensure-school', async (c) => {
   const apiToken = getPipedriveApiToken();

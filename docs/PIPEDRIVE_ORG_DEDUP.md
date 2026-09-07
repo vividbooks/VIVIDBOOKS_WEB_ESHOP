@@ -95,11 +95,57 @@ Doplňková pravidla:
 - **Atomický claim na IČO** před založením (insert na primární klíč KV). Souběžné
   požadavky téže školy projdou jen jednou; ostatní počkají a organizaci převezmou.
 
-## 4. Co zbývá
+## 4. Přepnutí Make scénářů na společný endpoint
 
-- **Make scénáře** (část 1.2) zakládají organizace dál podle starých pravidel.
-  Dokud tam nepřibude normalizace IČO a fallback na název, budou duplicity
-  vznikat z jejich strany.
+Aby pravidla z části 3 platila i pro Make, má server endpoint
+
+```
+POST /make-server-93a20b6f/pipedrive/resolve-organization
+hlavička: x-vividbooks-secret = PIPEDRIVE_ORG_RESOLVE_SECRET
+parametry (query nebo JSON tělo): ico, schoolName, address
+odpověď: { orgId, orgName, ownerId, matchedBy, created, ico, status }
+```
+
+Bez nastaveného `PIPEDRIVE_ORG_RESOLVE_SECRET` vrací 503 — endpoint zakládá
+záznamy v CRM, takže se nesmí omylem vystavit veřejně. Parametry se čtou z query
+stringu i z JSON těla; Make posílá query, protože si ho sám URL‑enkóduje a
+apostrof v názvu školy tak nic nerozbije.
+
+Ve scénáři se mění **jeden modul**: „Search organization“ (`pipedrive:MakeAPICall`
+nad `itemSearch`) se nahradí `http:ActionSendData` na tenhle endpoint. Odkazy na
+jeho výstup se přepíšou:
+
+| původní | nové |
+|---|---|
+| `{{N.body.data.items[].item.id}}` | `{{N.data.orgId}}` |
+| `{{N.body.data.items[].item.name}}` | `{{N.data.orgName}}` |
+| `{{N.body.data.items[].item.owner.id}}` | `{{N.data.ownerId}}` |
+
+Modul dostane error handler `builtin:Resume`: když endpoint selže, scénář
+nespadne, výstup zůstane prázdný a projde se **původní záložní větev**
+„Create new organization“. Registrace se tím nikdy neztratí a větev zůstává
+v scénáři jako pojistka (přejmenovaná, ať je zřejmé, že to není běžná cesta).
+
+Úpravu generuje `scripts/make/patch_pipedrive_org_lookup.py` — mapování vstupních
+polí pro každý scénář je v konstantě `SCENARIOS`. Blueprint se do Make nahrává
+přes **Import Blueprint** v menu scénáře; přes Make API to nejde, blueprinty
+těchhle scénářů mají přes 500 kB. Tajemství je ve vygenerovaném souboru jen jako
+placeholder `__DOPLNIT_PIPEDRIVE_ORG_RESOLVE_SECRET__` — doplňuje se až v Make.
+
+**Pořadí nasazení je závazné:** nejdřív nastavit `PIPEDRIVE_ORG_RESOLVE_SECRET`
+a nasadit `make-server-93a20b6f`, teprve pak importovat blueprint. Opačně by
+scénář volal endpoint, který ještě neexistuje (a spolehl by se na záložní větev).
+
+Stav přepnutí:
+
+| Scénář | Stav |
+|---|---|
+| 3472524 `[CZ1] Webinar form v1.5 (úpravy a testování)` | blueprint vygenerovaný, čeká na import a ověření |
+| ostatních 11 CZ/SK | čeká na potvrzení vzoru |
+| 11 zahraničních (AR, CL, CO, MX, PY, UY, ES, ESP, EN) | zatím beze změny — kontrolní součet IČO je česko‑slovenský |
+
+## 5. Co zbývá
+
 - **Historické duplicity** (část 2) tenhle kód nesloučí — je to jednorázový úklid
   v Pipedrive; přednostně 11 skupin se sdíleným CIN.
 - **Sanitace pole CIN** u 105 organizací s nečíselnou / krátkou hodnotou.

@@ -12,3 +12,4 @@ supabase/.temp/
 VIVIDASISTANT/supabase/.temp/
 .gstack/
 .deploy-args/
+__pycache__/
