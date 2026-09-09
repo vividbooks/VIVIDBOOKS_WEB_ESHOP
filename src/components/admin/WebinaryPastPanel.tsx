@@ -823,7 +823,14 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
           rawText?.slice(0, 200) || `Neplatná odpověď serveru (${res.status}).`,
         );
       }
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (!res.ok) {
+        // Přes HTTP/2 je `statusText` vždy prázdný — bez těla odpovědi by z chyby zbylo jen „selhalo“.
+        throw new Error(
+          data.error ||
+            res.statusText ||
+            `${res.status}: ${rawText?.slice(0, 200) || 'server nevrátil žádný detail'}`,
+        );
+      }
       const sent = typeof data.sent === 'number' ? data.sent : 0;
       const total = typeof data.total === 'number' ? data.total : n;
       const failed = typeof data.failed === 'number' ? data.failed : 0;
