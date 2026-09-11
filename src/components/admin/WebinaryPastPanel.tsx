@@ -1983,6 +1983,81 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
               )}
             </div>
 
+            {/* ── ČITELNÝ PŘEPIS A TITULKY ── */}
+            {!isNew && selected && ((selected as any).prepisText || (selected as any).prepisVtt) && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-emerald-500" />
+                    </div>
+                    <div>
+                      <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">
+                        {'Čitelný přepis a titulky'}
+                      </h3>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {'Vyrobila automatika ze záznamu — jen ke čtení, upravuje se přepis výše'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(selected as any).prepisText && (
+                      <button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(String((selected as any).prepisText));
+                          toast.success('Čitelný přepis zkopírován.');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <Copy className="w-3 h-3" />
+                        {'Kopírovat text'}
+                      </button>
+                    )}
+                    {(selected as any).prepisVtt && (
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([String((selected as any).prepisVtt)], {
+                            type: 'text/vtt;charset=utf-8',
+                          });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${selected.slug || selected.id}.vtt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-purple-600 border border-purple-200 rounded-lg hover:bg-purple-50 transition-colors"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        {'Stáhnout titulky .vtt'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {(selected as any).prepisText && (
+                  <textarea
+                    readOnly
+                    value={String((selected as any).prepisText)}
+                    rows={10}
+                    className="w-full px-5 py-4 text-[13px] text-[#001161] leading-relaxed resize-none outline-none border-0 focus:ring-0 bg-gray-50/50"
+                    style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  />
+                )}
+                <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 flex items-center justify-between text-[11px] text-gray-400">
+                  <span>
+                    {(selected as any).prepisText
+                      ? `${String((selected as any).prepisText).length.toLocaleString('cs-CZ')} zn. čitelného textu`
+                      : 'čitelný přepis chybí'}
+                  </span>
+                  <span>
+                    {(selected as any).prepisVtt
+                      ? `titulky s časy: ${String((selected as any).prepisVtt).split('-->').length - 1} úseků`
+                      : 'titulky chybí'}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* ── RAG INDEXACE ── */}
             {!isNew && selected && (
               <div className="bg-white rounded-2xl border border-gray-200 p-5">
