@@ -356,11 +356,17 @@ function triggerTrialPipedriveSync(
  * volali `trial-*-pipedrive` jako u legacy cesty, vznikl by obchod dvakrát.
  */
 
-const KABINET_TRIAL_REQUEST_URL =
-  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-request`;
+/**
+ * Most na Kabinet je samostatná Edge funkce `kabinet-trial` (nasazená 3. 9. 2026).
+ * Doplňuje tajemství, vynucuje `reason: 'web'` a `override: false`, a hlavně
+ * **maže kódy školy z odpovědí**, u kterých trial nevznikl — z veřejného webu
+ * je nesmí dostat nikdo, kdo jen zná IČO. Proto sem, ne přes `make-server`.
+ */
+const KABINET_TRIAL_BASE = `https://${projectId}.supabase.co/functions/v1/kabinet-trial`;
 
-export const KABINET_TRIAL_CHECK_URL =
-  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-check`;
+const KABINET_TRIAL_REQUEST_URL = `${KABINET_TRIAL_BASE}/request`;
+
+export const KABINET_TRIAL_CHECK_URL = `${KABINET_TRIAL_BASE}/check`;
 
 /** Tělo pro Kabinet — nová jména polí; aliasy ze starého formuláře umí taky. */
 export function buildKabinetTrialBody(fields: FreeTrialFields): Record<string, unknown> {
