@@ -21,6 +21,44 @@ import { matchDvppVideoForWebinar } from '../../../supabase/functions/_shared/dv
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
+/**
+ * Hromadné odeslání záznamu běží na pozadí, takže odpověď na request ještě nic neříká
+ * o výsledku. Tohle sleduje tracking, dokud počet odeslaných neustane růst.
+ * Vrací poslední známý počet, nebo `null`, když se stav nepodařilo přečíst.
+ */
+async function pollFollowupBulkProgress(
+  webinarId: string,
+  onTick: (sent: number) => void,
+): Promise<number | null> {
+  let last: number | null = null;
+  let stableRounds = 0;
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    let sent: number | null = null;
+    try {
+      const res = await fetch(
+        `${SERVER}/admin/webinar-post-followup-tracking/${encodeURIComponent(webinarId)}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const d = (parseJsonResponseBody(await res.text()) || {}) as {
+        recipients?: Record<string, { sentAt?: string }>;
+      };
+      if (res.ok) {
+        sent = Object.values(d.recipients || {}).filter((r) => r?.sentAt).length;
+      }
+    } catch {
+      /* výpadek sítě v jednom kole nevadí, zkusíme to za 4 s znovu */
+    }
+    if (sent == null) continue;
+    onTick(sent);
+    // Dvě kola beze změny bereme jako dojeté — rozesílka po dávkách jinak roste každé kolo.
+    stableRounds = sent === last ? stableRounds + 1 : 0;
+    last = sent;
+    if (stableRounds >= 2 && sent > 0) return sent;
+  }
+  return last;
+}
+
 const MONTH_NAMES = [
   'Leden','Únor','Březen','Duben','Květen','Červen',
   'Červenec','Srpen','Září','Říjen','Listopad','Prosinec',
@@ -815,7 +853,18 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         }),
       });
       const rawText = await res.text();
-      let data: { error?: string; sent?: number; total?: number; failed?: number };
+      let data: {
+        error?: string;
+        sent?: number;
+        total?: number;
+        failed?: number;
+        skipped?: number;
+        remaining?: number;
+        started?: boolean;
+        continued?: boolean;
+        alreadyRunning?: boolean;
+        breakdown?: { kvRegistrations?: number; mailchimpTagged?: number };
+      };
       try {
         data = (parseJsonResponseBody(rawText) || {}) as typeof data;
       } catch {
@@ -823,12 +872,49 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
           rawText?.slice(0, 200) || `Neplatná odpověď serveru (${res.status}).`,
         );
       }
-      if (!res.ok) throw new Error(data.error || res.statusText);
+      if (!res.ok) {
+        // Přes HTTP/2 je `statusText` vždy prázdný — bez těla odpovědi by z chyby zbylo jen „selhalo“.
+        throw new Error(
+          data.error ||
+            res.statusText ||
+            `${res.status}: ${rawText?.slice(0, 200) || 'server nevrátil žádný detail'}`,
+        );
+      }
+      // Server rozesílku jen založí a hned se vrátí — počty v téhle odpovědi ještě nic neznamenají.
+      if (data.started === true || data.continued === true) {
+        toast.success(
+          data.alreadyRunning === true
+            ? 'Odesílání už běží na pozadí, počkejte na dokončení.'
+            : `Odesílání běží na pozadí (${n} příjemců). Průběh se aktualizuje níže, neklikejte znovu.`,
+        );
+        const done = await pollFollowupBulkProgress(String(selected.id), () => {
+          void loadFollowupTracking();
+        });
+        await loadFollowupTracking();
+        if (done == null) {
+          toast.warning('Stav rozesílky se nepodařilo načíst — zkontrolujte počty níže.');
+        } else {
+          const zbyva = Math.max(0, n - done);
+          toast.success(
+            zbyva > 0
+              ? `Odesláno ${done} z ${n} e-mailů. Zbylých ${zbyva} Mandrill odmítl jako nedoručitelné (překlep v adrese nebo mrtvá schránka).`
+              : `Hotovo — odesláno všech ${done} e-mailů.`,
+          );
+        }
+        return;
+      }
+
       const sent = typeof data.sent === 'number' ? data.sent : 0;
       const total = typeof data.total === 'number' ? data.total : n;
       const failed = typeof data.failed === 'number' ? data.failed : 0;
-      const br = (data as { breakdown?: { kvRegistrations?: number; mailchimpTagged?: number } }).breakdown;
-      let okMsg = `Odesláno ${sent} z ${total} e-mailů.`;
+      const skipped = typeof data.skipped === 'number' ? data.skipped : 0;
+      const remaining = typeof data.remaining === 'number' ? data.remaining : 0;
+      const br = data.breakdown;
+      let okMsg =
+        sent === 0 && skipped > 0 && remaining === 0
+          ? `Všichni příjemci už e-mail mají (${skipped}).`
+          : `Odesláno ${sent} z ${total} e-mailů.`;
+      if (sent > 0 && skipped > 0) okMsg += ` Přeskočeno ${skipped} (už odesláno dřív).`;
       if (br && typeof br.mailchimpTagged === 'number' && br.mailchimpTagged > 0) {
         okMsg += ` (KV ${br.kvRegistrations ?? '—'}, Mailchimp ${br.mailchimpTagged})`;
       }
@@ -1975,6 +2061,81 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
                 </div>
               )}
             </div>
+
+            {/* ── ČITELNÝ PŘEPIS A TITULKY ── */}
+            {!isNew && selected && ((selected as any).prepisText || (selected as any).prepisVtt) && (
+              <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center">
+                      <FileText className="w-4 h-4 text-emerald-500" />
+                    </div>
+                    <div>
+                      <h3 className="text-[13px] font-bold text-gray-700 uppercase tracking-wide">
+                        {'Čitelný přepis a titulky'}
+                      </h3>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {'Vyrobila automatika ze záznamu — jen ke čtení, upravuje se přepis výše'}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {(selected as any).prepisText && (
+                      <button
+                        onClick={() => {
+                          void navigator.clipboard.writeText(String((selected as any).prepisText));
+                          toast.success('Čitelný přepis zkopírován.');
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <Copy className="w-3 h-3" />
+                        {'Kopírovat text'}
+                      </button>
+                    )}
+                    {(selected as any).prepisVtt && (
+                      <button
+                        onClick={() => {
+                          const blob = new Blob([String((selected as any).prepisVtt)], {
+                            type: 'text/vtt;charset=utf-8',
+                          });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `${selected.slug || selected.id}.vtt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold text-purple-600 border border-purple-200 rounded-lg hover:bg-purple-50 transition-colors"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        {'Stáhnout titulky .vtt'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {(selected as any).prepisText && (
+                  <textarea
+                    readOnly
+                    value={String((selected as any).prepisText)}
+                    rows={10}
+                    className="w-full px-5 py-4 text-[13px] text-[#001161] leading-relaxed resize-none outline-none border-0 focus:ring-0 bg-gray-50/50"
+                    style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
+                  />
+                )}
+                <div className="border-t border-gray-100 px-5 py-3 bg-gray-50 flex items-center justify-between text-[11px] text-gray-400">
+                  <span>
+                    {(selected as any).prepisText
+                      ? `${String((selected as any).prepisText).length.toLocaleString('cs-CZ')} zn. čitelného textu`
+                      : 'čitelný přepis chybí'}
+                  </span>
+                  <span>
+                    {(selected as any).prepisVtt
+                      ? `titulky s časy: ${String((selected as any).prepisVtt).split('-->').length - 1} úseků`
+                      : 'titulky chybí'}
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* ── RAG INDEXACE ── */}
             {!isNew && selected && (
