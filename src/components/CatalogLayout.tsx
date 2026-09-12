@@ -314,7 +314,7 @@ export default function CatalogLayout() {
     String(searchParams.get('from') || '').toLowerCase() === 'email';
 
   /** Stránka trial — bez katalogového chrome (stejně jako e-mailové vstupy). */
-  const isTrialPageFullscreen = location.pathname === '/vyzkousejte';
+  const isTrialPageFullscreen = location.pathname === '/vyzkousejte' || location.pathname === '/vyzkousejte-kabinet';
 
   const isMinimalCatalogChrome =
     isWebinarSurveyFullscreen

@@ -181,6 +181,8 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/NovinkaDetailRoute'), 'NovinkaDetailRoute'),
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            /** Stejná stránka, ale trial jde přes Kabinet — souběžně se starou cestou. */
+            { path: 'vyzkousejte-kabinet', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
             { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
             {
               path: 'dalsi-produkty',
