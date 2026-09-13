@@ -16,6 +16,9 @@ const TRIAL_PIPEDRIVE_EXISTING_ACTIVE_URL =
 const TRIAL_PIPEDRIVE_OPEN_DEAL_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-open-deal-pipedrive`;
 
+const TRIAL_PIPEDRIVE_CREATED_URL =
+  `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-created-pipedrive`;
+
 const TRIAL_PIPEDRIVE_PERSON_FIELDS_URL =
   `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f/trial-person-fields-pipedrive`;
 
@@ -160,6 +163,8 @@ async function postTrialPipedriveSync(
   fields: FreeTrialFields,
   /** Odpověď legacy API — server ji cituje v české poznámce obchodu. */
   legacy?: { reason?: string; message?: string },
+  /** Pole navíc pro konkrétní scénář (u happy path vydané kódy a konec trialu). */
+  extra?: Record<string, unknown>,
 ): Promise<void> {
   try {
     const { fullName } = splitFullNameForTrial(fields.name);
@@ -177,6 +182,7 @@ async function postTrialPipedriveSync(
        *  — do poznámky obchodu („proč se nevygenerovaly kódy"). */
       legacyReason: legacy?.reason ?? '',
       legacyMessage: legacy?.message ?? '',
+      ...(extra ?? {}),
     };
     const res = await fetch(url, {
       method: 'POST',
@@ -250,6 +256,33 @@ export function notifyTrialCreatedPersonFieldsToPipedrive(fields: FreeTrialField
     TRIAL_PIPEDRIVE_PERSON_FIELDS_URL,
     'trial-pipedrive-person-fields',
     fields,
+  );
+}
+
+/**
+ * Happy path z Kabinetu: kódy vznikly a **obchod v Pipedrive zakládá web**.
+ *
+ * Dřív ho zakládal scénář Make „Trial form", který visel na starém API. Kódy
+ * a konec trialu se posílají s sebou, protože je čte šablona automatizace
+ * „Trial CTA 01" — a ta je jediné, co zákazníkovi kódy pošle e-mailem.
+ *
+ * Server volání ignoruje, dokud není zapnuté (`TRIAL_CREATED_PIPEDRIVE_ENABLED`),
+ * aby po dobu, kdy ještě běží scénář Make, nevznikaly obchody dvakrát.
+ */
+export function notifyTrialCreatedToPipedrive(
+  fields: FreeTrialFields,
+  trial: { teacherCode?: string; studentCode?: string; endsOn?: string },
+): Promise<void> {
+  return postTrialPipedriveSync(
+    TRIAL_PIPEDRIVE_CREATED_URL,
+    'trial-pipedrive-created',
+    fields,
+    undefined,
+    {
+      teacherCode: trial.teacherCode ?? '',
+      studentCode: trial.studentCode ?? '',
+      trialEndsOn: trial.endsOn ?? '',
+    },
   );
 }
 
@@ -351,9 +384,10 @@ function triggerTrialPipedriveSync(
  * rozhoduje Kabinet nad všemi školami se stejným IČO, kódem nebo e-mailem;
  * když smí, založí ho u sebe a předá do starého systému.
  *
- * Do Pipedrive odsud **nic neposíláme**. Deal, ownera i CTA aktivity dělá
- * dál Make scénář „Trial form", který spouští starý systém — kdybychom
- * volali `trial-*-pipedrive` jako u legacy cesty, vznikl by obchod dvakrát.
+ * Do Pipedrive odsud posíláme jen happy path (`trial-created-pipedrive`), a i ten
+ * server zahazuje, dokud není zapnutý. Dokud běží scénář Make „Trial form",
+ * zakládá obchod on; jakmile se vypne, převezme to web. Dvě cesty naráz by
+ * znamenaly dva obchody.
  */
 
 /**
@@ -430,6 +464,16 @@ export async function submitTrialViaKabinet(fields: FreeTrialFields): Promise<Fr
   }
 
   if ((status === 'created' || status === 'extended') && codes) {
+    /** Obchod zakládáme jen u **nového** trialu. Prodloužení (`extended`) měl
+     *  v Make na starosti scénář „Trial code – Extend", který existující obchod
+     *  aktualizuje — nový obchod s „Case = New" by tam byl špatně. */
+    if (status === 'created') {
+      void notifyTrialCreatedToPipedrive(fields, {
+        teacherCode: codes.teacher,
+        studentCode: codes.student,
+        endsOn,
+      });
+    }
     return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'created', endsOn };
   }
 

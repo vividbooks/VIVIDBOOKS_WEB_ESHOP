@@ -20,6 +20,7 @@
  * 12463 = „Trial web (interactive) - 2.0"), liší se obchodní pipeline.
  */
 export type TrialPipedriveScenario =
+  | 'trial_created'            // happy path: Kabinet vydal kódy a obchod zakládá web (dřív ho zakládal scénář Make)
   | 'active_subscription'      // legacy reason "You have active subscription trial yet."
   | 'email_used_in_school'     // legacy reason "Email is used yet." (opětovná žádost o kód)
   | 'existing_active_trial'    // legacy odpověděla existujícími trial kódy (kind=existing_trial) — škola aktuálně má trial
@@ -46,6 +47,22 @@ export interface TrialScenarioExplanation {
 }
 
 const SCENARIO_EXPLANATIONS: Record<TrialPipedriveScenario, TrialScenarioExplanation> = {
+  trial_created: {
+    headline: 'Trial z webu — kódy vydány, obchod založil web',
+    codesHeading: 'Přístupové kódy',
+    codesReason:
+      'Zkušební přístup se vydal v pořádku, kódy zákazník viděl na děkovací stránce ' +
+      'a najdeš je v polích obchodu. Obchod zakládá přímo web — dřív ho zakládal ' +
+      'scénář Make nad odpovědí starého API, teď licence vzniká v Kabinetu a mezikrok ' +
+      'přes Make odpadl.',
+    labelReason:
+      'Je to standardní nový webový trial, ne odmítnutá žádost — label „Trial web ' +
+      '(interactive)" je tu proto, aby obchod poznaly navazující automatizace.',
+    pipelineLabel: 'CZ-Sales-Akvizice-CZ1 → Lead / Prospekt [CZ1]',
+    nextStep:
+      'První e-mail s kódy odesílá automatizace „Trial CTA 01" z tvé schránky, hned ' +
+      'po založení obchodu — nic neposílej znovu. Naváž až podle CTA 02 (za 3 dny).',
+  },
   active_subscription: {
     headline: 'Žádost o trial z webu — kódy se nevydaly (škola má aktivní předplatné)',
     codesHeading: 'Proč se nevygenerovaly přístupové kódy',
@@ -167,6 +184,12 @@ export interface TrialDealNoteParams {
   legacyReason?: string;
   /** Hláška, kterou zákazník viděl na webu (pokud ji frontend poslal). */
   legacyMessage?: string;
+  /** Vydané kódy a konec trialu (happy path) — ať je obchodník vidí i v poznámce,
+   *  ne jen v polích obchodu. */
+  teacherCode?: string;
+  studentCode?: string;
+  /** Konec trialu v ISO (`2026-09-25`); do textu se přepíše na český zápis. */
+  trialEndsOn?: string;
   /** Pro školu už existoval otevřený trial obchod — nový se nezakládal. */
   deduplicated?: boolean;
   /** Datum a čas odeslání formuláře, už naformátované (např. „28. 8. 2026 14:32"). */
@@ -175,6 +198,18 @@ export interface TrialDealNoteParams {
 
 function cleanLine(value: unknown): string {
   return String(value ?? '').trim();
+}
+
+/**
+ * ISO datum → český zápis („2026-09-25" → „25. 9. 2026"). Stejný tvar používá
+ * i deal pole „End of Trial formatted", ať poznámka a pole nemluví jinak.
+ * Co není ISO datum, projde beze změny — radši surová hodnota než prázdno.
+ */
+export function trialEndDateCs(value: unknown): string {
+  const raw = cleanLine(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return raw;
+  return `${Number(match[3])}. ${Number(match[2])}. ${match[1]}`;
 }
 
 /**
@@ -191,14 +226,30 @@ export function buildTrialDealNoteText(params: TrialDealNoteParams): string {
 
   lines.push(`${info.codesHeading}:`);
   lines.push(info.codesReason);
+  const teacherCode = cleanLine(params.teacherCode);
+  const studentCode = cleanLine(params.studentCode);
+  if (teacherCode) {
+    lines.push(
+      `Učitelský kód: ${teacherCode}${studentCode ? ` · žákovský kód: ${studentCode}` : ''}`,
+    );
+  }
+  const trialEndsOn = trialEndDateCs(params.trialEndsOn);
+  if (trialEndsOn) lines.push(`Trial běží do: ${trialEndsOn}`);
   if (apiReason) lines.push(`Odpověď API Vividbooks: „${apiReason}"`);
   const shownMessage = cleanLine(params.legacyMessage);
   if (shownMessage) lines.push(`Zákazník na webu viděl: „${shownMessage}"`);
   lines.push('');
 
-  lines.push(`Proč je obchod označený „${TRIAL_PIPEDRIVE_LABEL_NAME}":`);
-  lines.push(TRIAL_LABEL_COMMON_REASON);
-  lines.push(info.labelReason);
+  /** U happy path label neznamená „něco se nepovedlo", ale „tohle je webový
+   *  trial" — společné vysvětlení o nevydaných kódech by tam bylo matoucí. */
+  if (params.scenario === 'trial_created') {
+    lines.push('Odkud obchod je:');
+    lines.push(info.labelReason);
+  } else {
+    lines.push(`Proč je obchod označený „${TRIAL_PIPEDRIVE_LABEL_NAME}":`);
+    lines.push(TRIAL_LABEL_COMMON_REASON);
+    lines.push(info.labelReason);
+  }
   lines.push(`Zařazení: ${info.pipelineLabel}`);
   lines.push('');
 

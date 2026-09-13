@@ -48,7 +48,14 @@ import {
   buildTrialDealNoteHtml,
   buildTrialDealNoteText,
   TRIAL_PIPEDRIVE_LABEL_NAME,
+  trialEndDateCs,
 } from '../supabase/functions/_shared/trial-pipedrive-note.ts';
+import {
+  normalizeRegionKey,
+  PIPEDRIVE_REGION_COUNT,
+  PIPEDRIVE_SALES_USER_IDS,
+  resolveRegionOwnerUserId,
+} from '../supabase/functions/_shared/pipedrive-region-owner.ts';
 import {
   mapSchoolInquiryToPipedriveOrderItems,
   parseSchoolBundleLineQuantity,
@@ -1230,6 +1237,59 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+registerTest('kraj určí obchodníka bez ohledu na zápis názvu', () => {
+  const { gabrielaSvedova, evaBukolska, jiriPabian, ivetaFiserova } = PIPEDRIVE_SALES_USER_IDS;
+
+  /** Zdroje píšou kraj různě: skoly.csv „Jihomoravský kraj", adresa v Pipedrive
+   *  jen „Praha", ARES „Hlavní město Praha". Všechny musí trefit stejný řádek. */
+  assert.equal(resolveRegionOwnerUserId('Jihomoravský kraj'), evaBukolska);
+  assert.equal(resolveRegionOwnerUserId('jihomoravsky'), evaBukolska);
+  assert.equal(resolveRegionOwnerUserId('Hlavní město Praha'), ivetaFiserova);
+  assert.equal(resolveRegionOwnerUserId('Praha'), ivetaFiserova);
+  assert.equal(resolveRegionOwnerUserId('Kraj Vysočina'), jiriPabian);
+  assert.equal(resolveRegionOwnerUserId('Vysočina'), jiriPabian);
+  assert.equal(resolveRegionOwnerUserId('Středočeský kraj'), gabrielaSvedova);
+
+  /** Neznámý kraj nesmí spadnout na náhodného člověka — vrací null a volající
+   *  pokračuje dalším krokem kaskády. */
+  assert.equal(resolveRegionOwnerUserId('Dolnorakouský kraj'), null);
+  assert.equal(resolveRegionOwnerUserId(''), null);
+  assert.equal(resolveRegionOwnerUserId(undefined), null);
+
+  /** Všech 40 řádků z Make datastore 17499 se do mapy vešlo (žádná kolize klíčů). */
+  assert.equal(PIPEDRIVE_REGION_COUNT, 40);
+  assert.equal(normalizeRegionKey('  KRÁLOVÉHRADECKÝ   KRAJ '), 'kralovehradecky');
+});
+
+registerTest('poznámka happy path uvádí kódy a neříká, že se kódy nevydaly', () => {
+  const note = buildTrialDealNoteText({
+    scenario: 'trial_created',
+    contactName: 'Aneta Kopečná',
+    email: 'aneta@zsralsko.cz',
+    schoolName: 'ZŠ a MŠ Tomáše Ježka Ralsko',
+    ico: '12345678',
+    teacherCode: 'GM2EX9',
+    studentCode: 'JWCLDQ',
+    trialEndsOn: '2026-09-25',
+  });
+
+  assert.match(note, /Učitelský kód: GM2EX9 · žákovský kód: JWCLDQ/);
+  assert.match(note, /Trial běží do: 25\. 9\. 2026/);
+  /** Společné vysvětlení „kódy se nevydaly" sem nepatří — kódy se vydaly. */
+  assert.ok(!note.includes('nevznikla by v CRM žádná stopa'));
+  assert.match(note, /Odkud obchod je:/);
+  /** Obchodník nesmí posílat kódy sám — udělá to CTA 01 z jeho schránky. */
+  assert.match(note, /Trial CTA 01/);
+
+  /** Chybové větve vysvětlení dál mají. */
+  const rejected = buildTrialDealNoteText({ scenario: 'email_used_in_school', contactName: 'Petr Malý' });
+  assert.ok(rejected.includes(TRIAL_PIPEDRIVE_LABEL_NAME));
+
+  assert.equal(trialEndDateCs('2026-01-05'), '5. 1. 2026');
+  assert.equal(trialEndDateCs('nesmysl'), 'nesmysl');
+  assert.equal(trialEndDateCs(''), '');
 });
 
 registerTest('poznámka trial obchodu vysvětlí česky, proč nevznikly kódy a proč je to trial 2.0', () => {

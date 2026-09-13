@@ -50,12 +50,14 @@ import { normalizeCzechPhone, PHONE_CZ_HINT } from '../../../utils/phoneCZ.ts';
 import {
   buildTrialActivityNoteText,
   buildTrialDealNoteHtml,
+  trialEndDateCs,
   type TrialPipedriveScenario,
 } from '../../../../supabase/functions/_shared/trial-pipedrive-note.ts';
 import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtmlNormalize.ts';
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
 import { distributorContactPersonName } from '../../../../supabase/functions/_shared/pipedrive-distributor-person.ts';
+import { resolveRegionOwnerUserId } from '../../../../supabase/functions/_shared/pipedrive-region-owner.ts';
 import {
   PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS,
   buildPipedrivePersonSubjectFieldPayload,
@@ -15448,8 +15450,14 @@ function redirectPipedriveOwnerUserId(userId: number | null, ctx: string): numbe
  * Pořadí priorit:
  *   1) `explicitOwnerUserId` — pokud caller (typicky admin) výslovně určí vlastníka.
  *   2) Custom org pole „current deal owner" (ID 4056, key `7825f3fdbf7a73a202047a54a429f556a5406b81`).
- *   3) `lookupOwnerUserId` — vlastník odvozený z existujících dealů organizace (`upsertPipedriveSchoolOrganization`).
- *   4) `fallbackOwnerUserId` — ENV fallback (např. `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`).
+ *   3) `region` — kraj školy → obchodník podle rozdělení území
+ *      (`_shared/pipedrive-region-owner.ts`, převzato z Make datastore 17499).
+ *   4) `lookupOwnerUserId` — vlastník odvozený z existujících dealů organizace (`upsertPipedriveSchoolOrganization`).
+ *   5) `fallbackOwnerUserId` — ENV fallback (např. `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`).
+ *
+ * Kraj je **před** lookupem z existujících dealů schválně: rozdělení území je
+ * aktuální rozhodnutí obchodu, kdežto vlastník starého dealu je historie a bývá
+ * to člověk, který už region nemá. Stejné pořadí drží i Make.
  *
  * Na výsledek se nakonec vždy aplikuje `redirectPipedriveOwnerUserId()` — i na explicitní
  * override, protože i ten může mířit na zablokovaného obchodníka.
@@ -15462,6 +15470,9 @@ async function resolvePipedriveDealOwnerUserId(
   params: {
     orgId?: number | null;
     explicitOwnerUserId?: number | null;
+    /** Kraj školy (např. „Jihomoravský kraj") — ze `skoly.csv` podle IČO nebo
+     *  z adresy organizace v Pipedrive. Prázdný kraj krok jen přeskočí. */
+    region?: string | null;
     lookupOwnerUserId?: number | null;
     fallbackOwnerUserId?: number | null;
     contextLabel?: string;
@@ -15483,6 +15494,16 @@ async function resolvePipedriveDealOwnerUserId(
       console.log(`[${ctx}] owner z org pole current_deal_owner (ID 4056): user_id=${fromOrgField}`);
       return redirectPipedriveOwnerUserId(fromOrgField, ctx);
     }
+  }
+
+  const region = String(params.region ?? '').trim();
+  if (region) {
+    const fromRegion = resolveRegionOwnerUserId(region);
+    if (fromRegion) {
+      console.log(`[${ctx}] owner podle kraje „${region}": user_id=${fromRegion}`);
+      return redirectPipedriveOwnerUserId(fromRegion, ctx);
+    }
+    console.log(`[${ctx}] kraj „${region}" není v mapě území — pokračuji dál.`);
   }
 
   const fromLookup = params.lookupOwnerUserId != null && params.lookupOwnerUserId > 0
@@ -15563,6 +15584,99 @@ async function resolveSchoolOrderDealFieldPayloadValue(
   }
   const fallback = optionIds.length === 1 ? optionIds[0] : optionIds.map(String).join(',');
   return { [key]: fallback };
+}
+
+/**
+ * Najde deal pole podle **názvu** a v něm volbu podle **popisku** — a vrátí
+ * kousek payloadu, který se dá přimíchat do `POST /deals`.
+ *
+ * Proč podle názvu a ne podle ID: tyhle dvě hodnoty čte automatizace
+ * „Trial CTA 01" jako podmínky. Kdyby se hash klíče nebo ID volby změnily,
+ * natvrdo zapsaná hodnota by tiše přestala sedět, obchod by podmínkou neprošel
+ * a zákazníkovi by nepřišel první e-mail — bez jediné chyby v logu. Název
+ * „Case" a popisek „New" jsou to, co má obchod v Pipedrive před očima, a když
+ * je někdo přejmenuje, tenhle kód to nahlásí.
+ */
+async function resolveDealFieldOptionPayloadByName(
+  apiToken: string,
+  fieldName: string,
+  optionLabel: string,
+  logPrefix: string,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const map = await getPipedriveFieldMap(apiToken, '/dealFields');
+    const wantedField = normalizePipedriveFieldName(fieldName);
+    const entry = Object.entries(map).find(([, meta]) => normalizePipedriveFieldName(meta.name) === wantedField);
+    if (!entry) {
+      console.log(`[${logPrefix}] deal pole „${fieldName}" v Pipedrive není — přeskakuji.`);
+      return null;
+    }
+    const [key, meta] = entry;
+    const wantedOption = normalizePipedriveFieldName(optionLabel);
+    const option = Object.entries(meta.options).find(
+      ([, label]) => normalizePipedriveFieldName(label) === wantedOption,
+    );
+    if (!option) {
+      console.log(`[${logPrefix}] deal pole „${fieldName}" nemá volbu „${optionLabel}" — přeskakuji.`);
+      return null;
+    }
+    return { [key]: Number(option[0]) };
+  } catch (error: any) {
+    console.log(`[${logPrefix}] deal pole „${fieldName}" selhalo: ${error?.message ?? error}`);
+    return null;
+  }
+}
+
+/**
+ * Název pole v Pipedrive na tvar, ve kterém se dá porovnávat. Sjednocuje
+ * pomlčky (pole se jmenuje „Trial – Teacher Code" s en dashem, v kódu se píše
+ * s obyčejným spojovníkem), mezery a velikost písmen.
+ */
+function normalizePipedriveFieldName(name: unknown): string {
+  return String(name ?? '')
+    .replace(/[\u2010-\u2015]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/** Hash klíč deal pole podle jeho názvu (např. „End of Trial"). `null`, když
+ *  pole neexistuje — volající pak hodnotu nezapíše, místo aby ji zapsal jinam. */
+async function resolveDealFieldKeyByName(
+  apiToken: string,
+  fieldName: string,
+  logPrefix: string,
+): Promise<string | null> {
+  try {
+    const map = await getPipedriveFieldMap(apiToken, '/dealFields');
+    const wanted = normalizePipedriveFieldName(fieldName);
+    const entry = Object.entries(map).find(([, meta]) => normalizePipedriveFieldName(meta.name) === wanted);
+    if (!entry) {
+      console.log(`[${logPrefix}] deal pole „${fieldName}" v Pipedrive není — hodnotu nezapisuji.`);
+      return null;
+    }
+    return entry[0];
+  } catch (error: any) {
+    console.log(`[${logPrefix}] hledání deal pole „${fieldName}" selhalo: ${error?.message ?? error}`);
+    return null;
+  }
+}
+
+/** Nativní štítek dealu (pole `label`) podle jména — stejnou cestou a ze stejného
+ *  důvodu jako výše. Vrací ID volby, `null` když štítek neexistuje. */
+async function resolveDealNativeLabelIdByName(
+  apiToken: string,
+  labelName: string,
+  logPrefix: string,
+): Promise<number | null> {
+  const idToName = await getPipedriveDealLabelIdToName(apiToken);
+  const wanted = normalizePipedriveFieldName(labelName);
+  const hit = Object.entries(idToName).find(([, name]) => normalizePipedriveFieldName(name) === wanted);
+  if (!hit) {
+    console.log(`[${logPrefix}] nativní štítek „${labelName}" mezi štítky dealů není — přeskakuji.`);
+    return null;
+  }
+  return Number(hit[0]) || null;
 }
 
 async function searchPipedrivePersonByEmailGlobal(apiToken: string, email: string): Promise<any | null> {
@@ -16227,9 +16341,56 @@ interface TrialPipedriveScenarioConfig {
   };
   /** Lidsky čitelný prefix do logů (např. „Pipedrive trial upsell"). */
   logPrefix: string;
+  /**
+   * Zakládat vlastní úkol pro obchodníka. U happy path **ne**: automatizace
+   * „Trial CTA 01" si po vzniku obchodu založí svoje aktivity sama (CTA 02,
+   * CTA 03 a „New lead - Call"), náš úkol by byl čtvrtý navíc.
+   */
+  createOwnActivity: boolean;
+  /**
+   * Doplnit do obchodu to, na čem stojí podmínky automatizace „Trial CTA 01" —
+   * nativní štítek „Trial web (interactive)" a `Case = New`. Jen u happy path;
+   * chybové větve mají e-mail zákazníkovi záměrně nechodit, ozvat se má člověk.
+   */
+  applyAutomationFields: boolean;
+  /**
+   * Nezakládat druhý obchod, když už škola nějaký otevřený trial obchod má.
+   * U happy path **vypnuto**: o tom, jestli škola smí nový trial dostat, už
+   * rozhodl Kabinet (jinak by kódy nevydal). Starý otevřený obchod z loňska
+   * není důvod obchod nezaložit — a bez nového obchodu by se nespustila CTA 01
+   * a zákazník by nedostal kódy, aniž by cokoli spadlo.
+   */
+  deduplicateOpenTrialDeal: boolean;
 }
 
 function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): TrialPipedriveScenarioConfig {
+  if (scenario === 'trial_created') {
+    /** Happy path — kódy vydal Kabinet, obchod zakládá web. Dřív ho zakládal
+     *  scénář Make „[CZ1] Trial form"; jediné, co po něm musí zůstat stejné, je
+     *  podoba obchodu, protože na ni jsou navěšené automatizace CTA 01–03. */
+    return {
+      pipelineId: 6,
+      stageId: 37,
+      fallbackOwnerUserId: 18026774,
+      envKeys: {
+        pipelineId: 'PIPEDRIVE_TRIAL_CREATED_PIPELINE_ID',
+        stageId: 'PIPEDRIVE_TRIAL_CREATED_STAGE_ID',
+        activityType: 'PIPEDRIVE_TRIAL_CREATED_ACTIVITY_TYPE',
+        activitySubject: 'PIPEDRIVE_TRIAL_CREATED_ACTIVITY_SUBJECT',
+        activityNote: 'PIPEDRIVE_TRIAL_CREATED_ACTIVITY_NOTE',
+        fallbackOwnerId: 'PIPEDRIVE_TRIAL_CREATED_FALLBACK_OWNER_ID',
+      },
+      defaults: {
+        activityType: 'call',
+        activitySubject: 'Nový trial z webu',
+        activityNote: 'Škola si z webu vyzvedla zkušební přístup.',
+      },
+      logPrefix: 'Pipedrive trial created',
+      createOwnActivity: false,
+      applyAutomationFields: true,
+      deduplicateOpenTrialDeal: false,
+    };
+  }
   if (scenario === 'active_subscription') {
     return {
       pipelineId: 7,
@@ -16249,6 +16410,9 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Zákazník žádá o trial.',
       },
       logPrefix: 'Pipedrive trial upsell',
+      createOwnActivity: true,
+      applyAutomationFields: false,
+      deduplicateOpenTrialDeal: true,
     };
   }
   if (scenario === 'existing_active_trial') {
@@ -16272,6 +16436,9 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Škola aktuálně má trial a žádá si o další.',
       },
       logPrefix: 'Pipedrive trial existing-active',
+      createOwnActivity: true,
+      applyAutomationFields: false,
+      deduplicateOpenTrialDeal: true,
     };
   }
   if (scenario === 'open_deal_in_progress') {
@@ -16296,6 +16463,9 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
         activityNote: 'Škola má v CRM rozjednaný obchod a vyplnila webový formulář o trial.',
       },
       logPrefix: 'Pipedrive trial open-deal',
+      createOwnActivity: true,
+      applyAutomationFields: false,
+      deduplicateOpenTrialDeal: true,
     };
   }
   /** email_used_in_school = opětovná žádost o kód v akviziční pipeline. */
@@ -16319,7 +16489,122 @@ function getTrialPipedriveScenarioConfig(scenario: TrialPipedriveScenario): Tria
       activityNote: 'Opětovná žádost o kód.',
     },
     logPrefix: 'Pipedrive trial re-request',
+    createOwnActivity: true,
+    applyAutomationFields: false,
+    deduplicateOpenTrialDeal: true,
   };
+}
+
+/**
+ * Kraj školy pro rozdělení území. Dva zdroje, v tomhle pořadí:
+ *
+ *   1. `skoly.csv` podle IČO — rejstřík MŠMT, kraj má vyplněný spolehlivě
+ *      a nezávisí na tom, jestli je organizace v Pipedrive nová.
+ *   2. adresa organizace v Pipedrive (`address_admin_area_level_1`) — záchrana
+ *      pro školy, které v CSV nejsou (soukromé, nové, IČO nepadlo do shody).
+ *
+ * Vrací prázdný řetězec, když kraj nezjistíme — volající pak krok přeskočí.
+ * Chyba při čtení není důvod nezaložit deal, proto se všechno tiší do logu.
+ */
+async function resolveSchoolRegionForOwner(
+  apiToken: string,
+  params: { ico?: string | null; orgId?: number | null; logPrefix: string },
+): Promise<string> {
+  const ico = String(params.ico || '').replace(/\D/g, '');
+  if (ico) {
+    try {
+      const schools = await loadSchoolsCache();
+      const hit = schools.find((s) => s.ico === ico);
+      const kraj = String(hit?.kraj || '').trim();
+      if (kraj) {
+        console.log(`[${params.logPrefix}] kraj z rejstříku škol podle IČO ${ico}: „${kraj}"`);
+        return kraj;
+      }
+    } catch (error: any) {
+      console.log(`[${params.logPrefix}] kraj z rejstříku škol selhal: ${error?.message ?? error}`);
+    }
+  }
+
+  const orgId = params.orgId != null && params.orgId > 0 ? params.orgId : null;
+  if (orgId) {
+    try {
+      const org: any = await getPipedriveOrganization(apiToken, orgId);
+      /** v1 vrací adresu naplocho, v2 jako objekt — přečteme obojí. */
+      const kraj = String(
+        org?.address_admin_area_level_1 || org?.address?.admin_area_level_1 || '',
+      ).trim();
+      if (kraj) {
+        console.log(`[${params.logPrefix}] kraj z adresy organizace ${orgId}: „${kraj}"`);
+        return kraj;
+      }
+    } catch (error: any) {
+      console.log(`[${params.logPrefix}] kraj z organizace selhal: ${error?.message ?? error}`);
+    }
+  }
+
+  console.log(`[${params.logPrefix}] kraj se nepodařilo zjistit (IČO ${ico || '—'}, org ${orgId ?? '—'}).`);
+  return '';
+}
+
+/**
+ * Hodnotová pole trial obchodu — kódy a konec trialu. Prázdné vstupy se
+ * přeskočí, takže chybové větve (kde kódy nevznikly) volají totéž bez efektu.
+ *
+ * `End of Trial` i `End of Trial formatted` jsou dvě různá pole a Pipedrive je
+ * sám nedopočítá: první je datum pro filtry, druhé text pro e-mailové šablony.
+ * Kdo vyplní jen jedno, dostane e-mail s prázdným datem.
+ */
+async function buildTrialDealValueFields(
+  apiToken: string,
+  logPrefix: string,
+  params: { teacherCode?: string; studentCode?: string; trialEndsOn?: string },
+): Promise<Record<string, unknown>> {
+  const teacherCode = String(params.teacherCode || '').trim();
+  const studentCode = String(params.studentCode || '').trim();
+  const endsOn = String(params.trialEndsOn || '').trim();
+  const out: Record<string, unknown> = {};
+
+  const put = async (fieldName: string, value: string) => {
+    if (!value) return;
+    const key = await resolveDealFieldKeyByName(apiToken, fieldName, logPrefix);
+    if (key) out[key] = value;
+  };
+
+  await put('Trial - Teacher Code', teacherCode);
+  await put('Trial - Student Code', studentCode);
+  await put('End of Trial', endsOn);
+  await put('End of Trial formatted', trialEndDateCs(endsOn));
+  /** Očekávané uzavření = konec trialu, stejně jako to dělal scénář Make. */
+  if (endsOn) out.expected_close_date = endsOn;
+
+  return out;
+}
+
+/**
+ * Pole, na kterých stojí podmínky automatizace „Trial CTA 01": nativní štítek
+ * „Trial web (interactive)" a `Case = New`.
+ *
+ * Pozor na dvě podobná jména — `Trial web (interactive)` je **nativní štítek**
+ * dealu (pole `label`), kdežto `Trial web (interactive) - 2.0` je volba
+ * vlastního pole 12463, které si e-shop zavedl pro své chybové větve. Obchod
+ * založený scénářem Make nese ten první; automatizace se dívá na něj.
+ */
+async function buildTrialAutomationDealFields(
+  apiToken: string,
+  logPrefix: string,
+): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+
+  const labelName = (Deno.env.get('PIPEDRIVE_TRIAL_NATIVE_LABEL_NAME') || 'Trial web (interactive)').trim();
+  const labelId = await resolveDealNativeLabelIdByName(apiToken, labelName, logPrefix);
+  if (labelId) out.label = labelId;
+
+  const caseField = (Deno.env.get('PIPEDRIVE_TRIAL_CASE_FIELD_NAME') || 'Case').trim();
+  const caseOption = (Deno.env.get('PIPEDRIVE_TRIAL_CASE_OPTION_NAME') || 'New').trim();
+  const casePayload = await resolveDealFieldOptionPayloadByName(apiToken, caseField, caseOption, logPrefix);
+  if (casePayload) Object.assign(out, casePayload);
+
+  return out;
 }
 
 /**
@@ -16370,6 +16655,12 @@ async function syncTrialPipedriveDeal(
     legacyReason?: string;
     /** Hláška, kterou zákazník viděl na webu — do poznámky. */
     legacyMessage?: string;
+    /** Happy path: kódy vydané Kabinetem a konec trialu v ISO. Jdou do polí
+     *  obchodu **už při zakládání**, protože je čte šablona CTA 01, která se
+     *  spouští na „Deal added" — pozdější doplnění je pozdě. */
+    teacherCode?: string;
+    studentCode?: string;
+    trialEndsOn?: string;
   },
 ): Promise<{
   skipped: boolean;
@@ -16422,8 +16713,17 @@ async function syncTrialPipedriveDeal(
     cfg.fallbackOwnerUserId ||
     pipedriveEnvInt('PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID', 0);
 
+  /** Kraj hledáme vždy — u happy path rozhoduje o tom, ze které schránky
+   *  zákazníkovi odejde CTA 01, u ostatních scénářů komu úkol spadne. */
+  const region = await resolveSchoolRegionForOwner(apiToken, {
+    ico,
+    orgId: orgLookup.orgId,
+    logPrefix: cfg.logPrefix,
+  });
+
   const ownerUserId = await resolvePipedriveDealOwnerUserId(apiToken, {
     orgId: orgLookup.orgId,
+    region,
     lookupOwnerUserId: orgLookup.ownerUserId,
     fallbackOwnerUserId: fallbackOwnerId,
     contextLabel: cfg.logPrefix,
@@ -16448,25 +16748,31 @@ async function syncTrialPipedriveDeal(
    *  v `summarizePipedriveSchoolState`). V tom případě nezakládáme duplicit — jen
    *  přidáme aktivitu (pro obchodníka stopa, že žádost přišla znovu).
    *  Žádné omezení na konkrétní pipeline/label: o duplicitu jde i tehdy, když je
-   *  otevřený trial v jiné pipeline. */
+   *  otevřený trial v jiné pipeline.
+   *  U happy path je dedup vypnutý (`deduplicateOpenTrialDeal`) — viz komentář
+   *  u toho přepínače. */
   let dealId: number | null = null;
   let deduplicated = false;
-  try {
-    const existingDeals = await getPipedriveOrganizationDeals(apiToken, orgLookup.orgId).catch(() => []);
-    const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken).catch(() => ({} as Record<string, string>));
-    const existingTrialDeal = existingDeals.find(
-      (d: any) =>
-        String(d?.status || '').toLowerCase() === 'open' && isPipedriveTrialDeal(d, dealLabelIdToName),
-    );
-    if (existingTrialDeal) {
-      dealId = parsePipedriveNumericId(existingTrialDeal.id);
-      deduplicated = true;
-      console.log(
-        `[${cfg.logPrefix}] org ${orgLookup.orgId} už má aktivní (otevřený) trial deal id=${dealId} — nezakládám nový, jen přidávám aktivitu`,
+  if (!cfg.deduplicateOpenTrialDeal) {
+    console.log(`[${cfg.logPrefix}] dedup vypnutý — o nároku na trial rozhodl Kabinet, obchod zakládám vždy.`);
+  } else {
+    try {
+      const existingDeals = await getPipedriveOrganizationDeals(apiToken, orgLookup.orgId).catch(() => []);
+      const dealLabelIdToName = await getPipedriveDealLabelIdToName(apiToken).catch(() => ({} as Record<string, string>));
+      const existingTrialDeal = existingDeals.find(
+        (d: any) =>
+          String(d?.status || '').toLowerCase() === 'open' && isPipedriveTrialDeal(d, dealLabelIdToName),
       );
+      if (existingTrialDeal) {
+        dealId = parsePipedriveNumericId(existingTrialDeal.id);
+        deduplicated = true;
+        console.log(
+          `[${cfg.logPrefix}] org ${orgLookup.orgId} už má aktivní (otevřený) trial deal id=${dealId} — nezakládám nový, jen přidávám aktivitu`,
+        );
+      }
+    } catch (error: any) {
+      console.log(`[${cfg.logPrefix}] dedup check error: ${error.message}`);
     }
-  } catch (error: any) {
-    console.log(`[${cfg.logPrefix}] dedup check error: ${error.message}`);
   }
 
   if (!dealId) {
@@ -16484,6 +16790,22 @@ async function syncTrialPipedriveDeal(
     if (dealOwnerId != null && dealOwnerId > 0) payload.user_id = dealOwnerId;
     if (personId) payload.person_id = personId;
     if (labelExtra && Object.keys(labelExtra).length) Object.assign(payload, labelExtra);
+
+    /** Kódy a konec trialu patří do **zakládacího** requestu. Automatizace
+     *  „Trial CTA 01" spouští na „Deal added" a kódy bere z polí obchodu —
+     *  kdyby se doplnily až následným PUT, odešel by e-mail bez nich. */
+    Object.assign(payload, await buildTrialDealValueFields(apiToken, cfg.logPrefix, params));
+
+    /** Podmínky automatizace: nativní štítek a `Case = New`. Bez nich CTA 01
+     *  neprojde a učiteli nedorazí kódy — a nikde to nespadne, proto to logujeme
+     *  nahlas i v úspěšném průchodu. */
+    if (cfg.applyAutomationFields) {
+      const automationFields = await buildTrialAutomationDealFields(apiToken, cfg.logPrefix);
+      Object.assign(payload, automationFields);
+      console.log(
+        `[${cfg.logPrefix}] pole pro CTA 01: ${Object.keys(automationFields).join(', ') || 'ŽÁDNÁ — automatizace se nespustí'}`,
+      );
+    }
     try {
       const created = await pipedriveRequest<any>(apiToken, '/deals', {
         method: 'POST',
@@ -16511,6 +16833,9 @@ async function syncTrialPipedriveDeal(
     schoolStages,
     legacyReason,
     legacyMessage,
+    teacherCode: params.teacherCode,
+    studentCode: params.studentCode,
+    trialEndsOn: params.trialEndsOn,
     deduplicated,
     submittedAt: new Date().toLocaleString('cs-CZ', {
       timeZone: 'Europe/Prague',
@@ -16541,8 +16866,12 @@ async function syncTrialPipedriveDeal(
     }
   }
 
+  /** Úkol zakládáme jen tam, kde ho po nás nikdo neudělá. U happy path si
+   *  aktivity („New lead - Call", CTA 02, CTA 03) zakládá automatizace sama. */
   let activity: any = null;
-  if (ownerUserId && dealId) {
+  if (!cfg.createOwnActivity) {
+    console.log(`[${cfg.logPrefix}] vlastní úkol nezakládám — aktivity si vytvoří automatizace CTA 01.`);
+  } else if (ownerUserId && dealId) {
     const { todayISO } = buildTodayContextBlock();
     const subject = (Deno.env.get(cfg.envKeys.activitySubject) || '').trim()
       || cfg.defaults.activitySubject
@@ -16570,7 +16899,7 @@ async function syncTrialPipedriveDeal(
     }
   } else if (!ownerUserId) {
     console.log(
-      `[${cfg.logPrefix}] activity skipped — žádný owner pro org ${orgLookup.orgId} (current_deal_owner pole prázdné, žádné dealy a fallback owner=0).`,
+      `[${cfg.logPrefix}] activity skipped — žádný owner pro org ${orgLookup.orgId} (current_deal_owner pole prázdné, kraj neznámý, žádné dealy a fallback owner=0).`,
     );
   }
 
@@ -17036,10 +17365,30 @@ function readTrialStringArrayField(body: Record<string, unknown>, ...keys: strin
   return [];
 }
 
+/**
+ * Happy path smí zakládat obchod teprve tehdy, až se vypne scénář Make
+ * „[CZ1] Trial form" — jinak by ke každému trialu vznikly obchody dva a
+ * automatizace CTA 01 by odeslala kódy dvakrát.
+ *
+ * Je to jeden ENV přepínač na serveru, ne rozhodnutí ve frontendu: přepnout se
+ * musí ve chvíli, kdy Dan scénář v Make vypne, a to nemá čekat na nasazení webu.
+ * Výchozí stav je vypnuto.
+ */
+function trialCreatedPipedriveEnabled(): boolean {
+  const raw = (Deno.env.get('TRIAL_CREATED_PIPEDRIVE_ENABLED') || '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+}
+
 async function handleTrialPipedriveEndpoint(
   c: Parameters<Parameters<typeof app.post>[1]>[0],
   scenario: TrialPipedriveScenario,
 ) {
+  if (scenario === 'trial_created' && !trialCreatedPipedriveEnabled()) {
+    console.log(
+      '[Pipedrive trial created] vypnuto (TRIAL_CREATED_PIPEDRIVE_ENABLED) — obchod zakládá scénář Make.',
+    );
+    return c.json({ skipped: true, reason: 'disabled', scenario });
+  }
   try {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     const schoolName = String(body.schoolName ?? body.school ?? '').trim();
@@ -17066,6 +17415,12 @@ async function handleTrialPipedriveEndpoint(
       return c.json({ skipped: true, reason: 'invalid_email' }, 400);
     }
 
+    /** Kódy a konec trialu posílá frontend jen u happy path (`trial_created`) —
+     *  ostatní scénáře je nemají a pole zůstanou prázdná. */
+    const teacherCode = String(body.teacherCode ?? '').trim().slice(0, 40);
+    const studentCode = String(body.studentCode ?? '').trim().slice(0, 40);
+    const trialEndsOn = String(body.trialEndsOn ?? body.endsOn ?? '').trim().slice(0, 10);
+
     const result = await syncTrialPipedriveDeal(scenario, {
       schoolName,
       ico: icoRaw,
@@ -17077,6 +17432,9 @@ async function handleTrialPipedriveEndpoint(
       schoolStages,
       legacyReason,
       legacyMessage,
+      teacherCode,
+      studentCode,
+      trialEndsOn,
     });
 
     return c.json({ success: true, ...result });
@@ -17265,6 +17623,32 @@ app.post('/make-server-93a20b6f/trial-existing-active-pipedrive', (c) =>
  */
 app.post('/make-server-93a20b6f/trial-open-deal-pipedrive', (c) =>
   handleTrialPipedriveEndpoint(c, 'open_deal_in_progress'));
+
+/**
+ * POST /trial-created-pipedrive
+ *
+ * Happy path: Kabinet vydal zkušební kódy a **obchod zakládá web**. Dřív ho
+ * zakládal scénář Make „[CZ1] Trial form" nad odpovědí starého API; ten padá
+ * spolu se starým API a tohle je jeho náhrada.
+ *
+ * Obchod musí vypadat úplně stejně jako ten od Make, protože na jeho podobu
+ * jsou navěšené automatizace „Trial CTA 01–03" — a **CTA 01 je jediné, co
+ * zákazníkovi pošle přístupové kódy**. Proto se v jednom `POST /deals` posílá:
+ *
+ *   - pipeline `CZ‑Sales‑Akvizice‑CZ1` (6) / stage `Lead / Prospekt [CZ1]` (37)
+ *   - nativní štítek „Trial web (interactive)" a `Case = New`
+ *   - navázaná kontaktní osoba (CTA 01 posílá na „Deal contact person email")
+ *   - učitelský i žákovský kód a konec trialu (bere je šablona e-mailu)
+ *   - vlastník podle kraje — automatizace **není jedna centrální**, každý
+ *     obchodník má vlastní kopii nastavenou na sebe, takže vlastník určuje,
+ *     ze které schránky e-mail zákazníkovi odejde
+ *
+ * Nic z toho nejde doplnit dodatečným PUT: trigger je „Deal added" a vyhodnotí
+ * se do vteřiny. Vlastní úkol tenhle scénář nezakládá — aktivity si vytvoří
+ * automatizace sama.
+ */
+app.post('/make-server-93a20b6f/trial-created-pipedrive', (c) =>
+  handleTrialPipedriveEndpoint(c, 'trial_created'));
 
 /**
  * POST /trial-person-fields-pipedrive
