@@ -15397,6 +15397,50 @@ async function getOrganizationCurrentDealOwnerUserId(
 }
 
 /**
+ * Přesměrování vlastníka dealu: `z user_id` → `na user_id`.
+ *
+ * Zadání: na Daniela Ondráška (11629944) nemá padat žádný nový deal, všechno jde na
+ * Gabrielu Švédovou (18026774). Daniel se přitom jako vlastník objevuje z několika
+ * nezávislých míst — jako obchodník pro Slovensko, jako vlastník řady organizací
+ * (a tedy i přes `current_deal_owner`) a přes vlastníky starších dealů. Proto to není
+ * úprava jedné tabulky, ale poslední krok nad výsledkem celého rozhodování.
+ *
+ * Formát ENV `PIPEDRIVE_OWNER_REDIRECTS`: `"z:na,z:na"`, např. `"11629944:18026774"`.
+ * ID obchodníků potvrzená proti Pipedrive 13. 9. 2026:
+ *   Daniel Ondrášek 11629944 · Gabriela Švédová 18026774 · Iveta Fišerová 12795779
+ *   Eva Bukolská 14063023 · Jiří Pabián 12116814 · Eduard Malachovský 12797715
+ */
+const PIPEDRIVE_OWNER_REDIRECTS_DEFAULT = '11629944:18026774';
+
+let pipedriveOwnerRedirectsCache: Map<number, number> | null = null;
+
+function pipedriveOwnerRedirects(): Map<number, number> {
+  if (pipedriveOwnerRedirectsCache) return pipedriveOwnerRedirectsCache;
+  const raw = (Deno.env.get('PIPEDRIVE_OWNER_REDIRECTS') || PIPEDRIVE_OWNER_REDIRECTS_DEFAULT).trim();
+  const map = new Map<number, number>();
+  for (const pair of raw.split(',')) {
+    const [from, to] = pair.split(':').map((p) => Number.parseInt(p.trim(), 10));
+    if (Number.isFinite(from) && Number.isFinite(to) && from > 0 && to > 0 && from !== to) {
+      map.set(from, to);
+    }
+  }
+  pipedriveOwnerRedirectsCache = map;
+  return map;
+}
+
+/**
+ * Aplikuje přesměrování na jedno user_id. Řetězení se schválně neprovádí — když by
+ * A→B a B→C, zůstane u B; chybná konfigurace tak nemůže skončit v nekonečné smyčce.
+ */
+function redirectPipedriveOwnerUserId(userId: number | null, ctx: string): number | null {
+  if (userId == null || userId <= 0) return userId;
+  const target = pipedriveOwnerRedirects().get(userId);
+  if (!target) return userId;
+  console.log(`[${ctx}] owner ${userId} přesměrován na ${target} (PIPEDRIVE_OWNER_REDIRECTS)`);
+  return target;
+}
+
+/**
  * Sjednocená logika pro nastavení vlastníka dealu (`user_id`) napříč všemi cestami,
  * které v Pipedrivu zakládají deal (e‑shop kartová/převodová objednávka, školní objednávka,
  * admin manuální /admin/pipedrive/deals).
@@ -15407,8 +15451,11 @@ async function getOrganizationCurrentDealOwnerUserId(
  *   3) `lookupOwnerUserId` — vlastník odvozený z existujících dealů organizace (`upsertPipedriveSchoolOrganization`).
  *   4) `fallbackOwnerUserId` — ENV fallback (např. `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID`).
  *
+ * Na výsledek se nakonec vždy aplikuje `redirectPipedriveOwnerUserId()` — i na explicitní
+ * override, protože i ten může mířit na zablokovaného obchodníka.
+ *
  * Bez `orgId` (typicky čistě B2C bez organizace) se vrací `null` a deal převezme vlastník
- * držitel API tokenu — tam nemáme z čeho čerpat.
+ * držitel API tokenu — tam nemáme z čeho čerpat, a tedy ani co přesměrovat.
  */
 async function resolvePipedriveDealOwnerUserId(
   apiToken: string,
@@ -15426,7 +15473,7 @@ async function resolvePipedriveDealOwnerUserId(
     : null;
   if (explicit) {
     console.log(`[${ctx}] owner z explicitního overrideu: user_id=${explicit}`);
-    return explicit;
+    return redirectPipedriveOwnerUserId(explicit, ctx);
   }
 
   const orgId = params.orgId != null && params.orgId > 0 ? params.orgId : null;
@@ -15434,7 +15481,7 @@ async function resolvePipedriveDealOwnerUserId(
     const fromOrgField = await getOrganizationCurrentDealOwnerUserId(apiToken, orgId);
     if (fromOrgField) {
       console.log(`[${ctx}] owner z org pole current_deal_owner (ID 4056): user_id=${fromOrgField}`);
-      return fromOrgField;
+      return redirectPipedriveOwnerUserId(fromOrgField, ctx);
     }
   }
 
@@ -15443,7 +15490,7 @@ async function resolvePipedriveDealOwnerUserId(
     : null;
   if (fromLookup) {
     console.log(`[${ctx}] owner z lookupu existujících dealů: user_id=${fromLookup} (current_deal_owner prázdné)`);
-    return fromLookup;
+    return redirectPipedriveOwnerUserId(fromLookup, ctx);
   }
 
   const fallback = params.fallbackOwnerUserId != null && params.fallbackOwnerUserId > 0
@@ -15451,7 +15498,7 @@ async function resolvePipedriveDealOwnerUserId(
     : null;
   if (fallback) {
     console.log(`[${ctx}] owner z ENV fallbacku: user_id=${fallback}`);
-    return fallback;
+    return redirectPipedriveOwnerUserId(fallback, ctx);
   }
 
   console.log(`[${ctx}] žádný owner — deal převezme vlastníka API tokenu.`);
@@ -16077,7 +16124,10 @@ async function createPipedriveDeal(
 ) {
   const payload: Record<string, any> = { title: params.title, org_id: params.orgId };
   if (params.personId) payload.person_id = params.personId;
-  if (params.ownerId) payload.user_id = params.ownerId;
+  // Poslední brána před zápisem: i kdyby owner přišel odjinud než z
+  // resolvePipedriveDealOwnerUserId(), přesměrování musí platit.
+  const ownerId = redirectPipedriveOwnerUserId(params.ownerId ?? null, 'createPipedriveDeal');
+  if (ownerId) payload.user_id = ownerId;
   if (params.value != null && Number.isFinite(params.value)) payload.value = params.value;
   if (params.currency) payload.currency = params.currency;
 
@@ -16129,7 +16179,9 @@ async function createPipedriveActivity(
 ) {
   const payload: Record<string, any> = {
     subject: params.subject,
-    user_id: params.userId,
+    // Úkol patří k dealu, takže řešitele přesměrováváme stejně jako vlastníka —
+    // jinak by deal měl Gabrielu a úkol k němu Daniela.
+    user_id: redirectPipedriveOwnerUserId(params.userId ?? null, 'Pipedrive aktivita'),
     due_date: params.dueDate,
     type: params.type || 'task',
   };
@@ -16428,7 +16480,8 @@ async function syncTrialPipedriveDeal(
       pipeline_id: pipelineId,
       stage_id: stageId,
     };
-    if (ownerUserId != null && ownerUserId > 0) payload.user_id = ownerUserId;
+    const dealOwnerId = redirectPipedriveOwnerUserId(ownerUserId ?? null, 'trial deal');
+    if (dealOwnerId != null && dealOwnerId > 0) payload.user_id = dealOwnerId;
     if (personId) payload.person_id = personId;
     if (labelExtra && Object.keys(labelExtra).length) Object.assign(payload, labelExtra);
     try {
