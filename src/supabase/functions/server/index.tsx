@@ -16581,13 +16581,15 @@ async function buildTrialDealValueFields(
 }
 
 /**
- * Pole, na kterých stojí podmínky automatizace „Trial CTA 01": nativní štítek
+ * Pole, na kterých stojí podmínky automatizace „Trial CTA 01": štítek
  * „Trial web (interactive)" a `Case = New`.
  *
- * Pozor na dvě podobná jména — `Trial web (interactive)` je **nativní štítek**
- * dealu (pole `label`), kdežto `Trial web (interactive) - 2.0` je volba
- * vlastního pole 12463, které si e-shop zavedl pro své chybové větve. Obchod
- * založený scénářem Make nese ten první; automatizace se dívá na něj.
+ * Pozor na dvě podobné volby **téhož** štítku (pole 12463 je nativní `label`
+ * dealu): `Trial web (interactive)` (52) nese obchod od Make a na ni se
+ * automatizace chytá; `Trial web (interactive) - 2.0.` (359) si e-shop zavedl
+ * pro své chybové větve, kde e-mail zákazníkovi chodit **nemá**. Ověřeno na
+ * obchodu 27643: má 359, vlastníka s automatizací i navázanou osobu — a CTA 01
+ * na něm nespustila.
  */
 async function buildTrialAutomationDealFields(
   apiToken: string,
@@ -16776,7 +16778,14 @@ async function syncTrialPipedriveDeal(
   }
 
   if (!dealId) {
-    const labelExtra = await resolveSchoolOrderDealFieldPayloadValue(apiToken, labelFieldId, [labelOptionId]);
+    /** Chybové větve nesou volbu „Trial web (interactive) - 2.0." (359). Happy
+     *  path ji **nesmí** mít: je to tentýž nativní štítek dealu, jen jiná volba,
+     *  a automatizace CTA 01 poslouchá na „Trial web (interactive)" (52).
+     *  Ověřeno na obchodu 27643 — má 359, vlastníka s automatizací i osobu,
+     *  a CTA 01 na něm nespustila. */
+    const labelExtra = cfg.applyAutomationFields
+      ? null
+      : await resolveSchoolOrderDealFieldPayloadValue(apiToken, labelFieldId, [labelOptionId]);
     /** Název dealu = jen název organizace + „trial 2.0." (preferujeme jméno org
      *  z Pipedrive; fallback je název školy z formuláře, krajně IČO). */
     const titleOrg = (orgLookup.orgName || '').trim() || schoolName || (ico ? `IČO ${ico}` : 'Škola');
