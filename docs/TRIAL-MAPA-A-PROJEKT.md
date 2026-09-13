@@ -217,6 +217,80 @@ Pravidla: kdo dosáhne cíle kroku, další krok přeskočí; každé odeslání
 
 ---
 
+## 6 · Propojení s onboardingem v aplikaci
+
+E-mail sám o sobě nestačí: rozhoduje se uvnitř aplikace. Aplikace a e-mail jsou **dva kanály jedné stavové mapy**. Každý stav triálu má jeden „další krok“. Aplikace ho ukazuje uvnitř (checklist, bobánek), e-mail ho připomíná zvenku, a jen tehdy, když se v aplikaci do X hodin nestal. Co učitel udělal v aplikaci, e-mail už neposílá.
+
+### 6.1 Stavová mapa triálu
+
+| Stav | Jak se pozná | Další krok | Kanál |
+|---|---|---|---|
+| 0 založen | kódy vydány | přihlásit se | e-mail den 0, SMS s kódem (volitelně) |
+| 1 přihlášen | `app_login` | vyplnit 3 otázky | aplikace (dotazník) |
+| 2 profil | odpovědi uložené | otevřít první lekci svého tématu | aplikace (Můj start) + e-mail den 0b |
+| 3 první materiál | `library_lesson_opened` | použít ve třídě (promítnout / tisk / test) | bobánek u lekce + e-mail den 1b |
+| 4 použito ve výuce | `lesson_presented`, `worksheet_printed`, relace | pozvat kolegu | bobánek v účtu + e-mail den 5 |
+| 5 kolega | 2. uživatel | rekapitulace, licence | e-mail den 10 + lišta v aplikaci |
+| 6 PQL | stav 4 nebo 5 | obchodník s přehledem použití | Pipedrive úkol |
+| × neaktivní | žádný `app_login` do 24 h | snižovat laťku (viz větev neaktivní) | e-mail |
+
+### 6.2 Dotazník při prvním přihlášení
+
+Tři otázky, 30 sekund, každou lze přeskočit. Předvyplněné z webového formuláře, takže učitel jen potvrdí:
+
+1. **Co učíte?** chipy předmětů (u vedení školy: „pro který předmět to zvažujete“)
+2. **Které ročníky?** 1–5 / 6–9
+3. **Co vás teď čeká?** tři témata z tematického plánu pro předmět × ročník × týden roku, plus „jiné“ (textové pole) a „jen se rozhlížím“
+
+Volitelná čtvrtá: **Jak nejčastěji učíte?** tabule ve třídě / žáci na zařízeních / tisk. Rozhoduje, který materiál nabídneme první (lekce v čtenářském módu / relace ve Vividboardu / PDF).
+
+Odpovědi se ukládají do profilu učitele a do Kabinetu (`registr_people`) a jsou stejné jako chipy v e-mailu den 0. Kdo už klikl v e-mailu, dotazník nevidí; kdo vyplnil dotazník, nedostane e-mail den 0b znovu s otázkou, ale rovnou s mini-plánem.
+
+Dotazník potřebuje identitu. Krok 0 v aplikaci proto je „zabezpečit účet“ (e-mail nebo Google, aplikace to umí); bez něj se profil váže na kód školy a sdílí ho všichni učitelé školy.
+
+### 6.3 Obrazovka „Můj start“ (prvních 14 dní)
+
+Místo prázdné Knihovny se po přihlášení otevře karta pro učitelovo téma („Fyzika 7. · Rychlost, dráha, čas“) se třemi dlaždicemi: lekce, pokus, pracovní list. Pod ní checklist pěti kroků s bobánky hotovo / zbývá:
+
+1. Otevřít lekci
+2. Promítnout na tabuli (čtenářský mód)
+3. Vytisknout pracovní list
+4. Spustit test se žáky
+5. Pozvat kolegu
+
+Vpravo „3 z 5 · zbývá 9 dní“. Každý splněný krok je událost do `cs_activity_log`, takže e-mailová sekvence ho přeskočí. Po 14 dnech (nebo po splnění 5/5) se Můj start schová a zůstane běžná Knihovna.
+
+### 6.4 Bobánky v aplikaci (kontextové nápovědy)
+
+| Kde | Kdy | Text |
+|---|---|---|
+| karta lekce | po prvním otevření | „Na tabuli: zapněte čtenářský mód“ |
+| Knihovna | po druhé otevřené lekci | „K tomuhle tématu je test, opraví se sám“ |
+| po tisku PDF | ihned | „Řešení je pod zelenou fajfkou“ |
+| Můj obsah | den 3 | „Vygenerovali jsme vám list na vaše téma“ (artefakt z e-mailu den 3 je i tady) |
+| Vividboard | po první relaci | „Slovní hodnocení žáků přes AI“ |
+| Můj účet | den 5 nebo po stavu 4 | „Kódy platí pro celou školu, pošlete kolegovi“ + předvyplněný e-mail |
+| horní lišta | celý trial | „Zkušební přístup · zbývá 9 dní“; od dne 10 „Prodloužit · Kalkulace“ |
+| celá aplikace | den 13 | dialog: prodloužit o 30 dní jedním klikem |
+
+Pravidla: nejvýš jeden bobánek najednou, každý maximálně dvakrát, zmizí po splnění kroku, nikdy nepřekrývá obsah lekce.
+
+### 6.5 Mikro-dotazníky (jedna otázka, uvnitř aplikace)
+
+- **po první promítnuté lekci:** „Jak to šlo?“ 👍 / 👎 + volitelná věta. 👎 zakládá úkol pro zákaznickou péči, 👍 nabídne pozvání kolegy.
+- **den 7:** aktivní dostanou v aplikaci „Co vám chybí?“, neaktivní totéž e-mailem (nemám čas / nefunguje přihlášení / není to pro mě / poslal jsem to kolegovi).
+- **den 13:** NPS (komponenta NPSPopup už existuje) + „Chcete pokračovat?“
+- **po expiraci:** tři volby proč ne; odpověď jde do Pipedrive jako důvod, ne jako úkol volat.
+
+### 6.6 Jak se to propojí technicky
+
+- Zdroj pravdy o profilu (předmět, ročník, téma, styl výuky): profil učitele v Ultra + `registr_people`. Web formulář, e-mailové chipy i dotazník zapisují do stejných polí.
+- Zdroj pravdy o chování: `cs_activity_log` (existuje) + nové události `onboarding_step_done`, `survey_answered`, `nudge_shown` / `nudge_clicked`.
+- Kabinet čte oboje a řídí enrollment e-mailů (krok přeskočit / poslat) a PQL událost do Pipedrive.
+- Metriky navíc k funnelu: dokončení dotazníku, rozložení splněných kroků checklistu, proklik bobánků, čas do první otevřené lekce.
+
+---
+
 ## Příloha A · Kde co je
 
 | Věc | Místo |
