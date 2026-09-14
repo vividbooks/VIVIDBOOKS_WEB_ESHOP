@@ -291,6 +291,122 @@ Pravidla: nejvýš jeden bobánek najednou, každý maximálně dvakrát, zmizí
 
 ---
 
+## 7 · Otevřená aplikace bez registrace (návrh a rozvaha)
+
+Otázka z 14. 9.: pustit lidi do aplikace i bez trial formuláře, zamknout po 5 minutách a limit resetovat každý třetí den.
+
+### 7.1 Proč je ta myšlenka správná
+
+Formulář je největší zeď v celém trychtýři a data to ukazují tvrdě:
+
+- Z 3 989 webinářových tokenů (odkaz „vyzkoušejte na 14 dní“ po registraci) skončilo v aplikaci **113, tedy 2,8 %**. Ti lidé už zájem projevili a stejně formulář nevyplnili.
+- Z těch, kdo formulář vyplní, se **68 % nikdy nepřihlásí**. Platíme cenu formuláře a hodnotu z něj nedostaneme.
+- Obchodnické triály aktivují skoro 2×, protože tam formulář nahradí člověk.
+
+Závěr: **pustit lidi dovnitř dřív, než se ptáme na identitu, je správný směr.** Dnešní pořadí „formulář → kódy → možná přihlášení“ je obrácené.
+
+### 7.2 Proč konkrétně „5 minut a reset po třech dnech“ ne
+
+Čtyři důvody, každý sám o sobě dost silný:
+
+1. **Pět minut je kratší než hodnocení jedné lekce.** Medián aktivního času u web triálu je 5 minut celkem, u obchodnických 10. Učitel, který zvažuje lekci na úterý, potřebuje 10–20 minut. Odstřihnutí přijde přesně ve chvíli, kdy ho to začalo zajímat.
+2. **Může to spadnout v hodině.** Učitel promítá třídě a aplikace se zamkne. Tahle historka oběhne sborovnu rychleji než jakákoli kampaň.
+3. **Automatický reset učí čekat, ne registrovat se.** Když se limit sám obnoví ve čtvrtek, není důvod dát e-mail. Nahradili bychom lead anonymním vracejícím se návštěvníkem — a trial je cesta, po které přišlo 63–76 % platících škol.
+4. **Odpočet je nepřátelské UX u publika, které si o edtechu myslí, že jim přidává práci.** Tikající hodiny to potvrzují.
+
+### 7.3 Co místo toho: limit podle akce, ne podle času
+
+Neomezovat čas, ale **to, co vytváří hodnotu ve třídě**. Identita je odemykací klíč, ne čekání. Tři vrstvy, které navazují na existující `entitlements`:
+
+| | **0 · Nakouknout** (bez identity) | **1 · E-mail** (jedno pole) | **2 · Trial školy** (dnešní formulář) |
+|---|---|---|---|
+| Knihovna, listování | ✅ celá | ✅ | ✅ |
+| Čtení lekce, učební text | ✅ | ✅ | ✅ |
+| Tisk PDF | náhled s vodoznakem | ✅ bez vodoznaku | ✅ |
+| Řešení (zelená fajfka) | ❌ | ✅ | ✅ |
+| Písemky a testy | ❌ | ✅ náhled | ✅ |
+| Uložit vlastní materiál | ❌ | ✅ do 10 (existující kvóta) | ✅ |
+| Vividbooks AI | ❌ | 3 generování | ✅ |
+| **Žákovský kód, živá relace, výsledky** | ❌ | ❌ | ✅ |
+| Doba platnosti | neomezeně | **neomezeně** | 14 / 30 dní |
+
+Klíčové rozhodnutí: **vrstva 1 není časově omezená.** Učitel, který dá e-mail v září a vrátí se v listopadu na optiku, má větší hodnotu než ten, komu v září vyprší přístup. E-mailová sekvence pak může běžet podle tematického plánu celý rok, ne 14 dní.
+
+Vrstva 0 nemá odpočet. Když je potřeba strop proti stahování obsahu, je to počet otevřených lekcí za den (například 5) a hlásí se jako fakt („dnes jste si prohlédl 5 lekcí“), ne jako běžící čas.
+
+**Odemykání je vždy jedno kliknutí, ne formulář.** Vrstva 0 → 1 je jedno pole s e-mailem (nebo Google). Vrstva 1 → 2 je předvyplněný formulář, kde zbývá doplnit školu.
+
+### 7.4 Kde se ptát na e-mail
+
+Ne na vstupu, ale v momentě nejvyšší motivace, kdy učitel právě chce něco udělat:
+
+- klik na **Tisk** → „Pošleme vám to bez vodoznaku, kam?“
+- klik na **Řešení** → „Řešení odemkneme na e-mail“
+- klik na **Uložit kopii** → „Kam vám to máme uložit?“
+- třetí otevřená lekce jednoho předmětu → „Vidíme, že vás zajímá fyzika. Chcete plány pro 7. ročník?“
+
+Tohle je zároveň nejlepší zdroj dat o předmětu a ročníku: víme je z chování ještě dřív, než se na ně zeptáme.
+
+### 7.5 Rizika, která je nutné ošetřit
+
+1. **Žáci bez kódu.** Vrstva 0 nesmí ukázat víc než dnešní žákovský pohled: žádná řešení, písemky ani metodika. To už aplikace jako roli umí, jen se musí použít i pro anonymní návštěvu.
+2. **Otázka platících škol: „proč platíme?“** Odpověď musí být jasná dřív, než se zeptají: platí se za **třídní vrstvu** — žákovské kódy, živé relace, výsledky a hodnocení, neomezená AI a přístup pro celou sborovnu. Obchod na to potřebuje jednu větu, ne vysvětlování.
+3. **Kanibalizace triálů.** Sledovat jako hlavní riziko testu: pokud počet založených triálů klesne a počet e-mailů nevzroste násobně, test se zastaví.
+4. **Náklady a zneužití** anonymního provozu (renderování PDF, AI): strop na zařízení a IP, AI až od vrstvy 1.
+5. **Měření.** Anonymní identifikátor zařízení se musí propsat do záznamu, jakmile člověk dá e-mail. Bez toho ztratíme celý trychtýř a nedozvíme se, jestli to funguje. Tohle je nutné postavit hned, ne dodělat později.
+
+### 7.6 Jak to ověřit, aniž bychom vsadili firmu
+
+A/B test na provozu `/vyzkousejte`: polovina vidí dnešní formulář, polovina navíc tlačítko **„Prohlédnout si aplikaci hned“**. Měří se po 30 a 90 dnech:
+
+| Metrika | Co znamená |
+|---|---|
+| e-maily získané na 100 návštěv | hlavní přínos vrstvy 1 |
+| podíl návštěv, kde někdo otevřel lekci | odstranění zdi |
+| **počet založených triálů** | hlídač kanibalizace |
+| „použito ve výuce“ na 100 návštěv | skutečná aktivace |
+| placená licence do 90 dnů | konečný efekt |
+
+---
+
+## 8 · Další onboarding v aplikaci
+
+Nad rámec dotazníku, obrazovky Můj start a bobánků z kapitoly 6. Seřazeno podle poměru přínos / práce.
+
+### 8.1 Demo relace s ukázkovými žáky (největší přínos)
+
+Nejsilnější věc v produktu je test, který se sám opraví, a slovní hodnocení žáka přes AI. Učitel v triálu ji **nemá jak uvidět**: sám u počítače nemá 24 žáků. Data to potvrzují — živou relaci spustí zlomek triálů, dva a více učitelů má 2 % web triálů.
+
+Řešení: připravená **demo relace s ukázkovými odpověďmi**. Učitel klikne na „Ukázat, jak to vypadá s třídou“ a za pár vteřin vidí hotovou obrazovku výsledků: rozložení odpovědí, nejtěžší otázka, návrh slovního hodnocení. Data jsou zjevně ukázková a označená. Bez žáků, bez přípravy, bez čekání na úterý.
+
+### 8.2 „Zkusit jako žák“
+
+Přepínač u každé lekce a testu, který ukáže žákovský pohled. Odpovídá na otázku, kterou si klade každý učitel („uvidí děti řešení?“) a dnes se na ni ptají e-mailem.
+
+### 8.3 Karta „Vaše příští hodina“ na úvodu Knihovny
+
+Stejný motor, který vybírá obsah do e-mailů (předmět × ročník × týden školního roku), plní kartu na úvodní obrazovce. Učitel po přihlášení nevidí prázdný katalog, ale jednu konkrétní nabídku pro tenhle týden. Tím se e-mail a aplikace potkají na stejném obsahu.
+
+### 8.4 Prázdné obrazovky, které něco dělají
+
+- **Můj obsah** bez materiálů: ukázat vygenerovaný pracovní list z dne 3, ne prázdno.
+- **Moje třídy** („Již brzy“): místo hlášky napsat, co jde dnes — spustit relaci a vidět výsledky.
+- **Vividboard** bez tabulí: nabídnout zkopírování hotové z Knihovny, ne prázdné plátno.
+
+### 8.5 Návrat do rozdělané práce
+
+„Naposledy jste otevřel *Rychlost* — pokračovat?“ na úvodu. Řeší druhou návštěvu, což je podle externí praxe místo s největším odpadem.
+
+### 8.6 Onboarding druhého učitele
+
+Pozvánka od kolegy nese kontext: „Jana Nováková vás pozvala do Vividbooks. Učíte taky fyziku?“ Nový člověk dostane vlastní dotazník a vlastní Můj start, ne cizí téma.
+
+### 8.7 Co měřit navíc
+
+Dokončení dotazníku, podíl učitelů, kteří viděli demo relaci, proklik karty „Vaše příští hodina“, rozložení splněných kroků checklistu, druhá návštěva do 7 dnů.
+
+---
+
 ## Příloha A · Kde co je
 
 | Věc | Místo |
