@@ -407,6 +407,97 @@ Dokončení dotazníku, podíl učitelů, kteří viděli demo relaci, proklik k
 
 ---
 
+## 9 · Interaktivní tutoriály v aplikaci
+
+Otázka: udělat čtyři interaktivní tutoriály (promítat test se žáky, projít lekci, promítat pracovní list) a ke každému předmětu jeden vlastní.
+
+### 9.1 Co říká dobrá praxe
+
+Čísla z benchmarků onboardingu (zdroje v příloze B):
+
+| Zjištění | Číslo |
+|---|---|
+| Dokončení tutoriálu o 3 krocích | 72 % |
+| O 4 krocích | 74 % |
+| O 7 krocích | **16 %** |
+| Tutoriály v horním 1 % dokončenosti | nikdy nepřesáhly 5 kroků |
+| Zkrácení času k první hodnotě u dokončeného onboardingu | −40 % |
+| Nárůst adopce funkce uvedené průvodcem | +35–50 % |
+
+Dvě věci, které z toho plynou a které jsou pro nás zásadní:
+
+1. **Rozlišuje se „prohlídka produktu“ a „průvodce úkolem“.** Prohlídka ukazuje, kde co je, a měří se dosažením první hodnoty. Průvodce vede jedním konkrétním úkolem a měří se jeho dokončením. To, co navrhuješ, jsou **průvodci úkolem** — a ti fungují výrazně líp.
+2. **Spouštění podle události poráží spouštění bez kontextu.** Nejlepší tutoriály se neukážou po přihlášení ve frontě, ale ve chvíli, kdy uživatel do té části sám vstoupí.
+
+Do toho náš vlastní tvrdý limit: medián web triálu je **1 aktivní den a 5 minut**. Kdo nám dá pět minut, nestráví je nácvikem. Tutoriál proto nesmí soutěžit s obsahem o čas — musí být tím obsahem.
+
+### 9.2 Návrh: čtyři průvodci, každý max 4 kroky
+
+Základní pravidlo: **tutoriál není nácvik, tutoriál je ta práce.** Každý běží na učitelově vlastním předmětu a tématu (z profilu, kapitola 6) a končí skutečným výsledkem, ne potleskem.
+
+| # | Průvodce | Kdy se nabídne | 3–4 kroky | Končí tím, že |
+|---|---|---|---|---|
+| 1 | **Projít lekci a promítnout ji** | učitel poprvé otevře lekci | otevřít → čtenářský mód → vyvolat žáka otázkou | má na tabuli svoje téma, připravené na zítřek |
+| 2 | **Promítnout nebo vytisknout pracovní list** | poprvé otevře list nebo stránku sešitu | otevřít → ukázat řešení pod fajfkou → tisk / promítnutí | má PDF ve stažených nebo list na tabuli |
+| 3 | **Test se žáky, který se opraví sám** | po druhé otevřené lekci jednoho tématu | vybrat test → spustit ukázkovou relaci → přečíst výsledky | viděl obrazovku výsledků včetně hodnocení přes AI |
+| 4 | **Vzít hotový materiál a upravit si ho** | poprvé klikne na Kopírovat nebo vstoupí do editoru | zkopírovat z Knihovny → změnit jednu úlohu → uložit | má vlastní materiál v Můj obsah |
+
+Pořadí není libovolné: jde od nejnižší námahy a nejvyšší frekvence (lekce se otevírá denně) k nejvyšší hodnotě, ale největší závislosti na okolnostech (test potřebuje třídu). Průvodce 4 je záměrně až poslední — podle hlasu značky se tvorba vždy ukazuje až po cestě „vezmi hotové a uprav si“.
+
+**Průvodce 3 stojí a padá s demo relací** (kapitola 8.1). Bez ukázkových žáků ho učitel sám u počítače v 21:00 nedokončí a jsme tam, kde dnes: živou relaci spustí zlomek triálů.
+
+### 9.3 Vlastní tutoriál pro každý předmět: obsah ano, průvodce ne
+
+Šest předmětů × čtyři průvodci je 24 věcí k vytvoření a k udržování. Přitom **mechanika promítání testu je ve fyzice i v prvouce stejná** — liší se jen to, co je na obrazovce.
+
+Doporučení: postavit **čtyři průvodce jednou** a nechat do nich téct obsah podle předmětu a ročníku ze stejného motoru, který plní e-maily a kartu „Vaše příští hodina“. Ze čtyř kusů práce vznikne 4 × N zážitků a každý nový ročník nebo téma se objeví sám, bez další práce.
+
+**Dvě výjimky, kde se liší i mechanika, ne jen obsah:**
+
+- **1. stupeň** nemá interaktivní lekce ani animace. Průvodce 1 tam vede přes **interaktivní nástěnku** pracovní učebnice (listy za sebou, metodika pod „i“, řešení pod zelenou fajfkou, přetahovatelné objekty). Je to druhá varianta skořápky, ne šestá.
+- **Matematika 2. stupně** nemá animace. Průvodce 1 tam vede přes interaktivní pracovní list a navazující procvičování, ne přes lekci.
+
+Takže: **4 průvodci ve 2 variantách skořápky (1. a 2. stupeň), obsah proměnný podle předmětu a ročníku.**
+
+### 9.4 Co ale opravdu patří jednotlivým předmětům
+
+Místo šesti tutoriálů jeden **třicetivteřinový moment „tohle má jen váš předmět“**, který se ukáže jednou, při první návštěvě Knihovny daného předmětu:
+
+| Předmět | Moment |
+|---|---|
+| Přírodopis | otočit si 3D model buňky přímo na tabuli |
+| Chemie | pustit pokus, který ve třídě udělat nejde |
+| Fyzika | animace, ze které žáci sami odvodí vztah |
+| Matematika 2. st. | tři úrovně obtížnosti jedné úlohy vedle sebe |
+| Matematika 1. st. | Početník, který se přizpůsobí tempu žáka |
+| Prvouka | interaktivní nástěnka s přetahováním |
+
+Není to tutoriál a nic se v něm neučí ovládat. Je to ukázka, proč tenhle předmět stojí za pozornost.
+
+### 9.5 Pravidla, bez kterých to uškodí
+
+- **Nejvýš 4 kroky**, každý jedno kliknutí. Nad pět kroků se dokončenost láme.
+- **Spouštět událostí, ne po přihlášení.** Žádná fronta čtyř průvodců na uvítanou; každý čeká, až do té části učitel sám vstoupí.
+- **Vždy přeskočitelné a vratné.** Zavřít znamená zavřít, ne odložit o minutu. Kdo přeskočí, dostane nabídku podruhé, pak už ne.
+- **V prezentačním režimu se nesmí ukázat nic.** Učitel stojí před třídou. Stejný důvod, proč nezamykat aplikaci uprostřed hodiny.
+- **Průvodce odškrtává krok v checklistu Můj start** (kapitola 6.3) — je to jeden systém, ne dva paralelní.
+- **Video jako záložní cesta, ne hlavní.** 60–90 vteřin pro toho, kdo se raději dívá; interaktivní průvodce je výchozí.
+
+### 9.6 Jak poznat, že fungují
+
+Dokončenost sama nestačí — dá se vyhrát tím, že se průvodce zkrátí na nic. Měřit dvojici:
+
+| Metrika | Cíl |
+|---|---|
+| dokončenost každého průvodce | > 70 % (benchmark pro 3–4 kroky) |
+| **skutečná akce do 7 dnů po dokončení** | promítnutí, tisk, relace nebo uložený materiál |
+| druhá návštěva do 7 dnů u těch, kdo dokončili vs. nedokončili | rozdíl je vlastní přínos průvodce |
+| čas od prvního přihlášení k první skutečné akci | klesá |
+
+Když dokončenost roste a skutečná akce ne, je průvodce divadlo a patří pryč.
+
+---
+
 ## Příloha A · Kde co je
 
 | Věc | Místo |
@@ -427,6 +518,10 @@ Dokončení dotazníku, podíl učitelů, kteří viděli demo relaci, proklik k
 - Lifecycle Architect — Onboarding optimization for EdTech (aktivace = učitel zadal první úkol; 2–3 otázky při registraci; D1 35–45 %, D7 20–30 %, free-to-paid 15–20 %): https://lifecyclearchitect.com/guides/onboarding-optimization-for-edtech/
 - Arcade — Free trial conversion playbook 2026 (68 % triálů bez aktivace do 72 h nekonvertuje; personalizace podle 2–3 datových bodů +20–30 % D7): https://www.arcade.software/post/free-trial-conversion-playbook-2026
 - Userpilot — SaaS trial conversion benchmarks (medián PLG 19 %, top kvartil 25–30 % s behaviorální automatizací): https://userpilot.com/blog/saas-average-conversion-rate/
+- Chameleon — The hidden metrics of effective product tours (dokončenost 3 kroky 72 %, 4 kroky 74 %, 7 kroků 16 %; horní 1 % nepřesáhlo 5 kroků; spouštění podle události): https://www.chameleon.io/blog/effective-product-tour-metrics
+- Chameleon — User onboarding benchmark report 2025: https://www.chameleon.io/benchmark-report
+- Whatfix — How to create effective product tours (rozdíl prohlídka produktu vs. průvodce úkolem, čas k hodnotě −40 %, adopce funkce +35–50 %): https://whatfix.com/product-tour/
+- Jimo — Interactive product tour best practices: https://jimo.ai/blog/interactive-product-tour
 - Mailsoftly — Onboarding email best practices 2026 (5–8 e-mailů za 14 dní; behaviorální triggery 3–4× CTR): https://mailsoftly.com/blog/user-onboarding-email-best-practices/
 - Open Loop Studio — Free trial onboarding emails for B2B SaaS: https://openloopstudio.co/best-practices-for-free-trial-onboarding-emails/
 - RAND — Harnessing the benefits of EdTech (bariéry: čas, školení, technika): https://www.rand.org/pubs/commentary/2026/01/harnessing-the-benefits-of-edtech-what-research-tells.html
