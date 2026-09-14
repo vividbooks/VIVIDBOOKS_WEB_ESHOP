@@ -50,6 +50,7 @@ import {
   TRIAL_PIPEDRIVE_LABEL_NAME,
   trialEndDateCs,
 } from '../supabase/functions/_shared/trial-pipedrive-note.ts';
+import { parseTeacherVerificationResponse } from '../src/utils/trialSubmit.ts';
 import {
   normalizeRegionKey,
   PIPEDRIVE_REGION_COUNT,
@@ -1237,6 +1238,28 @@ registerTest('email outline roztřídí české popisky bloků', () => {
   assert.match(html, /Matematika je priorita/);
   assert.match(html, /data-ai-webinar-slug="matematika-jaro"/);
   assert.match(html, /data-vb-block="highlight"/);
+});
+
+
+registerTest('ověření učitele: rozliší hotovo, odeslaný odkaz a chybu', () => {
+  assert.deepEqual(parseTeacherVerificationResponse(true, { ok: true, verified: true }), { status: 'verified' });
+  assert.deepEqual(parseTeacherVerificationResponse(true, { ok: true, verified: false, sent: true }), { status: 'sent' });
+
+  /** Českou hlášku posílá Kabinet — použijeme jeho, ne vlastní. */
+  const freemail = parseTeacherVerificationResponse(false, {
+    ok: false, code: 'FREEMAIL', message: 'Zadejte prosím školní e-mail.',
+  });
+  assert.equal(freemail.status, 'error');
+  assert.equal(freemail.status === 'error' && freemail.message, 'Zadejte prosím školní e-mail.');
+  assert.equal(freemail.status === 'error' && freemail.code, 'FREEMAIL');
+
+  /** Když hlášku nepošle, musíme mít vlastní — ne prázdný řádek. */
+  const bezTextu = parseTeacherVerificationResponse(false, { ok: false, code: 'RATE_LIMIT' });
+  assert.match(bezTextu.status === 'error' ? bezTextu.message : '', /Počkejte/);
+
+  /** ok:true s chybovým HTTP ani prázdná odpověď nesmí projít jako úspěch. */
+  assert.equal(parseTeacherVerificationResponse(false, { ok: true, verified: true }).status, 'error');
+  assert.equal(parseTeacherVerificationResponse(true, null).status, 'error');
 });
 
 registerTest('kraj určí obchodníka bez ohledu na zápis názvu', () => {

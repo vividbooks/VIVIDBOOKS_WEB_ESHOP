@@ -11,6 +11,8 @@ import {
   submitTrial,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
+  getTeacherVerificationStatus,
+  requestTeacherVerification,
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
@@ -688,6 +690,12 @@ export function TrialRegistrationForm({
   const [formError, setFormError] = useState('');
   /** Legacy API: e-mail už evidovaný u školy — zobrazíme kontakt obchodníka místo holé chyby. */
   const [emailUsedInSchool, setEmailUsedInSchool] = useState(false);
+  /** Ověření učitele: `null` = nenabízíme (ověřeno, není trial, nebo stav neznáme). */
+  const [verifyNeeded, setVerifyNeeded] = useState(false);
+  const [verifyEmail, setVerifyEmail] = useState('');
+  const [verifySending, setVerifySending] = useState(false);
+  const [verifyDone, setVerifyDone] = useState<'verified' | 'sent' | null>(null);
+  const [verifyError, setVerifyError] = useState('');
 
   // Email dedup
   const [emailCheck, setEmailCheck] = useState<{
@@ -914,6 +922,14 @@ export function TrialRegistrationForm({
       setEmailUsedInSchool(false);
       setTrialResult(result);
       setSubmitted(true);
+      /** Nabídku školního e-mailu ukazujeme jen tam, kde opravdu něco odemkne:
+       *  trialová škola, která zatím ověřená není. Kabinet u školní domény
+       *  ověřovací odkaz pošle sám, takže tady většinou zbude jen freemail.
+       *  Když stav nezjistíme, nenabízíme nic — radši nic než zbytečný formulář. */
+      if (result.status === 'codes' && result.kind === 'created') {
+        const stav = await getTeacherVerificationStatus(result.teacherCode);
+        setVerifyNeeded(Boolean(stav && stav.trialOnly && !stav.verified));
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Nepodařilo se odeslat formulář.';
       setFormError(msg);
@@ -956,11 +972,71 @@ export function TrialRegistrationForm({
                   </div>
                 </div>
               </>
+            ) : trialResult?.status === 'review' ? (
+              <p style={FF} className="text-[#001161]/70 text-[15px] leading-snug">
+                {trialResult.message}
+              </p>
             ) : (
               <p style={FF} className="text-[#001161]/60 text-[15px]">
                 {'Ozveme se v\u00e1m co nejd\u0159\u00edve s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}
               </p>
             )}
+
+            {verifyNeeded && trialResult?.status === 'codes' ? (
+              <div className="mt-6 max-w-md mx-auto rounded-[14px] border border-[#001161]/10 bg-white px-4 py-4 text-left">
+                {verifyDone === 'verified' ? (
+                  <p style={FF} className="text-[14px] text-[#001161] leading-snug">
+                    {'Hotovo \u2014 \u0159e\u0161en\u00ed a spr\u00e1vn\u00e9 odpov\u011bdi m\u00e1te odemknut\u00e9.'}
+                  </p>
+                ) : verifyDone === 'sent' ? (
+                  <p style={FF} className="text-[14px] text-[#001161] leading-snug">
+                    {'Poslali jsme ov\u011b\u0159ovac\u00ed odkaz na '}
+                    <strong>{verifyEmail}</strong>
+                    {'. Po kliknut\u00ed se \u0159e\u0161en\u00ed odemknou.'}
+                  </p>
+                ) : (
+                  <>
+                    <p style={FF} className="text-[13px] font-bold text-[#001161] mb-1">
+                      {'P\u0159idejte \u0161koln\u00ed e-mail, odemkne v\u00e1m \u0159e\u0161en\u00ed'}
+                    </p>
+                    <p style={FF} className="text-[12.5px] text-[#001161]/60 mb-3 leading-snug">
+                      {'Spr\u00e1vn\u00e9 odpov\u011bdi a \u0159e\u0161en\u00ed vid\u00ed jen ov\u011b\u0159en\u00ed u\u010ditel\u00e9. Sta\u010d\u00ed adresa na dom\u00e9n\u011b \u0161koly \u2014 m\u016f\u017eete to ud\u011blat i pozd\u011bji v aplikaci.'}
+                    </p>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        id="trial-verify-email"
+                        type="email"
+                        value={verifyEmail}
+                        onChange={(e) => { setVerifyEmail(e.target.value); setVerifyError(''); }}
+                        placeholder={'jmeno@skola.cz'}
+                        style={FF}
+                        className="flex-1 rounded-xl border border-[#001161]/15 px-3 py-2.5 text-[14px] text-[#001161] outline-none focus:border-[#7C3AED]"
+                      />
+                      <button
+                        type="button"
+                        disabled={verifySending || !verifyEmail.trim()}
+                        onClick={async () => {
+                          setVerifySending(true);
+                          setVerifyError('');
+                          const odpoved = await requestTeacherVerification(trialResult.teacherCode, verifyEmail);
+                          if (odpoved.status === 'error') setVerifyError(odpoved.message);
+                          else setVerifyDone(odpoved.status);
+                          setVerifySending(false);
+                        }}
+                        style={FF}
+                        className="rounded-xl bg-[#001161] px-4 py-2.5 text-[14px] font-bold text-white disabled:opacity-40"
+                      >
+                        {verifySending ? 'Odes\u00edl\u00e1m\u2026' : 'Odemknout'}
+                      </button>
+                    </div>
+                    {verifyError ? (
+                      <p style={FF} className="mt-2 text-[12.5px] text-[#B91C1C] leading-snug">{verifyError}</p>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ) : null}
+
             <Link
               to={APP_ENTRY_PATH}
               target="_blank"

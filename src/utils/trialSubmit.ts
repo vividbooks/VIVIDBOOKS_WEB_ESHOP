@@ -89,6 +89,12 @@ export type FreeTrialSubmitResult =
     }
   | { status: 'thank_only' }
   | {
+      /** Kabinet žádost přijal, ale kódy zatím nevydal a čeká na posouzení
+       *  (`REVIEW_FREEMAIL`, HTTP 202). Zapíná se v `trial_policy.reviewFreemail`. */
+      status: 'review';
+      message: string;
+    }
+  | {
       status: 'error';
       message: string;
       /** Legacy API `reason` — pro bohatší UI (kontakt obchodníka). */
@@ -486,8 +492,133 @@ export async function submitTrialViaKabinet(fields: FreeTrialFields): Promise<Fr
     return { status: 'thank_only' };
   }
 
+  /** Kabinet umí žádost přijmout a kódy zadržet k posouzení. Bez téhle větve by
+   *  to spadlo do obecné chyby a učitel by viděl „nepodařilo se“, přestože jeho
+   *  žádost v pořádku dorazila. */
+  if (status === 'review') {
+    const message =
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message.trim()
+        : 'Žádost jsme přijali. Přístupové kódy vám pošleme e-mailem, jakmile ji projdeme.';
+    return { status: 'review', message };
+  }
+
   const err = parseFreeTrialError(data);
   return { status: 'error', code: err.code, message: err.message };
+}
+
+/* ═══════════════════ Ověření učitele (odemknutí řešení) ═══════════════════
+ *
+ * Trialová škola vidí správné odpovědi a řešení až potom, co Kabinet ověří, že
+ * za ní stojí učitel. Ověření se váže ke **škole** (`registr_organizations
+ * .teacher_verified_at`), takže platí pro trial z libovolné cesty.
+ *
+ * Kabinet to zkouší sám: adresa už u školy vedená → ověřeno hned, školní doména
+ * → odejde ověřovací odkaz. Web přidává jen zbylý případ — **freemail**, kde
+ * Kabinet nemá co ověřit a učitel musí školní adresu dodat ručně.
+ *
+ * Endpointy jsou veřejné a bez JWT, volají se přímo na Kabinet.
+ */
+
+const KABINET_PUBLIC_BASE =
+  'https://qypiuvqglsmxdsnyazih.supabase.co/functions/v1/api/public';
+
+export type TeacherVerificationStatus = {
+  /** Školu Kabinet zná. */
+  known: boolean;
+  /** Už je ověřená — řešení jsou odemčená. */
+  verified: boolean;
+  /** Škola má jen trial (u předplatitele se ověření neřeší). */
+  trialOnly: boolean;
+};
+
+/**
+ * Stav školy podle učitelského kódu. Vrací `null`, když se stav nepodařilo
+ * zjistit — volající pak nabídku ověření **nezobrazí**, místo aby ji ukázal
+ * škole, která ji nepotřebuje.
+ */
+export async function getTeacherVerificationStatus(
+  teacherCode: string,
+): Promise<TeacherVerificationStatus | null> {
+  const code = String(teacherCode || '').trim();
+  if (!code) return null;
+  try {
+    const res = await fetch(
+      `${KABINET_PUBLIC_BASE}/teacher-verification/status?code=${encodeURIComponent(code)}`,
+      { headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as Record<string, unknown>;
+    return {
+      known: data.known === true,
+      verified: data.verified === true,
+      trialOnly: data.trialOnly === true,
+    };
+  } catch (error) {
+    console.warn('[teacher-verification] stav se nepodařilo zjistit:', error);
+    return null;
+  }
+}
+
+export type TeacherVerificationResult =
+  /** Adresa byla u školy už vedená — hotovo, nic dalšího se neposílá. */
+  | { status: 'verified' }
+  /** Ověřovací odkaz odešel na zadanou adresu. */
+  | { status: 'sent' }
+  | { status: 'error'; message: string; code: string };
+
+/** Hlášky pro kódy, u kterých Kabinet vlastní text neposlal. */
+const TEACHER_VERIFICATION_FALLBACKS: Record<string, string> = {
+  FREEMAIL: 'Tohle je zase veřejná adresa. Zadejte prosím e-mail na doméně školy.',
+  INVALID_EMAIL: 'E-mail nevypadá správně, zkontrolujte ho prosím.',
+  RATE_LIMIT: 'Zkoušeli jste to už několikrát. Počkejte prosím chvíli a zkuste to znovu.',
+};
+
+/**
+ * Převede odpověď Kabinetu na stav pro UI. Oddělené od `fetch`, aby šlo
+ * otestovat všechny větve bez sítě.
+ */
+export function parseTeacherVerificationResponse(
+  httpOk: boolean,
+  data: Record<string, unknown> | null,
+): TeacherVerificationResult {
+  if (httpOk && data?.ok === true) {
+    return data.verified === true ? { status: 'verified' } : { status: 'sent' };
+  }
+  const code = typeof data?.code === 'string' ? data.code : 'UNKNOWN';
+  const message =
+    typeof data?.message === 'string' && data.message.trim()
+      ? data.message.trim()
+      : TEACHER_VERIFICATION_FALLBACKS[code] ||
+        'Ověření se teď nepodařilo. Zkuste to prosím za chvíli znovu.';
+  return { status: 'error', message, code };
+}
+
+/** Požádá Kabinet o ověření učitele školní adresou. */
+export async function requestTeacherVerification(
+  teacherCode: string,
+  email: string,
+): Promise<TeacherVerificationResult> {
+  try {
+    const res = await fetch(`${KABINET_PUBLIC_BASE}/teacher-verification/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        code: String(teacherCode || '').trim(),
+        email: String(email || '').trim(),
+        from: 'web',
+      }),
+    });
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    return parseTeacherVerificationResponse(res.ok, data);
+  } catch (error) {
+    console.warn('[teacher-verification] požadavek selhal:', error);
+    return {
+      status: 'error',
+      code: 'NETWORK',
+      message: 'Ověření se teď nepodařilo odeslat. Zkuste to prosím za chvíli znovu.',
+    };
+  }
 }
 
 /** Která cesta trialu se použije. `legacy` = dnešní stav, `kabinet` = nová. */
