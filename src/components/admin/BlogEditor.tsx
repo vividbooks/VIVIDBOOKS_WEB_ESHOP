@@ -766,7 +766,7 @@ export default function BlogEditor() {
               <div className="flex-1 overflow-y-auto p-6">
                 <div className="max-w-2xl mx-auto bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                   {selected.coverImage && (
-                    <img src={selected.coverImage} alt={selected.title} className="w-full object-cover" style={{ maxHeight: 280 }} />
+                    <img src={selected.coverImage} alt={selected.title} className="article-body-img w-full h-auto" />
                   )}
                   <div className="p-8">
                     {!selected.published && (
@@ -794,7 +794,7 @@ export default function BlogEditor() {
                       );
                       if (block.type === 'image' && block.src) return (
                         <figure key={i} className="my-5">
-                          <img src={block.src} alt={block.alt} className="w-full rounded-xl object-cover" style={{ maxHeight: 220 }} />
+                          <img src={block.src} alt={block.alt} className="article-body-img w-full h-auto rounded-xl" />
                           {block.caption && <figcaption className="text-center text-[11px] text-[#001161]/40 mt-1">{block.caption}</figcaption>}
                         </figure>
                       );
