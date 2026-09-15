@@ -530,6 +530,10 @@ export type TeacherVerificationStatus = {
   verified: boolean;
   /** Škola má jen trial (u předplatitele se ověření neřeší). */
   trialOnly: boolean;
+  /** Účet studenta učitelství. Ověřit se nemůže — univerzitní doména není
+   *  freemail, ale škola to není. Nabídka školního e-mailu by mu jen slibovala
+   *  něco, co nedostane; řeší se individuálně. */
+  studentAccount: boolean;
 };
 
 /**
@@ -553,6 +557,7 @@ export async function getTeacherVerificationStatus(
       known: data.known === true,
       verified: data.verified === true,
       trialOnly: data.trialOnly === true,
+      studentAccount: data.studentAccount === true,
     };
   } catch (error) {
     console.warn('[teacher-verification] stav se nepodařilo zjistit:', error);
@@ -567,12 +572,28 @@ export type TeacherVerificationResult =
   | { status: 'sent' }
   | { status: 'error'; message: string; code: string };
 
-/** Hlášky pro kódy, u kterých Kabinet vlastní text neposlal. */
+/**
+ * Hlášky pro kódy, u kterých by Kabinet vlastní text neposlal. Dnes posílá
+ * u všech, tohle je jen záchranná síť — text zákazníkovi má být jeden, jeho.
+ */
 const TEACHER_VERIFICATION_FALLBACKS: Record<string, string> = {
-  FREEMAIL: 'Tohle je zase veřejná adresa. Zadejte prosím e-mail na doméně školy.',
+  FREEMAIL: 'Tohle je zase osobní adresa. Zadejte prosím e-mail na doméně školy.',
   INVALID_EMAIL: 'E-mail nevypadá správně, zkontrolujte ho prosím.',
-  RATE_LIMIT: 'Zkoušeli jste to už několikrát. Počkejte prosím chvíli a zkuste to znovu.',
+  RATE_LIMIT: 'Ověřovacích e-mailů už dnes odešlo dost. Zkuste to prosím zítra.',
+  MAIL_FAILED: 'E-mail se nepodařilo odeslat. Zkuste to prosím za chvíli znovu.',
+  STUDENT_ACCOUNT: 'Tohle je studentský účet, ne škola. Napište nám prosím na hello@vividbooks.com.',
 };
+
+/**
+ * Kódy, u kterých nemá smysl nechávat formulář otevřený — opakovaný pokus
+ * dopadne stejně. Student učitelství se ověřit nemůže vůbec a denní limit
+ * se do zítřka neuvolní, takže je to sdělení, ne chyba k opravení.
+ */
+const TEACHER_VERIFICATION_TERMINAL = new Set(['STUDENT_ACCOUNT', 'RATE_LIMIT']);
+
+export function isTerminalVerificationCode(code: string): boolean {
+  return TEACHER_VERIFICATION_TERMINAL.has(code);
+}
 
 /**
  * Převede odpověď Kabinetu na stav pro UI. Oddělené od `fetch`, aby šlo

@@ -50,7 +50,7 @@ import {
   TRIAL_PIPEDRIVE_LABEL_NAME,
   trialEndDateCs,
 } from '../supabase/functions/_shared/trial-pipedrive-note.ts';
-import { parseTeacherVerificationResponse } from '../src/utils/trialSubmit.ts';
+import { isTerminalVerificationCode, parseTeacherVerificationResponse } from '../src/utils/trialSubmit.ts';
 import {
   normalizeRegionKey,
   PIPEDRIVE_REGION_COUNT,
@@ -1255,7 +1255,15 @@ registerTest('ověření učitele: rozliší hotovo, odeslaný odkaz a chybu', (
 
   /** Když hlášku nepošle, musíme mít vlastní — ne prázdný řádek. */
   const bezTextu = parseTeacherVerificationResponse(false, { ok: false, code: 'RATE_LIMIT' });
-  assert.match(bezTextu.status === 'error' ? bezTextu.message : '', /Počkejte/);
+  assert.match(bezTextu.status === 'error' ? bezTextu.message : '', /zítra/);
+
+  /** Student učitelství a vyčerpaný denní limit jsou sdělení, ne chyba
+   *  k opravení — formulář se u nich zavírá, opakovat nemá co pomoct. */
+  assert.equal(isTerminalVerificationCode('STUDENT_ACCOUNT'), true);
+  assert.equal(isTerminalVerificationCode('RATE_LIMIT'), true);
+  assert.equal(isTerminalVerificationCode('FREEMAIL'), false);
+  assert.equal(isTerminalVerificationCode('MAIL_FAILED'), false);
+  assert.equal(isTerminalVerificationCode('NETWORK'), false);
 
   /** ok:true s chybovým HTTP ani prázdná odpověď nesmí projít jako úspěch. */
   assert.equal(parseTeacherVerificationResponse(false, { ok: true, verified: true }).status, 'error');

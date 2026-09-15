@@ -12,6 +12,7 @@ import {
   type FreeTrialFields,
   type FreeTrialSubmitResult,
   getTeacherVerificationStatus,
+  isTerminalVerificationCode,
   requestTeacherVerification,
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
@@ -696,6 +697,9 @@ export function TrialRegistrationForm({
   const [verifySending, setVerifySending] = useState(false);
   const [verifyDone, setVerifyDone] = useState<'verified' | 'sent' | null>(null);
   const [verifyError, setVerifyError] = useState('');
+  /** Chyba, po které nemá smysl zkoušet znovu — formulář schováme a necháme
+   *  jen vysvětlení od Kabinetu (student učitelství, vyčerpaný denní limit). */
+  const [verifyTerminal, setVerifyTerminal] = useState(false);
 
   // Email dedup
   const [emailCheck, setEmailCheck] = useState<{
@@ -928,7 +932,9 @@ export function TrialRegistrationForm({
        *  Když stav nezjistíme, nenabízíme nic — radši nic než zbytečný formulář. */
       if (result.status === 'codes' && result.kind === 'created') {
         const stav = await getTeacherVerificationStatus(result.teacherCode);
-        setVerifyNeeded(Boolean(stav && stav.trialOnly && !stav.verified));
+        /** Studentovi učitelství nabídku neukazujeme vůbec — ověřit se nemůže,
+         *  tak ať mu nesvítí pole, které mu nic neodemkne. */
+        setVerifyNeeded(Boolean(stav && stav.trialOnly && !stav.verified && !stav.studentAccount));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Nepodařilo se odeslat formulář.';
@@ -994,6 +1000,10 @@ export function TrialRegistrationForm({
                     <strong>{verifyEmail}</strong>
                     {'. Po kliknut\u00ed se \u0159e\u0161en\u00ed odemknou.'}
                   </p>
+                ) : verifyTerminal ? (
+                  <p style={FF} className="text-[14px] text-[#001161]/80 leading-snug">
+                    {verifyError}
+                  </p>
                 ) : (
                   <>
                     <p style={FF} className="text-[13px] font-bold text-[#001161] mb-1">
@@ -1019,8 +1029,12 @@ export function TrialRegistrationForm({
                           setVerifySending(true);
                           setVerifyError('');
                           const odpoved = await requestTeacherVerification(trialResult.teacherCode, verifyEmail);
-                          if (odpoved.status === 'error') setVerifyError(odpoved.message);
-                          else setVerifyDone(odpoved.status);
+                          if (odpoved.status === 'error') {
+                            setVerifyError(odpoved.message);
+                            setVerifyTerminal(isTerminalVerificationCode(odpoved.code));
+                          } else {
+                            setVerifyDone(odpoved.status);
+                          }
                           setVerifySending(false);
                         }}
                         style={FF}
