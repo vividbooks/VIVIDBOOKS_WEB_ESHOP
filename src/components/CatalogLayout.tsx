@@ -5,6 +5,7 @@ import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ShoppingCart } fro
 import svgPaths from '../imports/svg-3hoiegevxq';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { TopNav } from './TopNav';
+import { APP_ENTRY_PATH } from '../config/publicUrls';
 import { CartIcon } from './checkout/CartIcon';
 import { CatalogContext } from '../contexts/CatalogContext';
 import { useCart } from '../contexts/CartContext';
@@ -314,7 +315,7 @@ export default function CatalogLayout() {
     String(searchParams.get('from') || '').toLowerCase() === 'email';
 
   /** Stránka trial — bez katalogového chrome (stejně jako e-mailové vstupy). */
-  const isTrialPageFullscreen = location.pathname === '/vyzkousejte';
+  const isTrialPageFullscreen = location.pathname === '/vyzkousejte' || location.pathname === '/vyzkousejte-kabinet';
 
   const isMinimalCatalogChrome =
     isWebinarSurveyFullscreen
@@ -365,7 +366,7 @@ export default function CatalogLayout() {
     <CatalogContext.Provider value={catalogContextValue}>
       <div className="bg-white min-h-screen">
         {/* Fixed top navbar — desktop only (checkout je bez horní lišty) */}
-        {!isCheckoutLikeSidebar && <TopNav onOrder={onOrder} />}
+        {!isCheckoutLikeSidebar && <TopNav />}
 
         <div className="flex flex-col md:flex-row">
           {/* ── Mobile sidebar backdrop ───────────────────────── */}
@@ -639,18 +640,14 @@ export default function CatalogLayout() {
                       ZIP
                     </button>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={onOrder}
-                      className="bg-[#001161] text-white px-3 py-2 rounded-[999px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold flex items-center gap-2 max-[380px]:px-2.5"
+                    <Link
+                      to={APP_ENTRY_PATH}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="bg-[#ff6a35] text-white px-3 py-2 rounded-[999px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold flex items-center gap-2 max-[380px]:px-2.5"
                     >
-                      <span className="whitespace-nowrap">{'Objednat pro školu'}</span>
-                      {schoolOrderCount > 0 && (
-                        <span className="w-5 h-5 rounded-full bg-white text-[#001161] text-[11px] font-bold flex items-center justify-center shrink-0">
-                          {schoolOrderCount}
-                        </span>
-                      )}
-                    </button>
+                      <span className="whitespace-nowrap">{'Otev\u0159\u00edt u\u010debnice'}</span>
+                    </Link>
                   )}
                   <button
                     type="button"

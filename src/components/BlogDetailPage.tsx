@@ -76,8 +76,7 @@ function ContentBlock({ block }: { block: BlogBlock }) {
         <img
           src={block.src}
           alt={block.alt}
-          className="w-full rounded-[14px] object-cover"
-          style={{ maxHeight: '280px' }}
+          className="article-body-img w-full h-auto rounded-[14px]"
         />
         {block.caption && (
           <figcaption className="font-['Fenomen_Sans',sans-serif] text-[#001161]/40 text-[12px] text-center mt-2">
@@ -142,11 +141,11 @@ function BlogSlider({ images, caption }: { images: { src: string; alt?: string; 
   const next = () => setIdx(i => (i + 1) % images.length);
   return (
     <figure className="my-7">
-      <div className="relative rounded-[16px] overflow-hidden bg-[#001161]/5" style={{ aspectRatio: '16/9' }}>
+      <div className="relative rounded-[16px] overflow-hidden bg-[#001161]/5">
         <img
           src={current.src}
           alt={current.alt || ''}
-          className="w-full h-full object-cover transition-opacity duration-300"
+          className="article-body-img w-full h-auto transition-opacity duration-300"
           key={idx}
         />
         {/* Nav buttons */}
@@ -246,8 +245,7 @@ function BlogTabs({ tabs, heading }: { tabs: { label: string; content: string; i
           <img
             src={tab.imageUrl}
             alt={tab.label}
-            className="w-full rounded-[12px] object-cover mb-4"
-            style={{ maxHeight: '220px' }}
+            className="article-body-img w-full h-auto rounded-[12px] mb-4"
           />
         )}
         <p className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[15px] leading-relaxed whitespace-pre-wrap">
@@ -265,6 +263,12 @@ interface BlogDetailPageProps {
 
 export function BlogDetailPage({ post }: BlogDetailPageProps) {
   const { posts } = useBlogPosts();
+
+  const contentHtml = post.contentHtml;
+  const hasHtml = Boolean(contentHtml && contentHtml.trim().length > 10);
+  const extraBlocks = Array.isArray(post.content)
+    ? post.content.filter(block => block.type === 'slider' || block.type === 'tabs')
+    : [];
 
   const related = posts
     .filter(p => p.id !== post.id && p.category === post.category)
@@ -327,8 +331,7 @@ export function BlogDetailPage({ post }: BlogDetailPageProps) {
             <img
               src={post.coverImage}
               alt={post.title}
-              className="w-full rounded-[20px] object-cover"
-              style={{ maxHeight: '400px' }}
+              className="article-body-img w-full h-auto rounded-[20px]"
             />
           </div>
         )}
@@ -338,10 +341,18 @@ export function BlogDetailPage({ post }: BlogDetailPageProps) {
 
           {/* Article content */}
           <article className="flex-1 min-w-0">
-            {Array.isArray(post.content)
+            {hasHtml ? (
+              <>
+                <div
+                  className="blog-richtext"
+                  dangerouslySetInnerHTML={{ __html: contentHtml! }}
+                />
+                {extraBlocks.map((block, i) => <ContentBlock key={`extra-${i}`} block={block} />)}
+              </>
+            ) : Array.isArray(post.content)
               ? post.content.map((block, i) => <ContentBlock key={i} block={block} />)
               : typeof post.content === 'string' && post.content
-                ? <div dangerouslySetInnerHTML={{ __html: post.content as unknown as string }} className="font-['Fenomen_Sans',sans-serif] text-[#001161] text-[16px] leading-[1.8]" />
+                ? <div dangerouslySetInnerHTML={{ __html: post.content as unknown as string }} className="blog-richtext" />
                 : null
             }
           </article>

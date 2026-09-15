@@ -1,6 +1,6 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import postgres from 'npm:postgres';
-import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
+import { sendOrderEmail, sendPosterOrderAdminNotification, type OrderEmailType } from '../_shared/order-email.ts';
 import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -98,6 +98,37 @@ Deno.serve(async (req) => {
           subject: result.subject,
         },
       });
+    }
+
+    /** Objednávky plakátů nejdou do Base.com — balí je Vividbooks ručně, proto interní upozornění
+     *  (POSTER_ORDER_NOTIFY_EMAIL). Best-effort: selhání nesmí shodit už odeslané potvrzení zákazníkovi. */
+    if (payload.emailType === 'order_confirmed' && result.order.poster_fulfillment_status != null) {
+      try {
+        const notify = await sendPosterOrderAdminNotification(sql, payload.orderId);
+        await sql`
+          insert into public.order_events (order_id, event_type, from_status, to_status, details, actor)
+          values (
+            ${payload.orderId}::uuid, 'email', null, null,
+            ${JSON.stringify({ emailType: 'poster_order_admin_notification', ...notify })}::jsonb,
+            'system'
+          )
+        `;
+      } catch (notifyError) {
+        const message = notifyError instanceof Error ? notifyError.message : 'Poster admin notification failed.';
+        console.error('[send-order-email] poster admin notification failed (non-blocking):', message);
+        try {
+          await sql`
+            insert into public.order_events (order_id, event_type, from_status, to_status, details, actor)
+            values (
+              ${payload.orderId}::uuid, 'email', null, null,
+              ${JSON.stringify({ emailType: 'poster_order_admin_notification', error: message })}::jsonb,
+              'system'
+            )
+          `;
+        } catch {
+          // Logging is best-effort only.
+        }
+      }
     }
 
     return jsonResponse(req, { success: true });

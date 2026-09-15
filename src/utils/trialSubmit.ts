@@ -81,6 +81,8 @@ export type FreeTrialSubmitResult =
       studentCode: string;
       teacherCode: string;
       kind: 'created' | 'existing_trial';
+      /** Konec trialu (ISO). Plní jen Kabinet, legacy `free-trial-ajax` ho nevrací. */
+      endsOn?: string;
     }
   | { status: 'thank_only' }
   | {
@@ -340,4 +342,127 @@ function triggerTrialPipedriveSync(
   if (code === 'email_used_in_school') {
     void notifyTrialEmailUsedToPipedrive(fields, legacy);
   }
+}
+
+/* ═══════════════════════ Kabinet (registr) ═══════════════════════
+ *
+ * Druhá cesta trialu. Formulář posílá stejná pole, ale na vlastní server
+ * (`/trial-request`), který je přepošle Kabinetu s tajemstvím. O trialu
+ * rozhoduje Kabinet nad všemi školami se stejným IČO, kódem nebo e-mailem;
+ * když smí, založí ho u sebe a předá do starého systému.
+ *
+ * Do Pipedrive odsud **nic neposíláme**. Deal, ownera i CTA aktivity dělá
+ * dál Make scénář „Trial form", který spouští starý systém — kdybychom
+ * volali `trial-*-pipedrive` jako u legacy cesty, vznikl by obchod dvakrát.
+ */
+
+/**
+ * Most na Kabinet je samostatná Edge funkce `kabinet-trial` (nasazená 3. 9. 2026).
+ * Doplňuje tajemství, vynucuje `reason: 'web'` a `override: false`, a hlavně
+ * **maže kódy školy z odpovědí**, u kterých trial nevznikl — z veřejného webu
+ * je nesmí dostat nikdo, kdo jen zná IČO. Proto sem, ne přes `make-server`.
+ */
+const KABINET_TRIAL_BASE = `https://${projectId}.supabase.co/functions/v1/kabinet-trial`;
+
+const KABINET_TRIAL_REQUEST_URL = `${KABINET_TRIAL_BASE}/request`;
+
+export const KABINET_TRIAL_CHECK_URL = `${KABINET_TRIAL_BASE}/check`;
+
+/** Tělo pro Kabinet — nová jména polí; aliasy ze starého formuláře umí taky. */
+export function buildKabinetTrialBody(fields: FreeTrialFields): Record<string, unknown> {
+  const { firstName, lastName, fullName } = splitFullNameForTrial(fields.name);
+  return {
+    reason: 'web',
+    ico: fields.vat,
+    schoolName: fields.schoolName,
+    email: fields.email,
+    firstName,
+    lastName,
+    fullName,
+    phone: fields.phone,
+    position: fields.position,
+    subjects: fields.teacherSubjects,
+    schoolStages: fields.schoolStages,
+    newsletter: fields.newsletter,
+    country: 'cz',
+  };
+}
+
+/**
+ * Odeslání trialu přes Kabinet.
+ *
+ * Odpověď Kabinetu nese vedle vlastních polí (`status`, `code`, `endsOn`)
+ * i `success` a `reason` v přesném znění starého API, takže `parseTrialCodes`
+ * a `parseFreeTrialError` fungují beze změny a UI se nemusí přepisovat.
+ */
+export async function submitTrialViaKabinet(fields: FreeTrialFields): Promise<FreeTrialSubmitResult> {
+  const res = await fetch(KABINET_TRIAL_REQUEST_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Bearer ${publicAnonKey}`,
+    },
+    body: JSON.stringify(buildKabinetTrialBody(fields)),
+  });
+
+  const rawText = await res.text();
+  let data: Record<string, unknown> | null = null;
+  if (rawText.trim()) {
+    try {
+      data = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      data = null;
+    }
+  }
+
+  const status = typeof data?.status === 'string' ? data.status : '';
+  const endsOn = typeof data?.endsOn === 'string' ? data.endsOn : undefined;
+  const codes = parseTrialCodes(data);
+
+  /** Kabinet ani starý systém trial nezaložily — nabídnout opakování, ne „děkujeme“. */
+  if (status === 'failed' || res.status >= 500) {
+    const message =
+      typeof data?.message === 'string' && data.message.trim()
+        ? data.message
+        : 'Registrace se teď nepodařila. Zkuste to prosím za chvíli znovu.';
+    return { status: 'error', code: 'generic', message };
+  }
+
+  if ((status === 'created' || status === 'extended') && codes) {
+    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'created', endsOn };
+  }
+
+  /** Škole trial už běží — Kabinet vrací její kódy, ukážeme je místo chyby. */
+  if (status === 'rejected' && codes) {
+    return { status: 'codes', studentCode: codes.student, teacherCode: codes.teacher, kind: 'existing_trial', endsOn };
+  }
+
+  if (status === 'created' || status === 'extended') {
+    return { status: 'thank_only' };
+  }
+
+  const err = parseFreeTrialError(data);
+  return { status: 'error', code: err.code, message: err.message };
+}
+
+/** Která cesta trialu se použije. `legacy` = dnešní stav, `kabinet` = nová. */
+export type TrialBackend = 'legacy' | 'kabinet';
+
+/** Jedno místo, kterým formuláře odesílají trial. */
+export function submitTrial(fields: FreeTrialFields, backend: TrialBackend = 'legacy'): Promise<FreeTrialSubmitResult> {
+  return backend === 'kabinet' ? submitTrialViaKabinet(fields) : submitFreeTrialAjax(fields);
+}
+
+/**
+ * Která cesta se použije pro danou adresu.
+ *
+ * `/vyzkousejte-kabinet` jede přes Kabinet, `/vyzkousejte` beze změny přes
+ * starý systém. Parametrem `?backend=kabinet|legacy` se to dá přebít, aby šlo
+ * obojí vyzkoušet na jedné adrese.
+ */
+export function resolveTrialBackend(pathname: string, search?: string): TrialBackend {
+  const override = new URLSearchParams(search ?? '').get('backend');
+  if (override === 'kabinet' || override === 'legacy') return override;
+  return pathname.replace(/\/+$/, '').endsWith('/vyzkousejte-kabinet') ? 'kabinet' : 'legacy';
 }

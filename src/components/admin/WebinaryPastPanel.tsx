@@ -21,6 +21,44 @@ import { matchDvppVideoForWebinar } from '../../../supabase/functions/_shared/dv
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
+/**
+ * Hromadné odeslání záznamu běží na pozadí, takže odpověď na request ještě nic neříká
+ * o výsledku. Tohle sleduje tracking, dokud počet odeslaných neustane růst.
+ * Vrací poslední známý počet, nebo `null`, když se stav nepodařilo přečíst.
+ */
+async function pollFollowupBulkProgress(
+  webinarId: string,
+  onTick: (sent: number) => void,
+): Promise<number | null> {
+  let last: number | null = null;
+  let stableRounds = 0;
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    let sent: number | null = null;
+    try {
+      const res = await fetch(
+        `${SERVER}/admin/webinar-post-followup-tracking/${encodeURIComponent(webinarId)}`,
+        { headers: { Authorization: `Bearer ${publicAnonKey}` } },
+      );
+      const d = (parseJsonResponseBody(await res.text()) || {}) as {
+        recipients?: Record<string, { sentAt?: string }>;
+      };
+      if (res.ok) {
+        sent = Object.values(d.recipients || {}).filter((r) => r?.sentAt).length;
+      }
+    } catch {
+      /* výpadek sítě v jednom kole nevadí, zkusíme to za 4 s znovu */
+    }
+    if (sent == null) continue;
+    onTick(sent);
+    // Dvě kola beze změny bereme jako dojeté — rozesílka po dávkách jinak roste každé kolo.
+    stableRounds = sent === last ? stableRounds + 1 : 0;
+    last = sent;
+    if (stableRounds >= 2 && sent > 0) return sent;
+  }
+  return last;
+}
+
 const MONTH_NAMES = [
   'Leden','Únor','Březen','Duben','Květen','Červen',
   'Červenec','Srpen','Září','Říjen','Listopad','Prosinec',
@@ -815,7 +853,18 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
         }),
       });
       const rawText = await res.text();
-      let data: { error?: string; sent?: number; total?: number; failed?: number };
+      let data: {
+        error?: string;
+        sent?: number;
+        total?: number;
+        failed?: number;
+        skipped?: number;
+        remaining?: number;
+        started?: boolean;
+        continued?: boolean;
+        alreadyRunning?: boolean;
+        breakdown?: { kvRegistrations?: number; mailchimpTagged?: number };
+      };
       try {
         data = (parseJsonResponseBody(rawText) || {}) as typeof data;
       } catch {
@@ -831,11 +880,41 @@ export default function WebinaryPastPanel({ active = true }: WebinaryPastPanelPr
             `${res.status}: ${rawText?.slice(0, 200) || 'server nevrátil žádný detail'}`,
         );
       }
+      // Server rozesílku jen založí a hned se vrátí — počty v téhle odpovědi ještě nic neznamenají.
+      if (data.started === true || data.continued === true) {
+        toast.success(
+          data.alreadyRunning === true
+            ? 'Odesílání už běží na pozadí, počkejte na dokončení.'
+            : `Odesílání běží na pozadí (${n} příjemců). Průběh se aktualizuje níže, neklikejte znovu.`,
+        );
+        const done = await pollFollowupBulkProgress(String(selected.id), () => {
+          void loadFollowupTracking();
+        });
+        await loadFollowupTracking();
+        if (done == null) {
+          toast.warning('Stav rozesílky se nepodařilo načíst — zkontrolujte počty níže.');
+        } else {
+          const zbyva = Math.max(0, n - done);
+          toast.success(
+            zbyva > 0
+              ? `Odesláno ${done} z ${n} e-mailů. Zbylých ${zbyva} Mandrill odmítl jako nedoručitelné (překlep v adrese nebo mrtvá schránka).`
+              : `Hotovo — odesláno všech ${done} e-mailů.`,
+          );
+        }
+        return;
+      }
+
       const sent = typeof data.sent === 'number' ? data.sent : 0;
       const total = typeof data.total === 'number' ? data.total : n;
       const failed = typeof data.failed === 'number' ? data.failed : 0;
-      const br = (data as { breakdown?: { kvRegistrations?: number; mailchimpTagged?: number } }).breakdown;
-      let okMsg = `Odesláno ${sent} z ${total} e-mailů.`;
+      const skipped = typeof data.skipped === 'number' ? data.skipped : 0;
+      const remaining = typeof data.remaining === 'number' ? data.remaining : 0;
+      const br = data.breakdown;
+      let okMsg =
+        sent === 0 && skipped > 0 && remaining === 0
+          ? `Všichni příjemci už e-mail mají (${skipped}).`
+          : `Odesláno ${sent} z ${total} e-mailů.`;
+      if (sent > 0 && skipped > 0) okMsg += ` Přeskočeno ${skipped} (už odesláno dřív).`;
       if (br && typeof br.mailchimpTagged === 'number' && br.mailchimpTagged > 0) {
         okMsg += ` (KV ${br.kvRegistrations ?? '—'}, Mailchimp ${br.mailchimpTagged})`;
       }

@@ -38,6 +38,8 @@ type OrderRow = {
   cancelled_reason: string | null;
   payment_resume_token: string | null;
   stripe_receipt_url: string | null;
+  /** NULL = běžná objednávka; pending|done = objednávka jen z plakátů (tisk na zakázku). */
+  poster_fulfillment_status: string | null;
 };
 
 type OrderItemRow = {
@@ -285,6 +287,199 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackin
   );
 }
 
+function isPosterOrder(order: OrderRow) {
+  return order.poster_fulfillment_status != null;
+}
+
+function formatDeliveryAddress(order: OrderRow) {
+  const line1 = String(order.street || '').trim();
+  const line2 = [String(order.zip || '').trim(), String(order.city || '').trim()].filter(Boolean).join(' ');
+  return [line1, line2].filter(Boolean).join(', ');
+}
+
+/** Blok „kam plakáty pošleme" — u Zásilkovny výdejní místo, jinak doručovací adresa. */
+function buildPosterDeliveryBlock(order: OrderRow) {
+  const address = formatDeliveryAddress(order);
+  const pickup = String(order.pickup_point_name || '').trim();
+  const rows: string[] = [];
+  rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;width:150px;">Jméno:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><strong>${escapeHtml(order.customer_name)}</strong></td></tr>`);
+  if (order.shipping_method === 'zasilkovna' && pickup) {
+    rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Výdejní místo:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><strong>${escapeHtml(pickup)}</strong></td></tr>`);
+    if (address) {
+      rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Adresa:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(address)}</td></tr>`);
+    }
+  } else if (address) {
+    rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Doručovací adresa:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><strong>${escapeHtml(address)}</strong></td></tr>`);
+  }
+  rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Doprava:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(shippingLabel(order.shipping_method))} — ${formatPrice(order.shipping_price)}</td></tr>`);
+  if (order.customer_phone) {
+    rows.push(`<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Telefon:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(order.customer_phone)}</td></tr>`);
+  }
+  return `
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;background:#f5f6fa;border-radius:14px;">
+      <tr><td style="padding:16px 18px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows.join('')}</table>
+      </td></tr>
+    </table>
+  `;
+}
+
+/**
+ * Potvrzení objednávky plakátů — tisk na zakázku, zákazníka prosíme o kontrolu doručovacích údajů.
+ * Plakáty nejdou přes Base.com, balí je Vividbooks ručně, proto se liší od běžného potvrzení.
+ */
+export function buildPosterOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackingUrl: string | null) {
+  const cardLike = ['card', 'apple_pay', 'google_pay'].includes(order.payment_method);
+  const receiptBlock = cardLike
+    ? `<p style="margin:16px 0 0;font-size:15px;line-height:1.65;color:#4a5568;">
+        Daňový doklad o zaplacení vám zašle e-mailem <strong style="color:${VB_EMAIL_NAVY};">iDoklad</strong> (obvykle během několika minut po zpracování platby).
+      </p>`
+    : '';
+  const trackingBlock = trackingUrl
+    ? `<p style="margin:20px 0 0;">${buildVividbooksBrandCta(trackingUrl, 'Sledovat objednávku')}</p>`
+    : '';
+  const replyTo = getReplyToAddress();
+
+  return buildShell(
+    `Potvrzení objednávky ${order.order_number} — plakáty Vividbooks`,
+    `
+      <h1 style="${H1}">Děkujeme, plakáty jdou do výroby!</h1>
+      <p style="${P}">
+        Máme vaši objednávku <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong> a platba v pořádku dorazila.
+        Plakáty tiskneme na zakázku, takže odeslání trvá o něco déle než u skladových položek.
+        Jakmile budou vytištěné a předáme je dopravci, pošleme vám další e-mail s informací o zásilce.
+      </p>
+      ${receiptBlock}
+      ${trackingBlock}
+      ${buildOrderItemsTable(items)}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
+        <tr>
+          <td style="padding:4px 0;font-size:17px;color:${VB_EMAIL_NAVY};"><strong>Celkem</strong></td>
+          <td style="padding:4px 0;font-size:17px;color:${VB_EMAIL_NAVY};text-align:right;"><strong>${formatPrice(order.total)}</strong></td>
+        </tr>
+      </table>
+      <h2 style="margin:0 0 10px;font-size:18px;font-weight:800;line-height:1.3;color:${VB_EMAIL_NAVY};">Prosíme o kontrolu, kam plakáty poslat</h2>
+      <p style="${P}">
+        Plakáty balíme ručně a posíláme jen jednou, proto si chceme být jistí, že dorazí na správné místo.
+        Zkontrolujte prosím údaje níže:
+      </p>
+      ${buildPosterDeliveryBlock(order)}
+      <p style="margin:16px 0 0;font-size:15px;line-height:1.65;color:#4a5568;">
+        Pokud je vše v pořádku, nemusíte nic dělat. Pokud chcete adresu nebo výdejní místo změnit, stačí odpovědět na tento e-mail
+        (nebo napsat na <a href="mailto:${escapeHtml(replyTo)}" style="${LINK}">${escapeHtml(replyTo)}</a>) — ideálně do 2 pracovních dnů, než plakáty zabalíme.
+      </p>
+    `,
+    'Objednávka plakátů',
+  );
+}
+
+function getPosterOrderNotifyRecipients(): string[] {
+  const raw = (Deno.env.get('POSTER_ORDER_NOTIFY_EMAIL') || 'vitek@vividbooks.com').trim();
+  return raw.split(/[,;\s]+/).map((e) => e.trim()).filter((e) => e.includes('@'));
+}
+
+function getAdminOrderUrl(orderId: string) {
+  return `${getPublicSiteUrl()}/admin/objednavky/${orderId}`;
+}
+
+/** Interní upozornění pro Vividbooks: přišla nová (zaplacená) objednávka plakátů. */
+export function buildPosterOrderAdminNotificationHtml(order: OrderRow, items: OrderItemRow[]) {
+  const note = String(order.note || '').trim();
+  const adminUrl = getAdminOrderUrl(order.id);
+  const totalPieces = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  return buildShell(
+    `Nová objednávka plakátů ${order.order_number}`,
+    `
+      <h1 style="${H1}">Nová objednávka plakátů</h1>
+      <p style="${P}">
+        Zaplacená objednávka <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong>
+        — ${totalPieces}&nbsp;ks, celkem <strong style="color:${VB_EMAIL_NAVY};">${formatPrice(order.total)}</strong>.
+        Zákazník dostal potvrzení s prosbou o kontrolu adresy.
+      </p>
+      <p style="margin:0 0 20px;">${buildVividbooksBrandCta(adminUrl, 'Otevřít v adminu')}</p>
+      ${buildOrderItemsTable(items)}
+      ${buildPosterDeliveryBlock(order)}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:12px 0 0;">
+        <tr><td style="padding:6px 0;font-size:15px;color:#4a5568;width:150px;">E-mail:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><a href="mailto:${escapeHtml(order.customer_email)}" style="${LINK}">${escapeHtml(order.customer_email)}</a></td></tr>
+        ${order.school_name ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Škola:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(order.school_name)}</td></tr>` : ''}
+        ${order.ico ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">IČO:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(order.ico)}</td></tr>` : ''}
+        <tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Platba:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(order.payment_method)}</td></tr>
+      </table>
+      ${note ? `
+        <p style="margin:16px 0 6px;font-size:15px;line-height:1.65;color:#4a5568;"><strong style="color:${VB_EMAIL_NAVY};">Poznámka zákazníka:</strong></p>
+        <p style="margin:0;font-size:15px;line-height:1.65;color:#1a1a22;">${escapeHtml(note).replace(/\r\n/g, '\n').replace(/\n/g, '<br/>')}</p>
+      ` : ''}
+    `,
+    'Interní upozornění',
+  );
+}
+
+async function sendMandrillMessage(params: {
+  mandrillKey: string;
+  from: { email: string; name: string };
+  to: { email: string; name?: string }[];
+  subject: string;
+  html: string;
+  replyTo: string;
+}) {
+  const response = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      key: params.mandrillKey,
+      message: {
+        html: params.html,
+        subject: params.subject,
+        from_email: params.from.email,
+        from_name: params.from.name,
+        to: params.to.map((t) => ({ email: t.email, name: t.name, type: 'to' })),
+        headers: { 'Reply-To': params.replyTo },
+        track_opens: true,
+        track_clicks: false,
+      },
+    }),
+  });
+
+  const result = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`Mandrill HTTP ${response.status}`);
+  }
+
+  if (!Array.isArray(result) || !['sent', 'queued', 'scheduled'].includes(result[0]?.status)) {
+    throw new Error(`Mandrill send failed: ${JSON.stringify(result).slice(0, 400)}`);
+  }
+}
+
+/**
+ * Interní notifikace o nové objednávce plakátů (POSTER_ORDER_NOTIFY_EMAIL, default vitek@vividbooks.com).
+ * Volá se po odeslání potvrzení zákazníkovi; chyba nesmí shodit zákaznický e-mail — volající ji jen zaloguje.
+ */
+export async function sendPosterOrderAdminNotification(sql: postgres.Sql, orderId: string) {
+  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  if (!mandrillKey) {
+    throw new Error('Missing MANDRILL_API_KEY.');
+  }
+  const { order, items } = await loadOrderEmailData(sql, orderId);
+  if (!isPosterOrder(order)) {
+    return { sent: false as const, reason: 'not_poster_order' as const };
+  }
+  const recipients = getPosterOrderNotifyRecipients();
+  if (recipients.length === 0) {
+    return { sent: false as const, reason: 'no_recipients' as const };
+  }
+  const subject = `🖼️ Nová objednávka plakátů ${order.order_number} — ${order.customer_name}`;
+  await sendMandrillMessage({
+    mandrillKey,
+    from: parseFromHeader(Deno.env.get('EMAIL_FROM') || 'VividBooks <objednavky@vividbooks.com>'),
+    to: recipients.map((email) => ({ email })),
+    subject,
+    html: buildPosterOrderAdminNotificationHtml(order, items),
+    replyTo: order.customer_email,
+  });
+  return { sent: true as const, recipients, subject };
+}
+
 function buildOrderShippedHtml(order: OrderRow, trackingUrl: string | null) {
   const trackingPageBlock = trackingUrl
     ? `<p style="margin:0 0 20px;">${buildVividbooksBrandCta(trackingUrl, 'Sledovat objednávku')}</p>`
@@ -423,7 +618,8 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
       total,
       cancelled_reason,
       payment_resume_token,
-      stripe_receipt_url
+      stripe_receipt_url,
+      poster_fulfillment_status
     from public.orders
     where id = ${orderId}::uuid
     limit 1
@@ -468,7 +664,10 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
   let subject = '';
   let html = '';
 
-  if (params.emailType === 'order_confirmed') {
+  if (params.emailType === 'order_confirmed' && isPosterOrder(order)) {
+    subject = `Potvrzení objednávky ${order.order_number} — plakáty jdou do výroby — VividBooks`;
+    html = buildPosterOrderConfirmedHtml(order, items, trackingUrl);
+  } else if (params.emailType === 'order_confirmed') {
     subject = `Potvrzení objednávky ${order.order_number} — VividBooks`;
     html = buildOrderConfirmedHtml(order, items, trackingUrl);
   } else if (params.emailType === 'order_shipped') {
@@ -497,33 +696,14 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
     throw new Error(`Unsupported emailType: ${params.emailType}`);
   }
 
-  const response = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      key: mandrillKey,
-      message: {
-        html,
-        subject,
-        from_email: from.email,
-        from_name: from.name,
-        to: [{ email: order.customer_email, name: order.customer_name, type: 'to' }],
-        headers: { 'Reply-To': getReplyToAddress() },
-        track_opens: true,
-        track_clicks: false,
-      },
-    }),
+  await sendMandrillMessage({
+    mandrillKey,
+    from,
+    to: [{ email: order.customer_email, name: order.customer_name }],
+    subject,
+    html,
+    replyTo: getReplyToAddress(),
   });
-
-  const result = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new Error(`Mandrill HTTP ${response.status}`);
-  }
-
-  if (!Array.isArray(result) || !['sent', 'queued', 'scheduled'].includes(result[0]?.status)) {
-    throw new Error(`Mandrill send failed: ${JSON.stringify(result).slice(0, 400)}`);
-  }
 
   return { order, subject, html };
 }
