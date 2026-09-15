@@ -1,24 +1,17 @@
 import { Phone } from 'lucide-react';
 import { Link, useNavigate } from 'react-router';
 import { useCart } from '../contexts/CartContext';
-import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
 import { APP_ENTRY_PATH } from '../config/publicUrls';
 import { presenceFirstName, useVividbooksPresence } from '@/lib/vividbooksPresence';
-
-interface TopNavProps {
-  onOrder?: () => void;
-}
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 const BTN_BASE =
   "flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97]";
 
-export function TopNav({ onOrder }: TopNavProps) {
+export function TopNav() {
   const navigate = useNavigate();
   const { itemCount, toggleCart } = useCart();
-  const { extraCount } = useSchoolOrderDraftMeta();
-  const schoolOrderCount = itemCount + extraCount;
   const presence = useVividbooksPresence();
   const presenceName = presenceFirstName(presence);
 
@@ -35,28 +28,19 @@ export function TopNav({ onOrder }: TopNavProps) {
 
         <span className="w-px h-6 bg-[#001161]/10" />
 
-        <a
-          href="/vyzkousejte"
-          onClick={(e) => {
-            e.preventDefault();
-            navigate('/vyzkousejte');
-          }}
-          className={`${BTN_BASE} bg-[#7C3AED] hover:bg-[#6D28D9] text-white shadow-sm`}
-        >
-          {'Vyzkou\u0161et zdarma'}
-        </a>
-
-        <button onClick={onOrder} className={`${BTN_BASE} bg-[#3d3d3d] hover:bg-[#555] text-white`}>
-          <span>Objednat pro školu</span>
-          {schoolOrderCount > 0 && (
-            <span
-              style={FF}
-              className="w-5 h-5 rounded-full bg-white text-[#3d3d3d] text-[11px] font-bold flex items-center justify-center"
-            >
-              {schoolOrderCount}
-            </span>
-          )}
-        </button>
+        {/* Přihlášenému už zkoušku zdarma nenabízíme — pozná se podle presence cookie. */}
+        {!presenceName && (
+          <a
+            href="/vyzkousejte"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate('/vyzkousejte');
+            }}
+            className={`${BTN_BASE} bg-[#7C3AED] hover:bg-[#6D28D9] text-white shadow-sm`}
+          >
+            {'Vyzkou\u0161et zdarma'}
+          </a>
+        )}
 
         {itemCount > 0 && (
           <button
@@ -87,9 +71,9 @@ export function TopNav({ onOrder }: TopNavProps) {
           target="_blank"
           rel="noopener noreferrer"
           title={presence?.school || undefined}
-          className={`${BTN_BASE} border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white group`}
+          className={`${BTN_BASE} bg-[#ff6a35] hover:bg-[#e8551f] text-white shadow-sm group`}
         >
-          {presenceName ? `Pokra\u010dovat jako ${presenceName}` : 'Otev\u0159\u00edt u\u010debnice'}
+          {presenceName ? `Otev\u0159\u00edt u\u010debnice jako ${presenceName}` : 'Otev\u0159\u00edt u\u010debnice'}
           <svg
             className="w-4 h-4 shrink-0 transition-transform group-hover:translate-x-0.5"
             fill="none"
