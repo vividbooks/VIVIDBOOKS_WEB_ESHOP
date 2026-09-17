@@ -81,7 +81,20 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 - Předmět: *Slovní úlohy: nová aplikace a dva webináře zdarma 🧮*
 - Preheader: *Od pondělí v knihovně matematiky. A 30. 9. i 14. 10. o nich vysíláme.*
 - Hlavní CTA: **Otevřít Slovní úlohy** → `https://app.vividbooks.com/aplikace/ulohy` (opakuje se v závěru)
-- Skladba: hero → háček → co aplikace umí + CTA → zvýrazněný box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+- Skladba: hero → háček → co aplikace umí + screenshot + CTA → „A takhle to vidí žák“ + screenshot → zvýrazněný box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+
+### Screenshoty
+
+Dva záběry z aplikace, pořízené z větve `production` v headless Chrome (1180 px a 1060 px šířky,
+2× DPI), zarámované na 1200 px se zaoblením 18 px a jemným okrajem, nahrané do bucketu
+`make-93a20b6f-images`:
+
+| Co | Soubor v bucketu |
+|---|---|
+| Výběr tématu + tři způsoby zadání | `1789677772776-u7v86kdfjg.png` |
+| Vyřešená úloha s náčrtem a hodnocením | `1789677774628-l7958lwln0t.png` |
+
+Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 
 ### Než se pustí ostrá kampaň
 
@@ -89,3 +102,11 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
 3. Vyměnit **cover webináře 14. 10.** — teď je vypůjčený ze zářijového webináře o matematice na 2. stupni.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
+
+### Našlo se při focení
+
+V procvičování jsou pod polem odpovědi tlačítka **„Odpovědět dobře“ a „Odpovědět špatně“**
+(`ulohy-practice__debug` v `UlohyPracticeChrome.tsx`). Nejsou schovaná za `import.meta.env.DEV`,
+takže jsou i v produkčním buildu — dokud aplikaci vidí jen admin, nevadí to, ale ve chvíli, kdy
+se otevře učitelům a žákům, je to tlačítko „vyřeš to za mě“. Stojí za to je před pondělkem
+schovat.
