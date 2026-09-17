@@ -19,6 +19,10 @@ import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
+  buildExistingBaseOrderLookupParams,
+  findExistingBaseOrderId,
+} from '../supabase/functions/_shared/basecom-find-existing-order.ts';
+import {
   deliveryInfoFromOrderRow,
   hasSeparateDeliveryAddress,
   orderDeliveryColumnsFromShipping,
@@ -222,6 +226,33 @@ registerTest('verifyOrderTrackingToken accepts valid token and rejects invalid t
   const badToken = `${token.slice(1)}a`;
   const malformed = await verifyOrderTrackingToken(orderId, secret, badToken);
   assert.equal(malformed, false);
+});
+
+registerTest('findExistingBaseOrderId finds the Base order already created for an e-shop order number', () => {
+  const orders = [
+    { order_id: 501, extra_field_1: 'VB-2026-0001' },
+    { order_id: 777, extra_field_1: ' vb-2026-0042 ' },
+    { order_id: 640, extra_field_1: 'VB-2026-0042' },
+    { order_id: 0, extra_field_1: 'VB-2026-0042' },
+  ];
+  // shoda bez ohledu na mezery a velikost písmen; při více shodách nejstarší (původní) objednávka
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-0042'), '640');
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-0001'), '501');
+  // nic nenalezeno → export smí objednávku založit
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-9999'), null);
+  assert.equal(findExistingBaseOrderId([], 'VB-2026-0042'), null);
+  assert.equal(findExistingBaseOrderId(undefined, 'VB-2026-0042'), null);
+  // prázdné číslo objednávky se nesmí spárovat s objednávkami, které pole nemají vyplněné
+  assert.equal(findExistingBaseOrderId([{ order_id: 5, extra_field_1: '' }, { order_id: 6 }], ''), null);
+});
+
+registerTest('buildExistingBaseOrderLookupParams searches from the day before the order, including unconfirmed orders', () => {
+  const params = buildExistingBaseOrderLookupParams({ created_at: '2026-09-17T10:00:00.000Z', customer_email: ' ucitel@skola.cz ' });
+  assert.equal(params.date_from, Math.floor(Date.parse('2026-09-16T10:00:00.000Z') / 1000));
+  assert.equal(params.get_unconfirmed_orders, true);
+  assert.equal(params.filter_email, 'ucitel@skola.cz');
+  // bez e-mailu se filtr neposílá (Base by jinak nevrátil nic)
+  assert.equal('filter_email' in buildExistingBaseOrderLookupParams({ created_at: '2026-09-17T10:00:00.000Z', customer_email: '' }), false);
 });
 
 registerTest('trimCompanyNameForBase keeps short names, normalizes whitespace, trims to Base limit', () => {
