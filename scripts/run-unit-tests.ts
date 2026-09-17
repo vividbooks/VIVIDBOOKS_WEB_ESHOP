@@ -19,6 +19,11 @@ import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
+  deliveryInfoFromOrderRow,
+  hasSeparateDeliveryAddress,
+  orderDeliveryColumnsFromShipping,
+} from '../supabase/functions/_shared/checkout-delivery-address.ts';
+import {
   enrichCzechAddressParts,
   geocodeFreeFormAddressViaGoogle,
   geocodeFreeFormAddressViaNominatim,
@@ -2033,6 +2038,51 @@ registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí 
     ),
     [{ product_id: 'mimo-katalog', quantity: 2, unit_price: 9000 }],
   );
+});
+
+registerTest('orderDeliveryColumnsFromShipping: jiná doručovací adresa z pokladny → orders.delivery_*', () => {
+  // Přepínač zapnutý → adresa se uloží (ořezaná), prázdný příjemce = null.
+  assert.deepEqual(
+    orderDeliveryColumnsFromShipping({
+      differentAddress: true,
+      deliveryAddress: {
+        recipientName: '  Kateřina Kupková, ZŠ a MŠ Ostrava-Výškovice ',
+        street: ' Šeříková 682/33 ',
+        city: 'Ostrava-Výškovice',
+        zip: '70030',
+      },
+    }),
+    {
+      delivery_recipient_name: 'Kateřina Kupková, ZŠ a MŠ Ostrava-Výškovice',
+      delivery_street: 'Šeříková 682/33',
+      delivery_city: 'Ostrava-Výškovice',
+      delivery_zip: '70030',
+    },
+  );
+  assert.equal(
+    orderDeliveryColumnsFromShipping({ differentAddress: true, deliveryAddress: { recipientName: '', street: 'Ul. 1', city: '', zip: '' } })
+      .delivery_recipient_name,
+    null,
+  );
+  // Přepínač vypnutý (nebo bez ulice) → samé null = doručit na fakturační adresu.
+  const empty = { delivery_recipient_name: null, delivery_street: null, delivery_city: null, delivery_zip: null };
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ differentAddress: false, deliveryAddress: { street: 'Ul. 1' } }), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ differentAddress: true, deliveryAddress: { street: '  ' } }), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ method: 'gls', price: 8900 } as never), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping(undefined), empty);
+});
+
+registerTest('hasSeparateDeliveryAddress / deliveryInfoFromOrderRow: zpět z řádku orders', () => {
+  const row = { delivery_recipient_name: null, delivery_street: 'Šeříková 682/33', delivery_city: 'Ostrava', delivery_zip: '70030' };
+  assert.equal(hasSeparateDeliveryAddress(row), true);
+  assert.equal(hasSeparateDeliveryAddress({ delivery_street: '   ' }), false);
+  assert.equal(hasSeparateDeliveryAddress({}), false);
+  assert.equal(hasSeparateDeliveryAddress(null), false);
+  assert.deepEqual(deliveryInfoFromOrderRow(row), {
+    differentAddress: true,
+    deliveryAddress: { recipientName: '', street: 'Šeříková 682/33', city: 'Ostrava', zip: '70030' },
+  });
+  assert.deepEqual(deliveryInfoFromOrderRow({ delivery_street: null }), { differentAddress: false });
 });
 
 await run();

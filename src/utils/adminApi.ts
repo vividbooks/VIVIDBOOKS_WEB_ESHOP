@@ -483,6 +483,11 @@ export interface AdminOrderDetail {
   shipping_price: number;
   pickup_point_id?: string | null;
   pickup_point_name?: string | null;
+  /** Jiná doručovací adresa z pokladny — null = doručit na fakturační (`street`/`city`/`zip`). */
+  delivery_recipient_name?: string | null;
+  delivery_street?: string | null;
+  delivery_city?: string | null;
+  delivery_zip?: string | null;
   tracking_number?: string | null;
   payment_method: string;
   payment_status?: string | null;
