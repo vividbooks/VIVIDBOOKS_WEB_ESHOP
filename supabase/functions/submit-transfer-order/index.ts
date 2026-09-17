@@ -13,6 +13,7 @@ import {
 import { domainAcceptsMailForForms } from '../_shared/email-mx.ts';
 import { isValidCZSKPostalCode } from '../_shared/postal-code-czsk.ts';
 import { hasStreetWithHouseNumber } from '../_shared/street-house-number.ts';
+import { orderDeliveryColumnsFromShipping } from '../_shared/checkout-delivery-address.ts';
 import {
   loadCheckoutCatalog,
   validateCheckoutPricing,
@@ -344,6 +345,9 @@ Deno.serve(async (req) => {
 
   const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
   const total = subtotal + shipping.price;
+  /** Jiná doručovací adresa (přepínač v pokladně) → `orders.delivery_*`. Převodové objednávky
+   *  nemají `checkout_sessions` řádek, takže tohle je jediné místo, kde se adresa uchová. */
+  const delivery = orderDeliveryColumnsFromShipping(shipping);
   if (subtotal <= 0 || total <= 0) {
     return jsonResponse(req, { error: 'Celková částka musí být kladná.' }, 400);
   }
@@ -429,6 +433,10 @@ Deno.serve(async (req) => {
                   shipping_price = ${shipping.price ?? 0},
                   pickup_point_id = ${shipping.pickupPointId ?? null},
                   pickup_point_name = ${shipping.pickupPointName ?? null},
+                  delivery_recipient_name = ${delivery.delivery_recipient_name},
+                  delivery_street = ${delivery.delivery_street},
+                  delivery_city = ${delivery.delivery_city},
+                  delivery_zip = ${delivery.delivery_zip},
                   payment_method = 'transfer',
                   status = 'pending_payment',
                   subtotal = ${subtotal},
@@ -528,6 +536,10 @@ Deno.serve(async (req) => {
               shipping_price,
               pickup_point_id,
               pickup_point_name,
+              delivery_recipient_name,
+              delivery_street,
+              delivery_city,
+              delivery_zip,
               payment_method,
               payment_status,
               subtotal,
@@ -550,6 +562,10 @@ Deno.serve(async (req) => {
               ${shipping.price ?? 0},
               ${shipping.pickupPointId ?? null},
               ${shipping.pickupPointName ?? null},
+              ${delivery.delivery_recipient_name},
+              ${delivery.delivery_street},
+              ${delivery.delivery_city},
+              ${delivery.delivery_zip},
               'transfer',
               'pending',
               ${subtotal},

@@ -177,6 +177,12 @@ Chování obecného parseru (`supabase/functions/_shared/fulfilment-stock.ts`):
 
 Diagnostika: odpověď `product-stock-status` má v `inventory.fulfilment` pole `configured`, `source` (`fulfillment.cz` / `generic`), `rowCount` a `error`.
 
+### Jiná doručovací adresa z pokladny
+
+Přepínač „Doručit na jinou adresu“ v pokladně (`CheckoutPage`) posílá `shipping.differentAddress` + `shipping.deliveryAddress`. Od migrace `20260917100000_orders_delivery_address.sql` se ukládá do `orders.delivery_recipient_name` / `delivery_street` / `delivery_city` / `delivery_zip` (NULL = doručit na fakturační `street` / `city` / `zip`). Zapisují ji všechny cesty založení objednávky (`create-payment-intent`, `submit-transfer-order`, `stripe-webhook`) přes `supabase/functions/_shared/checkout-delivery-address.ts`.
+
+Čtou ji: export do Base.com (`process-export-queue` → `delivery_fullname` / `delivery_address` / `delivery_city` / `delivery_postcode`; fakturační pole `invoice_*` a iDoklad zůstávají na fakturační adrese), potvrzovací e‑mail (`_shared/order-email.ts`), admin detail objednávky a Pipedrive sync (poznámka u dealu). Dřív adresa zůstávala jen v `checkout_sessions.shipping_data` (a u převodů nikde) a zásilka jela na fakturační adresu.
+
 ### Stavy objednávky — `incomplete` vs `pending_payment`
 
 Tabulka `public.orders` má dva „aktivní neúplné" stavy, které admin v UI rozlišuje:

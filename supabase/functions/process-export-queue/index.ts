@@ -7,6 +7,7 @@ import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
 import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
 import { enrichCzechAddressParts, normalizeCzechZip } from '../_shared/czech-address-enrichment.ts';
+import { hasSeparateDeliveryAddress } from '../_shared/checkout-delivery-address.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -36,6 +37,11 @@ type OrderRow = {
   shipping_price: number;
   pickup_point_id: string | null;
   pickup_point_name: string | null;
+  /** Jiná doručovací adresa z pokladny — NULL = doručit na fakturační (`street`/`city`/`zip`). */
+  delivery_recipient_name: string | null;
+  delivery_street: string | null;
+  delivery_city: string | null;
+  delivery_zip: string | null;
   payment_method: string;
   note: string | null;
   created_at: string;
@@ -774,6 +780,10 @@ async function handleBasecomExport(
       o.shipping_price,
       o.pickup_point_id,
       o.pickup_point_name,
+      o.delivery_recipient_name,
+      o.delivery_street,
+      o.delivery_city,
+      o.delivery_zip,
       o.payment_method,
       o.note,
       o.created_at,
@@ -882,6 +892,7 @@ async function handleBasecomExport(
     return typeof raw === 'string' ? raw : '';
   })();
   const effectiveUserComments = payloadUserComments || order.note || '';
+  const separateDelivery = hasSeparateDeliveryAddress(order);
 
   const parameters: Record<string, unknown> = {
     order_status_id: orderStatusId,
@@ -898,12 +909,16 @@ async function handleBasecomExport(
     paid: effectivePaid,
     delivery_method: deliveryMethodLabel(order.shipping_method),
     delivery_price: amountInCzk(order.shipping_price),
-    delivery_fullname: order.customer_name,
+    /** Doručovací adresa: když zákazník v pokladně zapnul „Doručit na jinou adresu“, jde do Base
+     *  ona (`orders.delivery_*`), jinak fakturační. Dřív šla vždy fakturační → zásilka na špatnou adresu. */
+    delivery_fullname: separateDelivery
+      ? (order.delivery_recipient_name || order.customer_name)
+      : order.customer_name,
     /** Base API: `delivery_company` je varchar(156) — delší název školy by export shodil. */
     delivery_company: trimCompanyNameForBase(order.school_name) || '',
-    delivery_address: order.street || '',
-    delivery_city: order.city || '',
-    delivery_postcode: order.zip || '',
+    delivery_address: separateDelivery ? order.delivery_street : (order.street || ''),
+    delivery_city: separateDelivery ? (order.delivery_city || '') : (order.city || ''),
+    delivery_postcode: separateDelivery ? (order.delivery_zip || '') : (order.zip || ''),
     delivery_country_code: 'CZ',
     invoice_fullname: order.customer_name,
     /** `invoice_company` má limit varchar(500), ale posíláme stejnou oříznutou hodnotu. */
