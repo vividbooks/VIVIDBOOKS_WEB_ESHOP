@@ -20368,7 +20368,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, checkout_session_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, delivery_recipient_name, delivery_street, delivery_city, delivery_zip, pipedrive_deal_id, checkout_session_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -20675,10 +20675,24 @@ async function syncEshopOrderToPipedriveFromDb(
   }
 
   /** Doručovací adresa jiná než fakturační → zvýrazněná note k dealu. Explicitní parametr
-   *  (např. z submit-transfer-order, který nemá `checkout_sessions` řádek) má přednost;
-   *  jinak fallback na `checkout_sessions.shipping_data` přes `orders.checkout_session_id`
-   *  (pokrývá create-payment-intent i stripe-webhook, kde checkout_session_id vždy existuje). */
+   *  (např. z submit-transfer-order) má přednost; jinak `orders.delivery_*` (ukládá pokladna,
+   *  převod i Stripe webhook) a jako poslední fallback pro starší objednávky
+   *  `checkout_sessions.shipping_data` přes `orders.checkout_session_id`. */
   let deliveryInfo: EshopOrderDeliveryInfo = explicitDelivery ?? null;
+  if (!deliveryInfo?.differentAddress) {
+    const orderDeliveryStreet = String((order as any).delivery_street || '').trim();
+    if (orderDeliveryStreet) {
+      deliveryInfo = {
+        differentAddress: true,
+        deliveryAddress: {
+          recipientName: String((order as any).delivery_recipient_name || '').trim(),
+          street: orderDeliveryStreet,
+          city: String((order as any).delivery_city || '').trim(),
+          zip: String((order as any).delivery_zip || '').trim(),
+        },
+      };
+    }
+  }
   if (!deliveryInfo?.differentAddress) {
     const checkoutSessionId = String((order as any).checkout_session_id || '').trim();
     if (checkoutSessionId) {
@@ -20687,11 +20701,21 @@ async function syncEshopOrderToPipedriveFromDb(
         .select('shipping_data')
         .eq('id', checkoutSessionId)
         .maybeSingle();
-      const shippingData = (session as any)?.shipping_data as
+      /** `shipping_data` bývá uložené jako jsonb *řetězec* (postgres.js serializuje
+       *  `JSON.stringify(shipping)` jako JSON string) — proto případně ještě jednou parsujeme. */
+      let shippingData = (session as any)?.shipping_data as
         | { differentAddress?: boolean; deliveryAddress?: EshopDeliveryAddress | null }
+        | string
         | null
         | undefined;
-      if (shippingData?.differentAddress) {
+      if (typeof shippingData === 'string') {
+        try {
+          shippingData = JSON.parse(shippingData);
+        } catch {
+          shippingData = null;
+        }
+      }
+      if (typeof shippingData === 'object' && shippingData?.differentAddress) {
         deliveryInfo = { differentAddress: true, deliveryAddress: shippingData.deliveryAddress };
       }
     }

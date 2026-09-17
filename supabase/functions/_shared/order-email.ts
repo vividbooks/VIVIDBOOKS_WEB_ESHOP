@@ -32,6 +32,11 @@ type OrderRow = {
   shipping_method: string;
   shipping_price: number;
   pickup_point_name: string | null;
+  /** Jiná doručovací adresa z pokladny — null = doručit na fakturační (`street`/`city`/`zip`). */
+  delivery_recipient_name: string | null;
+  delivery_street: string | null;
+  delivery_city: string | null;
+  delivery_zip: string | null;
   tracking_number: string | null;
   payment_method: string;
   total: number;
@@ -274,6 +279,7 @@ function buildOrderConfirmedHtml(order: OrderRow, items: OrderItemRow[], trackin
           <td style="padding:8px 0;font-size:15px;color:${VB_EMAIL_NAVY};text-align:right;"><strong>${escapeHtml(shippingLabel(order.shipping_method))}</strong> — ${formatPrice(order.shipping_price)}</td>
         </tr>
         ${order.pickup_point_name ? `<tr><td style="padding:8px 0;font-size:15px;color:#4a5568;">Výdejní místo:</td><td style="padding:8px 0;font-size:15px;color:${VB_EMAIL_NAVY};text-align:right;">${escapeHtml(order.pickup_point_name)}</td></tr>` : ''}
+        ${buildSeparateDeliveryAddressRow(order)}
         <tr>
           <td style="padding:12px 0 0;font-size:17px;color:${VB_EMAIL_NAVY};"><strong>Celkem</strong></td>
           <td style="padding:12px 0 0;font-size:17px;color:${VB_EMAIL_NAVY};text-align:right;"><strong>${formatPrice(order.total)}</strong></td>
@@ -291,10 +297,24 @@ function isPosterOrder(order: OrderRow) {
   return order.poster_fulfillment_status != null;
 }
 
+/** Kam zásilka skutečně jede: jiná doručovací adresa z pokladny (`delivery_*`), jinak fakturační. */
 function formatDeliveryAddress(order: OrderRow) {
-  const line1 = String(order.street || '').trim();
-  const line2 = [String(order.zip || '').trim(), String(order.city || '').trim()].filter(Boolean).join(' ');
-  return [line1, line2].filter(Boolean).join(', ');
+  const separate = String(order.delivery_street || '').trim().length > 0;
+  const recipient = separate ? String(order.delivery_recipient_name || '').trim() : '';
+  const line1 = String((separate ? order.delivery_street : order.street) || '').trim();
+  const line2 = [
+    String((separate ? order.delivery_zip : order.zip) || '').trim(),
+    String((separate ? order.delivery_city : order.city) || '').trim(),
+  ].filter(Boolean).join(' ');
+  return [recipient, line1, line2].filter(Boolean).join(', ');
+}
+
+/** Řádek „Doručovací adresa“ do potvrzení — jen když je jiná než fakturační (jinak by byl matoucí u Zásilkovny). */
+function buildSeparateDeliveryAddressRow(order: OrderRow) {
+  if (!String(order.delivery_street || '').trim()) return '';
+  const address = formatDeliveryAddress(order);
+  if (!address) return '';
+  return `<tr><td style="padding:8px 0;font-size:15px;color:#4a5568;vertical-align:top;">Doručovací adresa:</td><td style="padding:8px 0;font-size:15px;color:${VB_EMAIL_NAVY};text-align:right;"><strong>${escapeHtml(address)}</strong></td></tr>`;
 }
 
 /** Blok „kam plakáty pošleme" — u Zásilkovny výdejní místo, jinak doručovací adresa. */
@@ -613,6 +633,10 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
       shipping_method,
       shipping_price,
       pickup_point_name,
+      delivery_recipient_name,
+      delivery_street,
+      delivery_city,
+      delivery_zip,
       tracking_number,
       payment_method,
       total,

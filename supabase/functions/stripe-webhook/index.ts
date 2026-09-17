@@ -3,6 +3,11 @@ import postgres from 'npm:postgres';
 import { ensureWorkflowSteps, upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 import { scheduleCheckoutIdentityUpsert } from '../_shared/checkout-identity.ts';
+import {
+  deliveryInfoFromOrderRow,
+  orderDeliveryColumnsFromShipping,
+  type CheckoutDeliveryAddressInput,
+} from '../_shared/checkout-delivery-address.ts';
 
 type OrderItemMetadata = {
   productId: string;
@@ -31,7 +36,7 @@ type CustomerMetadata = {
   zip: string;
 };
 
-type ShippingMetadata = {
+type ShippingMetadata = CheckoutDeliveryAddressInput & {
   method: string;
   price: number;
   pickupPointId?: string;
@@ -401,6 +406,10 @@ type PendingOrderFallbackRow = {
   shipping_price: number;
   pickup_point_id: string | null;
   pickup_point_name: string | null;
+  delivery_recipient_name: string | null;
+  delivery_street: string | null;
+  delivery_city: string | null;
+  delivery_zip: string | null;
 };
 
 type OrderItemFallbackRow = {
@@ -486,7 +495,11 @@ async function loadCheckoutContextForSucceededPayment(
       shipping_method,
       shipping_price,
       pickup_point_id,
-      pickup_point_name
+      pickup_point_name,
+      delivery_recipient_name,
+      delivery_street,
+      delivery_city,
+      delivery_zip
     from public.orders
     where stripe_payment_intent_id = ${paymentIntent.id}
       and status in ('incomplete', 'pending_payment')
@@ -532,6 +545,7 @@ async function loadCheckoutContextForSucceededPayment(
     price: Number.isInteger(po.shipping_price) ? po.shipping_price : 0,
     ...(po.pickup_point_id?.trim() ? { pickupPointId: po.pickup_point_id.trim() } : {}),
     ...(po.pickup_point_name?.trim() ? { pickupPointName: po.pickup_point_name.trim() } : {}),
+    ...deliveryInfoFromOrderRow(po),
   };
 
   const items: OrderItemMetadata[] = itemRows.map((row) => ({
@@ -673,6 +687,9 @@ Deno.serve(async (req) => {
         paymentIntent,
       );
       const posterOnly = isPosterOnlyOrder(items);
+      /** Jiná doručovací adresa z `checkout_sessions.shipping_data` → `orders.delivery_*`
+       *  (pending řádek ji má už z create-payment-intent; `coalesce` ji jen doplní, když chybí). */
+      const delivery = orderDeliveryColumnsFromShipping(shipping);
 
       const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
       const total = subtotal + (Number.isInteger(shipping.price) ? shipping.price : 0);
@@ -715,7 +732,11 @@ Deno.serve(async (req) => {
                   paid_at = now(),
                   updated_at = now(),
                   poster_fulfillment_status = ${posterOnly ? 'pending' : null},
-                  basecom_status = ${posterOnly ? 'skipped' : 'pending'}
+                  basecom_status = ${posterOnly ? 'skipped' : 'pending'},
+                  delivery_recipient_name = coalesce(${delivery.delivery_recipient_name}, delivery_recipient_name),
+                  delivery_street = coalesce(${delivery.delivery_street}, delivery_street),
+                  delivery_city = coalesce(${delivery.delivery_city}, delivery_city),
+                  delivery_zip = coalesce(${delivery.delivery_zip}, delivery_zip)
                 where id = ${existing.id}::uuid
                   and status in ('incomplete', 'pending_payment')
                 returning id, order_number
@@ -840,6 +861,10 @@ Deno.serve(async (req) => {
               shipping_price,
               pickup_point_id,
               pickup_point_name,
+              delivery_recipient_name,
+              delivery_street,
+              delivery_city,
+              delivery_zip,
               payment_method,
               payment_status,
               stripe_payment_intent_id,
@@ -865,6 +890,10 @@ Deno.serve(async (req) => {
               ${shipping.price ?? 0},
               ${shipping.pickupPointId ?? null},
               ${shipping.pickupPointName ?? null},
+              ${delivery.delivery_recipient_name},
+              ${delivery.delivery_street},
+              ${delivery.delivery_city},
+              ${delivery.delivery_zip},
               ${pm},
               'paid',
               ${paymentIntent.id},
