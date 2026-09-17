@@ -78,10 +78,11 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 ## 4 · Mailing
 
 - Draft `slovni-ulohy-rijen-2026` v `/mailing/emaily`
-- Předmět: *Slovní úlohy: nová aplikace a dva webináře zdarma 🧮*
-- Preheader: *Od pondělí v knihovně matematiky. A 30. 9. i 14. 10. o nich vysíláme.*
+- Předmět: *Slovní úlohy: nová aplikace a dva webináře*
+- Preheader: *Od pondělí v knihovně matematiky. Webináře 30. září a 14. října.*
 - Hlavní CTA: **Otevřít Slovní úlohy** → `https://app.vividbooks.com/aplikace/ulohy` (opakuje se v závěru)
-- Skladba: hero → háček → co aplikace umí + screenshot + CTA → „A takhle to vidí žák“ + screenshot → zvýrazněný box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+- Skladba: hero → co to je → témata + screenshot + režimy + CTA → „Jak vypadá procvičování“ + screenshot → box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+- Tón: věcný. Žádné emoji v nadpisech, žádné oslovování sborovny, žádné díky za komentáře — co aplikace dělá, kdy, kde a za jakých podmínek.
 
 ### Screenshoty
 
