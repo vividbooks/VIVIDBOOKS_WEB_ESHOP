@@ -67,13 +67,17 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 - Obsah: situační model, concept cartoons, vizuální podpora, čtení s porozuměním na textu úloh, úlohy s komplikujícími parametry
 - `/webinar/jak-na-slovni-ulohy`
 
-### 14. 10. 2026 — František Cáb (nově založeno)
+### 14. 10. 2026 — Naďa Vondrová (nově založeno)
 
-- **Jak na slovní úlohy na 2. stupni – a nová aplikace, která je umí generovat**
+- **Jak na slovní úlohy v 6.–9. ročníku ZŠ**
+- prof. RNDr. Naďa Vondrová, Ph.D., Pedagogická fakulta UK
 - Středa 14. 10. od 18:00, 90 minut, live stream, certifikát DVPP přes anketu
 - Cílovka: učitelé matematiky 6.–9. ročníku · tagy: matematika, 2. stupeň, DVPP
-- První polovina navazuje na Vondrovou a překlápí to do praxe 6.–9. ročníku, druhá je živá prohlídka aplikace Slovní úlohy a výhled na Přijímací zkoušky
+- Totéž téma jako 30. 9., ale pro druhý stupeň: zlomky, procenta, úměrnosti, rovnice, geometrie
 - `/webinar/jak-na-slovni-ulohy-2-stupen`
+- Webinář byl původně založený na Františka Cába s představením aplikace. Podle grafiky z Figmy
+  (VIVIDBOOKS MARKETING, node 22698-83) ho vede Vondrová, takže lektor, název i popis jsou přepsané
+  a představení aplikace z programu i z mailu vypadlo.
 
 ## 4 · Mailing
 
@@ -101,7 +105,9 @@ Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 
 1. **Shodit admin-only zámek** na obou aplikacích, aby odkaz v mailu učiteli fungoval. Bez toho CTA nikam nevede.
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
-3. Vyměnit **cover webináře 14. 10.** — teď je vypůjčený ze zářijového webináře o matematice na 2. stupni.
+3. Nahrát **cover webináře 14. 10.** z Figmy (node 22698-83). Zatím je tam vypůjčený obrázek
+   ze zářijového webináře o matematice na 2. stupni. Cover je potřeba i pro kartu webináře v mailu —
+   ta si nese snímek obrázku v sobě, takže se po výměně musí přegenerovat.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
 
 ### Našlo se při focení
