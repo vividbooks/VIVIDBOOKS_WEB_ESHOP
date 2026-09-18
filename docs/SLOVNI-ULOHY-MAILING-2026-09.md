@@ -74,6 +74,7 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 - Středa 14. 10. od 18:00, 90 minut, live stream, certifikát DVPP přes anketu
 - Cílovka: učitelé matematiky 6.–9. ročníku · tagy: matematika, 2. stupeň, DVPP
 - Totéž téma jako 30. 9., ale pro druhý stupeň: zlomky, procenta, úměrnosti, rovnice, geometrie
+- Cover: `1789681633020-qe2iryx5eks.png` (1920×1080, pozadí `#001161`), `coverImageBgColor` na `#001161`
 - `/webinar/jak-na-slovni-ulohy-2-stupen`
 - Webinář byl původně založený na Františka Cába s představením aplikace. Podle grafiky z Figmy
   (VIVIDBOOKS MARKETING, node 22698-83) ho vede Vondrová, takže lektor, název i popis jsou přepsané
@@ -106,12 +107,7 @@ Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 
 1. **Shodit admin-only zámek** na obou aplikacích, aby odkaz v mailu učiteli fungoval. Bez toho CTA nikam nevede.
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
-3. Nahrát **cover webináře 14. 10.** z Figmy (node 22698-83) a nastavit podle něj `coverImageBgColor`.
-   Na webu je u webináře pořád vypůjčený obrázek ze zářijového webináře o matematice na 2. stupni —
-   ten je potřeba vyměnit. V mailu už není: karta jede bez `coverImage`, takže se vykresluje
-   vestavěná značková varianta (žlutý panel s názvem, termínem a lektorem + dekorace), viz
-   `heroTopTable()` v `src/components/admin/emailWebinarBlock.ts`. Po nahrání coveru se karta
-   v mailu musí přegenerovat — nese si snímek webináře v sobě.
+3. ~~Cover webináře 14. 10.~~ — hotovo. Grafika z Figmy je nahraná, na webu i v kartě v mailu.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
 
 ### Našlo se při focení
