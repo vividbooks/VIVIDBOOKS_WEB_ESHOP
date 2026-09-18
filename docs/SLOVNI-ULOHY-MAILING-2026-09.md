@@ -91,13 +91,14 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 ### Screenshoty
 
 Dva záběry z aplikace, pořízené z větve `production` v headless Chrome (1180 px a 1060 px šířky,
-2× DPI), zarámované na 1200 px se zaoblením 18 px a jemným okrajem, nahrané do bucketu
-`make-93a20b6f-images`:
+2× DPI). Každý je pak vysázený na 1200 px jako okno prohlížeče — tmavě modré plátno `#001161`,
+bílá lišta s puntíky a adresou `app.vividbooks.com/aplikace/ulohy`, nad oknem bílá bublina
+s popiskem. Obojí v bucketu `make-93a20b6f-images`:
 
-| Co | Soubor v bucketu |
-|---|---|
-| Výběr tématu + tři způsoby zadání | `1789677772776-u7v86kdfjg.png` |
-| Vyřešená úloha s náčrtem a hodnocením | `1789677774628-l7958lwln0t.png` |
+| Co | Popisek v bublině | Soubor v bucketu |
+|---|---|---|
+| Výběr tématu + tři způsoby zadání | Výběr tématu a způsobu zadání | `1789707539043-sih0vmh5lat.png` |
+| Vyřešená úloha s náčrtem a hodnocením | Procvičování s adaptivní obtížností | `1789707540699-6nast0r7i9x.png` |
 
 Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 
@@ -105,9 +106,12 @@ Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 
 1. **Shodit admin-only zámek** na obou aplikacích, aby odkaz v mailu učiteli fungoval. Bez toho CTA nikam nevede.
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
-3. Nahrát **cover webináře 14. 10.** z Figmy (node 22698-83). Zatím je tam vypůjčený obrázek
-   ze zářijového webináře o matematice na 2. stupni. Cover je potřeba i pro kartu webináře v mailu —
-   ta si nese snímek obrázku v sobě, takže se po výměně musí přegenerovat.
+3. Nahrát **cover webináře 14. 10.** z Figmy (node 22698-83) a nastavit podle něj `coverImageBgColor`.
+   Na webu je u webináře pořád vypůjčený obrázek ze zářijového webináře o matematice na 2. stupni —
+   ten je potřeba vyměnit. V mailu už není: karta jede bez `coverImage`, takže se vykresluje
+   vestavěná značková varianta (žlutý panel s názvem, termínem a lektorem + dekorace), viz
+   `heroTopTable()` v `src/components/admin/emailWebinarBlock.ts`. Po nahrání coveru se karta
+   v mailu musí přegenerovat — nese si snímek webináře v sobě.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
 
 ### Našlo se při focení
