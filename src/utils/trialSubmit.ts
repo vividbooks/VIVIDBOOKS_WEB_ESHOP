@@ -446,11 +446,11 @@ export async function submitTrialViaKabinet(fields: FreeTrialFields): Promise<Fr
   return { status: 'error', code: err.code, message: err.message };
 }
 
-/** Která cesta trialu se použije. `legacy` = dnešní stav, `kabinet` = nová. */
+/** Která cesta trialu se použije. `kabinet` = výchozí (škola vzniká s IČO v registru), `legacy` = původní přes starý systém. */
 export type TrialBackend = 'legacy' | 'kabinet';
 
 /** Jedno místo, kterým formuláře odesílají trial. */
-export function submitTrial(fields: FreeTrialFields, backend: TrialBackend = 'legacy'): Promise<FreeTrialSubmitResult> {
+export function submitTrial(fields: FreeTrialFields, backend: TrialBackend = 'kabinet'): Promise<FreeTrialSubmitResult> {
   return backend === 'kabinet' ? submitTrialViaKabinet(fields) : submitFreeTrialAjax(fields);
 }
 
@@ -464,5 +464,8 @@ export function submitTrial(fields: FreeTrialFields, backend: TrialBackend = 'le
 export function resolveTrialBackend(pathname: string, search?: string): TrialBackend {
   const override = new URLSearchParams(search ?? '').get('backend');
   if (override === 'kabinet' || override === 'legacy') return override;
-  return pathname.replace(/\/+$/, '').endsWith('/vyzkousejte-kabinet') ? 'kabinet' : 'legacy';
+  // Starý systém IČO ke škole neukládá → v registru vznikala škola bez IČO (duplicita skutečné školy).
+  // Výchozí je proto Kabinet; `?backend=legacy` zůstává jako nouzový návrat.
+  void pathname;
+  return 'kabinet';
 }
