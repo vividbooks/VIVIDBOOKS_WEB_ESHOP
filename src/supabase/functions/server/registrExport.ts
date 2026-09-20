@@ -12,6 +12,7 @@ import type { Context } from 'npm:hono';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 import { identityUpsertAuthorized } from './identityUpsert.ts';
+import { identifiedWebPathTopic } from '../../../lib/identityWebPath.ts';
 
 type WebinarIdxEntry = {
   webinarId: string;
@@ -215,15 +216,17 @@ export async function handleRegistrExportGet(c: Context, deps: Deps) {
         const person = people.find((p) => String(p.id) === String(row.person_id));
         const primary = (person?.identity_emails || []).find((e: any) => e.is_primary) || (person?.identity_emails || [])[0];
         if (!primary?.email) continue;
-        const kind = row.kind === 'trial' ? 'trial_requested' : row.kind === 'webinar' ? 'webinar_registered' : 'web_visit';
+        // Zobrazení stránky je vždy jen návštěva. Dřív se /vyzkousejte exportovalo jako „trial_requested"
+        // a stránka webináře jako „webinar_registered" – registr i CRM pak braly prohlížení za žádost o trial
+        // a za registraci. Skutečné registrace jdou zvlášť (webinars níže), žádosti o trial přes registr.
         events.push({
           email: String(primary.email).toLowerCase(),
-          kind,
+          kind: 'web_visit',
           occurred_at: row.occurred_at,
           title: row.path || row.entity_id || null,
           ref_id: row.entity_id || null,
           dedupe_key: `web:web_event:${row.id}`,
-          payload: { path: row.path, kind: row.kind },
+          payload: { path: row.path, kind: row.kind, topic: identifiedWebPathTopic(row.path) },
         });
       }
     }
