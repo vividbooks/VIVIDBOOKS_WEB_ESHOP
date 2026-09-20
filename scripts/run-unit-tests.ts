@@ -2052,6 +2052,106 @@ registerTest('párování záznamu vybere nejpodobnější název, při remíze 
   );
 });
 
+registerTest('párování záznamu nepřeskočí předmět v názvu (prvouka není chemie)', () => {
+  /**
+   * Regrese z 16.–18. 9. 2026: „Jak nadchnout žáky pro prvouku?“ a „…pro chemii?“ se párovaly
+   * na záznam fyziky. Jediné odlišné slovo je poslední, tedy za 70% hranicí prefixu, a čísla
+   * v názvech nejsou — obě pojistky z minulé regrese mlčely. Uložení v adminu pak záznam
+   * fyziky přepsalo prvoukou a o dva dny později chemií; tři rozesílky ukazovaly na jedno id.
+   */
+  const fyzika = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-fyziku',
+    name: 'Jak nadchnout žáky pro fyziku?',
+  };
+  const prvouka = {
+    id: 'jak-nadchnout-zaky-pro-prvouku-2026',
+    slug: 'jak-nadchnout-zaky-pro-prvouku',
+    title: 'Jak nadchnout žáky pro prvouku?',
+  };
+  const chemie = {
+    id: 'jak-nadchnout-zaky-pro-chemii-2026',
+    slug: 'jak-nadchnout-zaky-pro-chemii',
+    title: 'Jak nadchnout žáky pro chemii?',
+  };
+
+  assert.equal(matchDvppVideoForWebinar(prvouka, [fyzika]), null);
+  assert.equal(matchDvppVideoForWebinar(chemie, [fyzika]), null);
+
+  /** Pět webinářů „Jak nadchnout žáky pro …“ se navzájem nikdy nespáruje. */
+  const rada = [
+    { id: 'p', slug: 'p', name: 'Jak nadchnout žáky pro prvouku?' },
+    { id: 'c', slug: 'c', name: 'Jak nadchnout žáky pro chemii?' },
+    { id: 'f', slug: 'f', name: 'Jak nadchnout žáky pro fyziku?' },
+    { id: 'm1', slug: 'm1', name: 'Jak nadchnout žáky pro matematiku na 1. stupni?' },
+    { id: 'm2', slug: 'm2', name: 'Jak nadchnout žáky pro matematiku na 2. stupni?' },
+  ];
+  for (const w of rada) {
+    const cizi = rada.filter((v) => v.id !== w.id);
+    assert.equal(matchDvppVideoForWebinar({ id: `w-${w.id}`, slug: `w-${w.id}`, title: w.name }, cizi), null, w.name);
+  }
+
+  /** Delší název se slovy navíc a jiné skloňování se párují dál — přesně tak vypadají starší záznamy. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'uvod-do-vividbooks-v-listopadu', title: 'Úvod do Vividbooks v listopadu' },
+      [{ id: 'v', slug: 'uvod-do-vividbooks', name: 'Úvod do Vividbooks' }],
+    )?.id,
+    'v',
+  );
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'w', title: 'Jednoduchá tvorba interaktivních materiálů s Vividboardem' },
+      [{ id: 'v', slug: 'v', name: 'Jednoduchá tvorba interaktivních materiálů s nástrojem Vividboard' }],
+    )?.id,
+    'v',
+  );
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'w', title: '🥳 👨🏻‍🏫 Představení Vividbooks matematiky – 7. ročník' },
+      [{ id: 'v', slug: 'v', name: 'Vividbooks matematika 7. ročníku' }],
+    )?.id,
+    'v',
+  );
+
+  /** Stejná slova v jiném pořadí nebo s jinou interpunkcí se párují dál. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'jiny-slug', title: 'Jak nadchnout žáky pro fyziku?' },
+      [{ id: 'v', slug: 'v', name: 'Záznam webináře: Jak nadchnout žáky pro fyziku' }],
+    )?.id,
+    'v',
+  );
+});
+
+registerTest('párování záznamu: id má přednost před slugem, který mohl admin přepsat', () => {
+  /**
+   * Přesně stav katalogu 18. 9. 2026: záznam s id fyziky nesl po dvou přepsáních slug i název
+   * chemie. Webinář fyziky má dostat svůj záznam podle id, webinář chemie nesmí dostat cizí
+   * záznam jen proto, že na něm zůstal jeho slug — dostane ho jen tehdy, když se id shoduje.
+   */
+  const prepsany = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-chemii',
+    name: 'Jak nadchnout žáky pro chemii?',
+  };
+  const fyzika = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-fyziku',
+    title: 'Jak nadchnout žáky pro fyziku?',
+  };
+  assert.equal(matchDvppVideoForWebinar(fyzika, [prepsany])?.id, 'jak-nadchnout-zaky-pro-fyziku-2026');
+
+  /** Slug je pořád platná druhá cesta — starší záznamy z Webflow mají vlastní id. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'webinar-1700000000000', slug: 'stredobod-interaktivni-vyuky', title: 'Středobod interaktivní výuky' },
+      [{ id: '67d07ca261377ed42f76ea12', slug: 'stredobod-interaktivni-vyuky', name: 'Středobod' }],
+    )?.id,
+    '67d07ca261377ed42f76ea12',
+  );
+});
+
 registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí cenu z formuláře', () => {
   const catalog = new Map<string, unknown>([['ps-mat-6-1', { id: 'ps-mat-6-1', price: '125,-' }]]);
   assert.deepEqual(
