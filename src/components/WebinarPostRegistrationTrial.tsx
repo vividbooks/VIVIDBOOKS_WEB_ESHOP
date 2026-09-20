@@ -3,7 +3,7 @@ import { Link } from 'react-router';
 import { motion } from 'motion/react';
 import { AlertCircle, CheckCircle, ExternalLink, Loader2 } from 'lucide-react';
 import { SchoolSearch, type PdOwner, type PipedriveStatus } from './TrialPage';
-import { submitFreeTrialAjax, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
+import { submitTrial, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
@@ -168,7 +168,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         return;
       }
       const payload = buildTrialFieldsFromWebinar(form);
-      const result = await submitFreeTrialAjax(payload);
+      const result = await submitTrial(payload);
       if (result.status === 'error') {
         setTrialError(result.message);
         return;
