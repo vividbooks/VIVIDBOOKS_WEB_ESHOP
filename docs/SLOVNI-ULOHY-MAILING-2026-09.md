@@ -86,7 +86,8 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 - Předmět: *Slovní úlohy: nová aplikace a dva webináře*
 - Preheader: *Od pondělí v knihovně matematiky. Webináře 30. září a 14. října.*
 - Hlavní CTA: **Otevřít Slovní úlohy** → `https://app.vividbooks.com/aplikace/ulohy` (opakuje se v závěru)
-- Skladba: hero → co to je → témata + screenshot + režimy + CTA → „Jak vypadá procvičování“ + screenshot → box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+- Skladba: hero → úvodní slovo Vítka Škopa (jeho text, opravené překlepy z diktování) → co to je → témata + screenshot + režimy + CTA → „Jak vypadá procvičování“ + screenshot → box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
+- Podepsaný je nahoře Vítek Škop, dole už se podruhé nepodepisujeme.
 - Tón: věcný. Žádné emoji v nadpisech, žádné oslovování sborovny, žádné díky za komentáře — co aplikace dělá, kdy, kde a za jakých podmínek.
 
 ### Screenshoty
@@ -106,6 +107,8 @@ Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 ### Než se pustí ostrá kampaň
 
 1. **Shodit admin-only zámek** na obou aplikacích, aby odkaz v mailu učiteli fungoval. Bez toho CTA nikam nevede.
+   Stav k 21. 9. odpoledne: `RequireAdminAuth` je v `origin/production` u `/aplikace/ulohy`
+   i `/aplikace/prijimaci-zkousky` **pořád**, přestože mail tvrdí „od pondělí 21. září najdete".
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
 3. ~~Cover webináře 14. 10.~~ — hotovo. Grafika z Figmy je nahraná, na webu i v kartě v mailu.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
