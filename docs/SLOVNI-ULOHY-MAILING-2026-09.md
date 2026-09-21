@@ -19,13 +19,22 @@ Dlaždice v regálu se ukazuje jen u matematiky a jen na 2. stupni.
 
 Generátory jsou psané na 6.–9. ročník, každý s vlastním úvodem pro žáka a se třemi úrovněmi obtížnosti.
 
-| Karta | Režimy | Ročník |
-|---|---|---|
-| Úměrnosti | přímá, nepřímá, přímá i nepřímá | 7 |
-| Procenta | jednoduché slovní úlohy, pokročilé slovní úlohy | 7 |
-| Slovní úlohy řešitelné pomocí rovnic | jednoduché (podle sešitu 8), pokročilé (pohyb, procenta z neznámého základu, zadání z přijímaček) | 8 |
-| Geometrické úlohy (rovinné útvary) | čtverec a obdélník, rovnoběžníky, trojúhelník, lichoběžník, Pythagorova věta, kruh, kružnice a mnohoúhelníky, složené obrazce, úhly v rovině | 6–8 |
-| Geometrické úlohy (tělesa) | krychle a kvádr | 6 |
+Stav odečtený z běžící produkce 21. 9. (karty a chipy tak, jak je učitel vidí):
+
+| Karta | Režimy |
+|---|---|
+| Slovní a početní úlohy | přirozená čísla, necelá čísla, záporná čísla |
+| Aritmetický průměr | aritmetický průměr |
+| Úměrnosti | přímá, nepřímá, přímá i nepřímá, poměr, podobnost |
+| Procenta | jednoduché slovní úlohy, pokročilé slovní úlohy |
+| Slovní úlohy řešitelné pomocí rovnic | jednoduché, pokročilé, soustavy rovnic, úlohy o pohybu, úlohy o společné práci |
+| Geometrické úlohy (rovinné útvary) | čtverec a obdélník, rovnoběžníky, trojúhelník, lichoběžník, Pythagorova věta, kruh, kružnice a mnohoúhelníky, složené obrazce, úhly v rovině |
+| Geometrické úlohy (tělesa) | krychle a kvádr, hranoly, válec |
+| Statistika | statistika |
+
+Karty Algebraické výrazy, Soustavy rovnic, Přirozená čísla a přijímačkové (Cermat, Témata, Test)
+existují, ale v aplikaci Slovní úlohy se nezobrazují — `listedTopics()` odfiltruje `vyrazy-*`
+a `prijimacky-*`. Patří do Přijímacích zkoušek.
 
 ### Co aplikace umí
 
@@ -34,7 +43,7 @@ Generátory jsou psané na 6.–9. ročník, každý s vlastním úvodem pro ž�
 - **Pracovní list** — učitel řekne, kolik úloh chce z které úrovně, a vypadne PDF do tisku. Strop je 100 úloh na list.
 - **Board** — stejná sada úloh jako board na tabuli (vyžaduje zabezpečený účet).
 - **Zadání pro celou třídu** — relace, výsledky pohromadě (vyžaduje zabezpečený účet).
-- **Ke každé úloze řešení i postup.** Úlohy mají obrázky (hotová SVG z generátoru), tabulky, výběr z nabídky i tvrzení pravda/nepravda.
+- **Ke každé úloze řešení.** Postupy výpočtu zatím nejsou. Úlohy mají obrázky (hotová SVG z generátoru), tabulky, výběr z nabídky i tvrzení pravda/nepravda.
 - **Hodnocení úloh.** Po každé úloze palec 1–3 („Úloha byla super / Nic moc / Úloha byla špatná“), u nejhoršího stupně i komentář. Zatím se nedá vypnout — je to hlavní zdroj zpětné vazby z testovací verze.
 
 ### Co je rozpracované ve větvi `ULOHY2` (do produkce zatím nejde)
