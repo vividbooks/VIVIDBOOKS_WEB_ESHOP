@@ -93,7 +93,7 @@ Samostatná dlaždice, routa `/aplikace/prijimaci-zkousky`, v produkci taky jen 
 
 - Draft `slovni-ulohy-rijen-2026` v `/mailing/emaily`
 - Předmět: *Slovní úlohy: nová aplikace a dva webináře*
-- Preheader: *Od pondělí v knihovně matematiky. Webináře 30. září a 14. října.*
+- Preheader: *Od úterý v knihovně matematiky. Webináře 30. září a 14. října.*
 - Hlavní CTA: **Otevřít Slovní úlohy** → `https://app.vividbooks.com/aplikace/ulohy` (opakuje se v závěru)
 - Skladba: hero → úvodní slovo Vítka Škopa (jeho text, opravené překlepy z diktování) → co to je → témata + screenshot + režimy + CTA → „Jak vypadá procvičování“ + screenshot → box o testovací verzi → karta webináře 30. 9. → karta webináře 14. 10. → přijímačky + závěrečné CTA
 - Podepsaný je nahoře Vítek Škop, dole už se podruhé nepodepisujeme.
@@ -116,11 +116,20 @@ Při focení byl skrytý ladicí pruh `.ulohy-practice__debug` — viz níže.
 ### Než se pustí ostrá kampaň
 
 1. **Shodit admin-only zámek** na obou aplikacích, aby odkaz v mailu učiteli fungoval. Bez toho CTA nikam nevede.
-   Stav k 21. 9. odpoledne: `RequireAdminAuth` je v `origin/production` u `/aplikace/ulohy`
-   i `/aplikace/prijimaci-zkousky` **pořád**, přestože mail tvrdí „od pondělí 21. září najdete".
+   Odemyká se **v úterý 22. 9.** — mail je podle toho přepsaný („Od úterý 22. září najdete…“).
+   K 21. 9. večer je `RequireAdminAuth` v `origin/production` u `/aplikace/ulohy`
+   i `/aplikace/prijimaci-zkousky` pořád.
 2. Doplnit **YouTube odkaz** na live stream u webináře 14. 10.
 3. ~~Cover webináře 14. 10.~~ — hotovo. Grafika z Figmy je nahraná, na webu i v kartě v mailu.
 4. Zkontrolovat v mobilu a pak teprve vybírat audienci.
+
+### Obrázky v mailu se nezobrazují
+
+Prověřeno 21. 9.: všechny čtyři obrázky (dva screenshoty, dva covery webinářů) vrací z bucketu
+HTTP 200, `content-type: image/png`, a hlavičky se shodují s obrázkem, který prošel ostrou
+kampaní. Po odesílací kompilaci (`compileEmailBodyForSend`) zůstávají v HTML všechny čtyři
+`<img>` i s alt texty a celé tělo má 19 kB, takže Gmail zprávu neořezává (ořez je nad ~102 kB).
+Příčina je tedy na straně klienta — nenačtené externí obrázky.
 
 ### Našlo se při focení
 
