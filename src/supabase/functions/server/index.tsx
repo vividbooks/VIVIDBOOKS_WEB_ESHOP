@@ -14,6 +14,9 @@ import {
   recordIdentifiedWebEvent,
   upsertIdentity,
 } from './identityUpsert.ts';
+import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
+import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
+import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
 import { prepareCampaignRecipients, runCampaignSendBatches, scheduleSendContinuation } from './campaignSendEngine.ts';
@@ -33,6 +36,7 @@ import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
+import { matchDvppVideoForWebinar } from '../../../../supabase/functions/_shared/dvpp-video-match.ts';
 import {
   buildVividbooksBrandCta,
   buildVividbooksBrandShell,
@@ -60,6 +64,12 @@ import {
   parsePipedrivePersonOptionIds,
   sortSubjectOptionIdsOtherLast,
 } from '../../../../supabase/functions/_shared/pipedrive-person-subject.ts';
+import {
+  mapSchoolInquiryToPipedriveOrderItems,
+  schoolInquiryPickupPointName,
+  schoolInquiryShippingMethod,
+  schoolInquiryShippingPriceHaler,
+} from '../../../../supabase/functions/_shared/school-inquiry-pipedrive-items.ts';
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
@@ -3976,7 +3986,99 @@ app.get('/make-server-93a20b6f/webinar-registrace/:webinarId', async (c) => {
   }
 });
 
-/** Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení). */
+/**
+ * Veřejný počet přihlášených — jen číslo pro mezistránku „Přepojujeme vás na vysílání“.
+ * Seznam registrací (s e-maily) zůstává jen v `/webinar-registrace/:webinarId`.
+ * Krátká paměťová cache: v hodině před webinářem sem chodí všichni diváci naráz.
+ */
+const webinarRegCountCache = new Map<string, { at: number; count: number }>();
+const WEBINAR_REG_COUNT_TTL_MS = 60_000;
+app.get('/make-server-93a20b6f/webinar-registrace-count/:webinarId', async (c) => {
+  try {
+    const webinarId = String(c.req.param('webinarId') || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+    const hit = webinarRegCountCache.get(webinarId);
+    let count = hit && Date.now() - hit.at < WEBINAR_REG_COUNT_TTL_MS ? hit.count : null;
+    if (count === null) {
+      const rows = await kv.getByPrefix(`webinar_reg_${webinarId}_`);
+      count = rows.length;
+      webinarRegCountCache.set(webinarId, { at: Date.now(), count });
+    }
+    return c.json({ webinarId, count }, 200, {
+      'Cache-Control': 'public, max-age=30, s-maxage=60, stale-while-revalidate=600',
+    });
+  } catch (err: any) {
+    return c.json({ error: `Chyba počtu registrací: ${err.message}` }, 500);
+  }
+});
+
+/* ── Ochrana veřejného ověření e-mailu ──────────────────────────────
+ * Endpoint prozradí, jestli daná adresa byla na webináři — sám o sobě nic citlivého,
+ * ale procházet s ním seznam adres nikomu neumožníme. Isolate žije krátce, takže je to
+ * tlumič, ne bezpečnostní hranice: brzdí procházení seznamu, ne jednoho člověka,
+ * který si znovu otevírá svůj certifikát. */
+const REG_CHECK_WINDOW_MS = 60_000;
+const REG_CHECK_MAX_PER_WINDOW = 20;
+const REG_CHECK_EMAILS_WINDOW_MS = 10 * 60_000;
+const REG_CHECK_MAX_EMAILS = 40;
+const REG_CHECK_MAX_TRACKED_IPS = 5_000;
+
+type RegCheckBucket = {
+  windowStart: number;
+  count: number;
+  emailsWindowStart: number;
+  emails: Set<string>;
+};
+const regCheckBuckets = new Map<string, RegCheckBucket>();
+
+function clientIpForRateLimit(c: Context): string {
+  const fwd = c.req.header('x-forwarded-for') || '';
+  const first = fwd.split(',')[0]?.trim();
+  return first || c.req.header('cf-connecting-ip')?.trim() || 'unknown';
+}
+
+/** `false` = odmítnout (429). Počítá zvlášť dotazy a zvlášť počet různých adres. */
+function allowWebinarRegistrationCheck(ip: string, email: string): boolean {
+  const now = Date.now();
+  if (regCheckBuckets.size > REG_CHECK_MAX_TRACKED_IPS) regCheckBuckets.clear();
+
+  const b = regCheckBuckets.get(ip);
+  if (!b) {
+    regCheckBuckets.set(ip, {
+      windowStart: now,
+      count: 1,
+      emailsWindowStart: now,
+      emails: new Set([email]),
+    });
+    return true;
+  }
+
+  if (now - b.windowStart >= REG_CHECK_WINDOW_MS) {
+    b.windowStart = now;
+    b.count = 0;
+  }
+  if (now - b.emailsWindowStart >= REG_CHECK_EMAILS_WINDOW_MS) {
+    b.emailsWindowStart = now;
+    b.emails.clear();
+  }
+
+  b.count += 1;
+  if (b.count > REG_CHECK_MAX_PER_WINDOW) return false;
+  /** Opakovaný dotaz na vlastní adresu se do limitu různých adres nepřičítá. */
+  if (!b.emails.has(email)) {
+    if (b.emails.size >= REG_CHECK_MAX_EMAILS) return false;
+    b.emails.add(email);
+  }
+  return true;
+}
+
+/**
+ * Veřejné ověření: je e-mail registrovaný na webinář (dotazník, částečné uložení).
+ * `surveySubmitted` odlišuje odeslaný dotazník od rozepsaného — podle něj se na
+ * `/webinar/:slug/certifikat` rozhoduje, jestli se certifikát smí vystavit znovu.
+ * Osobní údaje z certifikátu (jméno, datum narození) se **nevracejí** — jinak by
+ * z toho byla veřejná vyhledávačka data narození podle e-mailu.
+ */
 async function handleWebinarRegistrationCheckGet(c: Context) {
   try {
     const webinarId = normalizeWebinarIdFromBody(c.req.query('webinarId'));
@@ -3985,12 +4087,20 @@ async function handleWebinarRegistrationCheckGet(c: Context) {
     if (!webinarId || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return c.json({ registered: false, error: 'Chybí platné webinarId nebo email.' }, 400);
     }
+    if (!allowWebinarRegistrationCheck(clientIpForRateLimit(c), email)) {
+      return c.json({ error: 'Příliš mnoho dotazů. Zkuste to prosím za minutu.' }, 429);
+    }
     const reg = await kv.get(`webinar_reg_${webinarId}_${email}`);
     const light = await kv.get(`webinar_survey_light_${webinarId}_${email}`);
-    const survey = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as { answers?: Record<string, string> } | null;
+    const survey = (await kv.get(webinarSurveyAnswerKey(webinarId, email))) as {
+      answers?: Record<string, string>;
+      submittedAt?: string;
+    } | null;
     const partial = (await kv.get(webinarSurveyPartialKey(webinarId, email))) as { answers?: Record<string, string> } | null;
     return c.json({
       registered: !!(reg || light),
+      surveySubmitted: !!survey,
+      surveySubmittedAt: typeof survey?.submittedAt === 'string' ? survey.submittedAt : undefined,
       answers: {
         ...answersFromWebinarRegistration(reg),
         ...(partial?.answers || {}),
@@ -4035,6 +4145,19 @@ app.post('/make-server-93a20b6f/identity/upsert', handleIdentityUpsertPost);
 app.post('/identity/upsert', handleIdentityUpsertPost);
 app.post('/make-server-93a20b6f/identity/web-event', handleIdentityWebEventPost);
 app.post('/identity/web-event', handleIdentityWebEventPost);
+
+app.get('/make-server-93a20b6f/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
+app.get('/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
+app.get('/make-server-93a20b6f/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
+app.get('/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
+app.post('/make-server-93a20b6f/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.post('/cron/ultra-watchdog', handleUltraWatchdogCron);
+app.get('/make-server-93a20b6f/ultra-watchdog/status', handleUltraWatchdogStatus);
+app.get('/ultra-watchdog/status', handleUltraWatchdogStatus);
+app.post('/make-server-93a20b6f/admin/webinar-access-nudge', adminWebinarAccessNudgeHandler);
+app.post('/admin/webinar-access-nudge', adminWebinarAccessNudgeHandler);
+app.post('/make-server-93a20b6f/admin/webinar-reply-send', adminPersonalReplySendHandler);
+app.post('/admin/webinar-reply-send', adminPersonalReplySendHandler);
 
 /** Minimální kontakt před dotazníkem DVPP (bez plné registrace na webinář) — ukládá se do KV pro `public/webinar-registration-check`. */
 app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
@@ -4605,6 +4728,68 @@ app.post('/make-server-93a20b6f/webinar-checkin', async (c) => {
   } catch (err: any) {
     console.log(`[Checkin] Chyba: ${err.message}`);
     return c.json({ error: `Chyba check-in: ${err.message}` }, 500);
+  }
+});
+
+/* ── Příchod na stream (režim „přesměrovat na YouTube") ────────── */
+/**
+ * Zapíše jeden příchod na `/webinar/…/live`. Každý příchod má vlastní klíč,
+ * takže souběžné zápisy o sebe nezavadí (na rozdíl od jednoho počítadla).
+ * Když příchozího známe podle e-mailu, nastaví se u jeho registrace `attended`
+ * — stejně jako u běžného check-inu. Bez e-mailu se zapíše jen anonymní příchod.
+ */
+app.post('/make-server-93a20b6f/webinar-live-entry', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const webinarId = String(body?.webinarId || '').trim();
+    if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
+
+    const cleanEmail = String(body?.email || '').toLowerCase().trim();
+    const rawSource = String(body?.source || 'anonymous');
+    const source = ['lobby', 'identity', 'anonymous'].includes(rawSource) ? rawSource : 'anonymous';
+    const at = new Date().toISOString();
+
+    let attended = false;
+    if (cleanEmail) {
+      const applied = await runWebinarCheckInEffects(webinarId, cleanEmail);
+      attended = applied.ok;
+    }
+
+    const rand = Math.random().toString(36).slice(2, 8);
+    await kv.set(`webinar_live_entry_${webinarId}_${at}_${rand}`, {
+      webinarId,
+      webinarSlug: String(body?.webinarSlug || webinarId),
+      email: cleanEmail,
+      source,
+      attended,
+      at,
+    });
+    console.log(`[WebinarLive] Příchod na stream: ${cleanEmail || 'anonym'} (${source}) na ${webinarId}`);
+    return c.json({ success: true, attended });
+  } catch (err: any) {
+    console.log(`[WebinarLive] Chyba zápisu příchodu: ${err.message}`);
+    return c.json({ error: `Chyba zápisu příchodu: ${err.message}` }, 500);
+  }
+});
+
+/** Souhrn příchodů — kolik lidí prošlo na stream a kolik z nich známe jménem. */
+app.get('/make-server-93a20b6f/webinar-live-entries/:webinarId', async (c) => {
+  try {
+    const webinarId = String(c.req.param('webinarId'));
+    const rows = (await kv.getByPrefix(`webinar_live_entry_${webinarId}_`)) as Array<Record<string, unknown>>;
+    const mine = rows.filter((r) => String(r?.webinarId || '') === webinarId);
+    const emails = new Set(mine.map((r) => String(r?.email || '')).filter(Boolean));
+    return c.json({
+      webinarId,
+      total: mine.length,
+      identified: mine.filter((r) => Boolean(r?.email)).length,
+      anonymous: mine.filter((r) => !r?.email).length,
+      uniqueEmails: emails.size,
+      firstAt: mine.map((r) => String(r?.at || '')).sort()[0] || null,
+      lastAt: mine.map((r) => String(r?.at || '')).sort().slice(-1)[0] || null,
+    });
+  } catch (err: any) {
+    return c.json({ error: `Chyba čtení příchodů: ${err.message}` }, 500);
   }
 });
 
@@ -5420,31 +5605,15 @@ function buildWebinarDvppDotaznikUrl(baseUrl: string, w: any, cleanEmail: string
   return `${origin}/webinar/${encodeURIComponent(slug)}/dvpp-dotaznik?email=${encodeURIComponent(cleanEmail)}`;
 }
 
-/** Stejné jako `matchDvppVideo` ve WebinaryPastPanel — párování webináře k záznamu v KV `dvpp-videos`. */
-function normWebinarDvppMatch(raw: string): string {
-  return String(raw || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function matchDvppVideoForWebinar(webinar: any, dvppVideos: any[]): any | null {
-  if (!dvppVideos?.length) return null;
-  const wSlug = normWebinarDvppMatch(String(webinar.slug || webinar.id || ''));
-  const wTitle = normWebinarDvppMatch(String(webinar.title || ''));
-  const bySlug = dvppVideos.find((v: any) =>
-    normWebinarDvppMatch(String(v.slug || v.id || '')) === wSlug,
-  );
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find((v: any) => {
-    const vt = normWebinarDvppMatch(String(v.name || v.title || ''));
-    return wTitle.length > 5 && (
-      vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-      wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7)))
-    );
-  });
-  return byTitle ?? null;
+/**
+ * Znovuvydání certifikátu: `/webinar/.../certifikat`. Certifikát se nikam neukládá —
+ * vzniká v prohlížeči po dotazníku. Kdo si okno zavřel, dostane ho tady znovu,
+ * aniž by musel psát na podporu.
+ */
+function buildWebinarCertificateReissueUrl(baseUrl: string, w: any, cleanEmail: string): string {
+  const slug = String(w?.slug || w?.id || '').trim() || String(w?.id ?? '');
+  const origin = String(baseUrl || '').replace(/\/$/, '');
+  return `${origin}/webinar/${encodeURIComponent(slug)}/certifikat?email=${encodeURIComponent(cleanEmail)}`;
 }
 
 /** Který webinář patří k danému DVPP záznamu (pro ověření `webinar_reg_*`). */
@@ -5581,15 +5750,20 @@ async function resolveWebinarZaznamPageUrl(origin: string, w: any, opts?: { emai
     const slug = String(w.slug || w.id || '').trim() || 'webinar';
     return `${base}/webinar/${encodeURIComponent(slug)}`;
   }
-  let url = `${base}/webinare/zaznam/${encodeURIComponent(zaznamId)}`;
-  const em = String(opts?.email || '').trim().toLowerCase();
-  if (em && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
-    const qs = new URLSearchParams();
-    qs.set('email', em);
-    qs.set('from', 'email');
-    url += `?${qs.toString()}`;
-  }
-  return url;
+  const url = `${base}/webinare/zaznam/${encodeURIComponent(zaznamId)}`;
+  return withFollowupEmailOnZaznamUrl(url, opts?.email || '');
+}
+
+/** Doplní `?email=&from=email` k URL záznamu — bez dalšího KV čtení. */
+function withFollowupEmailOnZaznamUrl(baseUrl: string, email: string): string {
+  const clean = String(baseUrl || '').split('?')[0];
+  const em = String(email || '').trim().toLowerCase();
+  if (!clean) return String(baseUrl || '');
+  if (!em || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return clean;
+  const qs = new URLSearchParams();
+  qs.set('email', em);
+  qs.set('from', 'email');
+  return `${clean}?${qs.toString()}`;
 }
 
 /** Ověření přístupu ke záznamu podle e-mailu (registrace na živý webinář nebo u záznamu). */
@@ -5765,6 +5939,45 @@ ${learningsBlock}
 ${webinarEmailDvppPromoBannerRow()}
 <tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
 <p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">${esc(footerNote)}<br>
+&copy; ${new Date().getFullYear()} Vividbooks</p>
+</td></tr>
+</table></td></tr></table></body></html>`;
+}
+
+/**
+ * Potvrzení po odeslání dotazníku — hlavně kvůli odkazu na znovuvydání certifikátu.
+ * Certifikát se generuje v prohlížeči a nikam neukládá, takže bez tohohle odkazu
+ * lidem, co okno zavřeli, nezbývá než napsat na podporu.
+ */
+function buildWebinarSurveyConfirmationEmailHtml(opts: {
+  webinarTitle: string;
+  certificateUrl: string;
+  certificateKind: 'dvpp' | 'feedback';
+}): string {
+  const esc = remEscHtmlReminder;
+  const titleEsc = esc(opts.webinarTitle);
+  const isDvpp = opts.certificateKind === 'dvpp';
+  const lead = isDvpp
+    ? `Děkujeme za vyplnění dotazníku k webináři <strong>${titleEsc}</strong>. Certifikát DVPP si můžete kdykoli otevřít a vytisknout znovu — stačí kliknout níž.`
+    : `Děkujeme za vyplnění dotazníku k webináři <strong>${titleEsc}</strong>. Potvrzení o účasti si můžete kdykoli otevřít a vytisknout znovu — stačí kliknout níž.`;
+  const buttonLabel = isDvpp ? 'Otevřít certifikát DVPP' : 'Otevřít potvrzení o účasti';
+
+  return `<!DOCTYPE html><html lang="cs"><head><meta charset="UTF-8">${WEBINAR_EMAIL_DARK_HEAD}</head>
+<!-- vb-survey-confirmation-email-template: v1 (deploy make-server-93a20b6f) -->
+<body class="dm-rem-body" style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f5f6fa;padding:24px;">
+<table class="dm-rem-wrap" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+<table class="dm-rem-card dm-card" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(0,17,97,0.08);">
+${webinarEmailBrandedHeaderRow(isDvpp ? 'Certifikát DVPP' : 'Potvrzení o účasti')}
+<tr><td class="dm-rem-content" style="padding:26px 26px 8px;">
+<p style="margin:0 0 22px;font-size:15px;color:#334155;line-height:1.65;">${lead}</p>
+<table cellpadding="0" cellspacing="0" width="100%" style="margin:0 0 22px;">
+<tr><td align="center" style="padding:0;">
+<a href="${esc(opts.certificateUrl)}" style="display:inline-block;background:#001161;color:#ffffff;font-weight:800;font-size:15px;padding:16px 28px;border-radius:100px;text-decoration:none;">${esc(buttonLabel)}</a>
+</td></tr></table>
+<p style="margin:0 0 8px;font-size:13px;color:#64748b;line-height:1.6;">Odkaz si uložte — funguje opakovaně. V okně tisku zvolte „Uložit jako PDF“ a stránku nechte na A4 na šířku.</p>
+</td></tr>
+<tr><td style="background:#f8f9fc;padding:20px 28px;border-top:1px solid #edf2f7;">
+<p style="margin:0;font-size:12px;color:#a0aec0;line-height:1.6;">Tento e-mail vám posíláme, protože jste vyplnili dotazník k webináři Vividbooks.<br>
 &copy; ${new Date().getFullYear()} Vividbooks</p>
 </td></tr>
 </table></td></tr></table></body></html>`;
@@ -5967,6 +6180,8 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
   toEmail: string;
   toName: string;
   emailKind: 'test' | 'bulk';
+  /** Předpočítaná URL záznamu bez e-mailu — bulk send ji nesmí tahat z KV u každého příjemce. */
+  recordingUrlBase?: string;
 }): Promise<{ ok: boolean; detail?: string }> {
   const { webinarId, w, merged, learningsHtml, toEmail, toName, emailKind } = opts;
   const slug = String((w as any).slug || (w as any).id || '').trim() || String(webinarId);
@@ -5984,7 +6199,9 @@ async function sendWebinarPostFollowupEmailToRecipient(opts: {
     ? !!(surveyQuizUrl || quizPreviewLabels.length > 0)
     : !!certificateExternalUrl;
 
-  const recordingUrlDefault = await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
+  const recordingUrlDefault = opts.recordingUrlBase
+    ? withFollowupEmailOnZaznamUrl(opts.recordingUrlBase, toEmail)
+    : await resolveWebinarZaznamPageUrl(origin, w, { email: toEmail });
   const base = String(origin || '').replace(/\/$/, '');
   const devRec = String((merged as any).devFollowupRecordingUrl ?? (w as any).devFollowupRecordingUrl ?? '').trim();
   const recordingUrl = devRec
@@ -6076,86 +6293,198 @@ async function adminWebinarPostFollowupTestSendHandler(c: Context) {
   }
 }
 
-/** Hromadné odeslání e-mailu se záznamem + dotazníkem všem registrovaným (KV `webinar_reg_{id}_`). */
-async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
+const FOLLOWUP_BULK_CONCURRENCY = 10;
+const FOLLOWUP_BULK_TIME_BUDGET_MS = 40_000;
+const FOLLOWUP_BULK_LOCK_PREFIX = 'webinar_post_followup_lock_v1_';
+
+type FollowupBulkBody = {
+  webinarId?: string;
+  learningsHtml?: string;
+  postWebinarQuizQuestions?: unknown;
+  mailchimpTag?: string;
+  _worker?: boolean;
+  _continue?: boolean;
+};
+
+/** Naváže hromadné odeslání novým requestem (Edge 150s idle timeout nesmí držet prohlížeč). */
+function scheduleFollowupBulkContinuation(body: FollowupBulkBody): void {
+  const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
+  const key =
+    Deno.env.get('SUPABASE_ANON_KEY') ||
+    Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ||
+    '';
+  if (!base || !key) {
+    console.log('[webinar-post-followup-bulk] continue skipped — chybí SUPABASE_URL / klíč');
+    return;
+  }
+  const url = `${base}/functions/v1/make-server-93a20b6f/admin/webinar-post-followup-bulk-send`;
+  const task = fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      webinarId: body.webinarId,
+      ...(typeof body.learningsHtml === 'string' ? { learningsHtml: body.learningsHtml } : {}),
+      ...(Array.isArray(body.postWebinarQuizQuestions)
+        ? { postWebinarQuizQuestions: body.postWebinarQuizQuestions }
+        : {}),
+      ...(body.mailchimpTag ? { mailchimpTag: body.mailchimpTag } : {}),
+      _worker: true,
+      _continue: true,
+    }),
+  })
+    .then(async (res) => {
+      const txt = await res.text().catch(() => '');
+      console.log(`[webinar-post-followup-bulk] worker http=${res.status} ${txt.slice(0, 180)}`);
+    })
+    .catch((e) => {
+      console.log(`[webinar-post-followup-bulk] continue schedule failed: ${e?.message || e}`);
+    });
   try {
-    const body = await c.req.json();
-    const webinarId = String(body?.webinarId || '').trim();
-    if (!webinarId) {
-      return c.json({ error: 'Chybí webinarId.' }, 400);
-    }
+    (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime?.waitUntil?.(task);
+  } catch {
+    /* fire-and-forget */
+  }
+}
 
-    const items = await getCollection(WEBINARS_KEY);
-    const w = items.find((x: any) => String(x.id) === webinarId) as Record<string, unknown> | undefined;
-    if (!w) return c.json({ error: 'Webinář nenalezen' }, 404);
+function countFollowupSentRecipients(state: FollowupCampaignState): number {
+  let n = 0;
+  for (const rec of Object.values(state.recipients)) {
+    if (rec?.sentAt) n++;
+  }
+  return n;
+}
 
-    const learningsRaw = typeof body?.learningsHtml === 'string' && body.learningsHtml.trim()
-      ? body.learningsHtml
-      : String(w.postWebinarLearningsHtml || '');
-    const learningsHtml = sanitizeWebinarLearningsHtml(learningsRaw);
+async function clearFollowupBulkLock(webinarId: string): Promise<void> {
+  try {
+    await kv.del(`${FOLLOWUP_BULK_LOCK_PREFIX}${webinarId}`);
+  } catch {
+    /* ignore */
+  }
+}
 
-    const merged: Record<string, unknown> = { ...w };
-    if (Array.isArray(body?.postWebinarQuizQuestions)) {
-      merged.postWebinarQuizQuestions = body.postWebinarQuizQuestions;
-    }
+/** Vlastní odesílání — Mandrill search sem nesmí, po velké rozesílce drží request až do 150s timeoutu. */
+async function runWebinarPostFollowupBulkSend(body: FollowupBulkBody): Promise<Record<string, unknown>> {
+  const webinarId = String(body?.webinarId || '').trim();
+  if (!webinarId) {
+    return { error: 'Chybí webinarId.', status: 400 };
+  }
 
-    const mailchimpTagOverride =
-      typeof (body as any)?.mailchimpTag === 'string' ? String((body as any).mailchimpTag).trim() : '';
+  const items = await getCollection(WEBINARS_KEY);
+  const w = items.find((x: any) => String(x.id) === webinarId) as Record<string, unknown> | undefined;
+  if (!w) return { error: 'Webinář nenalezen', status: 404 };
 
-    const prefix = `webinar_reg_${webinarId}_`;
-    const registrations = (await kv.getByPrefix(prefix)) as any[];
-    const list = Array.isArray(registrations) ? registrations : [];
-    const kvRecipients = list
-      .map((r) => ({
-        email: String(r?.email || '')
-          .toLowerCase()
-          .trim(),
-        name: String(r?.name || '').trim(),
-      }))
-      .filter((r) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));
+  const learningsRaw = typeof body?.learningsHtml === 'string' && body.learningsHtml.trim()
+    ? body.learningsHtml
+    : String(w.postWebinarLearningsHtml || '');
+  const learningsHtml = sanitizeWebinarLearningsHtml(learningsRaw);
 
-    const mcData = await mailchimpFetchFollowupRecipientsForWebinar(
-      w,
-      mailchimpTagOverride || undefined,
+  const merged: Record<string, unknown> = { ...w };
+  if (Array.isArray(body?.postWebinarQuizQuestions)) {
+    merged.postWebinarQuizQuestions = body.postWebinarQuizQuestions;
+  }
+
+  const mailchimpTagOverride =
+    typeof body?.mailchimpTag === 'string' ? String(body.mailchimpTag).trim() : '';
+
+  const prefix = `webinar_reg_${webinarId}_`;
+  const registrations = (await kv.getByPrefix(prefix)) as any[];
+  const list = Array.isArray(registrations) ? registrations : [];
+  const kvRecipients = list
+    .map((r) => ({
+      email: String(r?.email || '')
+        .toLowerCase()
+        .trim(),
+      name: String(r?.name || '').trim(),
+    }))
+    .filter((r) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.email));
+
+  const mcData = await mailchimpFetchFollowupRecipientsForWebinar(
+    w,
+    mailchimpTagOverride || undefined,
+  );
+  const recipients = mergeKvAndMailchimpFollowupRecipients(kvRecipients, mcData.rows);
+
+  if (recipients.length === 0) {
+    await clearFollowupBulkLock(webinarId);
+    const hint =
+      kvRecipients.length === 0 && mcData.error
+        ? ` ${mcData.error}`
+        : kvRecipients.length === 0 && mcData.rows.length === 0
+          ? ' Zkontrolujte tag v Mailchimpu (výchozí = tag u registrace, nebo zvolený tag v adminu).'
+          : '';
+    return {
+      error: `Žádní příjemci s platným e-mailem (KV registrace + Mailchimp tag).${hint}`,
+      status: 400,
+    };
+  }
+
+  if (mcData.error) {
+    console.log(
+      `[webinar-post-followup-bulk] Mailchimp merge warning: ${mcData.error} — odesílám jen KV (${kvRecipients.length}) + dostupné z MC (${mcData.rows.length}).`,
     );
-    const recipients = mergeKvAndMailchimpFollowupRecipients(kvRecipients, mcData.rows);
+  }
 
-    if (recipients.length === 0) {
-      const hint =
-        kvRecipients.length === 0 && mcData.error
-          ? ` ${mcData.error}`
-          : kvRecipients.length === 0 && mcData.rows.length === 0
-            ? ' Zkontrolujte tag v Mailchimpu (výchozí = tag u registrace, nebo zvolený tag v adminu).'
-            : '';
-      return c.json(
-        {
-          error:
-            `Žádní příjemci s platným e-mailem (KV registrace + Mailchimp tag).${hint}`,
-        },
-        400,
-      );
+  const origin = getPublicSiteOrigin();
+  const recordingUrlBase = await resolveWebinarZaznamPageUrl(origin, w);
+
+  const track = await getFollowupTrackingState(webinarId);
+  const pending = recipients.filter((r) => !track.recipients[r.email]?.sentAt);
+  const skippedAlreadySent = recipients.length - pending.length;
+
+  if (pending.length === 0) {
+    await clearFollowupBulkLock(webinarId);
+    const overlap0 = kvRecipients.length + mcData.rows.length - recipients.length;
+    console.log(
+      `[webinar-post-followup-bulk] webinarId=${webinarId} already-sent=${skippedAlreadySent} nothing-to-send`,
+    );
+    return {
+      ok: true,
+      sent: 0,
+      skipped: skippedAlreadySent,
+      remaining: 0,
+      continued: false,
+      total: recipients.length,
+      failed: 0,
+      failures: [],
+      breakdown: {
+        kvRegistrations: kvRecipients.length,
+        mailchimpTagged: mcData.rows.length,
+        mailchimpTag: mcData.tag || null,
+        uniqueRecipients: recipients.length,
+        overlapKvAndMailchimp: overlap0 > 0 ? overlap0 : 0,
+        mailchimpError: mcData.error || null,
+      },
+    };
+  }
+
+  let sent = 0;
+  const failures: { email: string; detail?: string }[] = [];
+  const nowIso = new Date().toISOString();
+  const startedAt = Date.now();
+  let stoppedEarly = false;
+
+  for (let i = 0; i < pending.length; i += FOLLOWUP_BULK_CONCURRENCY) {
+    if (i > 0 && Date.now() - startedAt > FOLLOWUP_BULK_TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      break;
     }
-
-    if (mcData.error) {
-      console.log(
-        `[webinar-post-followup-bulk] Mailchimp merge warning: ${mcData.error} — odesílám jen KV (${kvRecipients.length}) + dostupné z MC (${mcData.rows.length}).`,
-      );
-    }
-
-    let sent = 0;
-    const failures: { email: string; detail?: string }[] = [];
-    const track = await getFollowupTrackingState(webinarId);
-    const nowIso = new Date().toISOString();
-    for (const rec of recipients) {
-      const out = await sendWebinarPostFollowupEmailToRecipient({
-        webinarId,
-        w,
-        merged,
-        learningsHtml,
-        toEmail: rec.email,
-        toName: rec.name || rec.email.split('@')[0],
-        emailKind: 'bulk',
-      });
+    const slice = pending.slice(i, i + FOLLOWUP_BULK_CONCURRENCY);
+    const results = await Promise.all(
+      slice.map(async (rec) => {
+        const out = await sendWebinarPostFollowupEmailToRecipient({
+          webinarId,
+          w,
+          merged,
+          learningsHtml,
+          toEmail: rec.email,
+          toName: rec.name || rec.email.split('@')[0],
+          emailKind: 'bulk',
+          recordingUrlBase,
+        });
+        return { rec, out };
+      }),
+    );
+    for (const { rec, out } of results) {
       if (out.ok) {
         sent++;
         const prev = track.recipients[rec.email] || {};
@@ -6167,32 +6496,126 @@ async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
         failures.push({ email: rec.email, detail: out.detail });
       }
     }
-    if (sent > 0) {
-      track.lastBulkAt = nowIso;
-      track.lastBulkSucceeded = sent;
-      await saveFollowupTrackingState(webinarId, track);
+    track.lastBulkAt = nowIso;
+    track.lastBulkSucceeded = countFollowupSentRecipients(track);
+    await saveFollowupTrackingState(webinarId, track);
+  }
+
+  const remaining = pending.length - sent - failures.length;
+  const shouldContinue = stoppedEarly && remaining > 0;
+  if (shouldContinue) {
+    scheduleFollowupBulkContinuation({
+      webinarId,
+      mailchimpTag: mailchimpTagOverride || undefined,
+      learningsHtml: typeof body?.learningsHtml === 'string' ? body.learningsHtml : undefined,
+      postWebinarQuizQuestions: Array.isArray(body?.postWebinarQuizQuestions)
+        ? body.postWebinarQuizQuestions
+        : undefined,
+    });
+  } else {
+    await clearFollowupBulkLock(webinarId);
+  }
+
+  const overlap = kvRecipients.length + mcData.rows.length - recipients.length;
+  console.log(
+    `[webinar-post-followup-bulk] webinarId=${webinarId} kv=${kvRecipients.length} mc=${mcData.rows.length} unique=${recipients.length} overlap≈${overlap} sent=${sent} skipped=${skippedAlreadySent} failed=${failures.length} remaining=${Math.max(0, remaining)} continued=${shouldContinue}`,
+  );
+  return {
+    ok: failures.length === 0,
+    sent,
+    skipped: skippedAlreadySent,
+    remaining: Math.max(0, remaining),
+    continued: shouldContinue,
+    total: recipients.length,
+    failed: failures.length,
+    failures: failures.slice(0, 20),
+    breakdown: {
+      kvRegistrations: kvRecipients.length,
+      mailchimpTagged: mcData.rows.length,
+      mailchimpTag: mcData.tag || null,
+      uniqueRecipients: recipients.length,
+      overlapKvAndMailchimp: overlap > 0 ? overlap : 0,
+      mailchimpError: mcData.error || null,
+    },
+  };
+}
+
+/** Hromadné odeslání e-mailu se záznamem + dotazníkem všem registrovaným (KV `webinar_reg_{id}_`). */
+async function adminWebinarPostFollowupBulkSendHandler(c: Context) {
+  try {
+    const body = (await c.req.json()) as FollowupBulkBody;
+    const webinarId = String(body?.webinarId || '').trim();
+    if (!webinarId) {
+      return c.json({ error: 'Chybí webinarId.' }, 400);
     }
 
-    const overlap =
-      kvRecipients.length + mcData.rows.length - recipients.length;
-    console.log(
-      `[webinar-post-followup-bulk] webinarId=${webinarId} kv=${kvRecipients.length} mc=${mcData.rows.length} unique=${recipients.length} overlap≈${overlap} sent=${sent} failed=${failures.length}`,
-    );
-    return c.json({
-      ok: failures.length === 0,
-      sent,
-      total: recipients.length,
-      failed: failures.length,
-      failures: failures.slice(0, 20),
-      breakdown: {
-        kvRegistrations: kvRecipients.length,
-        mailchimpTagged: mcData.rows.length,
-        mailchimpTag: mcData.tag || null,
-        uniqueRecipients: recipients.length,
-        overlapKvAndMailchimp: overlap > 0 ? overlap : 0,
-        mailchimpError: mcData.error || null,
-      },
-    });
+    const isWorker = !!body?._worker || !!body?._continue;
+    if (!isWorker) {
+      const items = await getCollection(WEBINARS_KEY);
+      const w = items.find((x: any) => String(x.id) === webinarId);
+      if (!w) return c.json({ error: 'Webinář nenalezen' }, 404);
+
+      const lockKey = `${FOLLOWUP_BULK_LOCK_PREFIX}${webinarId}`;
+      const existingLock = (await kv.get(lockKey)) as { startedAt?: string } | null;
+      const lockAgeMs = existingLock?.startedAt ? Date.now() - Date.parse(existingLock.startedAt) : Infinity;
+      if (Number.isFinite(lockAgeMs) && lockAgeMs >= 0 && lockAgeMs < 3 * 60_000) {
+        return c.json({
+          ok: true,
+          started: true,
+          continued: true,
+          alreadyRunning: true,
+          sent: 0,
+          remaining: 1,
+          total: 0,
+          failed: 0,
+          message: 'Odesílání už běží na pozadí.',
+        });
+      }
+      await kv.set(lockKey, { startedAt: new Date().toISOString(), webinarId });
+
+      const workerBody: FollowupBulkBody = {
+        webinarId,
+        learningsHtml: typeof body?.learningsHtml === 'string' ? body.learningsHtml : undefined,
+        postWebinarQuizQuestions: Array.isArray(body?.postWebinarQuizQuestions)
+          ? body.postWebinarQuizQuestions
+          : undefined,
+        mailchimpTag: typeof body?.mailchimpTag === 'string' ? body.mailchimpTag : undefined,
+        _worker: true,
+      };
+
+      const background = runWebinarPostFollowupBulkSend(workerBody)
+        .then((r) => {
+          console.log(
+            `[webinar-post-followup-bulk] background done sent=${r.sent} remaining=${r.remaining} failed=${r.failed} err=${r.error || ''}`,
+          );
+        })
+        .catch((e) => {
+          console.log(`[webinar-post-followup-bulk] background failed: ${e?.message || e}`);
+        });
+      const er = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
+      if (er?.waitUntil) {
+        er.waitUntil(background);
+      } else {
+        scheduleFollowupBulkContinuation(workerBody);
+      }
+
+      return c.json({
+        ok: true,
+        started: true,
+        continued: true,
+        sent: 0,
+        remaining: 1,
+        total: 0,
+        failed: 0,
+        message: 'Odesílání běží na pozadí.',
+      });
+    }
+
+    const result = await runWebinarPostFollowupBulkSend(body);
+    const { status: rawStatus, ...payload } = result;
+    if (rawStatus === 400) return c.json(payload, 400);
+    if (rawStatus === 404) return c.json(payload, 404);
+    return c.json(payload);
   } catch (e: any) {
     console.log(`[webinar-post-followup-bulk] ${e.message}`);
     return c.json({ error: e.message || 'Chyba' }, 500);
@@ -7063,14 +7486,60 @@ const webinarSurveySubmitHandler = async (c: Context) => {
 
     /** Přepsat předchozí finální odeslání — opakované vyplnění je povolené. */
 
-    await kv.set(webinarSurveyAnswerKey(webinarId, email), {
+    /**
+     * Odpovědi ukládáme dřív, než se sáhne na Mandrill. Potvrzovací e-mail je příjemnost
+     * navíc; výpadek pošty nesmí shodit uložení dotazníku, na kterém visí certifikát.
+     */
+    const prevConfirmationSentAt =
+      typeof (existingDoc as { confirmationEmailSentAt?: unknown } | null)?.confirmationEmailSentAt === 'string'
+        ? String((existingDoc as { confirmationEmailSentAt?: string }).confirmationEmailSentAt)
+        : '';
+    const surveyDoc: Record<string, unknown> = {
       webinarId,
       email,
       name: storedName,
       answers: out,
       submittedAt: new Date().toISOString(),
-    });
+      ...(prevConfirmationSentAt ? { confirmationEmailSentAt: prevConfirmationSentAt } : {}),
+    };
+    await kv.set(webinarSurveyAnswerKey(webinarId, email), surveyDoc);
     await kv.del(partialKey).catch(() => {});
+
+    /**
+     * Potvrzení s odkazem na znovuvydání certifikátu posíláme jen jednou za webinář
+     * a e-mail — opakované vyplnění dotazníku nemá zaplavit schránku.
+     */
+    if (!prevConfirmationSentAt && webinar && webinar.certificateLinkMode === 'survey') {
+      try {
+        /** Pomalá pošta nesmí držet odpověď dotazníku — po 8 s to vzdáme a jen zalogujeme. */
+        const sent = await Promise.race([
+          sendMandrillHtmlResult({
+            toEmail: email,
+            toName: storedName || email.split('@')[0],
+            subject: `${WEBINAR_EMAIL_SUBJECT_PREFIX}Certifikát z webináře: ${String(webinar.title || 'Webinář').slice(0, 60)}`,
+            html: buildWebinarSurveyConfirmationEmailHtml({
+              webinarTitle: String(webinar.title || 'Webinář'),
+              certificateUrl: buildWebinarCertificateReissueUrl(getPublicSiteOrigin(), webinar, email),
+              certificateKind: mapPostWebinarQuizQuestionsForSurvey(webinar).length > 0 ? 'dvpp' : 'feedback',
+            }),
+            metadata: { webinar_id: String(webinarId), vb_kind: 'survey_confirmation' },
+          }),
+          new Promise<{ ok: boolean; detail?: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, detail: 'timeout 8s' }), 8_000),
+          ),
+        ]);
+        if (sent.ok) {
+          await kv.set(webinarSurveyAnswerKey(webinarId, email), {
+            ...surveyDoc,
+            confirmationEmailSentAt: new Date().toISOString(),
+          });
+        } else {
+          console.log(`[Survey] potvrzeni neodeslano ${email} webinar=${webinarId}: ${sent.detail || ''}`);
+        }
+      } catch (e: any) {
+        console.log(`[Survey] potvrzeni selhalo ${email} webinar=${webinarId}: ${e?.message || e}`);
+      }
+    }
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Survey] Chyba: ${err.message}`);
@@ -16671,6 +17140,7 @@ async function handleTrialPersonFieldsEndpoint(c: Parameters<Parameters<typeof a
   }
 }
 
+
 /**
  * POST /trial-active-subscription-pipedrive
  *
@@ -19908,7 +20378,7 @@ async function syncEshopOrderToPipedriveFromDb(
   const { data: order, error: orderError } = await sb
     .from('orders')
     .select(
-      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, pipedrive_deal_id, checkout_session_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
+      'id, order_number, total, customer_name, customer_email, customer_phone, school_name, ico, street, city, zip, note, shipping_method, shipping_price, pickup_point_name, delivery_recipient_name, delivery_street, delivery_city, delivery_zip, pipedrive_deal_id, checkout_session_id, order_items (product_id, product_name, quantity, unit_price, total_price)',
     )
     .eq('id', orderId)
     .single();
@@ -20215,10 +20685,24 @@ async function syncEshopOrderToPipedriveFromDb(
   }
 
   /** Doručovací adresa jiná než fakturační → zvýrazněná note k dealu. Explicitní parametr
-   *  (např. z submit-transfer-order, který nemá `checkout_sessions` řádek) má přednost;
-   *  jinak fallback na `checkout_sessions.shipping_data` přes `orders.checkout_session_id`
-   *  (pokrývá create-payment-intent i stripe-webhook, kde checkout_session_id vždy existuje). */
+   *  (např. z submit-transfer-order) má přednost; jinak `orders.delivery_*` (ukládá pokladna,
+   *  převod i Stripe webhook) a jako poslední fallback pro starší objednávky
+   *  `checkout_sessions.shipping_data` přes `orders.checkout_session_id`. */
   let deliveryInfo: EshopOrderDeliveryInfo = explicitDelivery ?? null;
+  if (!deliveryInfo?.differentAddress) {
+    const orderDeliveryStreet = String((order as any).delivery_street || '').trim();
+    if (orderDeliveryStreet) {
+      deliveryInfo = {
+        differentAddress: true,
+        deliveryAddress: {
+          recipientName: String((order as any).delivery_recipient_name || '').trim(),
+          street: orderDeliveryStreet,
+          city: String((order as any).delivery_city || '').trim(),
+          zip: String((order as any).delivery_zip || '').trim(),
+        },
+      };
+    }
+  }
   if (!deliveryInfo?.differentAddress) {
     const checkoutSessionId = String((order as any).checkout_session_id || '').trim();
     if (checkoutSessionId) {
@@ -20227,11 +20711,21 @@ async function syncEshopOrderToPipedriveFromDb(
         .select('shipping_data')
         .eq('id', checkoutSessionId)
         .maybeSingle();
-      const shippingData = (session as any)?.shipping_data as
+      /** `shipping_data` bývá uložené jako jsonb *řetězec* (postgres.js serializuje
+       *  `JSON.stringify(shipping)` jako JSON string) — proto případně ještě jednou parsujeme. */
+      let shippingData = (session as any)?.shipping_data as
         | { differentAddress?: boolean; deliveryAddress?: EshopDeliveryAddress | null }
+        | string
         | null
         | undefined;
-      if (shippingData?.differentAddress) {
+      if (typeof shippingData === 'string') {
+        try {
+          shippingData = JSON.parse(shippingData);
+        } catch {
+          shippingData = null;
+        }
+      }
+      if (typeof shippingData === 'object' && shippingData?.differentAddress) {
         deliveryInfo = { differentAddress: true, deliveryAddress: shippingData.deliveryAddress };
       }
     }
@@ -20609,6 +21103,45 @@ async function syncSchoolOrderToPipedrive(
 
   const dealId = parsePipedriveNumericId(deal?.id);
   const personId = parsePipedriveNumericId(person?.id);
+
+  /** Stejné produktové řádky jako u e-shopu (`POST /deals/:id/products`). Selhání nesmí shodit deal. */
+  if (dealId) {
+    try {
+      const catalogProducts = await getAllProducts();
+      const catalogMap = new Map(catalogProducts.map((p: any) => [String(p.id), p] as [string, any]));
+      const lineItems = mapSchoolInquiryToPipedriveOrderItems(body, catalogMap);
+      let codeToPdIdShared: Map<string, number | null> = new Map();
+      let nextLineOrder = 0;
+      if (lineItems.length) {
+        const result = await addPipedriveDealLineItemsFromOrder(
+          apiToken,
+          dealId,
+          lineItems,
+          catalogMap,
+        );
+        codeToPdIdShared = result.codeToPdId;
+        nextLineOrder = result.lastOrder;
+        console.log(
+          `[Pipedrive school order] deal ${dealId}: ${lineItems.length} product line(s) mapped`,
+        );
+      }
+      const shippingMethod = schoolInquiryShippingMethod(body);
+      if (shippingMethod && shippingMethod !== 'none') {
+        await addPipedriveDealShippingLineItem(
+          apiToken,
+          dealId,
+          shippingMethod,
+          schoolInquiryShippingPriceHaler(body),
+          schoolInquiryPickupPointName(body),
+          nextLineOrder + 1,
+          codeToPdIdShared,
+        );
+      }
+    } catch (productErr: any) {
+      console.log(`[Pipedrive school order] deal products: ${productErr?.message || productErr}`);
+    }
+  }
+
   const note = await createPipedriveNote(apiToken, {
     content: buildSchoolOrderNoteContent(order, body),
     dealId,

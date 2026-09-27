@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
+import { useDvppVideos, type DvppVideo } from '../contexts/DvppVideosContext';
 import type { Webinar } from '../data/webinars';
 
 const FF = "'Fenomen Sans', sans-serif";
@@ -25,6 +26,43 @@ type HowToCard = {
 
 function isSameLocalDay(w: Pick<HowToCard, 'day' | 'monthNum' | 'year'>, now = new Date()): boolean {
   return w.day === now.getDate() && (w.monthNum || 0) === now.getMonth() + 1 && w.year === now.getFullYear();
+}
+
+/** Stejná tolerance jako ve WebinarsContext — webinář je „nadcházející“ ještě 150 min po startu. */
+const RUNNING_GRACE_MS = 150 * 60 * 1000;
+
+type SortableCard = HowToCard & { live?: Webinar };
+
+function cardStartMs(card: SortableCard): number {
+  const day = card.live?.day ?? card.day;
+  const monthNum = card.live?.monthNum ?? card.monthNum;
+  const year = card.live?.year ?? card.year;
+  const time = card.live?.time ?? card.time;
+  const [h, m] = String(time || '18:00').split(':').map(Number);
+  return new Date(year, (monthNum || 1) - 1, day || 1, h || 0, m || 0).getTime();
+}
+
+/**
+ * Pořadí podle aktuálnosti: dnešní webinář první (i když už proběhl — pořád je nejčerstvější),
+ * pak nejbližší nadcházející, nakonec proběhlé od nejnovějšího záznamu.
+ */
+function sortByRecency<T extends SortableCard>(items: T[], nowMs: number): T[] {
+  const now = new Date(nowMs);
+  const rank = (c: T): 0 | 1 | 2 => {
+    const when = {
+      day: c.live?.day ?? c.day,
+      monthNum: c.live?.monthNum ?? c.monthNum,
+      year: c.live?.year ?? c.year,
+    };
+    if (isSameLocalDay(when, now)) return 0;
+    return !c.live?.isPast && cardStartMs(c) + RUNNING_GRACE_MS > nowMs ? 1 : 2;
+  };
+  return [...items].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return ra === 2 ? cardStartMs(b) - cardStartMs(a) : cardStartMs(a) - cardStartMs(b);
+  });
 }
 
 const HOW_TO_CARDS: HowToCard[] = [
@@ -128,19 +166,31 @@ function matchHowToWebinar(card: HowToCard, webinars: Webinar[]): Webinar | unde
   });
 }
 
+/** Párování stejné jako u WebinarDetailPage/DvppVideoDetailPage — server doplní `webinarSlugForSurvey`. */
+function matchDvppVideoForCard(webinar: Webinar, videos: DvppVideo[]): DvppVideo | undefined {
+  const wSlug = String(webinar.slug || webinar.id || '');
+  return videos.find((v) => v.webinarSlugForSurvey === wSlug);
+}
+
 export function SubjectHowToWebinarsSection() {
   const navigate = useNavigate();
   const { webinars } = useWebinars();
+  const { videos: dvppVideos } = useDvppVideos();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrolled, setScrolled] = useState(0);
 
   const cards = useMemo(() => {
     const series = HOW_TO_CARDS.map((card) => {
       const live = matchHowToWebinar(card, webinars);
+      const recording = live?.isPast ? matchDvppVideoForCard(live, dvppVideos) : undefined;
       return {
         ...card,
         live,
-        href: live ? `/webinar/${live.slug || live.id}` : '/webinare',
+        href: recording
+          ? `/webinare/zaznam/${recording.id}`
+          : live
+          ? `/webinar/${live.slug || live.id}`
+          : '/webinare',
       };
     });
 
@@ -149,17 +199,20 @@ export function SubjectHowToWebinarsSection() {
       .filter((w) => !w.isPast && isSameLocalDay(w, now))
       .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')))[0];
 
-    if (!today) return series;
+    if (!today) return sortByRecency(series, now.getTime());
     const todaySlug = today.slug || today.id;
     if (series.some((card) => card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug))) {
-      return series.map((card) =>
-        card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug)
-          ? { ...card, featuredToday: true }
-          : card,
+      return sortByRecency(
+        series.map((card) =>
+          card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug)
+            ? { ...card, featuredToday: true }
+            : card,
+        ),
+        now.getTime(),
       );
     }
 
-    return [
+    return sortByRecency([
       {
         subject: today.title,
         subjectFor: today.title,
@@ -176,8 +229,8 @@ export function SubjectHowToWebinarsSection() {
         href: `/webinar/${todaySlug}`,
       },
       ...series,
-    ];
-  }, [webinars]);
+    ], now.getTime());
+  }, [webinars, dvppVideos]);
 
   const scrollByDir = (dir: -1 | 1) => {
     scrollerRef.current?.scrollBy({ left: dir * CARD_SCROLL, behavior: 'smooth' });
@@ -253,6 +306,7 @@ export function SubjectHowToWebinarsSection() {
           const cover = card.live?.coverImage;
           const title = card.live?.title || `Jak nadchnout žáky pro ${card.subjectFor}`;
           const isPast = Boolean(card.live?.isPast);
+          const hasRecording = Boolean(card.live?.recordingUrl);
           const barColor = card.wash;
 
           return (
@@ -299,10 +353,10 @@ export function SubjectHowToWebinarsSection() {
                   {card.featuredToday ? `Dnes · ${time}` : `${day}. ${monthName} · ${time}`}
                 </span>
                 <span
-                  className="shrink-0 bg-[#001161] group-hover:bg-[#5B4FD8] text-white text-[12px] font-bold px-3 py-1.5 rounded-xl transition-colors"
+                  className="shrink-0 bg-[#001161] group-hover:bg-[#5B4FD8] text-white text-[12px] font-bold px-3 py-1.5 rounded-xl transition-colors whitespace-nowrap"
                   style={{ fontFamily: FF }}
                 >
-                  {isPast ? 'Záznam' : 'Přihlásit se'}
+                  {!isPast ? 'Přihlásit se' : hasRecording ? 'Záznam' : 'Čekáme na záznam'}
                 </span>
               </div>
             </button>

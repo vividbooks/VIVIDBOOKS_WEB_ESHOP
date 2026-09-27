@@ -1,5 +1,10 @@
 import { resolveAllowedOrigin } from '../_shared/cors.ts';
 import { callBasecomSetOrderStatus } from '../_shared/basecom-set-order-status.ts';
+import {
+  buildExistingBaseOrderLookupParams,
+  findExistingBaseOrderId,
+  type BaseOrderLookupRow,
+} from '../_shared/basecom-find-existing-order.ts';
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
@@ -7,6 +12,7 @@ import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
 import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
 import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
 import { enrichCzechAddressParts, normalizeCzechZip } from '../_shared/czech-address-enrichment.ts';
+import { hasSeparateDeliveryAddress } from '../_shared/checkout-delivery-address.ts';
 
 type ExportQueueRow = {
   id: string;
@@ -36,11 +42,18 @@ type OrderRow = {
   shipping_price: number;
   pickup_point_id: string | null;
   pickup_point_name: string | null;
+  /** Jiná doručovací adresa z pokladny — NULL = doručit na fakturační (`street`/`city`/`zip`). */
+  delivery_recipient_name: string | null;
+  delivery_street: string | null;
+  delivery_city: string | null;
+  delivery_zip: string | null;
   payment_method: string;
   note: string | null;
   created_at: string;
   invoice_status: string | null;
   pipedrive_deal_id: string | null;
+  /** ID objednávky v Base, pokud už export proběhl (pojistka proti dvojímu založení). */
+  basecom_order_id: string | null;
   school_inquiry: unknown | null;
   stripe_payment_intent_id: string | null;
 };
@@ -774,11 +787,16 @@ async function handleBasecomExport(
       o.shipping_price,
       o.pickup_point_id,
       o.pickup_point_name,
+      o.delivery_recipient_name,
+      o.delivery_street,
+      o.delivery_city,
+      o.delivery_zip,
       o.payment_method,
       o.note,
       o.created_at,
       o.invoice_status,
       o.pipedrive_deal_id,
+      o.basecom_order_id,
       cs.school_inquiry as school_inquiry
     from public.orders o
     left join public.checkout_sessions cs on cs.id = o.checkout_session_id
@@ -789,6 +807,23 @@ async function handleBasecomExport(
   const order = orderRows[0];
   if (!order) {
     throw new Error(`Order ${orderId} not found.`);
+  }
+
+  /**
+   * Pojistka proti dvojímu exportu (1/2): objednávka už v Base je a známe její ID — znovu ji nezakládat.
+   * Stává se, když se položka fronty po úspěšném exportu zařadí znovu (ruční requeue, reset zaseknuté položky).
+   */
+  const knownBasecomOrderId = String(order.basecom_order_id ?? '').trim();
+  if (/^\d+$/.test(knownBasecomOrderId) && Number(knownBasecomOrderId) > 0) {
+    console.log(
+      '[export-basecom] skip_already_exported',
+      JSON.stringify({ orderId: order.id, orderNumber: order.order_number, basecomOrderId: knownBasecomOrderId }),
+    );
+    return {
+      orderId: knownBasecomOrderId,
+      sourceOrderStatus: order.status,
+      orderNotePatch: tryMergeBasecomOrderIdIntoOrderNote(order.note, knownBasecomOrderId),
+    };
   }
 
   /** Dohledání PSČ je „nice to have" — jeho selhání nesmí zastavit export objednávky na sklad. */
@@ -882,6 +917,7 @@ async function handleBasecomExport(
     return typeof raw === 'string' ? raw : '';
   })();
   const effectiveUserComments = payloadUserComments || order.note || '';
+  const separateDelivery = hasSeparateDeliveryAddress(order);
 
   const parameters: Record<string, unknown> = {
     order_status_id: orderStatusId,
@@ -898,12 +934,16 @@ async function handleBasecomExport(
     paid: effectivePaid,
     delivery_method: deliveryMethodLabel(order.shipping_method),
     delivery_price: amountInCzk(order.shipping_price),
-    delivery_fullname: order.customer_name,
+    /** Doručovací adresa: když zákazník v pokladně zapnul „Doručit na jinou adresu“, jde do Base
+     *  ona (`orders.delivery_*`), jinak fakturační. Dřív šla vždy fakturační → zásilka na špatnou adresu. */
+    delivery_fullname: separateDelivery
+      ? (order.delivery_recipient_name || order.customer_name)
+      : order.customer_name,
     /** Base API: `delivery_company` je varchar(156) — delší název školy by export shodil. */
     delivery_company: trimCompanyNameForBase(order.school_name) || '',
-    delivery_address: order.street || '',
-    delivery_city: order.city || '',
-    delivery_postcode: order.zip || '',
+    delivery_address: separateDelivery ? order.delivery_street : (order.street || ''),
+    delivery_city: separateDelivery ? (order.delivery_city || '') : (order.city || ''),
+    delivery_postcode: separateDelivery ? (order.delivery_zip || '') : (order.zip || ''),
     delivery_country_code: 'CZ',
     invoice_fullname: order.customer_name,
     /** `invoice_company` má limit varchar(500), ale posíláme stejnou oříznutou hodnotu. */
@@ -943,7 +983,30 @@ async function handleBasecomExport(
     parameters.delivery_point_name = order.pickup_point_name;
   }
 
-  // Base.com rate limit is 100 req/min, which is comfortably above this worker's batch size of 10.
+  /**
+   * Pojistka proti dvojímu exportu (2/2): `addOrder` mohl v Base proběhnout, ale worker odpověď nedostal
+   * (timeout, pád) — položka se po 15 minutách vrátí do fronty a export by objednávku založil podruhé.
+   * Proto se před založením podíváme, jestli v Base už není objednávka s naším číslem v `extra_field_1`.
+   * Když dotaz selže, export radši odložíme (výjimka → retry), než abychom riskovali duplicitu na skladě.
+   */
+  const lookup = await callBasecomApi(apiToken, 'getOrders', buildExistingBaseOrderLookupParams(order));
+  const existingBasecomOrderId = findExistingBaseOrderId(
+    (lookup.orders as BaseOrderLookupRow[] | undefined) ?? [],
+    order.order_number,
+  );
+  if (existingBasecomOrderId) {
+    console.log(
+      '[export-basecom] reuse_existing_base_order',
+      JSON.stringify({ orderId: order.id, orderNumber: order.order_number, basecomOrderId: existingBasecomOrderId }),
+    );
+    return {
+      orderId: existingBasecomOrderId,
+      sourceOrderStatus: order.status,
+      orderNotePatch: tryMergeBasecomOrderIdIntoOrderNote(order.note, existingBasecomOrderId),
+    };
+  }
+
+  // Base.com rate limit is 100 req/min; s dotazem na existující objednávku jsou to 4 volání na položku, dávka je 10.
   const body = new URLSearchParams({
     method: 'addOrder',
     parameters: JSON.stringify(parameters),

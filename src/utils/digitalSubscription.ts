@@ -7,11 +7,15 @@ export const ALL_DIGITAL_BUNDLE_STRIPE_YEARLY_URL = 'https://api.vividbooks.com/
 export const ALL_DIGITAL_BUNDLE_PRICE_MONTHLY = '490,-/měsíc';
 export const ALL_DIGITAL_BUNDLE_PRICE_YEARLY = '4.900,-/rok';
 
-/** Digitální produkty s rodičovským Stripe předplatným (`online` + bundle licence). */
+/**
+ * Jen skutečný balíček „Celé Vividbooks“ má Stripe odkaz vynucený na tuhle konstantu.
+ * Dřív se testovalo i `type === 'online'`, což zasáhlo i samostatné předměty (matematika,
+ * fyzika, ...) — jejich vlastní stripeMonthlyUrl/stripeYearlyUrl se tak při každém načtení
+ * i uložení přepsaly na balíčkovou cenu 4 900 Kč/rok, i když produkt ukazoval jinou cenu.
+ */
 export function isDigitalStripeSubscriptionProduct(product: any): boolean {
   if (!product) return false;
-  if (String(product.id) === ALL_DIGITAL_BUNDLE_PRODUCT_ID) return true;
-  return String(product.type || '').toLowerCase() === 'online';
+  return String(product.id) === ALL_DIGITAL_BUNDLE_PRODUCT_ID;
 }
 
 export function applyAllDigitalBundleStripe<T extends Record<string, unknown>>(product: T): T {

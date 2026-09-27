@@ -29,8 +29,10 @@ export interface Webinar {
    * Kde probíhá živý přenos na `/webinar/…/live`.
    * `google_meet` = jen odkaz na setkání (pole `zoomLink`), bez chatu na stránce.
    * `live_stream` = YouTube embed + chat vpravo (výchozí / dosavadní chování).
+   * `youtube_redirect` = web jen zapíše příchod a hned přesměruje na `youtubeUrl`
+   *   (bez chatu a reakcí; nejmenší možná plocha, kde se dá něco pokazit).
    */
-  liveDeliveryMode?: 'google_meet' | 'live_stream';
+  liveDeliveryMode?: 'google_meet' | 'live_stream' | 'youtube_redirect';
   youtubeUrl?: string;
   thumbnailVariant: 1 | 2 | 3;
   isPast?: boolean;

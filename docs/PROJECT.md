@@ -87,7 +87,7 @@ Tyto se objevují napříč funkcemi (`make-server-*`, webhooky, fronty):
 | `PIPEDRIVE_ESHOP_*` | E‑shop dealy v Pipedrivu (viz `.env.example`). |
 | `PIPEDRIVE_ESHOP_ORDER_ID_FIELD_KEY` | Hash custom pole „Eshop ID" (UI ID 12586) — eshop ho plní `orders.order_number` při založení dealu (`syncEshopOrderToPipedriveFromDb`) a refresh PUTu (`refreshEshopPipedriveDealFromDb`). Webhook `pipedrive-inbound-deal` ho čte pro lookup existující objednávky. Default v kódu: `26e4a2f8dc44e49f369c468ccc816ad668b37d92`. |
 | `PIPEDRIVE_PRODUCT_CODE_FIELD` | Volitelně jeden klíč (nebo tečková cesta) v KV produktu pro **kód** odpovídající poli *Product code* v Pipedrivu; řádky dealu se přidají přes `GET /api/v2/products/search` (`exact_match` na `code`). Bez nastavení se bere heuristika (`pipedriveProductCode`, metadata, `shoptetId`, `isbn`, …). **Řádky `bundle:`** se zatím do dealu nepřidávají (nutné rozvinutí z definice balíčku). |
-| `PIPEDRIVE_SCHOOL_ORDER_*`, `PIPEDRIVE_ORG_*` | Školní poptávka z webu → deal v Pipedrivu (pipeline podle štítku customer u org; `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID` = user_id při chybějícím owner z CRM). |
+| `PIPEDRIVE_SCHOOL_ORDER_*`, `PIPEDRIVE_ORG_*` | Školní poptávka z webu → deal v Pipedrivu (pipeline podle štítku customer u org; `PIPEDRIVE_SCHOOL_ORDER_FALLBACK_OWNER_ID` = user_id při chybějícím owner z CRM). Objednané sešity se zapisují i do **Produktů** dealu — `supabase/functions/_shared/school-inquiry-pipedrive-items.ts` mapuje `workbooks.items` (balíčky rozbalí z `workbooks.bundles[].lines`) na řádky se stejným párováním přes kód produktu jako e‑shop; cena je z KV katalogu, textová cena z formuláře je jen fallback. Dřív položky skončily jen v poznámce a obchodník je musel do dealu naklikat ručně. Kusy zdarma z akce 10+1 zůstávají na obchodníkovi. |
 | `DISTRIBUTOR_ORDER_TOKEN` | **Povinné** pro neveřejnou distributorskou objednávku — klíč v odkazu `/distributor/objednavka?k=…`. Bez něj stránka i endpoint vrací 503. |
 | `PIPEDRIVE_DISTRIBUTOR_PIPELINE_ID`, `PIPEDRIVE_DISTRIBUTOR_STAGE_ID`, `PIPEDRIVE_DISTRIBUTOR_OWNER_ID` | Distributorské dealy — default pipeline **8** (Channel Partners Performance CP2) / fáze **43**; owner primárně z tohoto ID, jinak org pole „current deal owner“. |
 | `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT`, `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_PERCENT_SPECIAL`, `PIPEDRIVE_DISTRIBUTOR_DISCOUNT_SPECIAL_ICOS` | Sleva na řádcích distributorského dealu — default **25 %**, pro IČO `06745342`, `49709895`, `73565211` **35 %**. |
@@ -176,6 +176,12 @@ Chování obecného parseru (`supabase/functions/_shared/fulfilment-stock.ts`):
 - **Záporný Base.com stav neschová fulfilment** — sčítají se kladné fyzické sklady, takže `bl_132291 = -23` + `fulfillment_ff = 37` dá 37 ks.
 
 Diagnostika: odpověď `product-stock-status` má v `inventory.fulfilment` pole `configured`, `source` (`fulfillment.cz` / `generic`), `rowCount` a `error`.
+
+### Jiná doručovací adresa z pokladny
+
+Přepínač „Doručit na jinou adresu“ v pokladně (`CheckoutPage`) posílá `shipping.differentAddress` + `shipping.deliveryAddress`. Od migrace `20260917100000_orders_delivery_address.sql` se ukládá do `orders.delivery_recipient_name` / `delivery_street` / `delivery_city` / `delivery_zip` (NULL = doručit na fakturační `street` / `city` / `zip`). Zapisují ji všechny cesty založení objednávky (`create-payment-intent`, `submit-transfer-order`, `stripe-webhook`) přes `supabase/functions/_shared/checkout-delivery-address.ts`.
+
+Čtou ji: export do Base.com (`process-export-queue` → `delivery_fullname` / `delivery_address` / `delivery_city` / `delivery_postcode`; fakturační pole `invoice_*` a iDoklad zůstávají na fakturační adrese), potvrzovací e‑mail (`_shared/order-email.ts`), admin detail objednávky a Pipedrive sync (poznámka u dealu). Dřív adresa zůstávala jen v `checkout_sessions.shipping_data` (a u převodů nikde) a zásilka jela na fakturační adresu.
 
 ### Stavy objednávky — `incomplete` vs `pending_payment`
 

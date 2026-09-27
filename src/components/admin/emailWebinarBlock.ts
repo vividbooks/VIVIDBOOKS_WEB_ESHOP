@@ -22,6 +22,8 @@ export type EmailWebinarSnapshot = {
   targetAudience: string;
   /** Pozadí levé „barevné“ části u kompaktního bloku s cover obrázkem (#rrggbb). */
   coverImageBgColor: string;
+  /** Hotový, publikovaný záznam (ne živý/redirect odkaz) — určuje, jestli lze nabídnout „Záznam“. */
+  recordingUrl: string;
 };
 
 export type EmailWebinarPayloadV1 = {
@@ -70,6 +72,7 @@ export const EMPTY_EMAIL_WEBINAR_SNAPSHOT: EmailWebinarSnapshot = {
   isPast: false,
   targetAudience: '',
   coverImageBgColor: '#ffffff',
+  recordingUrl: '',
 };
 
 function escapeHtml(s: string): string {
@@ -94,6 +97,10 @@ function normalizeBackdropHex(input: string | undefined, fallback: string): stri
 }
 
 export function webinarDetailPath(snapshot: EmailWebinarSnapshot): string {
+  if (snapshot.isPast && snapshot.recordingUrl) {
+    const recSeg = encodeURIComponent((snapshot.id || snapshot.slug || '').trim() || 'webinar');
+    return publicSiteUrl(`/webinare/zaznam/${recSeg}`);
+  }
   const seg = encodeURIComponent((snapshot.slug || snapshot.id || '').trim() || 'webinar');
   return publicSiteUrl(`/webinar/${seg}`);
 }
@@ -116,6 +123,7 @@ export function snapshotFromWebinar(w: Webinar): EmailWebinarSnapshot {
     isPast: w.isPast === true,
     targetAudience: String(w.targetAudience || '').trim(),
     coverImageBgColor: normalizeBackdropHex(w.coverImageBgColor, '#ffffff'),
+    recordingUrl: String(w.recordingUrl || '').trim(),
   };
 }
 
@@ -213,7 +221,8 @@ function webinarDateBadgeHtml(snapshot: EmailWebinarSnapshot, compact: boolean):
 }
 
 function ctaLabel(snapshot: EmailWebinarSnapshot): string {
-  return snapshot.isPast ? 'Záznam' : 'Přihlásit se';
+  if (!snapshot.isPast) return 'Přihlásit se';
+  return snapshot.recordingUrl ? 'Záznam' : 'Čekáme na záznam';
 }
 
 function metaDateLine(snapshot: EmailWebinarSnapshot): string {

@@ -1217,6 +1217,22 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                         <span className="text-[11px] text-gray-500">Na stránce jen tlačítko „Otevřít webinář na Google Meet“ — bez chatu na webu.</span>
                       </span>
                     </label>
+                    <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-gray-200 p-3 hover:bg-gray-50/80 has-[:checked]:border-purple-400 has-[:checked]:bg-purple-50/50">
+                      <input
+                        type="radio"
+                        name="liveDeliveryMode"
+                        className="mt-0.5"
+                        checked={(selected.liveDeliveryMode ?? 'live_stream') === 'youtube_redirect'}
+                        onChange={() => updateField('liveDeliveryMode', 'youtube_redirect')}
+                      />
+                      <span>
+                        <span className="text-[13px] font-bold text-[#001161] block">Přesměrovat na YouTube</span>
+                        <span className="text-[11px] text-gray-500">
+                          Web jen zapíše, že účastník přišel, a hned ho pošle na YouTube. Bez chatu a reakcí —
+                          nejbezpečnější volba, výpadek webu nemůže zavřít vysílání. Vyžaduje YouTube URL.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                   <label className="text-[11px] font-bold text-gray-500 block mb-1">
                     {(selected.liveDeliveryMode ?? 'live_stream') === 'google_meet'
@@ -1230,10 +1246,11 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                     placeholder="https://meet.google.com/… nebo https://zoom.us/j/…"
                     className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
                   />
-                  {(selected.liveDeliveryMode ?? 'live_stream') === 'live_stream' ? (
+                  {(selected.liveDeliveryMode ?? 'live_stream') !== 'google_meet' ? (
                     <>
                       <label className="text-[11px] font-bold text-gray-500 block mt-4 mb-1">
                         YouTube URL (živý stream / záznam)
+                        {(selected.liveDeliveryMode ?? 'live_stream') === 'youtube_redirect' ? ' — povinné pro tento režim' : ''}
                       </label>
                       <input
                         type="url"
@@ -1243,7 +1260,9 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none"
                       />
                       <p className="text-[11px] text-gray-400 mt-1">
-                        Vloží se na live stránku /webinar/[id]/live; bez URL se zobrazí text o začátku streamu.
+                        {(selected.liveDeliveryMode ?? 'live_stream') === 'youtube_redirect'
+                          ? 'Na /webinar/[id]/live se zapíše účast a divák se hned přesměruje sem. Bez URL se použije běžná live stránka.'
+                          : 'Vloží se na live stránku /webinar/[id]/live; bez URL se zobrazí text o začátku streamu.'}
                       </p>
                     </>
                   ) : (

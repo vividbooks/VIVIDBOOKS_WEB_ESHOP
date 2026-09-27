@@ -39,6 +39,10 @@ type OrderDetailRow = {
   shipping_price: number;
   pickup_point_id: string | null;
   pickup_point_name: string | null;
+  delivery_recipient_name: string | null;
+  delivery_street: string | null;
+  delivery_city: string | null;
+  delivery_zip: string | null;
   tracking_number: string | null;
   payment_method: string;
   payment_status: string | null;
@@ -727,6 +731,10 @@ Deno.serve(async (req) => {
           shipping_price,
           pickup_point_id,
           pickup_point_name,
+          delivery_recipient_name,
+          delivery_street,
+          delivery_city,
+          delivery_zip,
           tracking_number,
           payment_method,
           payment_status,

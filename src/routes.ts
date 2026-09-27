@@ -161,6 +161,11 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/WebinarDvppDotaznikRedirectRoute'), 'WebinarDvppDotaznikRedirectRoute'),
             },
             {
+              // Znovuvydání certifikátu pro toho, kdo dotazník už vyplnil.
+              path: 'webinar/:id/certifikat',
+              lazy: lazyNamed(() => import('./components/WebinarCertificateReissueRoute'), 'WebinarCertificateReissueRoute'),
+            },
+            {
               path: 'webinar-dotaznik-vysledky/:token',
               lazy: lazyNamed(() => import('./components/WebinarSurveyPublicResultsPage'), 'WebinarSurveyPublicResultsPage'),
             },
@@ -176,6 +181,8 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/NovinkaDetailRoute'), 'NovinkaDetailRoute'),
             },
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            /** Stejná stránka, ale trial jde přes Kabinet — souběžně se starou cestou. */
+            { path: 'vyzkousejte-kabinet', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
             { path: 'studenti', lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramPage') },
             {
               path: 'studenti/aktualizace',

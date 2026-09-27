@@ -7,9 +7,11 @@ import { useDvppVideos } from '../contexts/DvppVideosContext';
 import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import { isWebinarDay } from '../utils/webinarLiveDelivery';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
+import { matchDvppVideoForWebinar } from '../../supabase/functions/_shared/dvpp-video-match';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
 import { WebinarRegistrationFormFields, type WebinarRegSubjectField } from './WebinarRegistrationFormFields';
@@ -83,32 +85,6 @@ interface WebinarDetailPageProps {
 
 const USE_VIVIDBOOKS_QID = 'uses_vividbooks';
 
-function normDvppMatch(s: string) {
-  return s
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]/g, '');
-}
-
-/** Stejná heuristika jako v adminu — párování webináře k záznamu z `/dvpp-videos` (server doplní `surveyRequireFullRegistration` z KV). */
-function matchDvppVideoForWebinarDetail(webinar: Webinar, dvppVideos: { id: string; slug?: string; name?: string; title?: string }[]) {
-  if (!dvppVideos?.length) return null;
-  const wSlug = normDvppMatch(String(webinar.slug || webinar.id || ''));
-  const wTitle = normDvppMatch(String(webinar.title || ''));
-  const bySlug = dvppVideos.find((v) => normDvppMatch(String(v.slug || v.id || '')) === wSlug);
-  if (bySlug) return bySlug;
-  const byTitle = dvppVideos.find((v) => {
-    const vt = normDvppMatch(String(v.name || v.title || ''));
-    return (
-      wTitle.length > 5 &&
-      (vt.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-        wTitle.includes(vt.slice(0, Math.floor(vt.length * 0.7))))
-    );
-  });
-  return byTitle ?? null;
-}
-
 export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const webinarPathSeg = String(webinar.slug || webinar.id || '').trim() || webinar.id;
   const webinarPath = `/webinar/${webinarPathSeg}`;
@@ -121,7 +97,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const { videos: dvppVideos, loading: dvppVideosLoading } = useDvppVideos();
 
   const matchedDvppVideo = useMemo(
-    () => matchDvppVideoForWebinarDetail(webinar, dvppVideos),
+    () => matchDvppVideoForWebinar(webinar, dvppVideos),
     [webinar, dvppVideos],
   );
 
@@ -443,7 +419,9 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
   const webinarEnd = new Date(webinarStart.getTime() + 90 * 60000);
   const nowMs = Date.now();
   const diffMin = (nowMs - webinarStart.getTime()) / 60000;
-  const showLiveButton = !webinar.isPast && diffMin > -60 && diffMin < 150;
+  /* Červený pruh: celý den konání (bez ohledu na registraci), do konce vysílání. */
+  const isWebinarToday = isWebinarDay(webinar, nowMs);
+  const showLiveButton = !webinar.isPast && (isWebinarToday || diffMin > -60) && diffMin < 150;
 
   const devImminentId = typeof localStorage !== 'undefined' ? localStorage.getItem('vvb_dev_imminent') : null;
   const isDevPreview = devImminentId === webinar.id;
@@ -1119,10 +1097,14 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               </span>
               <div>
                 <p className="font-['Fenomen_Sans',sans-serif] font-bold text-white text-[15px] leading-tight">
-                  {diffMin >= 0 ? 'Webin\u00e1\u0159 pr\u00e1v\u011b prob\u00edh\u00e1!' : `Za\u010d\u00edn\u00e1me za ${Math.abs(Math.round(diffMin))} min`}
+                  {diffMin >= 0
+                    ? 'Webinář právě probíhá!'
+                    : diffMin > -60
+                      ? `Začínáme za ${Math.abs(Math.round(diffMin))} min`
+                      : `Webinář začíná dnes v ${webinar.time || '18:00'}`}
                 </p>
                 <p className="font-['Fenomen_Sans',sans-serif] text-white/70 text-[12px]">
-                  {'Vstupte na \u017eiv\u00e9 vys\u00edl\u00e1n\u00ed a potvrdte svou \u00fa\u010dast.'}
+                  {'Klikněte zde pro vstup do webináře.'}
                 </p>
               </div>
             </div>
@@ -1130,7 +1112,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               href={`${webinarPath}/live`}
               className="shrink-0 bg-white hover:bg-gray-100 text-red-600 font-['Fenomen_Sans',sans-serif] font-bold text-[14px] px-5 py-2.5 rounded-full transition-all hover:scale-105 no-underline"
             >
-              {'Vstoupit na stream \u2192'}
+              {'Vstoupit do webináře →'}
             </a>
           </motion.div>
         )}

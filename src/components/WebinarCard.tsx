@@ -10,8 +10,12 @@ interface WebinarCardProps {
 
 export function WebinarCard({ webinar, openInNewTab = false }: WebinarCardProps) {
   const navigate = useNavigate();
+  const hasRecording = Boolean(webinar.recordingUrl);
 
-  const detailPath = `/webinar/${webinar.slug || webinar.id}`;
+  const detailPath =
+    webinar.isPast && hasRecording
+      ? `/webinare/zaznam/${webinar.id}`
+      : `/webinar/${webinar.slug || webinar.id}`;
   const goToDetail = () => {
     if (openInNewTab) {
       window.open(detailPath, '_blank', 'noopener,noreferrer');
@@ -73,7 +77,7 @@ export function WebinarCard({ webinar, openInNewTab = false }: WebinarCardProps)
           onClick={goToDetail}
           className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[12px] px-3.5 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
         >
-          {webinar.isPast ? 'Z\u00e1znam' : 'P\u0159ihl\u00e1sit se'}
+          {!webinar.isPast ? 'P\u0159ihl\u00e1sit se' : hasRecording ? 'Z\u00e1znam' : '\u010cek\u00e1me na z\u00e1znam'}
         </button>
       </div>
     </div>

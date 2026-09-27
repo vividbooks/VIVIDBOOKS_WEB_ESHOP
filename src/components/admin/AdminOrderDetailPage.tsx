@@ -575,9 +575,27 @@ export function AdminOrderDetailPage() {
 
           <section className="bg-white rounded-2xl border border-gray-100 p-4">
             <h2 className="text-[15px] font-bold text-[#001161] mb-3">{'Doručovací adresa'}</h2>
-            <p className="text-[13px] text-[#001161] font-medium">
-              {[order.street, order.city, order.zip].filter(Boolean).join(', ') || '—'}
-            </p>
+            {order.delivery_street?.trim() ? (
+              <>
+                <p className="mb-2 inline-flex items-center rounded-lg bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-800">
+                  {'Jiná než fakturační'}
+                </p>
+                {order.delivery_recipient_name?.trim() && (
+                  <p className="text-[13px] text-[#001161] font-semibold">{order.delivery_recipient_name.trim()}</p>
+                )}
+                <p className="text-[13px] text-[#001161] font-medium">
+                  {[order.delivery_street, order.delivery_city, order.delivery_zip].filter(Boolean).join(', ')}
+                </p>
+                <p className="mt-2 text-[12px] text-gray-500">
+                  <span>{'Fakturační: '}</span>
+                  {[order.street, order.city, order.zip].filter(Boolean).join(', ') || '—'}
+                </p>
+              </>
+            ) : (
+              <p className="text-[13px] text-[#001161] font-medium">
+                {[order.street, order.city, order.zip].filter(Boolean).join(', ') || '—'}
+              </p>
+            )}
           </section>
 
           <section className="bg-white rounded-2xl border border-gray-100 p-4">
