@@ -124,6 +124,13 @@ import {
   STUDENT_PROGRAM_PEDF_COUNT,
 } from '../supabase/functions/_shared/student-program-faculties.ts';
 import { resolveWebflowLegacyRedirect } from '../src/config/webflowLegacyRedirects.ts';
+import {
+  addMonthsIsoDay,
+  interpretStudentAccess,
+  renewalStartsOn,
+  studentAccessRequest,
+  teacherCodeEmailBlock,
+} from '../src/supabase/functions/server/studentProgramAccess.ts';
 
 type UnitTest = {
   name: string;
@@ -1905,6 +1912,55 @@ registerTest('studentský program: konec studia → poslední den měsíce a př
   assert.equal(accessValidUntilFromGraduation('2027-06-30'), '2027-12-30');
   assert.equal(accessValidUntilFromGraduation('2027-08-31'), '2028-02-29');
   assert.equal(accessValidUntilFromGraduation('2027-12-31'), '2028-06-30');
+});
+
+registerTest('studentský program: založení přes Kabinet posílá jméno, fakultu a roční období bez kódu', () => {
+  const body = studentAccessRequest(
+    { university_email: ' Jana.Nova@MUNI.cz ', personal_email: 'jana@seznam.cz', first_name: 'Jana', last_name: 'Nová', teacher_code: 'ABC123' },
+    'Pedagogická fakulta',
+    '2026-09-27',
+    12,
+  );
+  assert.deepEqual(body, {
+    universityEmail: 'jana.nova@muni.cz',
+    personalEmail: 'jana@seznam.cz',
+    firstName: 'Jana',
+    lastName: 'Nová',
+    faculty: 'Pedagogická fakulta',
+    startsOn: '2026-09-27',
+    endsOn: '2027-09-27',
+  });
+});
+
+registerTest('studentský program: obnova posílá kód studenta a navazuje na současný konec', () => {
+  const s = { university_email: 'a@muni.cz', teacher_code: 'ABC123', codes_valid_until: '2027-09-27' };
+  assert.equal(renewalStartsOn(s, '2027-09-01'), '2027-09-27');
+  assert.equal(renewalStartsOn(s, '2027-10-05'), '2027-10-05');
+  assert.equal(renewalStartsOn({ codes_valid_until: null, access_valid_until: null }, '2027-10-05'), '2027-10-05');
+  const body = studentAccessRequest(s, null, '2027-09-27', 12, true);
+  assert.equal(body.teacherCode, 'ABC123');
+  assert.equal(body.endsOn, '2028-09-27');
+  assert.equal(studentAccessRequest(s, null, '2027-09-27', 12).teacherCode, undefined);
+  assert.equal(addMonthsIsoDay('2027-01-31', 1), '2027-02-28');
+});
+
+registerTest('studentský program: odpověď Kabinetu je úspěch jen s kódem a koncem licence', () => {
+  const ok = interpretStudentAccess(200, { ok: true, action: 'created', teacherCode: 'abc123', studentCode: 'zzz999', endsOn: '2027-09-27' }, '');
+  assert.deepEqual(ok, { ok: true, action: 'created', teacherCode: 'ABC123', studentCode: 'ZZZ999', endsOn: '2027-09-27' });
+  const existing = interpretStudentAccess(200, { ok: true, action: 'existing', teacherCode: 'ABC123', studentCode: null, endsOn: '2027-09-27' }, '');
+  assert.equal(existing.ok && existing.action, 'existing');
+  const conflict = interpretStudentAccess(409, { ok: false, error: 'Starý systém vrátil cizí školu.', code: 'legacy_school_exists' }, '');
+  assert.equal(conflict.ok, false);
+  assert.ok(!conflict.ok && conflict.reason.includes('legacy_school_exists'));
+  assert.equal(interpretStudentAccess(200, { ok: true, teacherCode: 'ABC123' }, '').ok, false);
+  const net = interpretStudentAccess(0, null, 'timeout');
+  assert.ok(!net.ok && net.reason.startsWith('síť'));
+});
+
+registerTest('studentský program: e-mail ukazuje jen učitelský kód', () => {
+  const html = teacherCodeEmailBlock('ABC<1>');
+  assert.ok(html.includes('ABC&lt;1&gt;'));
+  assert.ok(!/žák/i.test(html));
 });
 
 registerTest('studentský program: staré adresy /studenti vedou na novou microsite, ne na starý web', () => {

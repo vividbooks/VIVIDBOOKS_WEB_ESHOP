@@ -4,11 +4,12 @@ Cíl: dostat Vividbooks ke studentům pedagogických fakult (a dalších fakult 
 
 | Kde | Co |
 |---|---|
-| `/studenti` | Microsite: registrace univerzitním e-mailem, ověření odkazem, kódy. `?f=<faculty-id>` předvyplní fakultu (odkaz pro fakulty), `?t=<token>` = ověření. |
-| `/studenti/aktualizace?t=<access_token>` | Self-service: „ještě studuji / dostudoval jsem / kam nastupuji“, telefon, osobní e-mail, používání, zpětná vazba. |
+| `/studenti` | Microsite: registrace univerzitním e-mailem, ověření odkazem, přihlašovací (učitelský) kód. `?f=<faculty-id>` předvyplní fakultu (odkaz pro fakulty), `?t=<token>` = ověření. |
+| `/studenti/aktualizace?t=<access_token>` | „Můj přístup“: „ještě studuji / dostudoval jsem / kam nastupuji“, telefon, osobní e-mail, používání, zpětná vazba. **Jediné veřejné místo, kde je vidět kód pro žáky** (s poznámkou „pro nácvik se žáky na praxi“). |
 | `/studenti/obnovit?t=<renewal_token>` | Roční obnovení jedním kliknutím (odkaz chodí na univerzitní e-mail). |
 | `/marketing/studenti` | Admin: Přehled (cíle a progress), Studenti (CRM), Fakulty (pokrytí, kontakty, oslovení), Cíle a nastavení, Metodika. |
 | `src/supabase/functions/server/studentProgram.ts` | Edge logika (v `make-server-93a20b6f`). |
+| `src/supabase/functions/server/studentProgramAccess.ts` | Čistá logika napojení na Kabinet (tělo hooku, obnova, výklad odpovědi, kód do e-mailu); testy v `scripts/run-unit-tests.ts`. |
 | `supabase/functions/_shared/student-program-faculties.ts` | Seznam fakult, domény, IČO, detekce univerzitního e-mailu. Sdílí web i server. |
 | `supabase/migrations/20260903120000_student_program.sql`, `20260927120000_student_program_renewal.sql` | Tabulky `student_program_*`, RLS (staff čte, service_role píše), pg_cron `student-program-daily`, sloupce ročního obnovení. |
 | `docs/STUDENT_PROGRAM.md` | Tenhle dokument. |
@@ -16,26 +17,45 @@ Cíl: dostat Vividbooks ke studentům pedagogických fakult (a dalších fakult 
 ## Cesta studenta
 
 1. **Registrace** — jméno, **univerzitní e-mail** (živá kontrola domény → univerzita a fakulta) a **osobní e-mail** (povinný, mimo univerzitu), volitelně telefon, obor, stupeň a předměty, souhlas, newsletter. `POST /student-program/register`.
-2. **Ověření** — odkaz na univerzitní e-mail (platí 7 dní). `GET /student-program/verify?t=` → Kabinet založí studentovu organizaci a roční licenci, stav `active`, `access_valid_until` = dnes + 12 měsíců. Kódy jdou na oba e-maily, kontakt do `subscribers` (tag `student-program`, `studenti-<faculty>`), `access_token` pro self-service.
-3. **Roční obnovení** (cron) — 30 dní před koncem přijde na univerzitní e-mail odkaz `/studenti/obnovit?t=<renewal_token>` (na osobní e-mail jen upozornění „mrkněte do univerzitní schránky“). Připomínky 7 dní před, v den konce a 14 dní po (`renewal_stage` 1–4). Kliknutí = `GET /student-program/renew` → další roční licence v Kabinetu, `renewal_count + 1`, stejné kódy.
+2. **Ověření** — odkaz na univerzitní e-mail (platí 7 dní). `GET /student-program/verify?t=` → Kabinet založí studentovu organizaci a roční licenci, stav `active`, `access_valid_until` = konec licence z Kabinetu. Uvítací e-mail jde na oba e-maily **jen s učitelským kódem** a návodem k přihlášení, kontakt do `subscribers` (tag `student-program`, `studenti-<faculty>`), `access_token` pro self-service.
+3. **Roční obnovení** (cron) — 30 dní před koncem přijde na univerzitní e-mail odkaz `/studenti/obnovit?t=<renewal_token>` (na osobní e-mail jen upozornění „mrkněte do univerzitní schránky“). Připomínky 7 dní před, v den konce a 14 dní po (`renewal_stage` 1–4). Kliknutí = `GET /student-program/renew` → další roční licence v Kabinetu (od většího z dneška a současného konce), `renewal_count + 1`, stejný kód.
 4. **Bez obnovení** — 30 dní po konci (`renewalGraceDays`) stav `expired` + e-mail. Nová registrace vypršelého studenta stejným univerzitním e-mailem pošle rovnou obnovovací odkaz.
 5. **Absolvent** — v `/studenti/aktualizace` nahlásí „dostudoval/a“ a školu (rejstřík škol). Stav `alumni`, přístup doběhne do konce zaplaceného roku, dál se neobnovuje. Známá škola → okamžité upozornění na `digestEmail` (lead pro obchod).
 
 Stavy: `pending → active → (expired | alumni)`, vedlejší `declined` (ukončil studium), `unsubscribed`.
 
-## Kódy: škola přes trial formulář, roční licence přes Kabinet
+## Kódy a licence: hook Kabinetu `/student-access`
 
-Každý student má **vlastní školu a vlastní kódy**. Ověřeno živým testem 27. 9. 2026:
+Každý student má **vlastní školu a vlastní kódy**. Od 27. 9. 2026 je zakládá Kabinet (Ultra,
+`POST …/api/registr/hooks/web/student-access`, tajemství `KABINET_SECRET` = `REGISTR_MAKE_SECRET`).
+Studentský přístup je definovaný jako B2C:
 
-| Krok | Volání | Poznámka |
+- ve starém systému škola „Student univerzity: Jméno Příjmení (fakulta)“, v Kabinetu organizace `kind='student'`,
+- individuální placená licence na všechny předměty (bundle), interaktivně, na `licenceMonths` (12),
+- **žádný trial, žádný obchod v Pipedrive, žádné přepnutí školy na licence z Kabinetu.**
+
+| Volání | Tělo | Výsledek |
 |---|---|---|
-| Pojistka | Kabinet `GET /trial-check?email=` | `emailKnown` / `organizationIds` → e-mail už patří škole → fronta *Bez kódů* (`email_known_in_kabinet`), nic se nezakládá |
-| Založení školy | starý `POST api.vividbooks.com/web/free-trial-ajax` | Position `Student`, Whence `studenti`, School „Student Jméno Příjmení (Fakulta)“, bez IČO. Páruje **přesně podle e-mailu**; existující e-mail → `legacy_existing_school`, fronta *Bez kódů*. Vytvoří i 14denní trial (neškodí) a spustí Make scénář „Trial form“ → Pipedrive |
-| Roční licence | Kabinet `POST /create-subscription-licence` | `teacherCode`, `subjectName=['bundle']`, d/m/Y, `contentType=interactive`, `individual=yes`; opakuje se při každém obnovení |
+| Ověření (a admin „Založit kódy“) | `universityEmail`, `personalEmail`, `firstName`, `lastName`, `faculty`, `startsOn` (dnes), `endsOn` (+12 měsíců) | `action`: `created` (nová škola), `adopted` (student už v Kabinetu školu má, přidá se jen licence), `existing` (licence do `endsOn` už je — opakované ověření nic nezaloží) |
+| Obnova (odkaz i admin „Prodloužit o rok“) | totéž + `teacherCode`, `startsOn` = max(dnes, současný konec) | `renewed`, případně `existing`; kód musí patřit organizaci `kind='student'` |
 
-**Proč ne hook `create-school`:** bez IČO vrací pořád tutéž školu (legacy 21271) — pro jiné jméno, jiný e-mail i jinou doménu (testy 27. 9., viz `registr_license_events` u org `bb5d1391…`). S IČO univerzity by zase všichni studenti spadli do jedné školy.
+Uloží se `teacher_code`, `student_code`, `codes_valid_until` = `endsOn`. Výsledek v `legacy_result`:
+`kabinet_student_access` (v `legacy_reason` je `action`), jinak `kabinet_student_error` s důvodem
+(HTTP status, `code` a text z Kabinetu) — student jde do fronty *Bez kódů* a admin dostane upozornění.
 
-Tajemství: `KABINET_SECRET` (project-wide, sdílí s `kabinet-trial`), volitelně `KABINET_API_BASE`, `KABINET_ANON_KEY`, `LEGACY_VIVIDBOOKS_WEB_API_BASE`.
+Ověřovací odkaz se atomicky „zabere“ (token → null), takže dvojklik nebo přednačtení odkazu
+poštovním klientem nezavolá Kabinet dvakrát; druhý požadavek počká na výsledek prvního.
+
+Starý trial formulář (`free-trial-ajax`, trial + obchod „Trial form“ v Pipedrive) a pojistka
+`trial-check` se už nepoužívají. Starý `create-school` deduplikoval školy podle DIČ, proto Kabinet
+posílá unikátní umělé `vatNumber` (`stu-` + 12 písmen z hashe e-mailu) — detail v
+`docs/licensing/REGISTR-PROVOZ.md` v repu Ultra.
+
+**Kde je vidět který kód:** e-maily (uvítání, obnova, znovuzaslání) a stránka po ověření jen
+učitelský kód. Kód pro žáky vrací jen `/student-program/me` a `/update` (stránka „Můj přístup“).
+Admin vidí oba.
+
+Tajemství: `KABINET_SECRET` (project-wide, sdílí s `kabinet-trial`), volitelně `KABINET_API_BASE`, `KABINET_ANON_KEY`.
 
 ## E-maily
 
@@ -70,7 +90,7 @@ Seznam: 9 pedagogických fakult (jádro) + fakulty s učitelskými programy (MFF
 ## Co ověřit po nasazení
 
 1. `KABINET_SECRET` je v Supabase Secrets projektu (nasazená funkce `kabinet-trial` ho už používá).
-2. Registrace testovacím univerzitním e-mailem + osobním e-mailem → ověřovací e-mail → kódy na oba e-maily. V legacy adminu vznikne škola „Student … (…)“; v Kabinetu se objeví nočním syncem s roční licencí typu paid/individual.
+2. Registrace testovacím univerzitním e-mailem + osobním e-mailem → ověřovací e-mail → učitelský kód na oba e-maily. Ve starém adminu vznikne škola „Student univerzity: … (…)“, v Kabinetu hned organizace `kind='student'` s roční individuální licencí; v `registr_crm_events` nic.
 3. V adminu u studenta „Poslat výzvu k obnovení“ → kliknout na odkaz → platnost se posune o rok, `renewal_count = 1`.
 4. `POST /admin/student-program/run-cron?dryRun=1` → bez chyb.
 5. 108 importovaných kontaktů: fronta *Importovaní z kontaktů* → „Pozvat“; import nemá osobní e-mail, ten si student doplní v aktualizaci (registrace ho vyžaduje, ověření pozvánky ne).
