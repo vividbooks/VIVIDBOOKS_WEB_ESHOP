@@ -671,8 +671,9 @@ async function kabinetHook(path: string, body: Record<string, unknown> | null, m
   }
 }
 
+/** Fakulta do názvu školy studenta: „Pedagogická fakulta MU“ (samotná fakulta neřekne, která univerzita). */
 function facultyName(fac: FacultyRow | null): string | null {
-  return fac ? fac.faculty : null;
+  return fac ? `${fac.faculty} ${fac.university_short}`.trim() : null;
 }
 
 type StudentAccessResult = {
