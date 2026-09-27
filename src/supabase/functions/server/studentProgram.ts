@@ -255,7 +255,7 @@ async function sendMandrill(opts: {
     const body = await res.json().catch(() => null);
     const first = Array.isArray(body) ? body[0] : null;
     const status = first?.status;
-    if (!res.ok || (status && status !== 'sent' && status !== 'queued')) {
+    if (!res.ok || (status && status !== 'sent' && status !== 'queued' && status !== 'scheduled')) {
       return { ok: false, detail: `${res.status} ${status || ''} ${first?.reject_reason || ''}`.trim() };
     }
     return { ok: true };
@@ -627,23 +627,23 @@ function publicStudentView(s: StudentRow, fac: FacultyRow | null) {
 type KabinetResult = { ok: boolean; status: number; body: Record<string, unknown> | null; text: string };
 
 /** Volání hooku Kabinetu s tajemstvím (stejná konfigurace jako Edge funkce `kabinet-trial`). */
-async function kabinetHook(path: string, body: Record<string, unknown>): Promise<KabinetResult> {
+async function kabinetHook(path: string, body: Record<string, unknown> | null, method: 'POST' | 'GET' = 'POST'): Promise<KabinetResult> {
   const secret = (Deno.env.get('KABINET_SECRET') || Deno.env.get('REGISTR_MAKE_SECRET') || '').trim();
   if (!secret) return { ok: false, status: 0, body: null, text: 'KABINET_SECRET není nastavený.' };
   const base = (Deno.env.get('KABINET_API_BASE') || DEFAULT_KABINET_BASE).replace(/\/+$/, '');
   const anon = (Deno.env.get('KABINET_ANON_KEY') || DEFAULT_KABINET_ANON).trim();
   try {
     const res = await fetch(`${base}${path}`, {
-      method: 'POST',
+      method,
       headers: {
-        'content-type': 'application/json',
+        ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
         accept: 'application/json',
         'x-registr-secret': secret,
         'x-registr-client': 'web',
         apikey: anon,
         Authorization: `Bearer ${anon}`,
       },
-      body: JSON.stringify(body),
+      ...(method === 'POST' ? { body: JSON.stringify(body ?? {}) } : {}),
       signal: AbortSignal.timeout(45_000),
     });
     const text = await res.text();
@@ -707,6 +707,27 @@ async function issueCodesForStudent(
 ): Promise<{ teacherCode: string | null; studentCode: string | null; codesValidUntil: string | null; adminLink: string | null; legacyResult: string; legacyReason: string }> {
   if (!settings.autoIssueCodes) {
     return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink: null, legacyResult: 'manual_pending', legacyReason: 'autoIssueCodes=false' };
+  }
+  /**
+   * Pojistka: starý systém hledá školu podle e-mailu. Kdyby univerzitní e-mail už patřil
+   * nějaké škole (bývalý trial, učitel z fakulty), `create-school` by vrátil JEJÍ kódy a
+   * Kabinet by ji přejmenoval na studenta. Takové případy jdou do fronty „Bez kódů“.
+   */
+  const check = await kabinetHook(`/trial-check?email=${encodeURIComponent(s.university_email)}`, null, 'GET');
+  if (!check.ok) {
+    return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink: null, legacyResult: 'kabinet_check_failed', legacyReason: kabinetErrorText(check) };
+  }
+  const orgIds = Array.isArray(check.body?.organizationIds) ? (check.body!.organizationIds as unknown[]) : [];
+  if (check.body?.emailKnown === true || orgIds.length > 0) {
+    const orgName = typeof check.body?.organizationName === 'string' ? check.body.organizationName : '';
+    return {
+      teacherCode: null,
+      studentCode: null,
+      codesValidUntil: null,
+      adminLink: null,
+      legacyResult: 'email_known_in_kabinet',
+      legacyReason: `Univerzitní e-mail už v Kabinetu patří organizaci${orgName ? ` „${orgName}“` : ''} (${orgIds.length} org.). Založte studentovi kódy ručně, nebo ať použije jinou univerzitní adresu.`,
+    };
   }
   const created = await kabinetHook('/create-school', {
     schoolName: studentOrgName(s, fac),
@@ -1152,7 +1173,8 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         // Kopie na osobní e-mail — ať má student kódy i po ztrátě školní schránky.
         await sendMandrill({ toEmail: String(fresh.personal_email), toName: `${fresh.first_name || ''} ${fresh.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['codes-personal'] });
       }
-      await logEvent(sb, { studentId: s.id, facultyId: fac?.id || null, type: 'verified', payload: { legacyResult: codes.legacyResult, legacyReason: codes.legacyReason || null, mailSent: sent.ok } });
+      if (!sent.ok) console.warn('[student-program] codes mail failed:', sent.detail);
+      await logEvent(sb, { studentId: s.id, facultyId: fac?.id || null, type: 'verified', payload: { legacyResult: codes.legacyResult, legacyReason: codes.legacyReason || null, mailSent: sent.ok, mailDetail: sent.detail || null } });
 
       if (!codes.teacherCode || !codes.codesValidUntil) {
         if (settings.digestEmail) {
@@ -1163,7 +1185,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
               h2(codes.teacherCode ? 'Kódy vznikly, ale roční licence ne' : 'Student ověřen, ale kódy nevznikly'),
               p(`${esc(fresh.first_name)} ${esc(fresh.last_name)} (${esc(fresh.university_email)}), ${esc(fac?.faculty_short || 'bez fakulty')}.`),
               p(`Kabinet: <code>${esc(codes.legacyResult)}</code> ${esc(codes.legacyReason)}`),
-              p(codes.teacherCode ? `V adminu (Marketing → Studenti → detail) klikněte „Prodloužit o rok“ — založí licenci v Kabinetu.` : `V adminu (Marketing → Studenti → detail) klikněte „Založit kódy“ znovu, nebo kódy vložte ručně a pošlete tlačítkem „Poslat kódy znovu“.`),
+              p(codes.teacherCode ? `V adminu (Marketing → Studenti → detail) klikněte „Prodloužit o rok“ — založí licenci v Kabinetu.` : codes.legacyResult === 'email_known_in_kabinet' ? `E-mail už v Kabinetu patří škole — založte studentovi vlastní školu a licenci ručně v Kabinetu a kódy vložte v adminu (Marketing → Studenti → detail), pak „Poslat kódy znovu“.` : `V adminu (Marketing → Studenti → detail) klikněte „Založit kódy“ znovu, nebo kódy vložte ručně a pošlete tlačítkem „Poslat kódy znovu“.`),
             ].join(''), 'Interní upozornění'),
             tags: ['admin-alert'],
           });
@@ -1222,7 +1244,8 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       const fresh = { ...s, ...update } as StudentRow;
       await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'renewed', payload: { endsOn: lic.endsOn, n: update.renewal_count }, actor: 'student' });
       const mail = renewedEmail(origin, fresh, lic.endsOn);
-      await sendMandrill({ toEmail: fresh.university_email, toName: `${fresh.first_name || ''} ${fresh.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewed'] });
+      const rsent = await sendMandrill({ toEmail: fresh.university_email, toName: `${fresh.first_name || ''} ${fresh.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewed'] });
+      if (!rsent.ok) console.warn('[student-program] renewed mail failed:', rsent.detail);
       if (fresh.personal_email) await sendMandrill({ toEmail: String(fresh.personal_email), subject: mail.subject, html: mail.html, tags: ['renewed-personal'] });
       return c.json({ valid: true, student: publicStudentView(fresh, fac) });
     } catch (e) {
