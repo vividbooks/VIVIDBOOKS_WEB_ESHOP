@@ -188,6 +188,10 @@ export const router = createBrowserRouter(
               path: 'studenti/aktualizace',
               lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramUpdatePage'),
             },
+            {
+              path: 'studenti/obnovit',
+              lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramRenewPage'),
+            },
             { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
             {
               path: 'dalsi-produkty',

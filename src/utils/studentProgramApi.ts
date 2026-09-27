@@ -43,6 +43,8 @@ export type StudentProgramStudentView = {
   usesInPractice: boolean | null;
   newsletter: boolean;
   checkinCount: number;
+  renewalCount: number;
+  renewedAt: string | null;
 };
 
 export type CheckEmailResult =
@@ -59,8 +61,8 @@ export type RegisterInput = {
   studyProgramme: string;
   subjects: string[];
   schoolStages: string[];
-  /** `YYYY-MM` */
-  expectedGraduation: string;
+  /** `YYYY-MM`, nepovinné — přístup se obnovuje ročně, ne podle data. */
+  expectedGraduation?: string;
   consentTerms: boolean;
   newsletter: boolean;
   source?: string;
@@ -117,6 +119,17 @@ export async function verifyStudentToken(token: string): Promise<{ valid: boolea
   }
 }
 
+/** Roční obnovení kliknutím na odkaz z univerzitního e-mailu. */
+export async function renewStudentAccess(token: string): Promise<{ valid: boolean; error?: string; student?: StudentProgramStudentView }> {
+  const res = await fetch(`${STUDENT_PROGRAM_PUBLIC}/renew?t=${encodeURIComponent(token)}`, { headers: anonHeaders });
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { valid: false, error: `Chyba serveru (${res.status}).` };
+  }
+}
+
 export async function fetchStudentSelf(token: string): Promise<StudentProgramStudentView> {
   const res = await fetch(`${STUDENT_PROGRAM_PUBLIC}/me?t=${encodeURIComponent(token)}`, { headers: anonHeaders });
   const data = await readJson<{ student: StudentProgramStudentView }>(res);
@@ -164,13 +177,13 @@ export type StudentProgramGoals = {
 
 export type StudentProgramSettings = {
   autoIssueCodes: boolean;
-  legacyVatMode: 'none' | 'university_ico';
-  legacyTrialDays: number;
-  checkinIntervalDays: number;
+  licenceMonths: number;
+  individualLicence: boolean;
+  renewalReminderDays: number;
+  renewalGraceDays: number;
   digestEmail: string;
   outreachFromName: string;
   outreachReplyTo: string;
-  extensionWarnDays: number;
 };
 
 export type StudentProgramOverview = {
@@ -181,7 +194,7 @@ export type StudentProgramOverview = {
   engagement: { responded: number; usesYes: number; activeShare: number | null; checkinsSent: number; responseRate: number | null };
   alumni: { total: number; schoolKnown: number; schoolShare: number | null; teaching: number };
   progress: { studentsPct: number | null; pedfPct: number | null; partnersPct: number | null; activeSharePct: number | null; alumniSchoolPct: number | null; daysToTarget: number };
-  queues: { studentsNeedingExtension: Array<{ id: string; name: string; email: string; facultyShort: string | null; codesValidUntil: string | null; accessValidUntil: string | null }>; extensionDue: number; studentsWithoutCodes: number; graduatingSoon: number; checkinsDue: number; pendingOlderThan3Days: number; importedNotInvited: number };
+  queues: { renewalDue: Array<{ id: string; name: string; email: string; facultyShort: string | null; accessValidUntil: string | null; renewalStage: number; renewalSentAt: string | null }>; renewalDueCount: number; studentsWithoutCodes: number; studentsWithoutLicence: number; renewedTotal: number; expiredRecently: number; pendingOlderThan3Days: number; importedNotInvited: number };
   months: Record<string, { registered: number; verified: number }>;
   perFaculty: Array<{ id: string; facultyShort: string; university: string; kind: 'pedf' | 'other'; outreachStatus: string; estimatedStudents: number | null; total: number; active: number; alumni: number; responded: number; usesYes: number }>;
 };
@@ -210,6 +223,12 @@ export type StudentProgramStudentRow = {
   access_valid_until: string | null;
   access_extended_until: string | null;
   next_checkin_at: string | null;
+  renewal_token: string | null;
+  renewal_sent_at: string | null;
+  renewal_stage: number;
+  renewal_count: number;
+  renewed_at: string | null;
+  legacy_admin_link: string | null;
   last_checkin_sent_at: string | null;
   checkin_count: number;
   last_response_at: string | null;
@@ -288,7 +307,8 @@ export const studentProgramAdmin = {
   resendCodes: (id: string) => adminJson<{ ok: boolean; detail: string | null; hasCodes: boolean }>(`/students/${id}/resend-codes`, { method: 'POST' }),
   invite: (id: string) => adminJson<{ ok: boolean; detail: string | null }>(`/students/${id}/invite`, { method: 'POST' }),
   issueCodes: (id: string, force = false) => adminJson<{ ok: boolean; legacyResult: string; legacyReason: string | null; item: StudentProgramStudentRow }>(`/students/${id}/issue-codes${force ? '?force=1' : ''}`, { method: 'POST' }),
-  sendCheckin: (id: string) => adminJson<{ ok: boolean; detail: string | null }>(`/students/${id}/send-checkin`, { method: 'POST' }),
+  sendRenewal: (id: string) => adminJson<{ ok: boolean; detail: string | null }>(`/students/${id}/send-renewal`, { method: 'POST' }),
+  renew: (id: string) => adminJson<{ ok: boolean; endsOn?: string; error?: string; item?: StudentProgramStudentRow }>(`/students/${id}/renew`, { method: 'POST' }),
   deleteStudent: (id: string) => adminJson<{ ok: boolean }>(`/students/${id}`, { method: 'DELETE' }),
   faculties: () => adminJson<{ items: StudentProgramFacultyRow[]; unassigned: { total: number; active: number } | null; templates: OutreachTemplate[] }>('/faculties'),
   seedFaculties: () => adminJson<{ ok: boolean; inserted: number }>('/faculties/seed', { method: 'POST' }),
@@ -307,7 +327,7 @@ export const studentProgramAdmin = {
   goals: () => adminJson<{ goals: StudentProgramGoals; settings: StudentProgramSettings; defaults: { goals: StudentProgramGoals; settings: StudentProgramSettings } }>('/goals'),
   saveGoals: (input: { goals?: Partial<StudentProgramGoals>; settings?: Partial<StudentProgramSettings> }) =>
     adminJson<{ ok: boolean; goals: StudentProgramGoals; settings: StudentProgramSettings }>('/goals', { method: 'PUT', body: JSON.stringify(input), json: true }),
-  runCron: (dryRun: boolean) => adminJson<{ ok: boolean; checkins: number; graduating: number; expired: number; errors: string[]; digestSent: boolean; dryRun: boolean }>(`/run-cron${dryRun ? '?dryRun=1' : ''}`, { method: 'POST' }),
+  runCron: (dryRun: boolean) => adminJson<{ ok: boolean; reminders: number; expired: number; errors: string[]; digestSent: boolean; dryRun: boolean }>(`/run-cron${dryRun ? '?dryRun=1' : ''}`, { method: 'POST' }),
   exportCsvUrl: () => `${STUDENT_PROGRAM_ADMIN}/export.csv`,
   exportCsv: async () => {
     const res = await fetchWithAdminAuth(`${STUDENT_PROGRAM_ADMIN}/export.csv`);

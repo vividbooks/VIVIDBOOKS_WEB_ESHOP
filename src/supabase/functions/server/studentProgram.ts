@@ -15,16 +15,18 @@
  * Datový model: migrace 20260903120000_student_program.sql. Seznam fakult:
  * supabase/functions/_shared/student-program-faculties.ts.
  *
- * Princip kódů: **každý student má vlastní kódy**. Při ověření se zavolá legacy free-trial
- * API pod jménem studenta (Position „Student“, škola = „<jméno> – student <fakulta>“), kódy
- * se uloží ke studentovi. Legacy trial je 14denní — obchod ho v legacy adminu prodlouží
- * (ideálně do konce studia + 6 měsíců) a zapíše `codes_valid_until`; cron hlídá konec.
+ * Princip kódů: **každý student má vlastní organizaci a vlastní kódy v Kabinetu**
+ * (registr Vividbooks Ultra, hooky `/api/registr/hooks/web/*`). Při ověření univerzitního
+ * e-mailu se zavolá `create-school` (bez trialu) a hned `create-subscription-licence` na
+ * 12 měsíců (bundle všech předmětů, individuální licence). **Každý rok** student přístup
+ * obnoví kliknutím na odkaz, který přijde na univerzitní e-mail — tím prokáže, že adresu
+ * pořád má. Obnovení = další `create-subscription-licence` na rok. Bez obnovení přístup
+ * po ochranné lhůtě skončí.
  */
 import type { Context, Hono } from 'npm:hono';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import * as kv from './kv_store.tsx';
 import {
-  accessValidUntilFromGraduation,
   facultyLabel,
   graduationMonthToDate,
   matchUniversityEmail,
@@ -49,7 +51,11 @@ const KV_SETTINGS = 'student_program_settings';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VERIFICATION_RESEND_MIN_MS = 2 * 60 * 1000;
-const LEGACY_TRIAL_DEFAULT_DAYS = 14;
+const VERIFICATION_LINK_TTL_MS = 7 * DAY_MS;
+/** Kabinet (registr Ultra) — stejná tajemství jako Edge funkce `kabinet-trial`. */
+const DEFAULT_KABINET_BASE = 'https://qypiuvqglsmxdsnyazih.supabase.co/functions/v1/api/registr/hooks/web';
+const DEFAULT_KABINET_ANON =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF5cGl1dnFnbHNteGRzbnlhemloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzA4MjU3NDAsImV4cCI6MjA4NjQwMTc0MH0.lVO7a-wuM2vkqsJcgqvLkthTmrt5g0R3U_Tu0jU7bfY';
 
 export type StudentProgramDeps = {
   serviceClient: () => SupabaseClient | null;
@@ -91,32 +97,32 @@ export const DEFAULT_GOALS: StudentProgramGoals = {
 };
 
 export type StudentProgramSettings = {
-  /** Volat legacy free-trial API automaticky při ověření studenta (jinak kódy vkládá admin ručně). */
+  /** Zakládat kódy a licenci v Kabinetu automaticky při ověření (jinak vkládá admin ručně). */
   autoIssueCodes: boolean;
-  /** Co posílat do pole Vat (IČO): `none` = prázdné (každý student vlastní organizace), `university_ico` = IČO univerzity. */
-  legacyVatMode: 'none' | 'university_ico';
-  /** Délka trialu, kterou legacy API založí (dny) — z ní se počítá první `codes_valid_until`. */
-  legacyTrialDays: number;
-  /** Interval půlročního check-inu ve dnech. */
-  checkinIntervalDays: number;
-  /** Kam chodí denní digest (nové registrace, absolventi, fakulty k prodloužení). Prázdné = neposílat. */
+  /** Délka studentské licence v měsících (výchozí rok). */
+  licenceMonths: number;
+  /** Individuální licence = přihlášení jen z jednoho zařízení najednou (brání sdílení kódů). */
+  individualLicence: boolean;
+  /** Kolik dní před koncem poslat první výzvu k obnovení. */
+  renewalReminderDays: number;
+  /** Kolik dní po konci ještě jde obnovit, než přístup přejde do `expired`. */
+  renewalGraceDays: number;
+  /** Kam chodí denní digest (nové registrace, obnovení, absolventi, studenti bez kódů). Prázdné = neposílat. */
   digestEmail: string;
   /** Jméno odesílatele u oslovení fakult. */
   outreachFromName: string;
   outreachReplyTo: string;
-  /** Kolik dní před `codes_valid_until` upozornit obchod. */
-  extensionWarnDays: number;
 };
 
 export const DEFAULT_SETTINGS: StudentProgramSettings = {
   autoIssueCodes: true,
-  legacyVatMode: 'none',
-  legacyTrialDays: LEGACY_TRIAL_DEFAULT_DAYS,
-  checkinIntervalDays: 182,
+  licenceMonths: 12,
+  individualLicence: true,
+  renewalReminderDays: 30,
+  renewalGraceDays: 30,
   digestEmail: 'vitek@vividbooks.com',
   outreachFromName: 'Vítek Škop (Vividbooks)',
   outreachReplyTo: 'vitek@vividbooks.com',
-  extensionWarnDays: 21,
 };
 
 async function readGoals(): Promise<StudentProgramGoals> {
@@ -173,6 +179,24 @@ function todayIso(): string {
 
 function addDays(base: Date, days: number): Date {
   return new Date(base.getTime() + days * DAY_MS);
+}
+
+/** ISO datum + N měsíců (přetečení dne srovná na konec měsíce). */
+function addMonthsIso(iso: string, months: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const target = new Date(Date.UTC(y, m - 1 + months, d));
+  if (target.getUTCMonth() !== (((m - 1 + months) % 12) + 12) % 12) target.setUTCDate(0);
+  return target.toISOString().slice(0, 10);
+}
+
+/** ISO → d/m/Y, jak chce starý API přes Kabinet. */
+function legacyDate(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${Number(d)}/${Number(m)}/${y}`;
+}
+
+function daysBetween(fromIso: string, toIso: string): number {
+  return Math.round((Date.parse(toIso) - Date.parse(fromIso)) / DAY_MS);
 }
 
 function fmtCzDate(iso: string | null | undefined): string {
@@ -285,6 +309,12 @@ type StudentRow = Record<string, unknown> & {
   codes_valid_until: string | null;
   next_checkin_at: string | null;
   checkin_count: number;
+  renewal_token: string | null;
+  renewal_sent_at: string | null;
+  renewal_stage: number;
+  renewal_count: number;
+  renewed_at: string | null;
+  legacy_admin_link: string | null;
 };
 
 type FacultyRow = Record<string, unknown> & {
@@ -333,7 +363,7 @@ function codesEmail(origin: string, s: StudentRow, fac: FacultyRow | null, until
       `<strong>Jak začít:</strong> otevřete aplikaci, zvolte přihlášení kódem školy a zadejte <em>kód pro učitele</em>. Kód pro žáka použijte, když si chcete vyzkoušet, co uvidí děti (na druhém zařízení nebo v anonymním okně).`,
     ),
     `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(appLink, 'Otevřít aplikaci')}</p>`,
-    until ? p(`Přístup platí po celou dobu vašeho studia a ještě půl roku po něm${until ? ` (aktuálně do <strong>${esc(fmtCzDate(until))}</strong>)` : ''}. Jednou za půl roku vám napíšeme a zeptáme se, jak se vám daří — kdykoli si můžete údaje upravit tady: <a href="${esc(meLink)}" style="color:#001161;">moje studium</a>.`) : '',
+    until ? p(`Přístup platí do <strong>${esc(fmtCzDate(until))}</strong>. Měsíc před koncem vám na univerzitní e-mail přijde odkaz — kliknutím přístup obnovíte na další rok, dokud studujete. Údaje si kdykoli upravíte tady: <a href="${esc(meLink)}" style="color:#001161;">moje studium</a>.`) : '',
     fac
       ? p(`<span style="color:#64748b;font-size:13px;">Fakulta: ${esc(fac.faculty)} — ${esc(fac.university)}</span>`)
       : '',
@@ -341,38 +371,59 @@ function codesEmail(origin: string, s: StudentRow, fac: FacultyRow | null, until
   return { subject: 'Váš přístup do Vividbooks je aktivní', html: shell('Přístup aktivní', content) };
 }
 
-function checkinEmail(origin: string, s: StudentRow): { subject: string; html: string } {
-  const meLink = siteUrl(origin, `/studenti/aktualizace?t=${encodeURIComponent(String(s.access_token || ''))}`);
+function renewalEmail(origin: string, s: StudentRow, token: string, until: string | null, stage: number): { subject: string; html: string } {
+  const link = siteUrl(origin, `/studenti/obnovit?t=${encodeURIComponent(token)}`);
+  const when = until ? fmtCzDate(until) : '';
+  const past = !!until && until < todayIso();
+  const headline = past ? 'Váš studentský přístup skončil — obnovte ho' : stage >= 2 ? 'Za pár dní končí váš přístup do Vividbooks' : 'Obnovte si Vividbooks na další rok';
   const content = [
-    h2('Jak se vám daří?'),
+    h2(headline),
     p(greeting(s)),
-    p(`uběhlo půl roku od chvíle, kdy jste získali přístup do Vividbooks. Rádi bychom věděli, jestli ještě studujete a jestli vám materiály pomáhají — třeba na praxi nebo v seminářích.`),
-    p(`Stačí minuta: potvrďte, kdy studium končí, a řekněte nám, jak Vividbooks používáte. Díky tomu vám přístup poběží dál bez přerušení.`),
-    `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(meLink, 'Aktualizovat moje studium')}</p>`,
-    p(`<span style="color:#64748b;font-size:13px;">Chcete pozvánky na workshopy a webináře pro budoucí učitele? V aktualizaci stačí doplnit telefon nebo zaškrtnout newsletter.</span>`),
+    p(
+      past
+        ? `studentský přístup do Vividbooks skončil ${esc(when)}. Nic není ztraceno: pokud ještě studujete, stačí kliknout níže a přístup se obnoví na další rok — se stejnými kódy.`
+        : `váš studentský přístup do Vividbooks platí do <strong>${esc(when)}</strong>. Pokud ještě studujete, obnovte ho jedním kliknutím na další rok — kódy zůstávají stejné.`,
+    ),
+    `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(link, 'Ještě studuji — obnovit přístup')}</p>`,
+    p(`<span style="color:#64748b;font-size:13px;">Odkaz posíláme na univerzitní adresu, protože tím ověříme, že jste stále student. Když jste studium dokončili, dejte nám vědět přes odkaz níže — rádi vaší škole ukážeme Vividbooks.</span>`),
+    s.access_token ? p(`<a href="${esc(siteUrl(origin, `/studenti/aktualizace?t=${encodeURIComponent(s.access_token)}`))}" style="color:#001161;font-size:13px;">Dostudoval/a jsem — kam nastupuji</a>`) : '',
   ].join('');
-  return { subject: 'Vividbooks: krátká aktualizace vašeho studia', html: shell('Půlroční check-in', content) };
+  return { subject: past ? 'Obnovte si studentský přístup do Vividbooks' : `Vividbooks: obnovte přístup do ${when}`, html: shell('Roční obnovení', content) };
 }
 
-function graduatingEmail(origin: string, s: StudentRow, until: string | null): { subject: string; html: string } {
-  const meLink = siteUrl(origin, `/studenti/aktualizace?t=${encodeURIComponent(String(s.access_token || ''))}`);
+/** Kopie na osobní e-mail — jen upozornění, odkaz je v univerzitní schránce. */
+function renewalHeadsUpEmail(s: StudentRow, until: string | null): { subject: string; html: string } {
   const content = [
-    h2('Blíží se konec studia — a co dál?'),
+    h2('Zkontrolujte univerzitní schránku'),
     p(greeting(s)),
-    p(`podle našich záznamů právě končíte studium. Gratulujeme! Přístup do Vividbooks vám necháme ještě půl roku${until ? ` (do ${esc(fmtCzDate(until))})` : ''}, abyste měli materiály po ruce i v prvních měsících ve škole.`),
-    p(`Prozraďte nám, kam nastupujete. Rádi vaší nové škole ukážeme Vividbooks a připravíme ukázku pro váš ročník — a když ještě studujete dál, jen posuňte datum konce studia.`),
-    `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(meLink, 'Nahlásit, kam nastupuji')}</p>`,
+    p(`na váš univerzitní e-mail <strong>${esc(s.university_email)}</strong> jsme poslali odkaz k ročnímu obnovení přístupu do Vividbooks${until ? ` (platí do ${esc(fmtCzDate(until))})` : ''}. Stačí na něj kliknout.`),
+    p(`<span style="color:#64748b;font-size:13px;">Nemáte už k univerzitní schránce přístup? Napište nám na hello@vividbooks.com a domluvíme se.</span>`),
   ].join('');
-  return { subject: 'Končíte studium? Vividbooks vám zůstává ještě půl roku', html: shell('Konec studia', content) };
+  return { subject: 'Vividbooks: odkaz k obnovení je ve vaší univerzitní schránce', html: shell('Roční obnovení', content) };
+}
+
+function renewedEmail(origin: string, s: StudentRow, until: string | null): { subject: string; html: string } {
+  const appLink = siteUrl(origin, '/otevrit');
+  const content = [
+    h2('Přístup obnoven na další rok'),
+    p(greeting(s)),
+    p(`děkujeme za potvrzení. Váš studentský přístup do Vividbooks teď platí do <strong>${esc(until ? fmtCzDate(until) : '')}</strong>. Kódy zůstávají stejné.`),
+    s.teacher_code && s.student_code
+      ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 20px;"><tr>${codeBox('Kód pro učitele', s.teacher_code)}${codeBox('Kód pro žáka', s.student_code)}</tr></table>`
+      : '',
+    `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(appLink, 'Otevřít aplikaci')}</p>`,
+  ].join('');
+  return { subject: 'Vividbooks: přístup obnoven na další rok', html: shell('Přístup obnoven', content) };
 }
 
 function expiredEmail(origin: string, s: StudentRow): { subject: string; html: string } {
   const trialLink = siteUrl(origin, '/vyzkousejte');
+  const studentLink = siteUrl(origin, '/studenti');
   const content = [
     h2('Studentský přístup skončil'),
     p(greeting(s)),
-    p(`půl roku po konci studia končí i studentský přístup do Vividbooks. Děkujeme, že jste s námi byli — a doufáme, že se materiály osvědčily.`),
-    p(`Učíte? Vaše škola může Vividbooks vyzkoušet zdarma jako škola a poté objednat licenci pro celý sbor. Stačí vyplnit krátký formulář nebo nám napsat na hello@vividbooks.com — rádi připravíme kalkulaci pro vaši školu.`),
+    p(`váš studentský přístup do Vividbooks skončil, protože nebyl obnoven. Děkujeme, že jste s námi byli — a doufáme, že se materiály osvědčily.`),
+    p(`Ještě studujete? Zaregistrujte se znovu univerzitním e-mailem na <a href="${esc(studentLink)}" style="color:#001161;">vividbooks.com/studenti</a>. Učíte? Vaše škola může Vividbooks vyzkoušet zdarma a poté objednat licenci pro celý sbor — napište nám na hello@vividbooks.com, rádi připravíme kalkulaci.`),
     `<p style="margin:24px 0;text-align:center;">${buildVividbooksBrandCta(trialLink, 'Vyzkoušet Vividbooks se školou')}</p>`,
   ].join('');
   return { subject: 'Váš studentský přístup do Vividbooks skončil', html: shell('Konec přístupu', content) };
@@ -534,23 +585,12 @@ function publicFaculty(r: FacultyRow) {
   };
 }
 
-/** Platnost přístupu studenta = max(konec studia + 6 měsíců, ruční prodloužení). */
+/** Platnost přístupu studenta = max(konec roční licence, ruční prodloužení). */
 function effectiveAccessUntil(s: Pick<StudentRow, 'access_valid_until' | 'access_extended_until'>): string | null {
   const a = s.access_valid_until || null;
   const b = s.access_extended_until || null;
   if (a && b) return a > b ? a : b;
   return a || b;
-}
-
-/**
- * Kódy v legacy adminu končí dřív než nárok studenta (konec studia + 6 měsíců)
- * a konec je v dohledu → obchod má prodloužit a zapsat nové `codes_valid_until`.
- */
-function needsExtension(s: StudentRow, warnBefore: string): boolean {
-  if (!s.codes_valid_until) return true;
-  const target = effectiveAccessUntil(s);
-  if (target && s.codes_valid_until >= target) return false;
-  return s.codes_valid_until <= warnBefore;
 }
 
 function publicStudentView(s: StudentRow, fac: FacultyRow | null) {
@@ -577,124 +617,130 @@ function publicStudentView(s: StudentRow, fac: FacultyRow | null) {
     usesInPractice: s.uses_in_practice ?? null,
     newsletter: s.newsletter === true,
     checkinCount: s.checkin_count ?? 0,
+    renewalCount: Number(s.renewal_count) || 0,
+    renewedAt: s.renewed_at ?? null,
   };
 }
 
-/* ── legacy Vividbooks free-trial API ──────────────────────────────────────── */
+/* ── Kabinet (registr Ultra): organizace + roční licence na studenta ─────────── */
 
-type LegacyResult =
-  | { status: 'codes'; teacherCode: string; studentCode: string; kind: 'created' | 'existing_trial' }
-  | { status: 'thank_only' }
-  | { status: 'error'; reason: string; message: string; httpStatus: number };
+type KabinetResult = { ok: boolean; status: number; body: Record<string, unknown> | null; text: string };
 
-async function callLegacyFreeTrial(input: {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  schoolName: string;
-  vat: string;
-  newsletter: boolean;
-  subjects: string[];
-  stages: string[];
-}): Promise<LegacyResult> {
-  const base = (Deno.env.get('LEGACY_VIVIDBOOKS_WEB_API_BASE') || 'https://api.vividbooks.com').replace(/\/+$/, '');
-  const body = new URLSearchParams();
-  body.append('FirstName', input.firstName);
-  body.append('LastName', input.lastName);
-  body.append('FullName', `${input.firstName} ${input.lastName}`.trim());
-  body.append('Email', input.email);
-  body.append('Phone', input.phone);
-  body.append('flexdatalist-School', input.schoolName);
-  body.append('School', input.schoolName);
-  body.append('Position', 'Student');
-  body.append('Whence', 'studenti');
-  body.append('Region', '');
-  if (input.newsletter) body.append('Checkbox-NL', 'yes');
-  body.append('CountryCode', 'cz');
-  body.append('CountryCodeSelect', '');
-  body.append('Version', '');
-  body.append('Dealer', '');
-  body.append('Vat', input.vat);
-  input.subjects.forEach((v) => body.append('TeacherSubjects', v));
-  input.stages.forEach((v) => body.append('SchoolStages', v));
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15_000);
+/** Volání hooku Kabinetu s tajemstvím (stejná konfigurace jako Edge funkce `kabinet-trial`). */
+async function kabinetHook(path: string, body: Record<string, unknown>): Promise<KabinetResult> {
+  const secret = (Deno.env.get('KABINET_SECRET') || Deno.env.get('REGISTR_MAKE_SECRET') || '').trim();
+  if (!secret) return { ok: false, status: 0, body: null, text: 'KABINET_SECRET není nastavený.' };
+  const base = (Deno.env.get('KABINET_API_BASE') || DEFAULT_KABINET_BASE).replace(/\/+$/, '');
+  const anon = (Deno.env.get('KABINET_ANON_KEY') || DEFAULT_KABINET_ANON).trim();
   try {
-    const res = await fetch(`${base}/web/free-trial-ajax`, {
+    const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        Accept: 'application/json',
-        'X-Requested-With': 'XMLHttpRequest',
+        'content-type': 'application/json',
+        accept: 'application/json',
+        'x-registr-secret': secret,
+        'x-registr-client': 'web',
+        apikey: anon,
+        Authorization: `Bearer ${anon}`,
       },
-      body: body.toString(),
-      redirect: 'manual',
-      signal: controller.signal,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(45_000),
     });
-    if ([301, 302, 303, 307, 308].includes(res.status)) return { status: 'thank_only' };
-    const raw = await res.text();
-    let data: Record<string, unknown> | null = null;
+    const text = await res.text();
+    let parsed: Record<string, unknown> | null = null;
     try {
-      data = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : null;
+      parsed = text.trim() ? (JSON.parse(text) as Record<string, unknown>) : null;
     } catch {
-      data = null;
+      parsed = null;
     }
-    const teacher = typeof data?.teacherCode === 'string' ? data.teacherCode.trim() : '';
-    const student = typeof data?.studentCode === 'string' ? data.studentCode.trim() : '';
-    const reason = typeof data?.reason === 'string' ? data.reason : '';
-    if (res.ok && data?.success === true && teacher && student) {
-      return { status: 'codes', teacherCode: teacher, studentCode: student, kind: 'created' };
-    }
-    if (teacher && student) {
-      return { status: 'codes', teacherCode: teacher, studentCode: student, kind: 'existing_trial' };
-    }
-    if (res.ok && !data) return { status: 'thank_only' };
-    const msg = reason || (typeof data?.message === 'string' ? data.message : '') || `HTTP ${res.status}`;
-    return { status: 'error', reason, message: msg, httpStatus: res.status };
+    return { ok: res.ok, status: res.status, body: parsed, text };
   } catch (e) {
-    return { status: 'error', reason: 'network', message: e instanceof Error ? e.message : String(e), httpStatus: 0 };
-  } finally {
-    clearTimeout(timeout);
+    return { ok: false, status: 0, body: null, text: e instanceof Error ? e.message : String(e) };
   }
 }
 
+function kabinetErrorText(r: KabinetResult): string {
+  const b = r.body;
+  const errs = b?.errors;
+  const msg = Array.isArray(errs) ? errs.join(' ') : typeof errs === 'string' ? errs : typeof b?.message === 'string' ? b.message : typeof b?.error === 'string' ? b.error : '';
+  return `${r.status ? `HTTP ${r.status}` : 'síť'}: ${msg || r.text.slice(0, 200)}`.slice(0, 300);
+}
+
+function studentOrgName(s: StudentRow, fac: FacultyRow | null): string {
+  const first = String(s.first_name || '').trim() || 'Student';
+  const last = String(s.last_name || '').trim() || 'Vividbooks';
+  const facLabel = fac ? facultyLabel({ facultyShort: fac.faculty_short, faculty: fac.faculty, universityShort: fac.university_short }) : 'studenti učitelství';
+  return `Student ${first} ${last} (${facLabel})`;
+}
+
 /**
- * Založí kódy pro studenta přes legacy free-trial API — každý student má vlastní
- * organizaci („<jméno> – student <fakulta>“) a vlastní dvojici kódů. Vrací, co se má
- * uložit ke studentovi; při chybě zůstávají kódy prázdné a student jde do fronty.
+ * Roční licence na kódu studenta: `create-subscription-licence` (bundle všech předmětů,
+ * interaktivní, individuální). Vrací konec licence (ISO) nebo chybu.
+ */
+async function issueYearLicence(
+  teacherCode: string,
+  startsOn: string,
+  settings: StudentProgramSettings,
+): Promise<{ ok: true; endsOn: string; legacyLicenceId: number | null } | { ok: false; error: string }> {
+  const endsOn = addMonthsIso(startsOn, Math.max(1, settings.licenceMonths || 12));
+  const r = await kabinetHook('/create-subscription-licence', {
+    teacherCode,
+    subjectName: ['bundle'],
+    startsOn: legacyDate(startsOn),
+    endsOn: legacyDate(endsOn),
+    contentType: 'interactive',
+    individual: settings.individualLicence === false ? 'no' : 'yes',
+  });
+  if (!r.ok) return { ok: false, error: kabinetErrorText(r) };
+  const lic = Number(r.body?.licenceId);
+  return { ok: true, endsOn, legacyLicenceId: Number.isFinite(lic) && lic > 0 ? lic : null };
+}
+
+/**
+ * Založí studentovi vlastní organizaci v Kabinetu (bez trialu) a roční licenci.
+ * Vrací, co se má uložit ke studentovi; při chybě zůstávají kódy prázdné a student jde do fronty.
  */
 async function issueCodesForStudent(
   s: StudentRow,
   fac: FacultyRow | null,
   settings: StudentProgramSettings,
-): Promise<{ teacherCode: string | null; studentCode: string | null; codesValidUntil: string | null; legacyResult: string; legacyReason: string }> {
+): Promise<{ teacherCode: string | null; studentCode: string | null; codesValidUntil: string | null; adminLink: string | null; legacyResult: string; legacyReason: string }> {
   if (!settings.autoIssueCodes) {
-    return { teacherCode: null, studentCode: null, codesValidUntil: null, legacyResult: 'manual_pending', legacyReason: 'autoIssueCodes=false' };
+    return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink: null, legacyResult: 'manual_pending', legacyReason: 'autoIssueCodes=false' };
   }
-  const first = String(s.first_name || '').trim() || 'Student';
-  const last = String(s.last_name || '').trim() || 'Vividbooks';
-  const facLabel = fac ? facultyLabel({ facultyShort: fac.faculty_short, faculty: fac.faculty, universityShort: fac.university_short }) : 'studenti učitelství';
-  const legacy = await callLegacyFreeTrial({
-    firstName: first,
-    lastName: last,
+  const created = await kabinetHook('/create-school', {
+    schoolName: studentOrgName(s, fac),
+    countryCode: 'cz',
     email: s.university_email,
-    phone: String(s.phone || ''),
-    schoolName: `${first} ${last} – student ${facLabel}`,
-    vat: settings.legacyVatMode === 'university_ico' ? String(fac?.ico || '') : '',
-    newsletter: s.newsletter === true,
-    subjects: Array.isArray(s.subjects) ? (s.subjects as string[]) : [],
-    stages: Array.isArray(s.school_stages) ? (s.school_stages as string[]) : [],
+    address: fac ? `${fac.faculty}, ${fac.university}` : '',
+    withFreeLicence: 'no',
   });
-  if (legacy.status === 'codes') {
-    const validUntil = addDays(new Date(), Math.max(1, settings.legacyTrialDays || LEGACY_TRIAL_DEFAULT_DAYS)).toISOString().slice(0, 10);
-    return { teacherCode: legacy.teacherCode, studentCode: legacy.studentCode, codesValidUntil: validUntil, legacyResult: `legacy_${legacy.kind}`, legacyReason: legacy.kind === 'existing_trial' ? 'API vrátilo existující trial (stejná organizace?)' : '' };
+  const teacherCode = typeof created.body?.teacherCode === 'string' ? created.body.teacherCode.trim().toUpperCase() : '';
+  const studentCode = typeof created.body?.studentCode === 'string' ? created.body.studentCode.trim().toUpperCase() : '';
+  const adminLink = typeof created.body?.adminLink === 'string' ? created.body.adminLink : null;
+  if (!created.ok || !teacherCode || !studentCode) {
+    return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink, legacyResult: 'kabinet_create_failed', legacyReason: kabinetErrorText(created) };
   }
-  if (legacy.status === 'thank_only') {
-    return { teacherCode: null, studentCode: null, codesValidUntil: null, legacyResult: 'legacy_thank_only', legacyReason: 'API nevrátilo kódy (thank_only)' };
+  const lic = await issueYearLicence(teacherCode, todayIso(), settings);
+  if (!lic.ok) {
+    // Organizace vznikla, ale licence ne — kódy uložíme, admin doplní licenci (nebo „Prodloužit o rok“).
+    return { teacherCode, studentCode, codesValidUntil: null, adminLink, legacyResult: 'kabinet_licence_failed', legacyReason: lic.error };
   }
-  return { teacherCode: null, studentCode: null, codesValidUntil: null, legacyResult: 'legacy_error', legacyReason: `${legacy.reason || ''} ${legacy.message}`.trim().slice(0, 300) };
+  return { teacherCode, studentCode, codesValidUntil: lic.endsOn, adminLink, legacyResult: 'kabinet_created', legacyReason: '' };
+}
+
+/** Roční obnovení: nová licence od většího z (dnes, konec současné). */
+async function renewStudentLicence(
+  s: StudentRow,
+  settings: StudentProgramSettings,
+): Promise<{ ok: true; endsOn: string } | { ok: false; error: string }> {
+  if (!s.teacher_code) return { ok: false, error: 'Student nemá kódy.' };
+  const today = todayIso();
+  const current = s.codes_valid_until || s.access_valid_until || today;
+  const startsOn = current > today ? current : today;
+  const lic = await issueYearLicence(s.teacher_code, startsOn, settings);
+  if (!lic.ok) return lic;
+  return { ok: true, endsOn: lic.endsOn };
 }
 
 /* ── cron secret ───────────────────────────────────────────────────────────── */
@@ -764,15 +810,16 @@ function buildOverview(students: StudentRow[], faculties: FacultyRow[], goals: S
     }
   }
 
-  const warnBefore = addDays(new Date(), settings.extensionWarnDays).toISOString().slice(0, 10);
+  const soon = addDays(new Date(), settings.renewalReminderDays).toISOString().slice(0, 10);
   const facById = new Map(faculties.map((f) => [f.id, f]));
-  const studentsNeedingExtension = activeStudents
-    .filter((s) => s.teacher_code && needsExtension(s, warnBefore))
-    .sort((a, b) => String(a.codes_valid_until || '').localeCompare(String(b.codes_valid_until || '')))
-    .map((s) => ({ id: s.id, name: `${s.first_name || ''} ${s.last_name || ''}`.trim(), email: s.university_email, facultyShort: facById.get(String(s.faculty_id))?.faculty_short || null, codesValidUntil: s.codes_valid_until, accessValidUntil: effectiveAccessUntil(s) }));
+  const renewalDue = activeStudents
+    .filter((s) => s.status === 'active' && s.teacher_code && effectiveAccessUntil(s) && String(effectiveAccessUntil(s)) <= soon)
+    .sort((a, b) => String(effectiveAccessUntil(a)).localeCompare(String(effectiveAccessUntil(b))))
+    .map((s) => ({ id: s.id, name: `${s.first_name || ''} ${s.last_name || ''}`.trim(), email: s.university_email, facultyShort: facById.get(String(s.faculty_id))?.faculty_short || null, accessValidUntil: effectiveAccessUntil(s), renewalStage: Number(s.renewal_stage) || 0, renewalSentAt: s.renewal_sent_at }));
   const studentsWithoutCodes = activeStudents.filter((s) => !s.teacher_code).length;
-  const graduatingSoon = activeStudents.filter((s) => s.expected_graduation && s.expected_graduation >= today && s.expected_graduation <= addDays(new Date(), 90).toISOString().slice(0, 10)).length;
-  const checkinsDue = activeStudents.filter((s) => s.next_checkin_at && s.next_checkin_at <= new Date().toISOString()).length;
+  const studentsWithoutLicence = activeStudents.filter((s) => s.teacher_code && !s.codes_valid_until).length;
+  const renewedThisYear = students.filter((s) => (Number(s.renewal_count) || 0) > 0).length;
+  const expiredRecently = students.filter((s) => s.status === 'expired' && s.updated_at && String(s.updated_at) >= addDays(new Date(), -90).toISOString()).length;
 
   const withPhone = activeStudents.filter((s) => s.phone).length;
   const withPersonalEmail = activeStudents.filter((s) => s.personal_email).length;
@@ -825,11 +872,12 @@ function buildOverview(students: StudentRow[], faculties: FacultyRow[], goals: S
       daysToTarget: Math.max(0, Math.round((Date.parse(goals.targetDate) - Date.now()) / DAY_MS)),
     },
     queues: {
-      studentsNeedingExtension: studentsNeedingExtension.slice(0, 50),
-      extensionDue: studentsNeedingExtension.length,
+      renewalDue: renewalDue.slice(0, 50),
+      renewalDueCount: renewalDue.length,
       studentsWithoutCodes,
-      graduatingSoon,
-      checkinsDue,
+      studentsWithoutLicence,
+      renewedTotal: renewedThisYear,
+      expiredRecently,
       pendingOlderThan3Days: pending.filter((s) => !String(s.source || '').startsWith('import-') && Date.parse(String(s.created_at)) < Date.now() - 3 * DAY_MS).length,
       importedNotInvited: pending.filter((s) => String(s.source || '').startsWith('import-') && !s.verification_sent_at).length,
     },
@@ -920,9 +968,9 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
 
     if (!firstName || !lastName) return c.json({ error: 'Vyplňte prosím jméno a příjmení.' }, 400);
     if (!universityEmail || !isValidEmailFormat(universityEmail)) return c.json({ error: 'Zadejte platný univerzitní e-mail.' }, 400);
-    if (personalEmail && !isValidEmailFormat(personalEmail)) return c.json({ error: 'Osobní e-mail nemá správný formát.' }, 400);
-    if (personalEmail && personalEmail === universityEmail) return c.json({ error: 'Osobní e-mail musí být jiný než univerzitní.' }, 400);
-    if (!graduation) return c.json({ error: 'Vyberte prosím předpokládaný konec studia.' }, 400);
+    if (!personalEmail || !isValidEmailFormat(personalEmail)) return c.json({ error: 'Zadejte prosím i osobní e-mail — použijeme ho, až vám školní schránka skončí.' }, 400);
+    if (personalEmail === universityEmail) return c.json({ error: 'Osobní e-mail musí být jiný než univerzitní.' }, 400);
+    if (matchUniversityEmail(personalEmail)) return c.json({ error: 'Jako osobní e-mail použijte adresu mimo univerzitu (např. Gmail nebo Seznam).' }, 400);
     if (!consentTerms) return c.json({ error: 'Pro založení přístupu potřebujeme souhlas s podmínkami.' }, 400);
 
     try {
@@ -963,6 +1011,15 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
           await logEvent(sb, { studentId: s.id, type: 'codes_resent', payload: { via: 'register' } });
           return c.json({ status: 'already_active', message: 'Tenhle e-mail už přístup má — poslali jsme vám přístupové údaje znovu.' });
         }
+        if (s.status === 'expired' && s.teacher_code) {
+          // Vypršelý přístup: nová registrace = obnovení. Pošleme obnovovací odkaz na univerzitní e-mail.
+          const token = randomToken();
+          await sb.from('student_program_students').update({ renewal_token: token, renewal_sent_at: nowIso, personal_email: personalEmail || s.personal_email, phone: phone || s.phone }).eq('id', s.id);
+          const mail = renewalEmail(origin, s, token, effectiveAccessUntil(s), 3);
+          await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewal-reregister'] });
+          await logEvent(sb, { studentId: s.id, type: 'renewal_sent', payload: { via: 'register' } });
+          return c.json({ status: 'pending', resent: true, emailSent: true, message: 'Váš dřívější přístup skončil. Poslali jsme vám na univerzitní e-mail odkaz k obnovení.' });
+        }
         return c.json({ status: 'contact_us', message: 'Tenhle e-mail už u nás je, ale přístup není aktivní. Napište nám na hello@vividbooks.com a dáme to do pořádku.' });
       }
 
@@ -978,7 +1035,6 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         subjects,
         school_stages: schoolStages,
         expected_graduation: graduation,
-        access_valid_until: accessValidUntilFromGraduation(graduation),
         consent_terms: true,
         newsletter,
         source,
@@ -1040,7 +1096,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         return c.json({ valid: true, alreadyVerified: true, student: publicStudentView(s, fac) });
       }
       const sentAt = s.verification_sent_at ? Date.parse(String(s.verification_sent_at)) : 0;
-      if (sentAt && Date.now() - sentAt > 7 * DAY_MS) {
+      if (sentAt && Date.now() - sentAt > VERIFICATION_LINK_TTL_MS) {
         return c.json({ valid: false, expired: true, error: 'Odkaz už vypršel. Zaregistrujte se prosím znovu, pošleme nový.' }, 410);
       }
 
@@ -1057,9 +1113,12 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         student_code: codes.studentCode,
         codes_issued_at: codes.teacherCode ? nowIso : null,
         codes_valid_until: codes.codesValidUntil,
+        access_valid_until: codes.codesValidUntil,
+        legacy_admin_link: codes.adminLink,
         legacy_result: codes.legacyResult,
         legacy_reason: codes.legacyReason || null,
-        next_checkin_at: addDays(new Date(), settings.checkinIntervalDays).toISOString(),
+        renewal_stage: 0,
+        renewal_token: null,
       };
       const { error: upErr } = await sb.from('student_program_students').update(update).eq('id', s.id);
       if (upErr) throw new Error(upErr.message);
@@ -1095,17 +1154,16 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       }
       await logEvent(sb, { studentId: s.id, facultyId: fac?.id || null, type: 'verified', payload: { legacyResult: codes.legacyResult, legacyReason: codes.legacyReason || null, mailSent: sent.ok } });
 
-      if (!codes.teacherCode) {
-        const settingsNow = settings;
-        if (settingsNow.digestEmail) {
+      if (!codes.teacherCode || !codes.codesValidUntil) {
+        if (settings.digestEmail) {
           await sendMandrill({
-            toEmail: settingsNow.digestEmail,
-            subject: `[Studenti] Student bez kódů: ${fresh.university_email}`,
+            toEmail: settings.digestEmail,
+            subject: `[Studenti] ${codes.teacherCode ? 'Student bez licence' : 'Student bez kódů'}: ${fresh.university_email}`,
             html: shell('Student bez kódů', [
-              h2('Student ověřen, ale kódy nevznikly'),
+              h2(codes.teacherCode ? 'Kódy vznikly, ale roční licence ne' : 'Student ověřen, ale kódy nevznikly'),
               p(`${esc(fresh.first_name)} ${esc(fresh.last_name)} (${esc(fresh.university_email)}), ${esc(fac?.faculty_short || 'bez fakulty')}.`),
-              p(`Legacy výsledek: <code>${esc(codes.legacyResult)}</code> ${esc(codes.legacyReason)}`),
-              p(`Založte studentovi trial v legacy adminu Vividbooks a kódy vložte v adminu (Marketing → Studenti → detail studenta), nebo zkuste „Založit kódy“ znovu; pak je pošlete tlačítkem „Poslat kódy znovu“.`),
+              p(`Kabinet: <code>${esc(codes.legacyResult)}</code> ${esc(codes.legacyReason)}`),
+              p(codes.teacherCode ? `V adminu (Marketing → Studenti → detail) klikněte „Prodloužit o rok“ — založí licenci v Kabinetu.` : `V adminu (Marketing → Studenti → detail) klikněte „Založit kódy“ znovu, nebo kódy vložte ručně a pošlete tlačítkem „Poslat kódy znovu“.`),
             ].join(''), 'Interní upozornění'),
             tags: ['admin-alert'],
           });
@@ -1115,6 +1173,60 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       return c.json({ valid: true, student: publicStudentView(fresh, fac), codesPending: !codes.teacherCode });
     } catch (e) {
       console.error('[student-program] verify:', e);
+      return c.json({ valid: false, error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  /**
+   * Roční obnovení: odkaz z e-mailu na univerzitní adresu. Kliknutí = ověření, že student
+   * schránku pořád má → nová roční licence v Kabinetu, stejné kódy.
+   */
+  app.get(`${PUBLIC_PREFIX}/renew`, async (c) => {
+    const token = cleanText(c.req.query('t'), 120);
+    if (!token) return c.json({ valid: false, error: 'Chybí obnovovací token.' }, 400);
+    try {
+      const sb = getSb();
+      const { data: found, error } = await sb.from('student_program_students').select('*').eq('renewal_token', token).maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!found) return c.json({ valid: false, error: 'Odkaz je neplatný nebo už byl použit.' }, 404);
+      const s = found as StudentRow;
+      const faculties = await loadFaculties(sb);
+      const fac = faculties.find((f) => f.id === s.faculty_id) || null;
+      const settings = await readSettings();
+      const origin = deps.publicSiteOrigin();
+      if (!['active', 'graduating', 'expired'].includes(s.status)) {
+        return c.json({ valid: false, error: 'Tento přístup už nejde obnovit. Napište nám na hello@vividbooks.com.' }, 400);
+      }
+      const lic = await renewStudentLicence(s, settings);
+      if (!lic.ok) {
+        await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'renewal_failed', payload: { error: lic.error }, actor: 'student' });
+        if (settings.digestEmail) {
+          await sendMandrill({ toEmail: settings.digestEmail, subject: `[Studenti] Obnovení selhalo: ${s.university_email}`, html: shell('Obnovení selhalo', [h2('Student klikl na obnovení, Kabinet licenci nezaložil'), p(`${esc(s.first_name)} ${esc(s.last_name)} (${esc(s.university_email)})`), p(`<code>${esc(lic.error)}</code>`), p('V adminu klikněte „Prodloužit o rok“, až bude Kabinet dostupný.')].join(''), 'Interní upozornění'), tags: ['admin-alert'] });
+        }
+        return c.json({ valid: false, error: 'Obnovení se teď nepodařilo. Zkuste odkaz otevřít za chvíli znovu — nebo nám napište, dořešíme to ručně.' }, 502);
+      }
+      const nowIso = new Date().toISOString();
+      const update = {
+        status: 'active',
+        access_valid_until: lic.endsOn,
+        codes_valid_until: lic.endsOn,
+        renewal_token: null,
+        renewal_stage: 0,
+        renewal_count: (Number(s.renewal_count) || 0) + 1,
+        renewed_at: nowIso,
+        last_response_at: nowIso,
+        engagement: s.engagement === 'unknown' || s.engagement === 'inactive' ? 'active' : s.engagement,
+      };
+      const { error: upErr } = await sb.from('student_program_students').update(update).eq('id', s.id);
+      if (upErr) throw new Error(upErr.message);
+      const fresh = { ...s, ...update } as StudentRow;
+      await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'renewed', payload: { endsOn: lic.endsOn, n: update.renewal_count }, actor: 'student' });
+      const mail = renewedEmail(origin, fresh, lic.endsOn);
+      await sendMandrill({ toEmail: fresh.university_email, toName: `${fresh.first_name || ''} ${fresh.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewed'] });
+      if (fresh.personal_email) await sendMandrill({ toEmail: String(fresh.personal_email), subject: mail.subject, html: mail.html, tags: ['renewed-personal'] });
+      return c.json({ valid: true, student: publicStudentView(fresh, fac) });
+    } catch (e) {
+      console.error('[student-program] renew:', e);
       return c.json({ valid: false, error: e instanceof Error ? e.message : String(e) }, 500);
     }
   });
@@ -1188,30 +1300,20 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
 
       let newStatus = s.status;
       if (studyStatus === 'studying') {
-        if (graduation) {
-          update.expected_graduation = graduation;
-          update.access_valid_until = accessValidUntilFromGraduation(graduation);
-        }
-        if (s.status === 'graduating' || s.status === 'active') newStatus = 'active';
-        update.next_checkin_at = addDays(new Date(), settings.checkinIntervalDays).toISOString();
+        if (graduation) update.expected_graduation = graduation;
+        if (s.status === 'graduating') newStatus = 'active';
       } else if (studyStatus === 'graduated') {
-        newStatus = 'alumni';
-        if (graduation) {
-          update.expected_graduation = graduation;
-          update.access_valid_until = accessValidUntilFromGraduation(graduation);
-        } else if (!s.expected_graduation || s.expected_graduation > todayIso()) {
-          const g = todayIso();
-          update.expected_graduation = g;
-          update.access_valid_until = accessValidUntilFromGraduation(g);
-        }
-        update.next_checkin_at = addDays(new Date(), Math.round(settings.checkinIntervalDays / 2)).toISOString();
+        // Absolvent: přístup doběhne do konce zaplaceného roku, dál se neobnovuje.
+        if (s.status !== 'expired') newStatus = 'alumni';
+        update.expected_graduation = graduation || s.expected_graduation || todayIso();
+        update.renewal_token = null;
         if (['teaching', 'not_teaching', 'studying_further'].includes(employerStatus)) update.employer_status = employerStatus;
         if (employerSchoolName) update.employer_school_name = employerSchoolName;
         if (employerSchoolIco) update.employer_school_ico = employerSchoolIco;
         if (employerSchoolName || employerSchoolIco) update.employer_status = update.employer_status || 'teaching';
       } else if (studyStatus === 'ended') {
         newStatus = 'declined';
-        update.next_checkin_at = null;
+        update.renewal_token = null;
       } else if (['teaching', 'not_teaching', 'studying_further'].includes(employerStatus)) {
         update.employer_status = employerStatus;
         if (employerSchoolName) update.employer_school_name = employerSchoolName;
@@ -1239,7 +1341,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
             p(`${esc(s.first_name)} ${esc(s.last_name)} (${esc(s.university_email)}${s.personal_email ? `, ${esc(s.personal_email)}` : ''}${phone || s.phone ? `, tel. ${esc(phone || s.phone)}` : ''})`),
             p(`Škola: <strong>${esc(employerSchoolName || '—')}</strong>${employerSchoolIco ? ` (IČO ${esc(employerSchoolIco)})` : ''}`),
             p(`Používá Vividbooks: ${usesInPractice === true ? 'ano' : usesInPractice === false ? 'ne' : 'neuvedeno'}${feedback ? `<br/>Vzkaz: „${esc(feedback)}“` : ''}`),
-            p(`Studentský přístup platí do ${esc(fmtCzDate(String(update.access_valid_until || s.access_valid_until || '')))} — ideální chvíle nabídnout škole ukázku a kalkulaci.`),
+            p(`Studentský přístup platí do ${esc(fmtCzDate(effectiveAccessUntil(s) || ''))} — ideální chvíle nabídnout škole ukázku a kalkulaci.`),
           ].join(''), 'Interní upozornění'),
           tags: ['admin-alert'],
         });
@@ -1289,15 +1391,15 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         query = query.or(`university_email.ilike.${like},personal_email.ilike.${like},first_name.ilike.${like},last_name.ilike.${like},employer_school_name.ilike.${like}`);
       }
       if (queue === 'no_codes') query = query.is('teacher_code', null).in('status', ['active', 'graduating', 'alumni']);
-      if (queue === 'checkin_due') query = query.lte('next_checkin_at', new Date().toISOString()).in('status', ['active', 'graduating', 'alumni']);
-      if (queue === 'graduating_soon') query = query.gte('expected_graduation', todayIso()).lte('expected_graduation', addDays(new Date(), 90).toISOString().slice(0, 10)).in('status', ['active', 'graduating']);
+      if (queue === 'no_licence') query = query.not('teacher_code', 'is', null).is('codes_valid_until', null).in('status', ['active', 'graduating', 'alumni']);
       if (queue === 'alumni_no_school') query = query.in('status', ['alumni', 'expired']).is('employer_school_name', null);
       if (queue === 'pending_old') query = query.eq('status', 'pending').lte('created_at', addDays(new Date(), -3).toISOString());
       if (queue === 'imported') query = query.like('source', 'import-%').eq('status', 'pending');
-      if (queue === 'extension_due') {
+      if (queue === 'renewal_due') {
         const settings = await readSettings();
-        query = query.not('teacher_code', 'is', null).in('status', ['active', 'graduating', 'alumni']).or(`codes_valid_until.is.null,codes_valid_until.lte.${addDays(new Date(), settings.extensionWarnDays).toISOString().slice(0, 10)}`);
+        query = query.not('teacher_code', 'is', null).eq('status', 'active').lte('access_valid_until', addDays(new Date(), settings.renewalReminderDays).toISOString().slice(0, 10)).order('access_valid_until', { ascending: true });
       }
+      if (queue === 'expired_recent') query = query.eq('status', 'expired').gte('updated_at', addDays(new Date(), -90).toISOString());
       query = query.range(offset, offset + limit - 1);
       const { data, error, count } = await query;
       if (error) throw new Error(error.message);
@@ -1326,7 +1428,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
 
   const STUDENT_EDITABLE = new Set([
     'first_name', 'last_name', 'personal_email', 'phone', 'faculty_id', 'study_programme', 'subjects', 'school_stages',
-    'expected_graduation', 'status', 'teacher_code', 'student_code', 'codes_valid_until', 'access_extended_until', 'engagement',
+    'expected_graduation', 'status', 'teacher_code', 'student_code', 'codes_valid_until', 'access_valid_until', 'access_extended_until', 'engagement',
     'uses_in_practice', 'employer_status', 'employer_school_name', 'employer_school_ico', 'newsletter', 'notes', 'next_checkin_at',
   ]);
 
@@ -1339,9 +1441,6 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       for (const [k, v] of Object.entries(body)) {
         if (!STUDENT_EDITABLE.has(k)) continue;
         update[k] = typeof v === 'string' && v.trim() === '' ? null : v;
-      }
-      if (typeof update.expected_graduation === 'string') {
-        update.access_valid_until = accessValidUntilFromGraduation(String(update.expected_graduation));
       }
       if (Object.keys(update).length === 0) return c.json({ error: 'Nic k uložení.' }, 400);
       const sb = getSb();
@@ -1428,6 +1527,8 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         student_code: codes.studentCode ?? s.student_code,
         codes_issued_at: codes.teacherCode ? nowIso : s.codes_issued_at,
         codes_valid_until: codes.codesValidUntil ?? s.codes_valid_until,
+        access_valid_until: codes.codesValidUntil ?? s.access_valid_until,
+        legacy_admin_link: codes.adminLink ?? s.legacy_admin_link,
         legacy_result: codes.legacyResult,
         legacy_reason: codes.legacyReason || null,
       };
@@ -1439,7 +1540,8 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
     }
   });
 
-  app.post(`${ADMIN_PREFIX}/students/:id/send-checkin`, async (c) => {
+  /** Admin: poslat obnovovací odkaz (na univerzitní e-mail + upozornění na osobní). */
+  app.post(`${ADMIN_PREFIX}/students/:id/send-renewal`, async (c) => {
     const gate = await adminGate(c);
     if (gate instanceof Response) return gate;
     try {
@@ -1447,15 +1549,54 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       const { data: found } = await sb.from('student_program_students').select('*').eq('id', c.req.param('id')).maybeSingle();
       if (!found) return c.json({ error: 'Student nenalezen.' }, 404);
       const s = found as StudentRow;
-      if (!s.access_token) return c.json({ error: 'Student ještě není ověřený.' }, 400);
-      const settings = await readSettings();
-      const mail = checkinEmail(deps.publicSiteOrigin(), s);
-      const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['checkin-manual'] });
-      if (sent.ok) {
-        await sb.from('student_program_students').update({ last_checkin_sent_at: new Date().toISOString(), checkin_count: (Number(s.checkin_count) || 0) + 1, next_checkin_at: addDays(new Date(), settings.checkinIntervalDays).toISOString() }).eq('id', s.id);
+      if (!s.teacher_code) return c.json({ error: 'Student nemá kódy — obnovení nemá co prodloužit.' }, 400);
+      const token = s.renewal_token || randomToken();
+      const nowIso = new Date().toISOString();
+      const stage = Math.max(1, Number(s.renewal_stage) || 0);
+      await sb.from('student_program_students').update({ renewal_token: token, renewal_sent_at: nowIso, renewal_stage: stage }).eq('id', s.id);
+      const until = effectiveAccessUntil(s);
+      const mail = renewalEmail(deps.publicSiteOrigin(), s, token, until, stage);
+      const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewal-manual'] });
+      if (s.personal_email) {
+        const hu = renewalHeadsUpEmail(s, until);
+        await sendMandrill({ toEmail: String(s.personal_email), subject: hu.subject, html: hu.html, tags: ['renewal-headsup'] });
       }
-      await logEvent(sb, { studentId: s.id, type: 'checkin_sent', payload: { manual: true, sent: sent.ok }, actor: (gate as { email: string }).email });
+      await logEvent(sb, { studentId: s.id, type: 'renewal_sent', payload: { manual: true, sent: sent.ok }, actor: (gate as { email: string }).email });
       return c.json({ ok: sent.ok, detail: sent.detail || null });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  /** Admin: prodloužit o rok rovnou (bez kliknutí studenta) — např. po telefonu nebo když Kabinet selhal. */
+  app.post(`${ADMIN_PREFIX}/students/:id/renew`, async (c) => {
+    const gate = await adminGate(c);
+    if (gate instanceof Response) return gate;
+    try {
+      const sb = getSb();
+      const { data: found } = await sb.from('student_program_students').select('*').eq('id', c.req.param('id')).maybeSingle();
+      if (!found) return c.json({ error: 'Student nenalezen.' }, 404);
+      const s = found as StudentRow;
+      const settings = await readSettings();
+      const lic = await renewStudentLicence(s, settings);
+      if (!lic.ok) return c.json({ ok: false, error: lic.error }, 502);
+      const nowIso = new Date().toISOString();
+      const upd = {
+        status: s.status === 'expired' || s.status === 'graduating' ? 'active' : s.status,
+        access_valid_until: lic.endsOn,
+        codes_valid_until: lic.endsOn,
+        renewal_token: null,
+        renewal_stage: 0,
+        renewal_count: (Number(s.renewal_count) || 0) + 1,
+        renewed_at: nowIso,
+        legacy_result: 'kabinet_renewed_admin',
+        legacy_reason: null,
+      };
+      await sb.from('student_program_students').update(upd).eq('id', s.id);
+      await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'renewed', payload: { endsOn: lic.endsOn, admin: true }, actor: (gate as { email: string }).email });
+      const mail = renewedEmail(deps.publicSiteOrigin(), { ...s, ...upd } as StudentRow, lic.endsOn);
+      await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewed-admin'] });
+      return c.json({ ok: true, endsOn: lic.endsOn, item: { ...s, ...upd } });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
     }
@@ -1481,7 +1622,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       const [{ data, error }, faculties] = await Promise.all([sb.from('student_program_students').select('*').order('created_at', { ascending: false }), loadFaculties(sb)]);
       if (error) throw new Error(error.message);
       const facById = new Map(faculties.map((f) => [f.id, f]));
-      const cols = ['university_email', 'personal_email', 'phone', 'first_name', 'last_name', 'faculty', 'university', 'status', 'expected_graduation', 'access_valid_until', 'access_extended_until', 'teacher_code', 'student_code', 'codes_valid_until', 'uses_in_practice', 'employer_status', 'employer_school_name', 'employer_school_ico', 'newsletter', 'checkin_count', 'last_response_at', 'created_at', 'verified_at', 'notes'];
+      const cols = ['university_email', 'personal_email', 'phone', 'first_name', 'last_name', 'faculty', 'university', 'status', 'expected_graduation', 'access_valid_until', 'access_extended_until', 'teacher_code', 'student_code', 'codes_valid_until', 'renewal_count', 'renewed_at', 'uses_in_practice', 'employer_status', 'employer_school_name', 'employer_school_ico', 'newsletter', 'checkin_count', 'last_response_at', 'created_at', 'verified_at', 'notes'];
       const csvCell = (v: unknown) => {
         const s = v == null ? '' : Array.isArray(v) ? v.join('|') : String(v);
         return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -1744,10 +1885,10 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       if (body.settings) {
         const s = { ...(await readSettings()), ...body.settings };
         s.autoIssueCodes = s.autoIssueCodes !== false;
-        s.legacyVatMode = s.legacyVatMode === 'university_ico' ? 'university_ico' : 'none';
-        s.legacyTrialDays = Math.max(1, Math.min(3650, Number(s.legacyTrialDays) || LEGACY_TRIAL_DEFAULT_DAYS));
-        s.checkinIntervalDays = Math.max(30, Math.min(365, Number(s.checkinIntervalDays) || 182));
-        s.extensionWarnDays = Math.max(1, Math.min(90, Number(s.extensionWarnDays) || 21));
+        s.licenceMonths = Math.max(1, Math.min(60, Number(s.licenceMonths) || 12));
+        s.individualLicence = s.individualLicence !== false;
+        s.renewalReminderDays = Math.max(3, Math.min(120, Number(s.renewalReminderDays) || 30));
+        s.renewalGraceDays = Math.max(0, Math.min(180, Number(s.renewalGraceDays) || 30));
         s.digestEmail = cleanEmail(s.digestEmail);
         s.outreachFromName = cleanText(s.outreachFromName, 80) || DEFAULT_SETTINGS.outreachFromName;
         s.outreachReplyTo = cleanEmail(s.outreachReplyTo) || DEFAULT_SETTINGS.outreachReplyTo;
@@ -1759,7 +1900,7 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
     }
   });
 
-  /* ── cron: půlroční check-iny, přechody stavů, digest ─────────────────────── */
+  /* ── cron: roční obnovení (výzvy 30/7/0 dní), vypršení po ochranné lhůtě, digest ──── */
 
   const runCron = async (opts?: { dryRun?: boolean }) => {
     const sb = getSb();
@@ -1768,16 +1909,29 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
     const now = new Date();
     const nowIso = now.toISOString();
     const today = todayIso();
-    const summary = { checkins: 0, graduating: 0, expired: 0, errors: [] as string[], digestSent: false, dryRun: opts?.dryRun === true };
+    const summary = { reminders: 0, expired: 0, errors: [] as string[], digestSent: false, dryRun: opts?.dryRun === true };
     const budgetEnd = Date.now() + 45_000;
 
     const { data: rows, error } = await sb
       .from('student_program_students')
       .select('*')
       .in('status', ['active', 'graduating', 'alumni'])
-      .limit(2000);
+      .not('teacher_code', 'is', null)
+      .limit(3000);
     if (error) throw new Error(error.message);
     const students = (rows || []) as StudentRow[];
+
+    const sendReminder = async (s: StudentRow, stage: number, until: string) => {
+      const token = s.renewal_token || randomToken();
+      const mail = renewalEmail(origin, s, token, until, stage);
+      const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['renewal', `renewal-${stage}`] });
+      if (s.personal_email) {
+        const hu = renewalHeadsUpEmail(s, until);
+        await sendMandrill({ toEmail: String(s.personal_email), subject: hu.subject, html: hu.html, tags: ['renewal-headsup'] });
+      }
+      await sb.from('student_program_students').update({ renewal_token: token, renewal_sent_at: nowIso, renewal_stage: stage }).eq('id', s.id);
+      await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'renewal_sent', payload: { stage, sent: sent.ok, until } });
+    };
 
     for (const s of students) {
       if (Date.now() > budgetEnd) {
@@ -1786,59 +1940,40 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       }
       try {
         const until = effectiveAccessUntil(s);
-        // 1) konec přístupu (půl roku po studiu)
-        if (until && until < today && s.status !== 'expired') {
+        if (!until) continue;
+        const daysLeft = daysBetween(today, until);
+        const stage = Number(s.renewal_stage) || 0;
+
+        // 1) Po ochranné lhůtě bez obnovení → expired (absolventům přístup prostě doběhne).
+        if (daysLeft < -settings.renewalGraceDays || (s.status === 'alumni' && daysLeft < 0)) {
           if (!opts?.dryRun) {
             const mail = expiredEmail(origin, s);
             const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['expired'] });
             if (s.personal_email) await sendMandrill({ toEmail: String(s.personal_email), subject: mail.subject, html: mail.html, tags: ['expired-personal'] });
-            await sb.from('student_program_students').update({ status: 'expired', next_checkin_at: null }).eq('id', s.id);
-            await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'expired', payload: { sent: sent.ok } });
+            await sb.from('student_program_students').update({ status: 'expired', renewal_token: null, renewal_stage: 0 }).eq('id', s.id);
+            await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'expired', payload: { sent: sent.ok, until } });
           }
           summary.expired += 1;
           continue;
         }
-        // 2) konec studia → graduating (jednorázový e-mail „kam nastupujete“)
-        if (s.status === 'active' && s.expected_graduation && s.expected_graduation <= today) {
-          if (!opts?.dryRun) {
-            const mail = graduatingEmail(origin, s, until);
-            const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['graduating'] });
-            if (s.personal_email) await sendMandrill({ toEmail: String(s.personal_email), subject: mail.subject, html: mail.html, tags: ['graduating-personal'] });
-            await sb
-              .from('student_program_students')
-              .update({ status: 'graduating', next_checkin_at: addDays(now, 45).toISOString(), last_checkin_sent_at: nowIso, checkin_count: (Number(s.checkin_count) || 0) + 1 })
-              .eq('id', s.id);
-            await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'graduating', payload: { sent: sent.ok } });
-          }
-          summary.graduating += 1;
-          continue;
-        }
-        // 3) půlroční check-in
-        if (s.next_checkin_at && s.next_checkin_at <= nowIso && s.access_token) {
-          if (!opts?.dryRun) {
-            const mail = s.status === 'alumni' ? graduatingEmail(origin, s, until) : checkinEmail(origin, s);
-            const sent = await sendMandrill({ toEmail: s.university_email, toName: `${s.first_name || ''} ${s.last_name || ''}`.trim(), subject: mail.subject, html: mail.html, tags: ['checkin'] });
-            if (s.personal_email && s.status !== 'active') await sendMandrill({ toEmail: String(s.personal_email), subject: mail.subject, html: mail.html, tags: ['checkin-personal'] });
-            const noResponseTwice = (Number(s.checkin_count) || 0) >= 2 && !s.last_response_at;
-            await sb
-              .from('student_program_students')
-              .update({
-                last_checkin_sent_at: nowIso,
-                checkin_count: (Number(s.checkin_count) || 0) + 1,
-                next_checkin_at: addDays(now, settings.checkinIntervalDays).toISOString(),
-                ...(noResponseTwice && s.engagement === 'unknown' ? { engagement: 'inactive' } : {}),
-              })
-              .eq('id', s.id);
-            await logEvent(sb, { studentId: s.id, facultyId: s.faculty_id, type: 'checkin_sent', payload: { sent: sent.ok, n: (Number(s.checkin_count) || 0) + 1 } });
-          }
-          summary.checkins += 1;
+        if (s.status !== 'active') continue; // absolventi a končící se neobnovují automaticky
+
+        // 2) Výzvy k obnovení: 30 dní před (stage 1), 7 dní před (2), v den konce (3), 14 dní po (4).
+        let wanted = 0;
+        if (daysLeft <= -14) wanted = 4;
+        else if (daysLeft <= 0) wanted = 3;
+        else if (daysLeft <= 7) wanted = 2;
+        else if (daysLeft <= settings.renewalReminderDays) wanted = 1;
+        if (wanted > stage) {
+          if (!opts?.dryRun) await sendReminder(s, wanted, until);
+          summary.reminders += 1;
         }
       } catch (e) {
         summary.errors.push(`${s.university_email}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
 
-    // 4) denní digest pro Vítka / obchod
+    // 3) denní digest pro Vítka / obchod
     if (settings.digestEmail && !opts?.dryRun) {
       try {
         const since = addDays(now, -1).toISOString();
@@ -1847,11 +1982,11 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         const everyone = (all || []) as StudentRow[];
         const newVerified = everyone.filter((s) => s.verified_at && String(s.verified_at) >= since);
         const newRegistered = everyone.filter((s) => String(s.created_at || '') >= since);
-        const responded = everyone.filter((s) => s.last_response_at && String(s.last_response_at) >= since);
+        const renewed = everyone.filter((s) => s.renewed_at && String(s.renewed_at) >= since);
+        const responded = everyone.filter((s) => s.last_response_at && String(s.last_response_at) >= since && !(s.renewed_at && String(s.renewed_at) >= since));
         const goals = await readGoals();
         const ov = buildOverview(everyone, faculties, goals, settings);
-        const needExt = ov.queues.studentsNeedingExtension;
-        const somethingHappened = newVerified.length || newRegistered.length || responded.length || needExt.length || summary.graduating || summary.expired || ov.queues.studentsWithoutCodes;
+        const somethingHappened = newVerified.length || newRegistered.length || renewed.length || responded.length || summary.expired || ov.queues.studentsWithoutCodes;
         if (somethingHappened) {
           const facById = new Map(faculties.map((f) => [f.id, f]));
           const li = (s: StudentRow) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(facById.get(String(s.faculty_id))?.faculty_short || '?')} (${esc(s.university_email)})</li>`;
@@ -1859,14 +1994,15 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
             h2(`Studentský program — denní přehled ${now.toLocaleDateString('cs-CZ')}`),
             p(`<strong>${ov.totals.active}</strong> aktivních studentů z cíle ${goals.targetStudents} (${ov.progress.studentsPct ?? 0} %). Pokrytí PedF: ${ov.coverage.pedfCovered}/${ov.coverage.pedfTotal}. Partnerské fakulty: ${ov.coverage.partners}.`),
             newRegistered.length ? `<p style="margin:0 0 6px;font-weight:700;">Nové registrace (${newRegistered.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${newRegistered.map(li).join('')}</ul>` : '',
-            newVerified.length ? `<p style="margin:0 0 6px;font-weight:700;">Ověřeno (${newVerified.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${newVerified.map(li).join('')}</ul>` : '',
-            responded.length ? `<p style="margin:0 0 6px;font-weight:700;">Odpověděli na check-in (${responded.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${responded.map((s) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(s.status)}${s.employer_school_name ? `, škola: ${esc(s.employer_school_name)}` : ''}${s.uses_in_practice === true ? ', používá' : s.uses_in_practice === false ? ', nepoužívá' : ''}</li>`).join('')}</ul>` : '',
-            summary.graduating || summary.expired ? p(`Dnes: ${summary.graduating} studentů přešlo do „končí studium“, ${summary.expired} přístupů skončilo, ${summary.checkins} check-inů odesláno.`) : '',
-            needExt.length ? `<p style="margin:0 0 6px;font-weight:700;color:#b45309;">Prodloužit trial v legacy adminu (${ov.queues.extensionDue})</p><ul style="margin:0 0 16px;padding-left:20px;">${needExt.slice(0, 20).map((st) => `<li>${esc(st.name)} — ${esc(st.facultyShort || '?')} (${esc(st.email)}), kódy platí do ${esc(st.codesValidUntil ? fmtCzDate(st.codesValidUntil) : 'neuvedeno')}, nárok do ${esc(st.accessValidUntil ? fmtCzDate(st.accessValidUntil) : '?')}</li>`).join('')}</ul>` : '',
-            ov.queues.studentsWithoutCodes ? p(`<span style="color:#b91c1c;">${ov.queues.studentsWithoutCodes} ověřených studentů je bez kódů — založte je v adminu tlačítkem „Založit kódy“ nebo vložte ručně.</span>`) : '',
+            newVerified.length ? `<p style="margin:0 0 6px;font-weight:700;">Ověřeno a kódy (${newVerified.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${newVerified.map(li).join('')}</ul>` : '',
+            renewed.length ? `<p style="margin:0 0 6px;font-weight:700;">Obnovili na další rok (${renewed.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${renewed.map(li).join('')}</ul>` : '',
+            responded.length ? `<p style="margin:0 0 6px;font-weight:700;">Aktualizovali údaje (${responded.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${responded.map((s) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(s.status)}${s.employer_school_name ? `, škola: ${esc(s.employer_school_name)}` : ''}${s.uses_in_practice === true ? ', používá' : s.uses_in_practice === false ? ', nepoužívá' : ''}</li>`).join('')}</ul>` : '',
+            summary.reminders || summary.expired ? p(`Dnes: ${summary.reminders} výzev k obnovení, ${summary.expired} přístupů skončilo bez obnovení.`) : '',
+            ov.queues.renewalDueCount ? p(`Čeká na obnovení (do ${settings.renewalReminderDays} dnů): <strong>${ov.queues.renewalDueCount}</strong> studentů.`) : '',
+            ov.queues.studentsWithoutCodes ? p(`<span style="color:#b91c1c;">${ov.queues.studentsWithoutCodes} ověřených studentů je bez kódů — v adminu „Založit kódy“.</span>`) : '',
             `<p style="margin:20px 0 0;text-align:center;">${buildVividbooksBrandCta(siteUrl(origin, '/marketing/studenti'), 'Otevřít admin Studenti')}</p>`,
           ].join('');
-          const sent = await sendMandrill({ toEmail: settings.digestEmail, subject: `[Studenti] ${ov.totals.active} aktivních · ${newRegistered.length} nových · ${needExt.length} k prodloužení`, html: shell('Denní přehled', content, 'Interní přehled'), tags: ['digest'] });
+          const sent = await sendMandrill({ toEmail: settings.digestEmail, subject: `[Studenti] ${ov.totals.active} aktivních · ${newRegistered.length} nových · ${renewed.length} obnovilo`, html: shell('Denní přehled', content, 'Interní přehled'), tags: ['digest'] });
           summary.digestSent = sent.ok;
         }
       } catch (e) {

@@ -107,9 +107,9 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
 
   const queues = [
     { key: 'no_codes', label: 'Ověření bez kódů', count: data.queues.studentsWithoutCodes, tone: 'danger' as const },
-    { key: 'extension_due', label: 'Prodloužit trial v legacy adminu', count: data.queues.extensionDue, tone: 'warn' as const },
-    { key: 'checkin_due', label: 'Check-in po termínu', count: data.queues.checkinsDue, tone: 'warn' as const },
-    { key: 'graduating_soon', label: 'Končí do 90 dnů', count: data.queues.graduatingSoon, tone: 'info' as const },
+    { key: 'no_licence', label: 'Kódy bez roční licence', count: data.queues.studentsWithoutLicence, tone: 'warn' as const },
+    { key: 'renewal_due', label: 'Čeká na roční obnovení', count: data.queues.renewalDueCount, tone: 'warn' as const },
+    { key: 'expired_recent', label: 'Skončilo bez obnovení (90 dní)', count: data.queues.expiredRecently, tone: 'info' as const },
     { key: 'alumni_no_school', label: 'Absolventi bez školy', count: data.alumni.total - data.alumni.schoolKnown, tone: 'info' as const },
     { key: 'pending_old', label: 'Neověřeno > 3 dny', count: data.queues.pendingOlderThan3Days, tone: 'muted' as const },
     { key: 'imported', label: 'Importovaní z kontaktů (nepozvaní)', count: data.queues.importedNotInvited, tone: 'info' as const },
@@ -154,15 +154,15 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
         <div className="rounded-2xl border border-gray-100 bg-white p-5">
           <p className="mb-3 text-[13px] font-bold text-[#001161]">Co je potřeba udělat</p>
           <div className="space-y-2">
-            {data.queues.studentsNeedingExtension.length > 0 && (
+            {data.queues.renewalDue.length > 0 && (
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                <p className="mb-1 flex items-center gap-1.5 text-[12px] font-bold text-amber-800"><KeyRound className="h-3.5 w-3.5" /> Prodloužit trial v legacy adminu ({data.queues.extensionDue})</p>
+                <p className="mb-1 flex items-center gap-1.5 text-[12px] font-bold text-amber-800"><KeyRound className="h-3.5 w-3.5" /> Blíží se roční obnovení ({data.queues.renewalDueCount})</p>
                 <ul className="space-y-0.5 text-[12px] text-amber-900">
-                  {data.queues.studentsNeedingExtension.slice(0, 8).map((st) => (
-                    <li key={st.id}>{st.name} ({st.facultyShort || '?'}) — kódy do {st.codesValidUntil ? formatCzDate(st.codesValidUntil) : 'neuvedeno'}, nárok do {st.accessValidUntil ? formatCzDate(st.accessValidUntil) : '?'}</li>
+                  {data.queues.renewalDue.slice(0, 8).map((st) => (
+                    <li key={st.id}>{st.name} ({st.facultyShort || '?'}) — platí do {st.accessValidUntil ? formatCzDate(st.accessValidUntil) : '?'}{st.renewalStage ? `, výzva ${st.renewalStage}× (${formatCzDate(st.renewalSentAt)})` : ', výzva zatím neodešla'}</li>
                   ))}
                 </ul>
-                <p className="mt-1 text-[11px] text-amber-800/80">Po prodloužení zapište nové datum do „Kódy platí do“ v detailu studenta.</p>
+                <p className="mt-1 text-[11px] text-amber-800/80">Výzvy chodí automaticky 30 a 7 dní před koncem, v den konce a 14 dní po něm. Student obnoví kliknutím; vy můžete „Prodloužit o rok“ v detailu.</p>
               </div>
             )}
             {queues.map((q) => (
@@ -302,11 +302,11 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
                 {faculties.map((f) => <option key={f.id} value={f.id}>{f.faculty_short}</option>)}
               </select>
             </label>
-            <label className="text-[11px] font-semibold text-gray-500">Konec studia
-              <input type="date" value={merged.expected_graduation || ''} onChange={(e) => set('expected_graduation', e.target.value)} className={INPUT} />
+            <label className="text-[11px] font-semibold text-gray-500">Přístup platí do
+              <input type="date" value={merged.access_valid_until || ''} onChange={(e) => set('access_valid_until', e.target.value || null)} className={INPUT} />
             </label>
-            <label className="text-[11px] font-semibold text-gray-500">Prodlouženo do
-              <input type="date" value={merged.access_extended_until || ''} onChange={(e) => set('access_extended_until', e.target.value || null)} className={INPUT} />
+            <label className="text-[11px] font-semibold text-gray-500">Konec studia (info)
+              <input type="date" value={merged.expected_graduation || ''} onChange={(e) => set('expected_graduation', e.target.value || null)} className={INPUT} />
             </label>
             <label className="text-[11px] font-semibold text-gray-500">Telefon
               <input value={merged.phone || ''} onChange={(e) => set('phone', e.target.value)} className={INPUT} />
@@ -320,9 +320,9 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
             <label className="text-[11px] font-semibold text-gray-500">Kód žáka
               <input value={merged.student_code || ''} onChange={(e) => set('student_code', e.target.value)} className={cn(INPUT, 'font-mono')} />
             </label>
-            <label className="col-span-2 text-[11px] font-semibold text-gray-500">Kódy platí do (legacy admin)
+            <label className="col-span-2 text-[11px] font-semibold text-gray-500">Licence v Kabinetu platí do
               <input type="date" value={merged.codes_valid_until || ''} onChange={(e) => set('codes_valid_until', e.target.value || null)} className={INPUT} />
-              <span className="mt-1 block text-[10px] font-normal text-gray-400">Po založení je to 14 dní. Když trial v legacy adminu prodloužíte, zapište sem nové datum — nárok studenta je do {formatCzDate(merged.access_extended_until && merged.access_extended_until > (merged.access_valid_until || '') ? merged.access_extended_until : merged.access_valid_until)}.</span>
+              <span className="mt-1 block text-[10px] font-normal text-gray-400">Nastavuje se automaticky ročním obnovením (create-subscription-licence). Ručně měňte jen, když jste licenci upravili přímo v Kabinetu.{merged.legacy_admin_link ? <> Organizace v legacy adminu: <a href={merged.legacy_admin_link} target="_blank" rel="noopener noreferrer" className="underline">otevřít</a>.</> : null}</span>
             </label>
             <label className="text-[11px] font-semibold text-gray-500">Po škole
               <select value={merged.employer_status} onChange={(e) => set('employer_status', e.target.value)} className={INPUT}>
@@ -356,10 +356,13 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
               <button type="button" onClick={() => void act('invite', () => studentProgramAdmin.invite(student.id), 'Pozvánka odeslána')} disabled={busy !== null} className={BTN_PRIMARY}><Send className="h-4 w-4" /> {student.verification_sent_at ? 'Poslat ověřovací e-mail znovu' : 'Pozvat (ověřovací e-mail)'}</button>
             )}
             {!student.teacher_code && student.status !== 'pending' && (
-              <button type="button" onClick={() => void act('issue', async () => { const r = await studentProgramAdmin.issueCodes(student.id); if (r.ok) onChanged(r.item); return { ok: r.ok, detail: r.legacyReason || r.legacyResult }; }, 'Kódy založeny')} disabled={busy !== null} className={cn(BTN_PRIMARY, 'bg-amber-600 hover:bg-amber-700')}><KeyRound className="h-4 w-4" /> Založit kódy (legacy API)</button>
+              <button type="button" onClick={() => void act('issue', async () => { const r = await studentProgramAdmin.issueCodes(student.id); if (r.ok) onChanged(r.item); return { ok: r.ok, detail: r.legacyReason || r.legacyResult }; }, 'Kódy a licence založeny v Kabinetu')} disabled={busy !== null} className={cn(BTN_PRIMARY, 'bg-amber-600 hover:bg-amber-700')}><KeyRound className="h-4 w-4" /> Založit kódy (Kabinet)</button>
+            )}
+            {student.teacher_code && student.status !== 'pending' && (
+              <button type="button" onClick={() => { if (window.confirm('Založit v Kabinetu další roční licenci na kódu studenta a posunout platnost o rok?')) void act('renew', async () => { const r = await studentProgramAdmin.renew(student.id); if (r.ok && r.item) onChanged(r.item); return { ok: r.ok, detail: r.error || null }; }, 'Prodlouženo o rok'); }} disabled={busy !== null} className={cn(BTN_PRIMARY, 'bg-emerald-600 hover:bg-emerald-700')}><Clock className="h-4 w-4" /> Prodloužit o rok</button>
             )}
             <button type="button" onClick={() => void act('codes', () => studentProgramAdmin.resendCodes(student.id), 'Kódy odeslány')} disabled={busy !== null || student.status === 'pending' || !student.teacher_code} className={BTN_SECONDARY}><KeyRound className="h-3.5 w-3.5" /> Poslat kódy znovu</button>
-            <button type="button" onClick={() => void act('checkin', () => studentProgramAdmin.sendCheckin(student.id), 'Check-in odeslán')} disabled={busy !== null || student.status === 'pending'} className={BTN_SECONDARY}><Mail className="h-3.5 w-3.5" /> Poslat check-in</button>
+            <button type="button" onClick={() => void act('renewal', () => studentProgramAdmin.sendRenewal(student.id), 'Výzva k obnovení odeslána')} disabled={busy !== null || student.status === 'pending' || !student.teacher_code} className={BTN_SECONDARY}><Mail className="h-3.5 w-3.5" /> Poslat výzvu k obnovení</button>
             <button type="button" onClick={() => void remove()} disabled={busy !== null} className={cn(BTN_SECONDARY, 'text-rose-600')}><Trash2 className="h-3.5 w-3.5" /> Smazat</button>
           </div>
 
@@ -367,11 +370,11 @@ function StudentDrawer({ student, faculties, onClose, onChanged }: { student: St
             <div className="grid grid-cols-2 gap-y-1">
               <span>Registrace</span><span className="text-[#001161]">{formatCzDate(student.created_at, true)}</span>
               <span>Ověřeno</span><span className="text-[#001161]">{formatCzDate(student.verified_at, true)}</span>
-              <span>Nárok do</span><span className="text-[#001161]">{formatCzDate(student.access_extended_until && student.access_extended_until > (student.access_valid_until || '') ? student.access_extended_until : student.access_valid_until)}</span>
-              <span>Kódy platí do</span><span className={cn('text-[#001161]', student.teacher_code && (!student.codes_valid_until || student.codes_valid_until < (student.access_valid_until || '')) && 'text-amber-700 font-semibold')}>{formatCzDate(student.codes_valid_until)}{student.codes_issued_at ? ` (založeno ${formatCzDate(student.codes_issued_at)})` : ''}</span>
-              <span>Další check-in</span><span className="text-[#001161]">{formatCzDate(student.next_checkin_at)} (odesláno {student.checkin_count}×)</span>
+              <span>Přístup do</span><span className="text-[#001161]">{formatCzDate(student.access_extended_until && student.access_extended_until > (student.access_valid_until || '') ? student.access_extended_until : student.access_valid_until)}{student.codes_issued_at ? ` (kódy založeny ${formatCzDate(student.codes_issued_at)})` : ''}</span>
+              <span>Obnoveno</span><span className="text-[#001161]">{student.renewal_count || 0}× {student.renewed_at ? `(naposledy ${formatCzDate(student.renewed_at)})` : ''}</span>
+              <span>Výzva k obnovení</span><span className="text-[#001161]">{student.renewal_stage ? `${student.renewal_stage}. výzva, ${formatCzDate(student.renewal_sent_at, true)}` : '—'}</span>
               <span>Poslední odpověď</span><span className="text-[#001161]">{formatCzDate(student.last_response_at, true)}</span>
-              <span>Legacy</span><span className="text-[#001161]">{student.legacy_result || '—'}{student.legacy_reason ? ` · ${student.legacy_reason}` : ''}</span>
+              <span>Kabinet</span><span className="text-[#001161]">{student.legacy_result || '—'}{student.legacy_reason ? ` · ${student.legacy_reason}` : ''}</span>
               <span>Obor</span><span className="text-[#001161]">{student.study_programme || '—'}</span>
               <span>Předměty</span><span className="text-[#001161]">{[...(student.school_stages || []), ...(student.subjects || [])].join(', ') || '—'}</span>
               <span>Zdroj</span><span className="text-[#001161]">{student.source || '—'}</span>
@@ -469,9 +472,9 @@ function StudentsTab({ faculties, initialQueue, onQueueConsumed }: { faculties: 
         <select value={queue} onChange={(e) => { setQueue(e.target.value); setOffset(0); }} className={cn(INPUT, 'w-auto')}>
           <option value="">Bez fronty</option>
           <option value="no_codes">Bez kódů</option>
-          <option value="extension_due">Prodloužit trial v legacy adminu</option>
-          <option value="checkin_due">Check-in po termínu</option>
-          <option value="graduating_soon">Končí do 90 dnů</option>
+          <option value="no_licence">Kódy bez roční licence</option>
+          <option value="renewal_due">Čeká na roční obnovení</option>
+          <option value="expired_recent">Skončilo bez obnovení (90 dní)</option>
           <option value="alumni_no_school">Absolventi bez školy</option>
           <option value="pending_old">Neověřeno &gt; 3 dny</option>
           <option value="imported">Importovaní z kontaktů (nepozvaní)</option>
@@ -488,9 +491,9 @@ function StudentsTab({ faculties, initialQueue, onQueueConsumed }: { faculties: 
                 <th className="px-3 py-2">Student</th>
                 <th className="px-3 py-2">Fakulta</th>
                 <th className="px-3 py-2">Stav</th>
-                <th className="px-3 py-2">Konec studia</th>
+                <th className="px-3 py-2">Přístup do</th>
                 <th className="px-3 py-2">Kódy</th>
-                <th className="px-3 py-2">Check-in</th>
+                <th className="px-3 py-2">Obnovení</th>
                 <th className="px-3 py-2">Používá</th>
                 <th className="px-3 py-2">Po škole</th>
                 <th className="px-3 py-2">Kontakt</th>
@@ -510,9 +513,9 @@ function StudentsTab({ faculties, initialQueue, onQueueConsumed }: { faculties: 
                     </td>
                     <td className="px-3 py-2 text-gray-700">{fac ? fac.faculty_short : <span className="text-gray-300">—</span>}</td>
                     <td className="px-3 py-2"><Pill className={STATUS_COLORS[s.status]}>{STUDENT_STATUS_LABELS[s.status]}</Pill></td>
-                    <td className="px-3 py-2 text-gray-700">{formatCzDate(s.expected_graduation)}</td>
-                    <td className="px-3 py-2">{s.teacher_code ? <span className="font-mono text-[#001161]">{s.teacher_code}</span> : s.status === 'pending' ? <span className="text-gray-300">—</span> : <span className="text-rose-600">chybí</span>}</td>
-                    <td className="px-3 py-2 text-gray-600">{s.checkin_count}× · {s.last_response_at ? <span className="text-emerald-700">odpověď {formatCzDate(s.last_response_at)}</span> : <span className="text-gray-400">bez odpovědi</span>}</td>
+                    <td className={cn('px-3 py-2', s.status === 'active' && s.access_valid_until && s.access_valid_until <= new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10) ? 'text-amber-700 font-semibold' : 'text-gray-700')}>{formatCzDate(s.access_valid_until)}</td>
+                    <td className="px-3 py-2">{s.teacher_code ? <span className="font-mono text-[#001161]">{s.teacher_code}</span> : s.status === 'pending' ? <span className="text-gray-300">—</span> : <span className="text-rose-600">chybí</span>}{s.teacher_code && !s.codes_valid_until ? <span className="ml-1 text-amber-700">bez licence</span> : null}</td>
+                    <td className="px-3 py-2 text-gray-600">{s.renewal_count || 0}× {s.renewal_stage ? <span className="text-amber-700">· výzva {s.renewal_stage}</span> : null}</td>
                     <td className="px-3 py-2">{s.uses_in_practice === true ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : s.uses_in_practice === false ? <X className="h-4 w-4 text-gray-300" /> : <span className="text-gray-300">?</span>}</td>
                     <td className="px-3 py-2 text-gray-700">{s.employer_school_name || (s.employer_status !== 'unknown' ? s.employer_status : <span className="text-gray-300">—</span>)}</td>
                     <td className="px-3 py-2 text-gray-500">{s.phone ? <Phone className="inline h-3.5 w-3.5 text-emerald-600" /> : null} {s.personal_email ? <Mail className="inline h-3.5 w-3.5 text-sky-600" /> : null}</td>
@@ -863,11 +866,11 @@ function GoalsTab() {
     }
   };
   const runCron = async (dryRun: boolean) => {
-    if (!dryRun && !window.confirm('Spustit denní běh naostro? Odešle check-iny a přechody stavů, které jsou po termínu.')) return;
+    if (!dryRun && !window.confirm('Spustit denní běh naostro? Odešle výzvy k obnovení a ukončí přístupy po ochranné lhůtě.')) return;
     setCronBusy(true);
     try {
       const r = await studentProgramAdmin.runCron(dryRun);
-      toast.success(`${dryRun ? 'Nasucho' : 'Hotovo'}: ${r.checkins} check-inů, ${r.graduating} končí studium, ${r.expired} vypršelo${r.errors.length ? `, chyby: ${r.errors.length}` : ''}`);
+      toast.success(`${dryRun ? 'Nasucho' : 'Hotovo'}: ${r.reminders} výzev k obnovení, ${r.expired} vypršelo${r.errors.length ? `, chyby: ${r.errors.length}` : ''}`);
     } catch (e) {
       toast.error(errMsg(e));
     } finally {
@@ -894,23 +897,23 @@ function GoalsTab() {
       </div>
       <div className="rounded-2xl border border-gray-100 bg-white p-5">
         <p className="mb-1 text-[14px] font-bold text-[#001161]">Nastavení programu</p>
-        <p className="mb-4 text-[12px] text-gray-500">Každý student má vlastní kódy z legacy free-trial API (organizace „Jméno – student Fakulta“). Tady se nastavuje, jak se volá, jak často píšeme studentům a kam chodí denní přehled.</p>
+        <p className="mb-4 text-[12px] text-gray-500">Každý student má v Kabinetu vlastní organizaci („Student Jméno Příjmení (Fakulta)“) a roční licenci. Tady se nastavuje délka licence, výzvy k obnovení a kam chodí denní přehled.</p>
         <div className="grid grid-cols-2 gap-3">
           <label className="text-[11px] font-semibold text-gray-500">Zakládat kódy automaticky
             <select value={settings.autoIssueCodes ? '1' : '0'} onChange={(e) => setSettings({ ...settings, autoIssueCodes: e.target.value === '1' })} className={INPUT}>
-              <option value="1">Ano — každý student vlastní trial přes free-trial API</option>
+              <option value="1">Ano — při ověření přes Kabinet</option>
               <option value="0">Ne, kódy vkládám ručně</option>
             </select>
           </label>
-          <label className="text-[11px] font-semibold text-gray-500">IČO v legacy volání
-            <select value={settings.legacyVatMode} onChange={(e) => setSettings({ ...settings, legacyVatMode: e.target.value as StudentProgramSettings['legacyVatMode'] })} className={INPUT}>
-              <option value="none">Neposílat (vlastní organizace na studenta)</option>
-              <option value="university_ico">IČO univerzity</option>
+          <label className="text-[11px] font-semibold text-gray-500">Typ licence
+            <select value={settings.individualLicence ? '1' : '0'} onChange={(e) => setSettings({ ...settings, individualLicence: e.target.value === '1' })} className={INPUT}>
+              <option value="1">Individuální (jedno zařízení najednou)</option>
+              <option value="0">Školní (bez limitu zařízení)</option>
             </select>
           </label>
-          <label className="text-[11px] font-semibold text-gray-500">Délka trialu z API (dny)<input type="number" min={1} max={3650} value={settings.legacyTrialDays} onChange={(e) => setSettings({ ...settings, legacyTrialDays: Number(e.target.value) })} className={INPUT} /></label>
-          <label className="text-[11px] font-semibold text-gray-500">Interval check-inu (dny)<input type="number" min={30} max={365} value={settings.checkinIntervalDays} onChange={(e) => setSettings({ ...settings, checkinIntervalDays: Number(e.target.value) })} className={INPUT} /></label>
-          <label className="text-[11px] font-semibold text-gray-500">Varovat před koncem kódů (dny)<input type="number" min={1} max={90} value={settings.extensionWarnDays} onChange={(e) => setSettings({ ...settings, extensionWarnDays: Number(e.target.value) })} className={INPUT} /></label>
+          <label className="text-[11px] font-semibold text-gray-500">Délka licence (měsíce)<input type="number" min={1} max={60} value={settings.licenceMonths} onChange={(e) => setSettings({ ...settings, licenceMonths: Number(e.target.value) })} className={INPUT} /></label>
+          <label className="text-[11px] font-semibold text-gray-500">První výzva před koncem (dny)<input type="number" min={3} max={120} value={settings.renewalReminderDays} onChange={(e) => setSettings({ ...settings, renewalReminderDays: Number(e.target.value) })} className={INPUT} /></label>
+          <label className="text-[11px] font-semibold text-gray-500">Ochranná lhůta po konci (dny)<input type="number" min={0} max={180} value={settings.renewalGraceDays} onChange={(e) => setSettings({ ...settings, renewalGraceDays: Number(e.target.value) })} className={INPUT} /></label>
           <label className="col-span-2 text-[11px] font-semibold text-gray-500">Denní přehled a upozornění na e-mail<input value={settings.digestEmail} onChange={(e) => setSettings({ ...settings, digestEmail: e.target.value })} placeholder="prázdné = neposílat" className={INPUT} /></label>
           <label className="text-[11px] font-semibold text-gray-500">Odesílatel oslovení fakult<input value={settings.outreachFromName} onChange={(e) => setSettings({ ...settings, outreachFromName: e.target.value })} className={INPUT} /></label>
           <label className="text-[11px] font-semibold text-gray-500">Reply-To oslovení<input value={settings.outreachReplyTo} onChange={(e) => setSettings({ ...settings, outreachReplyTo: e.target.value })} className={INPUT} /></label>
@@ -944,20 +947,20 @@ function MethodologyTab() {
       </Block>
       <Block title="Cesta studenta">
         <ol className="list-decimal space-y-1 pl-5">
-          <li><strong>Registrace</strong> na /studenti — univerzitní e-mail, fakulta (auto podle domény), osobní e-mail, telefon (nepovinně), stupeň a předměty, konec studia.</li>
-          <li><strong>Ověření</strong> odkazem v e-mailu (7 dní). Po kliknutí vznikne přístup: kódy fakulty, uvítací e-mail (kopie na osobní e-mail), zápis do subscribers s tagem <code>student-program</code>.</li>
-          <li><strong>Check-in každých 182 dní</strong> — „ještě studujete?“, datum konce, používání, telefon. Odpověď = engagement <em>active/passive</em>; dvě nezodpovězené výzvy = <em>inactive</em>.</li>
-          <li><strong>Konec studia</strong> — jednorázový e-mail „kam nastupujete“ + hledání školy v rejstříku. Absolvent = stav <em>alumni</em>, přístup běží ještě 6 měsíců.</li>
-          <li><strong>Vypršení</strong> — půl roku po studiu končí přístup, e-mail nabídne školní trial a kalkulaci. Absolvent se známou školou = lead pro obchod (upozornění na e-mail hned po nahlášení).</li>
+          <li><strong>Registrace</strong> na /studenti — jméno, <strong>univerzitní e-mail</strong> (fakulta auto podle domény) a <strong>osobní e-mail</strong> (záloha), volitelně telefon, obor, stupeň a předměty.</li>
+          <li><strong>Ověření</strong> odkazem na univerzitní e-mail (7 dní). Po kliknutí Kabinet založí studentovu organizaci a <strong>roční licenci</strong>; kódy přijdou na oba e-maily, kontakt jde do subscribers s tagem <code>student-program</code>.</li>
+          <li><strong>Roční obnovení</strong> — 30 dní před koncem přijde na univerzitní e-mail odkaz „Ještě studuji“ (na osobní jen upozornění). Kliknutí = důkaz, že adresu pořád má → Kabinet přidá další rok, kódy zůstávají. Připomínky 7 dní před, v den konce a 14 dní po.</li>
+          <li><strong>Bez obnovení</strong> — 30 dní po konci přístup přejde do <em>expired</em> a e-mail nabídne novou registraci nebo školní trial. Nová registrace vypršelého studenta = rovnou obnovení.</li>
+          <li><strong>Absolvent</strong> — v aktualizaci nahlásí „dostudoval/a“ a školu (rejstřík). Přístup doběhne do konce zaplaceného roku, dál se neobnovuje. Známá škola = lead pro obchod (upozornění hned).</li>
         </ol>
       </Block>
       <Block title="Co se děje, když student používá / nepoužívá">
         <p><strong>Používá</strong> (odpověděl ano): pozvánky na workshopy a webináře pro budoucí učitele, výzva sdílet přístup se spolužáky přes odkaz fakulty, po státnicích prioritní kontakt obchodu se školou.</p>
-        <p><strong>Nepoužívá / neodpovídá</strong>: check-in dál chodí (max. 2× ročně), ale bez dalších aktivit. Po dvou nezodpovězených check-inech je engagement <em>inactive</em> — signál pro fakultu (nestačí odkaz, je potřeba workshop) a pro nás (co v aplikaci chybí). Přístup se kvůli nečinnosti neruší, ruší se jen po vypršení nebo na žádost.</p>
+        <p><strong>Nepoužívá / neobnoví</strong>: kdo na roční výzvu nezareaguje, přístup po ochranné lhůtě ztratí — to je zároveň nejčistší metrika zájmu. Podíl obnovených ku vypršelým sledujeme po fakultách; nízké obnovení = signál pro fakultu (nestačí odkaz, je potřeba workshop) a pro nás (co v aplikaci chybí).</p>
       </Block>
       <Block title="Kódy a legacy admin">
-        <p>Přístup do aplikace stále řídí legacy Vividbooks (kódy školy). <strong>Každý student má vlastní kódy</strong>: při ověření e-mailu se zavolá free-trial API pod jménem studenta (Position „Student“, organizace „Jméno – student Fakulta“) a vznikne 14denní trial s vlastní dvojicí kódů.</p>
-        <p>Obchod pak v legacy adminu prodlouží studentův trial (ideálně do konce studia + 6 měsíců) a zapíše datum do <em>Kódy platí do</em> v detailu studenta. Cron hlídá konec 21 dní předem — fronta <em>Prodloužit trial v legacy adminu</em> a denní přehled. Když API kódy nevrátí, student je ve frontě <em>Bez kódů</em>: „Založit kódy“ zkusí API znovu, nebo se kódy vloží ručně.</p>
+        <p>Přístup do aplikace řídí kódy školy; <strong>každý student má vlastní organizaci v Kabinetu</strong>. Při ověření se zavolá hook <code>create-school</code> (bez trialu, e-mail = univerzitní) a hned <code>create-subscription-licence</code> na 12 měsíců (bundle všech předmětů, individuální licence = jedno zařízení najednou). Žádný trial, žádná zpráva do Pipedrive.</p>
+        <p>Roční obnovení = další <code>create-subscription-licence</code> od konce současné licence. Když Kabinet neodpoví, student zůstává aktivní a jde do fronty <em>Bez kódů</em> / <em>Kódy bez roční licence</em>; v detailu jsou tlačítka „Založit kódy (Kabinet)“ a „Prodloužit o rok“. Tajemství <code>KABINET_SECRET</code> sdílí s funkcí kabinet-trial.</p>
       </Block>
       <Block title="Fakulty: oslovení a pokrytí">
         <p>Seznam = 9 pedagogických fakult (jádro) + fakulty s učitelskými programy. U každé sledujeme stav oslovení (neosloveno → osloveno → v jednání → partner/odmítli), kontakty (proděkan pro studium, vedoucí kateder didaktiky, studijní oddělení) a follow-up.</p>
@@ -966,10 +969,10 @@ function MethodologyTab() {
       </Block>
       <Block title="Provoz a rytmus">
         <ul className="list-disc space-y-1 pl-5">
-          <li><strong>Denně</strong> (cron 7:10 UTC): check-iny, přechody stavů, digest na e-mail s frontami (bez kódů, k prodloužení, absolventi).</li>
+          <li><strong>Denně</strong> (cron 7:10 UTC): výzvy k obnovení, vypršení po ochranné lhůtě, digest na e-mail (nové registrace, obnovení, bez kódů).</li>
           <li><strong>Týdně</strong>: projít frontu „K oslovení / follow-up“ ve Fakultách a „Absolventi bez školy“.</li>
           <li><strong>Září a únor</strong> (začátek semestrů): kampaň na fakulty — rozeslání textu pro studenty, workshopy, vzorky pro katedry.</li>
-          <li><strong>Červen</strong>: většina studií končí — zkontrolovat, že fakultní kódy platí přes léto, připravit obchodní follow-up absolventů.</li>
+          <li><strong>Červen</strong>: většina studií končí — projít absolventy bez školy, připravit obchodní follow-up.</li>
         </ul>
       </Block>
     </div>
@@ -1005,7 +1008,7 @@ export default function StudentProgramAdminPage() {
             </div>
             <h1 className="font-['Fenomen_Sans'] text-3xl font-bold text-[#001161]">Studenti učitelství</h1>
           </div>
-          <p className="max-w-2xl text-[14px] text-gray-600">Studentský program: registrace z /studenti, přístup po dobu studia, půlroční check-iny, absolventi jako leady a oslovení pedagogických fakult.</p>
+          <p className="max-w-2xl text-[14px] text-gray-600">Studentský program: registrace dvěma e-maily na /studenti, roční licence v Kabinetu, obnovení kliknutím každý rok, absolventi jako leady a oslovení pedagogických fakult.</p>
         </div>
         <a href="/studenti" target="_blank" rel="noopener noreferrer" className={BTN_SECONDARY}><ExternalLink className="h-3.5 w-3.5" /> Otevřít /studenti</a>
       </div>

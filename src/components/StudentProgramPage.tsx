@@ -16,6 +16,7 @@ import {
   checkStudentEmail,
   fetchStudentSelf,
   registerStudent,
+  renewStudentAccess,
   searchSchoolsRegistry,
   updateStudentSelf,
   verifyStudentToken,
@@ -32,7 +33,7 @@ const SELECT_ARROW =
 
 const PAGE_TITLE = 'Vividbooks pro studenty učitelství zdarma';
 const PAGE_DESC =
-  'Studujete učitelství? Získejte přístup do Vividbooks zdarma po celou dobu studia. Stačí univerzitní e-mail — materiály, se kterými učí přes 600 základních škol.';
+  'Studujete učitelství? Získejte přístup do Vividbooks zdarma po celou dobu studia. Stačí univerzitní e-mail, přístup obnovíte jednou ročně jedním kliknutím.';
 
 const MONTHS_CS = ['leden', 'únor', 'březen', 'duben', 'květen', 'červen', 'červenec', 'srpen', 'září', 'říjen', 'listopad', 'prosinec'];
 
@@ -112,7 +113,7 @@ function AccessCard({ student, codesPending }: { student: StudentProgramStudentV
         {student.accessValidUntil && (
           <div className="flex items-center gap-2 pt-2 border-t border-[#001161]/8">
             <Clock className="w-4 h-4 text-[#001161]/40 shrink-0" />
-            <p style={FF} className="text-[#001161]/55 text-[12px]">Přístup platí do {fmtDate(student.accessValidUntil)} (konec studia + půl roku). Když se studium protáhne, stačí datum upravit.</p>
+            <p style={FF} className="text-[#001161]/55 text-[12px]">Přístup platí do {fmtDate(student.accessValidUntil)}. Měsíc před koncem vám na univerzitní e-mail přijde odkaz — jedním kliknutím obnovíte přístup na další rok, dokud studujete.</p>
           </div>
         )}
       </div>
@@ -143,7 +144,6 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
     phone: '',
     facultyId: presetFacultyId || '',
     studyProgramme: '',
-    expectedGraduation: '',
     consentTerms: false,
     newsletter: true,
   });
@@ -155,7 +155,6 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<RegisterResult | null>(null);
   const debouncedEmail = useDebounced(form.universityEmail.trim().toLowerCase(), 500);
-  const gradOptions = useMemo(graduationOptions, []);
 
   useEffect(() => {
     if (!debouncedEmail || !isValidEmailFormat(debouncedEmail)) {
@@ -223,11 +222,8 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
     }
     if (emailCheck?.ok && emailCheck.faculties.length > 1 && !form.facultyId) { setFormError('Vyberte prosím fakultu.'); flash('sp-faculty'); return; }
     const pers = form.personalEmail.trim().toLowerCase();
-    if (pers && !isValidEmailFormat(pers)) { setFormError('Osobní e-mail nemá správný formát.'); flash('sp-pers'); return; }
-    if (pers && pers === uni) { setFormError('Osobní e-mail musí být jiný než univerzitní.'); flash('sp-pers'); return; }
-    if (!form.expectedGraduation) { setFormError('Vyberte prosím předpokládaný konec studia.'); flash('sp-grad'); return; }
-    if (stages.length === 0) { setFormError('Vyberte prosím stupeň, na který se připravujete.'); flash('sp-stages'); return; }
-    if (subjects.length === 0) { setFormError('Vyberte aspoň jeden předmět.'); flash('sp-subjects'); return; }
+    if (!pers || !isValidEmailFormat(pers)) { setFormError('Zadejte prosím i osobní e-mail (např. Gmail nebo Seznam) — použijeme ho, až vám školní schránka skončí.'); flash('sp-pers'); return; }
+    if (pers === uni) { setFormError('Osobní e-mail musí být jiný než univerzitní.'); flash('sp-pers'); return; }
     if (!form.consentTerms) { setFormError('Potřebujeme váš souhlas s podmínkami programu.'); flash('sp-consent'); return; }
 
     setSubmitting(true);
@@ -251,7 +247,6 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         studyProgramme: form.studyProgramme.trim(),
         subjects,
         schoolStages: stages,
-        expectedGraduation: form.expectedGraduation,
         consentTerms: form.consentTerms,
         newsletter: form.newsletter,
         source: 'web-studenti',
@@ -276,7 +271,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         <p style={FF} className="text-[#001161]/70 text-[14px] leading-relaxed max-w-md mx-auto">
           {isPending ? (
             <>
-              Poslali jsme ověřovací odkaz na <strong>{form.universityEmail.trim()}</strong>. Klikněte na něj a přístup se aktivuje během chvilky. Odkaz platí 7 dní — když e-mail nevidíte, mrkněte do spamu.
+              Poslali jsme ověřovací odkaz na <strong>{form.universityEmail.trim()}</strong>. Klikněte na něj a přístup se aktivuje během chvilky — kódy pošleme i na {form.personalEmail.trim()}. Odkaz platí 7 dní; když e-mail nevidíte, mrkněte do spamu.
             </>
           ) : (
             result.message
@@ -345,28 +340,20 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         )}
       </AnimatePresence>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div id="sp-pers" className="rounded-[14px] p-1 -m-1">
-          <input name="personalEmail" type="email" placeholder="Osobní e-mail (doporučeno)" value={form.personalEmail} onChange={handle} className={INPUT_CLASS} style={FF} inputMode="email" />
-        </div>
-        <input name="phone" type="tel" placeholder="Telefon (nepovinné)" value={form.phone} onChange={handle} className={INPUT_CLASS} style={FF} autoComplete="tel" inputMode="tel" />
+      <div id="sp-pers" className="rounded-[14px] p-1 -m-1">
+        <input name="personalEmail" type="email" placeholder="Osobní e-mail *" value={form.personalEmail} onChange={handle} className={INPUT_CLASS} style={FF} inputMode="email" />
       </div>
       <p style={FF} className="text-[12px] text-[#001161]/50 px-2 -mt-1 leading-snug">
-        Osobní e-mail použijeme, až vám školní schránka skončí — ať o přístup nepřijdete. Telefon jen pro pozvánky na workshopy pro budoucí učitele.
+        Ověřovací odkaz pošleme na univerzitní adresu. Osobní e-mail použijeme, až vám školní schránka skončí — ať o přístup a kódy nepřijdete.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <input name="studyProgramme" placeholder="Studijní program / obor" value={form.studyProgramme} onChange={handle} className={INPUT_CLASS} style={FF} />
-        <select id="sp-grad" name="expectedGraduation" value={form.expectedGraduation} onChange={handle} className={`${INPUT_CLASS} ${SELECT_ARROW}`} style={FF}>
-          <option value="" disabled>Předpokládaný konec studia *</option>
-          {gradOptions.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
+        <input name="phone" type="tel" placeholder="Telefon (nepovinné)" value={form.phone} onChange={handle} className={INPUT_CLASS} style={FF} autoComplete="tel" inputMode="tel" />
       </div>
 
       <div id="sp-stages" className="bg-white/60 rounded-2xl p-5 space-y-4 border border-[#001161]/8">
-        <p style={FF} className="text-[14px] font-bold text-[#001161]">Na jaký stupeň se připravujete? *</p>
+        <p style={FF} className="text-[14px] font-bold text-[#001161]">Na jaký stupeň se připravujete? <span className="font-normal text-[#001161]/45">(nepovinné)</span></p>
         <div className="grid grid-cols-2 gap-2">
           <SubjectCheckbox label="1. stupeň ZŠ" checked={stages.includes('SchoolStage-1')} onChange={() => toggleStage('SchoolStage-1')} />
           <SubjectCheckbox label="2. stupeň ZŠ" checked={stages.includes('SchoolStage-2')} onChange={() => toggleStage('SchoolStage-2')} />
@@ -374,7 +361,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         <AnimatePresence>
           {subjectOptions.length > 0 && (
             <motion.div id="sp-subjects" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-              <p style={FF} className="text-[13px] font-bold text-[#001161] mb-2 pt-1">Které předměty chcete učit? *</p>
+              <p style={FF} className="text-[13px] font-bold text-[#001161] mb-2 pt-1">Které předměty chcete učit?</p>
               <div className="grid grid-cols-2 gap-2">
                 {subjectOptions.map((o) => (
                   <SubjectCheckbox key={o.value} label={stages.length > 1 ? `${o.label} (${o.stage})` : o.label} checked={subjects.includes(o.value)} onChange={() => toggleSubject(o.value)} />
@@ -388,7 +375,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
       <label id="sp-consent" className="flex items-start gap-3 cursor-pointer pt-1 rounded-[14px] p-1 -m-1">
         <input type="checkbox" name="consentTerms" checked={form.consentTerms} onChange={handle} className="mt-1 w-4 h-4 accent-[#7C3AED]" />
         <span style={FF} className="text-[13px] text-[#001161]/70 leading-snug">
-          Souhlasím s podmínkami studentského programu: přístup je určen jen pro mé studium, jednou za půl roku mi Vividbooks napíše ohledně stavu studia a po jeho skončení mi přístup zůstává ještě 6 měsíců. *
+          Souhlasím s podmínkami studentského programu: přístup je určen jen pro mé studium a je nepřenosný. Platí rok a každý rok ho obnovím kliknutím na odkaz, který přijde na můj univerzitní e-mail. *
         </span>
       </label>
       <label className="flex items-start gap-3 cursor-pointer">
@@ -428,18 +415,19 @@ const BENEFITS = [
   { icon: BookOpen, title: 'Knihovna hotových materiálů', text: 'Interaktivní lekce, pracovní listy, učební texty a metodiky pro matematiku, fyziku, chemii, přírodopis a prvouku — to samé, co používají učitelé ve školách.' },
   { icon: Sparkles, title: 'Vividboard a vlastní přípravy', text: 'Postavte si hodinu na praxi: aktivity, hlasování, soutěže. Editor dokumentu a pracovního listu pro vlastní materiály a seminární práce.' },
   { icon: Users, title: 'Pohled žáka i učitele', text: 'Dva kódy — učitelský a žákovský. Vyzkoušíte, jak hodina vypadá z lavice, a naučíte se s materiály pracovat dřív, než stanete před třídou.' },
-  { icon: ShieldCheck, title: 'Zdarma po celou dobu studia', text: 'Žádná platební karta, žádný závazek. Přístup platí po dobu studia a ještě půl roku po něm, ať máte materiály po ruce i v prvním roce ve škole.' },
+  { icon: ShieldCheck, title: 'Zdarma po celou dobu studia', text: 'Žádná platební karta, žádný závazek. Přístup platí rok a každý rok ho obnovíte jedním kliknutím na odkaz z univerzitního e-mailu — dokud studujete.' },
 ];
 
 const STEPS = [
   { n: '1', title: 'Zadejte univerzitní e-mail', text: 'Poznáme podle něj fakultu. Fungují adresy všech českých univerzit s učitelskými programy.' },
-  { n: '2', title: 'Potvrďte odkaz v e-mailu', text: 'Přijde během minuty. Kliknutím ověříte, že jste student, a přístup se aktivuje.' },
-  { n: '3', title: 'Otevřete aplikaci', text: 'Dostanete dva kódy a rovnou můžete začít — na počítači, tabletu i v učebně na praxi.' },
+  { n: '2', title: 'Potvrďte odkaz v e-mailu', text: 'Přijde během minuty na univerzitní adresu. Kliknutím ověříte, že jste student, a přístup se aktivuje.' },
+  { n: '3', title: 'Otevřete aplikaci', text: 'Dostanete dva kódy (na oba e-maily) a rovnou můžete začít — na počítači, tabletu i v učebně na praxi. Za rok stačí jedno kliknutí a jedete dál.' },
 ];
 
 const FAQ = [
   { q: 'Kdo má na přístup nárok?', a: 'Studenti bakalářských, magisterských i doktorských programů zaměřených na učitelství na českých univerzitách — pedagogické fakulty i další fakulty s učitelskými obory (přírodovědecké, filozofické, MFF a další).' },
-  { q: 'Jak dlouho přístup platí?', a: 'Po celou dobu studia podle data, které zadáte, plus 6 měsíců po jeho skončení. Jednou za půl roku vám napíšeme a zeptáme se, jestli ještě studujete — datum můžete kdykoli upravit.' },
+  { q: 'Jak dlouho přístup platí?', a: 'Rok od aktivace. Měsíc před koncem vám na univerzitní e-mail přijde odkaz; kliknutím přístup obnovíte na další rok se stejnými kódy. Tak to jde po celou dobu studia.' },
+  { q: 'Proč chcete dva e-maily?', a: 'Univerzitní adresa je náš doklad, že studujete — na ni chodí ověření i roční obnovení. Osobní adresa je záloha: dostanete na ni kopii kódů a po škole vás na ní najdeme, kdyby vás univerzitní schránka odpojila.' },
   { q: 'Můžu materiály použít na praxi ve škole?', a: 'Ano, přesně na to je program určený. Promítejte lekce, spouštějte aktivity ve vividboardu a tiskněte pracovní listy pro žáky. Jen prosím nepředávejte kódy dál — přístup je vázaný na vás.' },
   { q: 'Co když má škola, kde budu učit, o Vividbooks zájem?', a: 'Skvělé! Po skončení studia se vás zeptáme, kam nastupujete, a vaší škole rádi ukážeme Vividbooks a připravíme nezávaznou kalkulaci. Škola si může Vividbooks nejdřív 14 dní vyzkoušet zdarma.' },
   { q: 'Můj univerzitní e-mail systém nezná.', a: 'Napište nám na hello@vividbooks.com — doplníme doménu a přístup založíme ručně.' },
@@ -578,7 +566,7 @@ export function StudentProgramPage() {
             Co je v aplikaci
           </Link>
         </div>
-        <p style={FF} className="text-[12px] text-[#001161]/45 mt-5">Bez karty · bez závazku · platí i půl roku po státnicích</p>
+        <p style={FF} className="text-[12px] text-[#001161]/45 mt-5">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
       </motion.section>
 
       {/* Benefity */}
@@ -626,7 +614,7 @@ export function StudentProgramPage() {
         </div>
         <div className="bg-[#f5f6fa] border border-[#001161]/6 rounded-[28px] p-6 md:p-8">
           <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[24px] leading-tight mb-1">Založit studentský přístup</h2>
-          <p style={FF} className="text-[13px] text-[#001161]/55 mb-6">Trvá to dvě minuty. Hvězdička = povinné.</p>
+          <p style={FF} className="text-[13px] text-[#001161]/55 mb-6">Dvě minuty a dva e-maily: univerzitní pro ověření, osobní jako záloha.</p>
           <StudentRegistrationForm presetFacultyId={presetFaculty} />
         </div>
       </section>
@@ -727,10 +715,6 @@ export function StudentProgramUpdatePage() {
       setError('Vyberte prosím, jak na tom se studiem jste.');
       return;
     }
-    if (studyStatus === 'studying' && !graduation) {
-      setError('Doplňte prosím předpokládaný konec studia.');
-      return;
-    }
     setSaving(true);
     setError('');
     try {
@@ -789,10 +773,10 @@ export function StudentProgramUpdatePage() {
             <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[24px] mb-1">Děkujeme!</h2>
             <p style={FF} className="text-[#001161]/70 text-[14px]">
               {student.status === 'alumni'
-                ? 'Gratulujeme k dokončení studia. Přístup vám zůstává ještě půl roku — a když jste uvedli školu, ozveme se jí s ukázkou.'
+                ? 'Gratulujeme k dokončení studia. Přístup vám doběhne do konce aktuálního roku licence — a když jste uvedli školu, ozveme se jí s ukázkou.'
                 : student.status === 'declined'
                   ? 'Rozumíme. Přístup ukončíme a už vám nebudeme psát. Kdykoli se můžete vrátit.'
-                  : 'Máme to zapsané. Přístup běží dál a napíšeme si zase za půl roku.'}
+                  : 'Máme to zapsané. Přístup běží dál — před koncem roku vám přijde odkaz k obnovení.'}
             </p>
           </div>
           {student.status !== 'declined' && <AccessCard student={student} />}
@@ -831,9 +815,9 @@ export function StudentProgramUpdatePage() {
           <AnimatePresence>
             {studyStatus === 'studying' && (
               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                <p style={FF} className="text-[14px] font-bold text-[#001161] mb-2">Předpokládaný konec studia *</p>
+                <p style={FF} className="text-[14px] font-bold text-[#001161] mb-2">Kdy asi studium končí? <span className="font-normal text-[#001161]/45">(nepovinné)</span></p>
                 <select value={graduation} onChange={(e) => setGraduation(e.target.value)} className={`${INPUT_CLASS} ${SELECT_ARROW}`} style={FF}>
-                  <option value="" disabled>Vyberte měsíc</option>
+                  <option value="">Nevím / zatím neřeším</option>
                   {gradOptions.map((o) => (
                     <option key={o.value} value={o.value}>{o.label}</option>
                   ))}
@@ -940,6 +924,83 @@ export function StudentProgramUpdatePage() {
             </Link>
           </div>
         )}
+      </div>
+    </motion.div>
+  );
+}
+
+/* ══════════════════════════════════════════
+   /studenti/obnovit?t=… — roční obnovení jedním kliknutím
+══════════════════════════════════════════ */
+export function StudentProgramRenewPage() {
+  const [searchParams] = useSearchParams();
+  const token = searchParams.get('t') || '';
+  const [loading, setLoading] = useState(!!token);
+  const [student, setStudent] = useState<StudentProgramStudentView | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    renewStudentAccess(token)
+      .then((r) => {
+        if (cancelled) return;
+        if (r.valid && r.student) setStudent(r.student);
+        else setError(r.error || 'Odkaz je neplatný.');
+      })
+      .catch(() => {
+        if (!cancelled) setError('Obnovení se nepodařilo. Zkuste odkaz otevřít znovu.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
+
+  const head = <SEOHead title="Obnovení přístupu — Vividbooks" path="/studenti/obnovit" description="Roční obnovení studentského přístupu Vividbooks." noIndex />;
+
+  if (loading) {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center">
+        {head}
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 border-3 border-[#7C3AED]/20 border-t-[#7C3AED] rounded-full animate-spin" />
+          <p style={FF} className="text-[#001161]/60 text-[15px]">Obnovuji váš přístup na další rok…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!token || error || !student) {
+    return (
+      <div className="min-h-[70vh] flex items-center justify-center px-4 py-12">
+        {head}
+        <div className="w-full max-w-[460px] text-center bg-red-50 border border-red-200 rounded-[24px] p-8">
+          <p style={FF} className="text-red-600 text-[16px] font-bold mb-2">Obnovení se nepodařilo</p>
+          <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{error || 'V adrese chybí obnovovací token. Použijte odkaz z e-mailu od Vividbooks.'}</p>
+          <p style={FF} className="text-[13px] text-[#001161]/50">Napište nám na <a href="mailto:hello@vividbooks.com" className="underline">hello@vividbooks.com</a>, dořešíme to ručně.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} className="min-h-[70vh] flex items-center justify-center px-4 py-12">
+      {head}
+      <div className="w-full max-w-[560px] space-y-4">
+        <div className="bg-[#F0FDF4] border border-green-200 rounded-[24px] p-6 text-center">
+          <CheckCircle className="w-10 h-10 text-green-500 mx-auto mb-2" />
+          <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] mb-1">Přístup obnoven na další rok</h1>
+          <p style={FF} className="text-[#001161]/70 text-[14px]">
+            Platí do <strong>{fmtDate(student.accessValidUntil)}</strong>. Kódy zůstávají stejné. Hodně štěstí ve studiu i na praxi!
+          </p>
+        </div>
+        <AccessCard student={student} />
+        <p style={FF} className="text-center text-[13px] text-[#001161]/50">
+          Dostudovali jste, nebo se něco změnilo? Napište nám na <a href="mailto:hello@vividbooks.com" className="underline">hello@vividbooks.com</a>.
+        </p>
       </div>
     </motion.div>
   );
