@@ -50,6 +50,12 @@ import {
   TEACHER_LOGIN_STEPS_HTML,
   teacherCodeEmailBlock,
 } from './studentProgramAccess.ts';
+import {
+  buildStudentMeasurement,
+  type KabinetStudent,
+  type MeasurementFaculty,
+  type MeasurementWebStudent,
+} from './studentProgramMeasurement.ts';
 
 const FN = '/make-server-93a20b6f';
 const PUBLIC_PREFIX = `${FN}/student-program`;
@@ -1391,6 +1397,35 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
       const { data: students, error } = await sb.from('student_program_students').select('*');
       if (error) throw new Error(error.message);
       return c.json({ overview: buildOverview((students || []) as StudentRow[], faculties, goals, settings), settings });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  });
+
+  /**
+   * Měření: úspěšnost univerzit a používání nové aplikace. Studenti z webu + všechny
+   * studentské školy z Kabinetu (i ze starého formuláře) s daty z `cs_activity_log`.
+   */
+  app.get(`${ADMIN_PREFIX}/measurement`, async (c) => {
+    const gate = await adminGate(c);
+    if (gate instanceof Response) return gate;
+    try {
+      const sb = getSb();
+      const [faculties, studentsRes, kab] = await Promise.all([
+        loadFaculties(sb),
+        sb.from('student_program_students').select('id, status, faculty_id, university_email, first_name, last_name, teacher_code, created_at, verified_at, renewal_count, access_valid_until, access_extended_until, employer_status'),
+        kabinetHook('/student-usage', { all: true }),
+      ]);
+      if (studentsRes.error) throw new Error(studentsRes.error.message);
+      const kabOk = kab.ok && kab.body?.ok === true && Array.isArray(kab.body.students);
+      const measurement = buildStudentMeasurement({
+        webStudents: (studentsRes.data || []) as MeasurementWebStudent[],
+        faculties: faculties as unknown as MeasurementFaculty[],
+        kabinet: kabOk ? (kab.body!.students as KabinetStudent[]) : null,
+        kabinetError: kabOk ? null : `Kabinet: ${kab.status ? `HTTP ${kab.status}` : 'síť'} ${typeof kab.body?.error === 'string' ? kab.body.error : kab.text.slice(0, 160)}`.trim(),
+        today: todayIso(),
+      });
+      return c.json({ measurement });
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 500);
     }

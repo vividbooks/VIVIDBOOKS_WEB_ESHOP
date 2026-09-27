@@ -7,8 +7,10 @@ Cíl: dostat Vividbooks ke studentům pedagogických fakult (a dalších fakult 
 | `/studenti` | Microsite: registrace univerzitním e-mailem, ověření odkazem, přihlašovací (učitelský) kód. `?f=<faculty-id>` předvyplní fakultu (odkaz pro fakulty), `?t=<token>` = ověření. |
 | `/studenti/aktualizace?t=<access_token>` | „Můj přístup“: „ještě studuji / dostudoval jsem / kam nastupuji“, telefon, osobní e-mail, používání, zpětná vazba. **Jediné veřejné místo, kde je vidět kód pro žáky** (s poznámkou „pro nácvik se žáky na praxi“). |
 | `/studenti/obnovit?t=<renewal_token>` | Roční obnovení jedním kliknutím (odkaz chodí na univerzitní e-mail). |
-| `/marketing/studenti` | Admin: Přehled (cíle a progress), Studenti (CRM), Fakulty (pokrytí, kontakty, oslovení), Cíle a nastavení, Metodika. |
+| `/marketing/studenti` | Admin: Přehled (cíle a progress), **Měření** (úspěšnost univerzit a používání aplikace), Studenti (CRM), Fakulty (pokrytí, kontakty, oslovení), Cíle a nastavení, Metodika. |
 | `src/supabase/functions/server/studentProgram.ts` | Edge logika (v `make-server-93a20b6f`). |
+| `src/components/studentProgram/StudentShowcase.tsx` | Sekce microsite: hero s tabletem a obálkami, předměty (obálky sešitů ze Supabase Storage přes `render/image`), „Co v aplikaci najdete“ (lekce, animace a 3D, listy, testy, vividboard, matematické aplikace, vlastní materiály — snímky z CDN webu a `public/`), „Na praxi i na seminář“. |
+| `src/supabase/functions/server/studentProgramMeasurement.ts` | Výpočet měření (čistá logika, testy v `scripts/run-unit-tests.ts`). |
 | `src/supabase/functions/server/studentProgramAccess.ts` | Čistá logika napojení na Kabinet (tělo hooku, obnova, výklad odpovědi, kód do e-mailu); testy v `scripts/run-unit-tests.ts`. |
 | `supabase/functions/_shared/student-program-faculties.ts` | Seznam fakult, domény, IČO, detekce univerzitního e-mailu. Sdílí web i server. |
 | `supabase/migrations/20260903120000_student_program.sql`, `20260927120000_student_program_renewal.sql` | Tabulky `student_program_*`, RLS (staff čte, service_role píše), pg_cron `student-program-daily`, sloupce ročního obnovení. |
@@ -60,6 +62,20 @@ Tajemství: `KABINET_SECRET` (project-wide, sdílí s `kabinet-trial`), voliteln
 ## E-maily
 
 Transakční e-maily jdou přes Mandrill (hello@vividbooks.com). Když Mandrill selže (26.–27. 9. 2026 vracel `Invalid API key` pro celý web), e-mail odejde přes **Resend** (news@news.vividbooks.com, Reply-To hello@) a v události je `mailDetail: resend-fallback (…)`.
+
+## Měření (admin → Měření)
+
+`GET /admin/student-program/measurement` spojí studenty z webu s **všemi studentskými
+školami v Kabinetu** (hook `/student-usage` s `all: true`, i studenti ze starého Webflow
+formuláře) a jejich používáním **nové aplikace** (`cs_activity_log` podle učitelského
+i žákovského kódu; stará aplikace se nepočítá). Osoba se páruje podle učitelského kódu.
+Univerzita: z fakulty v registraci, u starších studentů z domény e-mailu, jinak *Nezařazeno*.
+
+- **Trychtýř:** mají přístup → vyzkoušeli aplikaci → aktivní 30 dní → pravidelní (5+ dní) → se žáky (aktivita pod žákovským kódem).
+- **Úspěšnost univerzit:** pořadí podle aktivních za 30 dní, pak podle vyzkoušelo; pokrytí = studenti s přístupem na 100 odhadovaných studentů učitelství na PedF.
+- **Nové přístupy a první použití** po měsících, **předměty** (normalizované z `subject`, slugy knih se mapují na předmět), **nejaktivnější studenti**, počet studentů s přístupem déle než 14 dní, kteří aplikaci ještě neotevřeli.
+
+Když Kabinet neodpoví, záložka to napíše a ukáže jen data z webu.
 
 ## Měřitelné cíle (admin → Cíle)
 

@@ -289,6 +289,8 @@ export type OutreachTemplate = { key: 'intro_dean' | 'intro_department' | 'follo
 
 export type StudentProgramEvent = { id: number; student_id: string | null; faculty_id: string | null; type: string; payload: Record<string, unknown>; actor: string; created_at: string };
 
+export type { StudentMeasurement as StudentProgramMeasurement, MeasurementRow as StudentProgramMeasurementRow } from '../supabase/functions/server/studentProgramMeasurement';
+
 async function adminJson<T>(path: string, init?: RequestInit & { json?: boolean }): Promise<T> {
   const res = await fetchWithAdminAuth(`${STUDENT_PROGRAM_ADMIN}${path}`, init);
   return readJson<T>(res);
@@ -296,6 +298,7 @@ async function adminJson<T>(path: string, init?: RequestInit & { json?: boolean 
 
 export const studentProgramAdmin = {
   overview: () => adminJson<{ overview: StudentProgramOverview; settings: StudentProgramSettings }>('/overview'),
+  measurement: () => adminJson<{ measurement: import('../supabase/functions/server/studentProgramMeasurement').StudentMeasurement }>('/measurement'),
   students: (params: Record<string, string | number | undefined>) => {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));

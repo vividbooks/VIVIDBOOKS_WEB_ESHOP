@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { toast } from 'sonner@2.0.3';
 import {
   GraduationCap, Users, School, Target, BookOpen, RefreshCw, Search, Download, Mail, Send, Copy, Plus, Trash2, X,
-  CheckCircle2, AlertTriangle, Clock, ExternalLink, Loader2, Phone, KeyRound, ChevronRight, Sparkles, Play,
+  CheckCircle2, AlertTriangle, Clock, ExternalLink, Loader2, Phone, KeyRound, ChevronRight, Sparkles, Play, BarChart3,
 } from 'lucide-react';
 import { cn } from '../ui/utils';
 import {
@@ -17,15 +17,18 @@ import {
   type StudentProgramFacultyContact,
   type StudentProgramFacultyRow,
   type StudentProgramGoals,
+  type StudentProgramMeasurement,
+  type StudentProgramMeasurementRow,
   type StudentProgramOverview,
   type StudentProgramSettings,
   type StudentProgramStudentRow,
 } from '../../utils/studentProgramApi';
 
-type Tab = 'prehled' | 'studenti' | 'fakulty' | 'cile' | 'metodika';
+type Tab = 'prehled' | 'mereni' | 'studenti' | 'fakulty' | 'cile' | 'metodika';
 
 const TABS: Array<{ id: Tab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { id: 'prehled', label: 'Přehled', icon: Target },
+  { id: 'mereni', label: 'Měření', icon: BarChart3 },
   { id: 'studenti', label: 'Studenti', icon: Users },
   { id: 'fakulty', label: 'Fakulty', icon: School },
   { id: 'cile', label: 'Cíle a nastavení', icon: Sparkles },
@@ -207,6 +210,210 @@ function OverviewTab({ onQueue }: { onQueue: (queue: string) => void }) {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Měření: úspěšnost univerzit a používání aplikace
+══════════════════════════════════════════════════════════════════════════ */
+function subjectLabel(name: string): string {
+  return name;
+}
+
+function Rate({ value }: { value: number | null }) {
+  if (value == null) return <span className="text-gray-300">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="relative inline-block h-1.5 w-12 overflow-hidden rounded-full bg-gray-100">
+        <span className="absolute inset-y-0 left-0 rounded-full bg-[#7C3AED]" style={{ width: `${Math.min(100, value)}%` }} />
+      </span>
+      <span className="tabular-nums">{value} %</span>
+    </span>
+  );
+}
+
+function MeasurementTab() {
+  const [data, setData] = useState<StudentProgramMeasurement | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [showEmpty, setShowEmpty] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await studentProgramAdmin.measurement();
+      setData(r.measurement);
+    } catch (e) {
+      toast.error(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (loading && !data) return <div className="py-16 text-center text-gray-400"><Loader2 className="mx-auto h-6 w-6 animate-spin" /><p className="mt-2 text-[12px]">Načítám studenty z Kabinetu a jejich používání aplikace…</p></div>;
+  if (!data) return <div className="py-16 text-center text-gray-400">Data se nepodařilo načíst.</div>;
+
+  const t = data.totals;
+  const funnel = [
+    { label: 'Mají přístup', value: t.withAccess, hint: `platný dnes ${t.accessActive}` },
+    { label: 'Vyzkoušeli aplikaci', value: t.activated, hint: 'aspoň jednou v nové aplikaci' },
+    { label: 'Aktivní 30 dní', value: t.active30, hint: 'něco dělali za poslední měsíc' },
+    { label: 'Pravidelní', value: t.regular, hint: '5 a více dní s aktivitou' },
+    { label: 'Se žáky', value: t.withPupils, hint: 'použili žákovský kód' },
+  ];
+  const funnelMax = Math.max(1, t.withAccess);
+  const rows: StudentProgramMeasurementRow[] = data.universities.filter((u) => showEmpty || u.withAccess > 0 || u.pending > 0);
+  const monthMax = Math.max(1, ...data.months.map((m) => Math.max(m.newAccess, m.activated)));
+  const subjMax = Math.max(1, ...data.subjects.map((s) => s.students));
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-[12px] text-gray-400">
+          Stav k {formatCzDate(data.generatedAt, true)} · studentů z Kabinetu {data.sources.kabinet}, z webu {data.sources.web} (spárováno {data.sources.matched}) · používání jen z nové aplikace
+        </p>
+        <button type="button" onClick={() => void load()} className={BTN_SECONDARY}><RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} /> Obnovit</button>
+      </div>
+
+      {!data.kabinetOk && (
+        <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Kabinet teď neodpověděl, čísla o přístupu a používání chybí. {data.kabinetError}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+        <div className="rounded-2xl border border-gray-100 bg-white p-5">
+          <p className="mb-4 text-[13px] font-bold text-[#001161]">Trychtýř: od přístupu k výuce se žáky</p>
+          <div className="space-y-3">
+            {funnel.map((f, i) => (
+              <div key={f.label} className="grid grid-cols-[150px_1fr_70px] items-center gap-3">
+                <div>
+                  <p className="text-[12px] font-semibold text-[#001161]">{f.label}</p>
+                  <p className="text-[10px] text-gray-400">{f.hint}</p>
+                </div>
+                <div className="h-7 overflow-hidden rounded-lg bg-gray-50">
+                  <div className="flex h-full items-center rounded-lg px-2 text-[11px] font-bold text-white" style={{ width: `${Math.max(f.value ? 6 : 0, (f.value / funnelMax) * 100)}%`, background: ['#001161', '#4c1d95', '#7C3AED', '#a78bfa', '#f59e0b'][i] }}>
+                    {f.value > 0 ? f.value : ''}
+                  </div>
+                </div>
+                <p className="text-right text-[12px] tabular-nums text-gray-500">{i === 0 ? '100 %' : t.withAccess ? `${Math.round((f.value / t.withAccess) * 100)} %` : '—'}</p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 text-[11px] text-gray-400">
+            Na webu čeká na ověření e-mailu {t.pending} registrací · otevřené lekce {t.lessonsOpened.toLocaleString('cs-CZ')}, promítnuté {t.lessonsPresented.toLocaleString('cs-CZ')}, vytištěné listy {t.worksheetsPrinted.toLocaleString('cs-CZ')} ·
+            {' '}{data.neverActivated.olderThan14Days} studentů má přístup déle než 14 dní a v aplikaci ještě nebyli.
+          </p>
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5">
+          <p className="mb-4 text-[13px] font-bold text-[#001161]">Nové přístupy a první použití za 12 měsíců</p>
+          <div className="flex h-40 items-end gap-1.5">
+            {data.months.map((m) => (
+              <div key={m.month} className="flex flex-1 flex-col items-center justify-end gap-0.5" title={`${m.month}: ${m.newAccess} nových přístupů, ${m.activated} poprvé v aplikaci`}>
+                <div className="flex h-full w-full items-end gap-[2px]">
+                  <div className="flex-1 rounded-t bg-[#001161]/20" style={{ height: `${(m.newAccess / monthMax) * 100}%`, minHeight: m.newAccess ? 3 : 0 }} />
+                  <div className="flex-1 rounded-t bg-[#7C3AED]" style={{ height: `${(m.activated / monthMax) * 100}%`, minHeight: m.activated ? 3 : 0 }} />
+                </div>
+                <span className="text-[9px] text-gray-400">{m.month.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-gray-400">Světlá = nové přístupy, fialová = poprvé v nové aplikaci.</p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-gray-100 bg-white p-5">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[13px] font-bold text-[#001161]">Úspěšnost univerzit</p>
+          <label className="flex items-center gap-2 text-[12px] text-gray-500">
+            <input type="checkbox" checked={showEmpty} onChange={(e) => setShowEmpty(e.target.checked)} className="accent-[#7C3AED]" /> i univerzity bez studentů
+          </label>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12px]">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400">
+                <th className="py-2 pr-3">#</th>
+                <th className="py-2 pr-3">Univerzita</th>
+                <th className="py-2 pr-3 text-right">S přístupem</th>
+                <th className="py-2 pr-3 text-right" title="Studenti s přístupem na 100 odhadovaných studentů učitelství na pedagogické fakultě">Pokrytí</th>
+                <th className="py-2 pr-3">Vyzkoušeli</th>
+                <th className="py-2 pr-3">Aktivní 30 dní</th>
+                <th className="py-2 pr-3 text-right">Pravidelní</th>
+                <th className="py-2 pr-3 text-right">Se žáky</th>
+                <th className="py-2 pr-3 text-right">Lekce</th>
+                <th className="py-2 pr-3 text-right">Čeká na ověření</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((u, i) => (
+                <tr key={u.key} className="border-t border-gray-50">
+                  <td className="py-2 pr-3 text-gray-400">{i + 1}</td>
+                  <td className="py-2 pr-3"><span className="font-semibold text-[#001161]">{u.label}</span> <span className="text-gray-400">· {u.university}</span></td>
+                  <td className="py-2 pr-3 text-right font-bold text-[#001161]">{u.withAccess}</td>
+                  <td className="py-2 pr-3 text-right text-gray-600">{u.penetration == null ? '—' : `${u.penetration.toLocaleString('cs-CZ')} %`}</td>
+                  <td className="py-2 pr-3 text-gray-600"><Rate value={u.activationRate} /> <span className="text-gray-400">({u.activated})</span></td>
+                  <td className="py-2 pr-3 text-gray-600"><Rate value={u.active30Rate} /> <span className="text-gray-400">({u.active30})</span></td>
+                  <td className="py-2 pr-3 text-right text-gray-600">{u.regular}</td>
+                  <td className="py-2 pr-3 text-right text-gray-600">{u.withPupils}</td>
+                  <td className="py-2 pr-3 text-right text-gray-600">{u.lessonsOpened}</td>
+                  <td className="py-2 pr-3 text-right text-gray-400">{u.pending || ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-3 text-[11px] text-gray-400">Pořadí: aktivní za 30 dní, pak kolik jich aplikaci vyzkoušelo. Univerzita se bere z fakulty v registraci, u starších studentů z domény e-mailu. „Pokrytí“ počítá s odhadem studentů učitelství na pedagogické fakultě (Fakulty → odhad).</p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.6fr]">
+        <div className="rounded-2xl border border-gray-100 bg-white p-5">
+          <p className="mb-3 text-[13px] font-bold text-[#001161]">Předměty, které studenti otevírají</p>
+          {data.subjects.length === 0 && <p className="text-[12px] text-gray-400">Zatím bez dat.</p>}
+          <div className="space-y-2">
+            {data.subjects.slice(0, 10).map((s) => (
+              <div key={s.subject} className="grid grid-cols-[110px_1fr_40px] items-center gap-2 text-[12px]">
+                <span className="text-gray-700">{subjectLabel(s.subject)}</span>
+                <span className="h-2 overflow-hidden rounded-full bg-gray-100"><span className="block h-full rounded-full bg-[#7C3AED]" style={{ width: `${(s.students / subjMax) * 100}%` }} /></span>
+                <span className="text-right tabular-nums text-gray-500">{s.students}</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-[11px] text-gray-400">Počet studentů, kteří v předmětu něco otevřeli.</p>
+        </div>
+        <div className="rounded-2xl border border-gray-100 bg-white p-5">
+          <p className="mb-3 text-[13px] font-bold text-[#001161]">Nejaktivnější studenti</p>
+          {data.topStudents.length === 0 && <p className="text-[12px] text-gray-400">Zatím nikdo.</p>}
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12px]">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400">
+                  <th className="py-1.5 pr-3">Student</th>
+                  <th className="py-1.5 pr-3 text-right">Dní (30 d)</th>
+                  <th className="py-1.5 pr-3 text-right">Lekcí</th>
+                  <th className="py-1.5 pr-3">Předměty</th>
+                  <th className="py-1.5 pr-3 text-right">Naposledy</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.topStudents.map((s, i) => (
+                  <tr key={`${s.name}-${i}`} className="border-t border-gray-50">
+                    <td className="py-1.5 pr-3"><span className="font-semibold text-[#001161]">{s.name}</span> <span className="text-gray-400">· {s.university}</span>{s.pupilDays > 0 && <Pill className="ml-1.5 bg-amber-50 text-amber-700">se žáky</Pill>}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{s.activeDays} <span className="text-gray-400">({s.activeDays30})</span></td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{s.lessonsOpened}</td>
+                    <td className="py-1.5 pr-3 text-gray-500">{s.subjects.map(subjectLabel).join(', ') || '—'}</td>
+                    <td className="py-1.5 pr-3 text-right text-gray-500">{s.lastOn ? formatCzDate(s.lastOn) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -1022,6 +1229,7 @@ export default function StudentProgramAdminPage() {
       </div>
 
       {tab === 'prehled' && <OverviewTab onQueue={(q) => { setQueue(q); setTab('studenti'); }} />}
+      {tab === 'mereni' && <MeasurementTab />}
       {tab === 'studenti' && <StudentsTab faculties={faculties} initialQueue={queue} onQueueConsumed={() => setQueue('')} />}
       {tab === 'fakulty' && <FacultiesTab />}
       {tab === 'cile' && <GoalsTab />}
