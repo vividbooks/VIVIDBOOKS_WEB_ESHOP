@@ -137,9 +137,10 @@ const SUBJECTS: SubjectCard[] = [
 function CoverFan({ covers, name }: { covers: string[]; name: string }) {
   const n = covers.length;
   return (
-    <div className="relative mx-auto h-[150px] w-full max-w-[240px]">
+    <div className="relative mx-auto h-[150px] w-full max-w-[260px]">
       {covers.map((src, i) => {
         const offset = i - (n - 1) / 2;
+        const spread = n > 2 ? 58 : 64;
         return (
           <img
             key={src}
@@ -148,8 +149,8 @@ function CoverFan({ covers, name }: { covers: string[]; name: string }) {
             loading="lazy"
             decoding="async"
             onError={hideBroken}
-            className="absolute left-1/2 top-2 h-[132px] w-auto rounded-[4px] shadow-[0_8px_20px_rgba(0,17,97,0.18)]"
-            style={{ transform: `translateX(calc(-50% + ${offset * 46}px)) rotate(${offset * 7}deg)`, zIndex: 10 - Math.abs(Math.round(offset * 2)) }}
+            className="absolute left-1/2 top-2 h-[124px] w-auto rounded-[4px] shadow-[0_8px_20px_rgba(0,17,97,0.18)]"
+            style={{ transform: `translateX(calc(-50% + ${offset * spread}px)) rotate(${offset * 6}deg)`, zIndex: 10 - Math.abs(Math.round(offset * 2)) }}
           />
         );
       })}
