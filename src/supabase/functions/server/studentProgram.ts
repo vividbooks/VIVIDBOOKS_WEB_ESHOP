@@ -15,10 +15,11 @@
  * Datový model: migrace 20260903120000_student_program.sql. Seznam fakult:
  * supabase/functions/_shared/student-program-faculties.ts.
  *
- * Princip kódů: **každý student má vlastní organizaci a vlastní kódy v Kabinetu**
- * (registr Vividbooks Ultra, hooky `/api/registr/hooks/web/*`). Při ověření univerzitního
- * e-mailu se zavolá `create-school` (bez trialu) a hned `create-subscription-licence` na
- * 12 měsíců (bundle všech předmětů, individuální licence). **Každý rok** student přístup
+ * Princip kódů: **každý student má vlastní školu a vlastní kódy**. Při ověření univerzitního
+ * e-mailu se škola založí přes starý trial formulář (`free-trial-ajax`, páruje přesně podle
+ * e-mailu — hook `create-school` bez IČO vrací pořád tutéž školu, ověřeno 27. 9. 2026) a hned
+ * se přes Kabinet přidá `create-subscription-licence` na 12 měsíců (bundle všech předmětů,
+ * individuální licence). **Každý rok** student přístup
  * obnoví kliknutím na odkaz, který přijde na univerzitní e-mail — tím prokáže, že adresu
  * pořád má. Obnovení = další `create-subscription-licence` na rok. Bez obnovení přístup
  * po ochranné lhůtě skončí.
@@ -40,6 +41,7 @@ import {
 } from '../../../../supabase/functions/_shared/email-brand-shell.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
+import { sendResendEmail } from './resendClient.ts';
 
 const FN = '/make-server-93a20b6f';
 const PUBLIC_PREFIX = `${FN}/student-program`;
@@ -256,12 +258,36 @@ async function sendMandrill(opts: {
     const first = Array.isArray(body) ? body[0] : null;
     const status = first?.status;
     if (!res.ok || (status && status !== 'sent' && status !== 'queued' && status !== 'scheduled')) {
-      return { ok: false, detail: `${res.status} ${status || ''} ${first?.reject_reason || ''}`.trim() };
+      const detail = `${res.status} ${status || ''} ${first?.reject_reason || (body && !Array.isArray(body) ? JSON.stringify(body).slice(0, 160) : '')}`.trim();
+      return await sendViaResendFallback(opts, `Mandrill: ${detail}`);
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    return await sendViaResendFallback(opts, e instanceof Error ? e.message : String(e));
   }
+}
+
+/**
+ * Záloha přes Resend (marketingový odesílatel news@news.vividbooks.com, Reply-To hello@).
+ * Mandrill 26.–27. 9. 2026 vracel „Invalid API key“ pro celý web — studenti by jinak
+ * nedostali ani ověření, ani kódy.
+ */
+async function sendViaResendFallback(
+  opts: { toEmail: string; subject: string; html: string; fromName?: string; replyTo?: string; tags?: string[] },
+  mandrillDetail: string,
+): Promise<{ ok: boolean; detail?: string }> {
+  const r = await sendResendEmail({
+    to: opts.toEmail,
+    subject: opts.subject,
+    html: opts.html,
+    replyTo: opts.replyTo || 'hello@vividbooks.com',
+    tags: [{ name: 'source', value: 'student-program' }],
+  });
+  if (r.ok) {
+    console.warn(`[student-program] Mandrill selhal (${mandrillDetail}), odesláno přes Resend`);
+    return { ok: true, detail: `resend-fallback (${mandrillDetail})` };
+  }
+  return { ok: false, detail: `${mandrillDetail}; Resend: ${r.error}` };
 }
 
 /* ── e-mailové šablony ─────────────────────────────────────────────────────── */
@@ -622,7 +648,87 @@ function publicStudentView(s: StudentRow, fac: FacultyRow | null) {
   };
 }
 
-/* ── Kabinet (registr Ultra): organizace + roční licence na studenta ─────────── */
+/* ── starý trial formulář: založení školy studenta (páruje přesně podle e-mailu) ── */
+
+type LegacyResult =
+  | { status: 'codes'; teacherCode: string; studentCode: string; kind: 'created' | 'existing_trial' }
+  | { status: 'thank_only' }
+  | { status: 'error'; reason: string; message: string; httpStatus: number };
+
+async function callLegacyFreeTrial(input: {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  schoolName: string;
+  vat: string;
+  newsletter: boolean;
+  subjects: string[];
+  stages: string[];
+}): Promise<LegacyResult> {
+  const base = (Deno.env.get('LEGACY_VIVIDBOOKS_WEB_API_BASE') || 'https://api.vividbooks.com').replace(/\/+$/, '');
+  const body = new URLSearchParams();
+  body.append('FirstName', input.firstName);
+  body.append('LastName', input.lastName);
+  body.append('FullName', `${input.firstName} ${input.lastName}`.trim());
+  body.append('Email', input.email);
+  body.append('Phone', input.phone);
+  body.append('flexdatalist-School', input.schoolName);
+  body.append('School', input.schoolName);
+  body.append('Position', 'Student');
+  body.append('Whence', 'studenti');
+  body.append('Region', '');
+  if (input.newsletter) body.append('Checkbox-NL', 'yes');
+  body.append('CountryCode', 'cz');
+  body.append('CountryCodeSelect', '');
+  body.append('Version', '');
+  body.append('Dealer', '');
+  body.append('Vat', input.vat);
+  input.subjects.forEach((v) => body.append('TeacherSubjects', v));
+  input.stages.forEach((v) => body.append('SchoolStages', v));
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const res = await fetch(`${base}/web/free-trial-ajax`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        Accept: 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: body.toString(),
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    if ([301, 302, 303, 307, 308].includes(res.status)) return { status: 'thank_only' };
+    const raw = await res.text();
+    let data: Record<string, unknown> | null = null;
+    try {
+      data = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : null;
+    } catch {
+      data = null;
+    }
+    const teacher = typeof data?.teacherCode === 'string' ? data.teacherCode.trim() : '';
+    const student = typeof data?.studentCode === 'string' ? data.studentCode.trim() : '';
+    const reason = typeof data?.reason === 'string' ? data.reason : '';
+    if (res.ok && data?.success === true && teacher && student) {
+      return { status: 'codes', teacherCode: teacher, studentCode: student, kind: 'created' };
+    }
+    if (teacher && student) {
+      return { status: 'codes', teacherCode: teacher, studentCode: student, kind: 'existing_trial' };
+    }
+    if (res.ok && !data) return { status: 'thank_only' };
+    const msg = reason || (typeof data?.message === 'string' ? data.message : '') || `HTTP ${res.status}`;
+    return { status: 'error', reason, message: msg, httpStatus: res.status };
+  } catch (e) {
+    return { status: 'error', reason: 'network', message: e instanceof Error ? e.message : String(e), httpStatus: 0 };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/* ── Kabinet (registr Ultra): roční licence na kódu studenta ────────────────── */
 
 type KabinetResult = { ok: boolean; status: number; body: Record<string, unknown> | null; text: string };
 
@@ -729,25 +835,37 @@ async function issueCodesForStudent(
       legacyReason: `Univerzitní e-mail už v Kabinetu patří organizaci${orgName ? ` „${orgName}“` : ''} (${orgIds.length} org.). Založte studentovi kódy ručně, nebo ať použije jinou univerzitní adresu.`,
     };
   }
-  const created = await kabinetHook('/create-school', {
-    schoolName: studentOrgName(s, fac),
-    countryCode: 'cz',
+  const first = String(s.first_name || '').trim() || 'Student';
+  const last = String(s.last_name || '').trim() || 'Vividbooks';
+  const legacy = await callLegacyFreeTrial({
+    firstName: first,
+    lastName: last,
     email: s.university_email,
-    address: fac ? `${fac.faculty}, ${fac.university}` : '',
-    withFreeLicence: 'no',
+    phone: String(s.phone || ''),
+    schoolName: studentOrgName(s, fac),
+    vat: '',
+    newsletter: s.newsletter === true,
+    subjects: Array.isArray(s.subjects) ? (s.subjects as string[]) : [],
+    stages: Array.isArray(s.school_stages) ? (s.school_stages as string[]) : [],
   });
-  const teacherCode = typeof created.body?.teacherCode === 'string' ? created.body.teacherCode.trim().toUpperCase() : '';
-  const studentCode = typeof created.body?.studentCode === 'string' ? created.body.studentCode.trim().toUpperCase() : '';
-  const adminLink = typeof created.body?.adminLink === 'string' ? created.body.adminLink : null;
-  if (!created.ok || !teacherCode || !studentCode) {
-    return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink, legacyResult: 'kabinet_create_failed', legacyReason: kabinetErrorText(created) };
+  if (legacy.status !== 'codes' || legacy.kind !== 'created') {
+    const reason =
+      legacy.status === 'codes'
+        ? 'Starý systém vrátil kódy už existující školy (e-mail už je použitý) — kódy založte ručně.'
+        : legacy.status === 'thank_only'
+          ? 'Starý systém nevrátil kódy (thank_only).'
+          : `${legacy.reason || ''} ${legacy.message}`.trim().slice(0, 300);
+    return { teacherCode: null, studentCode: null, codesValidUntil: null, adminLink: null, legacyResult: legacy.status === 'codes' ? 'legacy_existing_school' : 'legacy_error', legacyReason: reason };
   }
+  const teacherCode = legacy.teacherCode.toUpperCase();
+  const studentCode = legacy.studentCode.toUpperCase();
+  const adminLink: string | null = null;
   const lic = await issueYearLicence(teacherCode, todayIso(), settings);
   if (!lic.ok) {
     // Organizace vznikla, ale licence ne — kódy uložíme, admin doplní licenci (nebo „Prodloužit o rok“).
     return { teacherCode, studentCode, codesValidUntil: null, adminLink, legacyResult: 'kabinet_licence_failed', legacyReason: lic.error };
   }
-  return { teacherCode, studentCode, codesValidUntil: lic.endsOn, adminLink, legacyResult: 'kabinet_created', legacyReason: '' };
+  return { teacherCode, studentCode, codesValidUntil: lic.endsOn, adminLink, legacyResult: 'legacy_created_kabinet_licence', legacyReason: '' };
 }
 
 /** Roční obnovení: nová licence od většího z (dnes, konec současné). */
