@@ -68,10 +68,11 @@ function useDebounced<T>(value: T, ms: number): T {
 }
 
 /* ══════════════════════════════════════════
-   Kódy + „jak začít“ (po ověření i v aktualizaci)
+   Kód + „jak začít“ (po ověření i v aktualizaci; kód pro žáky jen v aktualizaci)
 ══════════════════════════════════════════ */
-function AccessCard({ student, codesPending }: { student: StudentProgramStudentView; codesPending?: boolean }) {
-  const hasCodes = !!(student.teacherCode && student.studentCode);
+function AccessCard({ student, codesPending, showStudentCode }: { student: StudentProgramStudentView; codesPending?: boolean; showStudentCode?: boolean }) {
+  const hasCode = !!student.teacherCode;
+  const studentCode = showStudentCode ? student.studentCode : null;
   return (
     <div className="bg-[#F0FDF4] border border-green-200 rounded-[24px] p-6 md:p-8 text-center">
       <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
@@ -79,36 +80,35 @@ function AccessCard({ student, codesPending }: { student: StudentProgramStudentV
         {student.firstName ? `Vítejte, ${student.firstName}!` : 'Vítejte ve Vividbooks!'}
       </h2>
       <p style={FF} className="text-[#001161]/70 text-[14px] mb-5 leading-snug">
-        {hasCodes
-          ? 'Váš přístup je aktivní. Kódy jsme poslali i e-mailem, ať je máte po ruce.'
+        {hasCode
+          ? 'Váš přístup je aktivní. Přihlašovací kód jsme poslali i e-mailem, ať ho máte po ruce.'
           : codesPending
-            ? 'Přístup máme založený. Kódy pro vaši fakultu právě připravujeme ručně — pošleme je e-mailem nejpozději do dvou pracovních dnů.'
+            ? 'Přístup máme založený. Přihlašovací kód právě připravujeme ručně — pošleme ho e-mailem nejpozději do dvou pracovních dnů.'
             : 'Váš přístup je aktivní.'}
       </p>
-      {hasCodes && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left max-w-md mx-auto mb-5">
+      {hasCode && (
+        <div className="text-left max-w-md mx-auto mb-5 space-y-3">
           <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
-            <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">Kód pro učitele</p>
+            <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">Váš přihlašovací kód</p>
             <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">{student.teacherCode}</p>
           </div>
-          <div className="rounded-[14px] bg-white border border-[#001161]/10 px-4 py-3 shadow-sm">
-            <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">Kód pro žáka</p>
-            <p style={FF} className="font-mono text-[18px] font-bold text-[#001161] tracking-wide break-all">{student.studentCode}</p>
-          </div>
+          {studentCode && (
+            <div className="rounded-[14px] bg-white/70 border border-dashed border-[#001161]/15 px-4 py-3">
+              <p style={FF} className="text-[11px] font-bold uppercase tracking-wide text-[#001161]/45 mb-1">Kód pro žáky</p>
+              <p style={FF} className="font-mono text-[16px] font-bold text-[#001161] tracking-wide break-all">{studentCode}</p>
+              <p style={FF} className="text-[12px] text-[#001161]/60 mt-1 leading-snug">Pro nácvik se žáky na praxi.</p>
+            </div>
+          )}
         </div>
       )}
       <div className="bg-white rounded-2xl p-5 text-left space-y-3 max-w-md mx-auto mb-5">
         <div className="flex items-start gap-3">
           <span className="w-6 h-6 rounded-full bg-[#7C3AED]/10 text-[#7C3AED] text-[12px] font-bold flex items-center justify-center shrink-0" style={FF}>1</span>
-          <p style={FF} className="text-[#001161]/75 text-[13px] leading-snug">Otevřete aplikaci a zvolte přihlášení <strong>kódem školy</strong>. Zadejte kód pro učitele a svůj e-mail.</p>
+          <p style={FF} className="text-[#001161]/75 text-[13px] leading-snug">Otevřete aplikaci a zvolte přihlášení <strong>kódem školy</strong>. Zadejte přihlašovací kód a svůj e-mail.</p>
         </div>
         <div className="flex items-start gap-3">
           <span className="w-6 h-6 rounded-full bg-[#7C3AED]/10 text-[#7C3AED] text-[12px] font-bold flex items-center justify-center shrink-0" style={FF}>2</span>
           <p style={FF} className="text-[#001161]/75 text-[13px] leading-snug">Zabezpečte účet heslem nebo Googlem — odemkne se <strong>Můj obsah</strong> pro vlastní přípravy.</p>
-        </div>
-        <div className="flex items-start gap-3">
-          <span className="w-6 h-6 rounded-full bg-[#7C3AED]/10 text-[#7C3AED] text-[12px] font-bold flex items-center justify-center shrink-0" style={FF}>3</span>
-          <p style={FF} className="text-[#001161]/75 text-[13px] leading-snug">Kód pro žáka použijte v anonymním okně, když chcete vidět hodinu očima dětí.</p>
         </div>
         {student.accessValidUntil && (
           <div className="flex items-center gap-2 pt-2 border-t border-[#001161]/8">
@@ -271,7 +271,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         <p style={FF} className="text-[#001161]/70 text-[14px] leading-relaxed max-w-md mx-auto">
           {isPending ? (
             <>
-              Poslali jsme ověřovací odkaz na <strong>{form.universityEmail.trim()}</strong>. Klikněte na něj a přístup se aktivuje během chvilky — kódy pošleme i na {form.personalEmail.trim()}. Odkaz platí 7 dní; když e-mail nevidíte, mrkněte do spamu.
+              Poslali jsme ověřovací odkaz na <strong>{form.universityEmail.trim()}</strong>. Klikněte na něj a přístup se aktivuje během chvilky — přihlašovací kód pošleme i na {form.personalEmail.trim()}. Odkaz platí 7 dní; když e-mail nevidíte, mrkněte do spamu.
             </>
           ) : (
             result.message
@@ -344,7 +344,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         <input name="personalEmail" type="email" placeholder="Osobní e-mail *" value={form.personalEmail} onChange={handle} className={INPUT_CLASS} style={FF} inputMode="email" />
       </div>
       <p style={FF} className="text-[12px] text-[#001161]/50 px-2 -mt-1 leading-snug">
-        Ověřovací odkaz pošleme na univerzitní adresu. Osobní e-mail použijeme, až vám školní schránka skončí — ať o přístup a kódy nepřijdete.
+        Ověřovací odkaz pošleme na univerzitní adresu. Osobní e-mail použijeme, až vám školní schránka skončí — ať o přístup a kód nepřijdete.
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -414,21 +414,21 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
 const BENEFITS = [
   { icon: BookOpen, title: 'Knihovna hotových materiálů', text: 'Interaktivní lekce, pracovní listy, učební texty a metodiky pro matematiku, fyziku, chemii, přírodopis a prvouku — to samé, co používají učitelé ve školách.' },
   { icon: Sparkles, title: 'Vividboard a vlastní přípravy', text: 'Postavte si hodinu na praxi: aktivity, hlasování, soutěže. Editor dokumentu a pracovního listu pro vlastní materiály a seminární práce.' },
-  { icon: Users, title: 'Pohled žáka i učitele', text: 'Dva kódy — učitelský a žákovský. Vyzkoušíte, jak hodina vypadá z lavice, a naučíte se s materiály pracovat dřív, než stanete před třídou.' },
+  { icon: Users, title: 'Pohled žáka i učitele', text: 'Vlastní učitelský přístup a k tomu kód pro žáky, když s materiály učíte na praxi. Naučíte se s materiály pracovat dřív, než stanete před třídou.' },
   { icon: ShieldCheck, title: 'Zdarma po celou dobu studia', text: 'Žádná platební karta, žádný závazek. Přístup platí rok a každý rok ho obnovíte jedním kliknutím na odkaz z univerzitního e-mailu — dokud studujete.' },
 ];
 
 const STEPS = [
   { n: '1', title: 'Zadejte univerzitní e-mail', text: 'Poznáme podle něj fakultu. Fungují adresy všech českých univerzit s učitelskými programy.' },
   { n: '2', title: 'Potvrďte odkaz v e-mailu', text: 'Přijde během minuty na univerzitní adresu. Kliknutím ověříte, že jste student, a přístup se aktivuje.' },
-  { n: '3', title: 'Otevřete aplikaci', text: 'Dostanete dva kódy (na oba e-maily) a rovnou můžete začít — na počítači, tabletu i v učebně na praxi. Za rok stačí jedno kliknutí a jedete dál.' },
+  { n: '3', title: 'Otevřete aplikaci', text: 'Dostanete přihlašovací kód (na oba e-maily) a rovnou můžete začít — na počítači, tabletu i v učebně na praxi. Za rok stačí jedno kliknutí a jedete dál.' },
 ];
 
 const FAQ = [
   { q: 'Kdo má na přístup nárok?', a: 'Studenti bakalářských, magisterských i doktorských programů zaměřených na učitelství na českých univerzitách — pedagogické fakulty i další fakulty s učitelskými obory (přírodovědecké, filozofické, MFF a další).' },
-  { q: 'Jak dlouho přístup platí?', a: 'Rok od aktivace. Měsíc před koncem vám na univerzitní e-mail přijde odkaz; kliknutím přístup obnovíte na další rok se stejnými kódy. Tak to jde po celou dobu studia.' },
-  { q: 'Proč chcete dva e-maily?', a: 'Univerzitní adresa je náš doklad, že studujete — na ni chodí ověření i roční obnovení. Osobní adresa je záloha: dostanete na ni kopii kódů a po škole vás na ní najdeme, kdyby vás univerzitní schránka odpojila.' },
-  { q: 'Můžu materiály použít na praxi ve škole?', a: 'Ano, přesně na to je program určený. Promítejte lekce, spouštějte aktivity ve vividboardu a tiskněte pracovní listy pro žáky. Jen prosím nepředávejte kódy dál — přístup je vázaný na vás.' },
+  { q: 'Jak dlouho přístup platí?', a: 'Rok od aktivace. Měsíc před koncem vám na univerzitní e-mail přijde odkaz; kliknutím přístup obnovíte na další rok se stejným kódem. Tak to jde po celou dobu studia.' },
+  { q: 'Proč chcete dva e-maily?', a: 'Univerzitní adresa je náš doklad, že studujete — na ni chodí ověření i roční obnovení. Osobní adresa je záloha: dostanete na ni kopii přihlašovacího kódu a po škole vás na ní najdeme, kdyby vás univerzitní schránka odpojila.' },
+  { q: 'Můžu materiály použít na praxi ve škole?', a: 'Ano, přesně na to je program určený. Promítejte lekce, spouštějte aktivity ve vividboardu a tiskněte pracovní listy pro žáky. Jen prosím nepředávejte přihlašovací kód dál — přístup je vázaný na vás.' },
   { q: 'Co když má škola, kde budu učit, o Vividbooks zájem?', a: 'Skvělé! Po skončení studia se vás zeptáme, kam nastupujete, a vaší škole rádi ukážeme Vividbooks a připravíme nezávaznou kalkulaci. Škola si může Vividbooks nejdřív 14 dní vyzkoušet zdarma.' },
   { q: 'Můj univerzitní e-mail systém nezná.', a: 'Napište nám na hello@vividbooks.com — doplníme doménu a přístup založíme ručně.' },
 ];
@@ -779,7 +779,7 @@ export function StudentProgramUpdatePage() {
                   : 'Máme to zapsané. Přístup běží dál — před koncem roku vám přijde odkaz k obnovení.'}
             </p>
           </div>
-          {student.status !== 'declined' && <AccessCard student={student} />}
+          {student.status !== 'declined' && <AccessCard student={student} showStudentCode />}
         </div>
       </motion.div>
     );
@@ -917,7 +917,15 @@ export function StudentProgramUpdatePage() {
         {student.teacherCode && (
           <div className="mt-6 bg-white border border-[#001161]/8 rounded-2xl px-5 py-4 flex flex-wrap items-center justify-between gap-3">
             <div style={FF} className="text-[13px] text-[#001161]/60">
-              Vaše kódy: <span className="font-mono font-bold text-[#001161]">{student.teacherCode}</span> (učitel) · <span className="font-mono font-bold text-[#001161]">{student.studentCode}</span> (žák)
+              <div>
+                Přihlašovací kód: <span className="font-mono font-bold text-[#001161]">{student.teacherCode}</span>
+              </div>
+              {student.studentCode && (
+                <div className="mt-1">
+                  Kód pro žáky: <span className="font-mono font-bold text-[#001161]">{student.studentCode}</span>{' '}
+                  <span className="text-[12px]">— pro nácvik se žáky na praxi</span>
+                </div>
+              )}
             </div>
             <Link to={APP_ENTRY_PATH} target="_blank" rel="noopener noreferrer" style={FF} className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[#7C3AED] no-underline hover:underline">
               Otevřít aplikaci <ExternalLink className="w-3.5 h-3.5" />
@@ -994,7 +1002,7 @@ export function StudentProgramRenewPage() {
           <CheckCircle className="w-10 h-10 text-green-500 mx-auto mb-2" />
           <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] mb-1">Přístup obnoven na další rok</h1>
           <p style={FF} className="text-[#001161]/70 text-[14px]">
-            Platí do <strong>{fmtDate(student.accessValidUntil)}</strong>. Kódy zůstávají stejné. Hodně štěstí ve studiu i na praxi!
+            Platí do <strong>{fmtDate(student.accessValidUntil)}</strong>. Přihlašovací kód zůstává stejný. Hodně štěstí ve studiu i na praxi!
           </p>
         </div>
         <AccessCard student={student} />
