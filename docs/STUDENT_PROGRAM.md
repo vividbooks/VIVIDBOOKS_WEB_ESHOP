@@ -23,18 +23,23 @@ Cíl: dostat Vividbooks ke studentům pedagogických fakult (a dalších fakult 
 
 Stavy: `pending → active → (expired | alumni)`, vedlejší `declined` (ukončil studium), `unsubscribed`.
 
-## Kódy: Kabinet (registr Ultra)
+## Kódy: škola přes trial formulář, roční licence přes Kabinet
 
-Každý student má **vlastní organizaci a vlastní kódy v Kabinetu**. Server volá hooky `https://qypiuvqglsmxdsnyazih.supabase.co/functions/v1/api/registr/hooks/web/*` s tajemstvím `KABINET_SECRET` (stejné jako u Edge funkce `kabinet-trial`; alternativně `REGISTR_MAKE_SECRET`), volitelně `KABINET_API_BASE`, `KABINET_ANON_KEY`.
+Každý student má **vlastní školu a vlastní kódy**. Ověřeno živým testem 27. 9. 2026:
 
-| Krok | Hook | Parametry |
+| Krok | Volání | Poznámka |
 |---|---|---|
-| Ověření | `POST /create-school` | `schoolName` = „Student Jméno Příjmení (Fakulta)“, `countryCode=cz`, `email` = univerzitní, `withFreeLicence=no` |
-| Ověření + každé obnovení | `POST /create-subscription-licence` | `teacherCode`, `subjectName=['bundle']`, `startsOn`/`endsOn` (d/m/Y, +`licenceMonths`), `contentType=interactive`, `individual=yes` |
+| Pojistka | Kabinet `GET /trial-check?email=` | `emailKnown` / `organizationIds` → e-mail už patří škole → fronta *Bez kódů* (`email_known_in_kabinet`), nic se nezakládá |
+| Založení školy | starý `POST api.vividbooks.com/web/free-trial-ajax` | Position `Student`, Whence `studenti`, School „Student Jméno Příjmení (Fakulta)“, bez IČO. Páruje **přesně podle e-mailu**; existující e-mail → `legacy_existing_school`, fronta *Bez kódů*. Vytvoří i 14denní trial (neškodí) a spustí Make scénář „Trial form“ → Pipedrive |
+| Roční licence | Kabinet `POST /create-subscription-licence` | `teacherCode`, `subjectName=['bundle']`, d/m/Y, `contentType=interactive`, `individual=yes`; opakuje se při každém obnovení |
 
-Proč ne `trial-request`: trial je měsíční, generuje zprávy do Pipedrive a má 180denní ochrannou lhůtu — nic z toho pro studenty nechceme. Roční „subscription“ licence zdarma je tichá a prodlužuje se přesně o rok. Individuální licence = přihlášení z jednoho zařízení najednou (brání sdílení kódů).
+**Proč ne hook `create-school`:** bez IČO vrací pořád tutéž školu (legacy 21271) — pro jiné jméno, jiný e-mail i jinou doménu (testy 27. 9., viz `registr_license_events` u org `bb5d1391…`). S IČO univerzity by zase všichni studenti spadli do jedné školy.
 
-Selhání Kabinetu: student zůstává `active`, dostane e-mail „kódy pošleme zvlášť“, jde do fronty *Bez kódů* (nebo *Kódy bez roční licence*, když vznikla organizace, ale ne licence) a `digestEmail` dostane upozornění. V adminu: „Založit kódy (Kabinet)“, „Prodloužit o rok“, nebo ruční vložení kódů + „Poslat kódy znovu“.
+Tajemství: `KABINET_SECRET` (project-wide, sdílí s `kabinet-trial`), volitelně `KABINET_API_BASE`, `KABINET_ANON_KEY`, `LEGACY_VIVIDBOOKS_WEB_API_BASE`.
+
+## E-maily
+
+Transakční e-maily jdou přes Mandrill (hello@vividbooks.com). Když Mandrill selže (26.–27. 9. 2026 vracel `Invalid API key` pro celý web), e-mail odejde přes **Resend** (news@news.vividbooks.com, Reply-To hello@) a v události je `mailDetail: resend-fallback (…)`.
 
 ## Měřitelné cíle (admin → Cíle)
 
@@ -65,7 +70,7 @@ Seznam: 9 pedagogických fakult (jádro) + fakulty s učitelskými programy (MFF
 ## Co ověřit po nasazení
 
 1. `KABINET_SECRET` je v Supabase Secrets projektu (nasazená funkce `kabinet-trial` ho už používá).
-2. Registrace testovacím univerzitním e-mailem + osobním e-mailem → ověřovací e-mail → kódy na oba e-maily. V Kabinetu (`/admin/kabinet`) musí být organizace „Student … (…)“ s roční licencí typu paid/individual.
+2. Registrace testovacím univerzitním e-mailem + osobním e-mailem → ověřovací e-mail → kódy na oba e-maily. V legacy adminu vznikne škola „Student … (…)“; v Kabinetu se objeví nočním syncem s roční licencí typu paid/individual.
 3. V adminu u studenta „Poslat výzvu k obnovení“ → kliknout na odkaz → platnost se posune o rok, `renewal_count = 1`.
 4. `POST /admin/student-program/run-cron?dryRun=1` → bez chyb.
 5. 108 importovaných kontaktů: fronta *Importovaní z kontaktů* → „Pozvat“; import nemá osobní e-mail, ten si student doplní v aktualizaci (registrace ho vyžaduje, ověření pozvánky ne).

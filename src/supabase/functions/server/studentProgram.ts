@@ -884,12 +884,17 @@ async function renewStudentLicence(
 
 /* ── cron secret ───────────────────────────────────────────────────────────── */
 
+/**
+ * pg_cron job posílá tajemství z jobu `webinar-reminders` (jediný cron secret, který je v DB
+ * skutečně nastavený — `app.mailing_cron_secret` chybí a mailing crony vrací 401). Přijímáme
+ * proto obě tajemství.
+ */
 function cronAuthorized(c: Context): boolean {
-  const secret = Deno.env.get('MAILING_CRON_SECRET')?.trim() || Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim();
-  if (!secret) return false;
+  const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()].filter((x): x is string => !!x);
+  if (secrets.length === 0) return false;
   const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '') || '';
   const hdr = c.req.header('X-Cron-Secret') || '';
-  return auth === secret || hdr === secret;
+  return secrets.some((sec) => auth === sec || hdr === sec);
 }
 
 /* ── přehled / metriky ─────────────────────────────────────────────────────── */
