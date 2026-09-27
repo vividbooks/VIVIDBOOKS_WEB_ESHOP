@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useSearchParams } from 'react-router';
 import {
-  GraduationCap, Mail, CheckCircle, CheckCircle2, AlertCircle, Loader2, Sparkles, BookOpen, Users, ExternalLink,
-  School, Clock, ShieldCheck, Phone, Search, Send, HelpCircle, ArrowRight,
+  GraduationCap, Mail, CheckCircle, CheckCircle2, AlertCircle, Loader2, ExternalLink,
+  School, Clock, Phone, Search, Send, HelpCircle, ArrowRight,
 } from 'lucide-react';
 import { SEOHead } from './SEOHead';
+import { StudentHeroVisual, StudentMaterialsSection, StudentPracticeSection, StudentSubjectsSection } from './studentProgram/StudentShowcase';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { SubjectCheckbox } from './TrialSubjectCheckbox';
 import { TEACHER_SUBJECTS_1ST, TEACHER_SUBJECTS_2ND } from '../utils/trialSubjectOptions';
@@ -411,13 +412,6 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
 /* ══════════════════════════════════════════
    Marketingové bloky microsite
 ══════════════════════════════════════════ */
-const BENEFITS = [
-  { icon: BookOpen, title: 'Knihovna hotových materiálů', text: 'Interaktivní lekce, pracovní listy, učební texty a metodiky pro matematiku, fyziku, chemii, přírodopis a prvouku — to samé, co používají učitelé ve školách.' },
-  { icon: Sparkles, title: 'Vividboard a vlastní přípravy', text: 'Postavte si hodinu na praxi: aktivity, hlasování, soutěže. Editor dokumentu a pracovního listu pro vlastní materiály a seminární práce.' },
-  { icon: Users, title: 'Pohled žáka i učitele', text: 'Vlastní učitelský přístup a k tomu kód pro žáky, když s materiály učíte na praxi. Naučíte se s materiály pracovat dřív, než stanete před třídou.' },
-  { icon: ShieldCheck, title: 'Zdarma po celou dobu studia', text: 'Žádná platební karta, žádný závazek. Přístup platí rok a každý rok ho obnovíte jedním kliknutím na odkaz z univerzitního e-mailu — dokud studujete.' },
-];
-
 const STEPS = [
   { n: '1', title: 'Zadejte univerzitní e-mail', text: 'Poznáme podle něj fakultu. Fungují adresy všech českých univerzit s učitelskými programy.' },
   { n: '2', title: 'Potvrďte odkaz v e-mailu', text: 'Přijde během minuty na univerzitní adresu. Kliknutím ověříte, že jste student, a přístup se aktivuje.' },
@@ -547,42 +541,45 @@ export function StudentProgramPage() {
       />
 
       {/* Hero */}
-      <motion.section initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="max-w-[1040px] mx-auto pt-12 md:pt-20 pb-10 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full bg-[#E8942A]/10 text-[#B45309] px-4 py-1.5 mb-6" style={FF}>
-          <GraduationCap className="w-4 h-4" />
-          <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
-        </div>
-        <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[34px] md:text-[52px] leading-[1.1] mb-5 max-w-[820px] mx-auto">
-          Vividbooks zdarma po celou dobu studia.
-        </h1>
-        <p style={FF} className="text-[#001161]/65 text-[16px] md:text-[18px] leading-relaxed max-w-[640px] mx-auto mb-8">
-          Připravujete se na učení? Mějte v ruce pracovní sešity a učební materiály, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail — přístup máte do minuty.
-        </p>
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button type="button" onClick={scrollToForm} className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-105 shadow-lg shadow-[#7C3AED]/25 cursor-pointer" style={FF}>
-            Získat přístup zdarma <ArrowRight className="w-4 h-4" />
-          </button>
-          <Link to="/aplikace" className="inline-flex items-center gap-2 text-[#001161] font-bold text-[15px] px-6 py-4 rounded-full border border-[#001161]/12 hover:bg-white transition-all no-underline" style={FF}>
-            Co je v aplikaci
-          </Link>
-        </div>
-        <p style={FF} className="text-[12px] text-[#001161]/45 mt-5">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
-      </motion.section>
-
-      {/* Benefity */}
-      <section className="max-w-[1040px] mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 mb-16">
-        {BENEFITS.map((b) => (
-          <div key={b.title} className="bg-white border border-[#001161]/8 rounded-[24px] p-6 flex gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-[#7C3AED]/10 flex items-center justify-center shrink-0">
-              <b.icon className="w-6 h-6 text-[#7C3AED]" />
-            </div>
-            <div>
-              <h3 style={FF} className="text-[16px] font-bold text-[#001161] mb-1">{b.title}</h3>
-              <p style={FF} className="text-[14px] text-[#001161]/65 leading-relaxed">{b.text}</p>
-            </div>
+      <section className="max-w-[1040px] mx-auto pt-10 md:pt-16 pb-12 grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-8 items-center">
+        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="text-center lg:text-left">
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#E8942A]/10 text-[#B45309] px-4 py-1.5 mb-6" style={FF}>
+            <GraduationCap className="w-4 h-4" />
+            <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
           </div>
-        ))}
+          <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[34px] md:text-[50px] leading-[1.1] mb-5">
+            Vividbooks zdarma po celou dobu studia.
+          </h1>
+          <p style={FF} className="text-[#001161]/65 text-[16px] md:text-[18px] leading-relaxed max-w-[560px] mx-auto lg:mx-0 mb-8">
+            Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
+            <button type="button" onClick={scrollToForm} className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-105 shadow-lg shadow-[#7C3AED]/25 cursor-pointer" style={FF}>
+              Získat přístup zdarma <ArrowRight className="w-4 h-4" />
+            </button>
+            <a href="#co-najdete" className="inline-flex items-center gap-2 text-[#001161] font-bold text-[15px] px-6 py-4 rounded-full border border-[#001161]/12 hover:bg-white transition-all no-underline" style={FF}>
+              Co v aplikaci najdete
+            </a>
+          </div>
+          <p style={FF} className="text-[12px] text-[#001161]/45 mt-5">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
+        </motion.div>
+        <StudentHeroVisual />
       </section>
+
+      <StudentSubjectsSection />
+
+      <div id="co-najdete" className="scroll-mt-24">
+        <StudentMaterialsSection />
+      </div>
+
+      <StudentPracticeSection />
+
+      <div className="max-w-[1040px] mx-auto mb-16 flex flex-col items-center gap-3 text-center">
+        <p className="font-['Cooper_Light',serif] text-[#001161] text-[24px] md:text-[28px] leading-tight">Vyzkoušejte to na své příští praxi.</p>
+        <button type="button" onClick={scrollToForm} className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-105 shadow-lg shadow-[#7C3AED]/25 cursor-pointer" style={FF}>
+          Získat přístup zdarma <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
 
       {/* Jak to funguje + formulář */}
       <section ref={formRef} className="max-w-[1040px] mx-auto grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-8 items-start mb-16 scroll-mt-24">

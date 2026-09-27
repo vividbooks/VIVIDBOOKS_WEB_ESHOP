@@ -131,6 +131,7 @@ import {
   studentAccessRequest,
   teacherCodeEmailBlock,
 } from '../src/supabase/functions/server/studentProgramAccess.ts';
+import { buildStudentMeasurement, normalizeSubject } from '../src/supabase/functions/server/studentProgramMeasurement.ts';
 
 type UnitTest = {
   name: string;
@@ -1961,6 +1962,68 @@ registerTest('studentský program: e-mail ukazuje jen učitelský kód', () => {
   const html = teacherCodeEmailBlock('ABC<1>');
   assert.ok(html.includes('ABC&lt;1&gt;'));
   assert.ok(!/žák/i.test(html));
+});
+
+registerTest('měření studentů: web i Kabinet, univerzita z fakulty nebo domény, trychtýř a pořadí', () => {
+  const usage = (activeDays: number, activeDays30: number, pupilDays = 0, subjects: string[] = []) => ({
+    firstOn: '2026-09-01', lastOn: '2026-09-20', activeDays, activeDays30, pupilDays, subjects,
+    actions: { library_lesson_opened: 4, lesson_presented: 1 }, actions30: {},
+  });
+  const m = buildStudentMeasurement({
+    today: '2026-09-27',
+    now: '2026-09-27T12:00:00Z',
+    faculties: [
+      { id: 'mu-pdf', university: 'Masarykova univerzita', university_short: 'MU', faculty_short: 'PdF MU', kind: 'pedf', estimated_students: 100 },
+      { id: 'uk-pedf', university: 'Univerzita Karlova', university_short: 'UK', faculty_short: 'PedF UK', kind: 'pedf', estimated_students: 200 },
+    ],
+    webStudents: [
+      { id: 'w1', status: 'active', faculty_id: 'mu-pdf', university_email: 'a@gmail.com', teacher_code: 'AAA111', created_at: '2026-09-20', verified_at: '2026-09-20', renewal_count: 1 },
+      { id: 'w2', status: 'pending', faculty_id: 'uk-pedf', university_email: 'b@cuni.cz', teacher_code: null },
+    ],
+    kabinet: [
+      { teacherCode: 'AAA111', email: 'a@gmail.com', name: 'Student univerzity: A', createdAt: '2026-09-20', accessUntil: '2027-09-20', usage: usage(6, 2, 1, ['Fyzika', '6-rocnik-1-dil']) },
+      { teacherCode: 'BBB222', email: '123@muni.cz', name: 'Student univerzity: Bára B', createdAt: '2025-10-01', accessUntil: '2026-10-01', usage: usage(1, 0, 0, ['Matematika (2. stupeň)']) },
+      { teacherCode: 'CCC333', email: 'x@cuni.cz', name: 'Student univerzity: C', createdAt: '2026-01-10', accessUntil: '2027-01-10', usage: null },
+      { teacherCode: 'DDD444', email: 'x@gmail.com', name: 'Student univerzity: D', createdAt: '2026-01-10', accessUntil: '2025-01-10', usage: null },
+    ],
+  });
+  assert.deepEqual(m.sources, { web: 2, kabinet: 4, matched: 1 });
+  assert.equal(m.totals.withAccess, 4);
+  assert.equal(m.totals.accessActive, 3);
+  assert.equal(m.totals.activated, 2);
+  assert.equal(m.totals.active30, 1);
+  assert.equal(m.totals.regular, 1);
+  assert.equal(m.totals.withPupils, 1);
+  assert.equal(m.totals.pending, 1);
+  assert.equal(m.totals.renewed, 1);
+  const mu = m.universities.find((u) => u.key === 'MU')!;
+  assert.equal(mu.withAccess, 2, 'w1 podle fakulty, BBB222 podle domény muni.cz');
+  assert.equal(mu.activationRate, 100);
+  assert.equal(mu.active30Rate, 50);
+  assert.equal(mu.penetration, 2);
+  assert.equal(m.universities[0].key, 'MU', 'první je univerzita s nejvíc aktivními za 30 dní');
+  const uk = m.universities.find((u) => u.key === 'UK')!;
+  assert.equal(uk.pending, 1);
+  assert.equal(uk.withAccess, 1);
+  assert.equal(m.universities.find((u) => u.key === '_none')!.withAccess, 1);
+  assert.deepEqual(m.subjects.map((s) => s.subject).sort(), ['Fyzika', 'Matematika']);
+  assert.equal(m.topStudents[0].name, 'A');
+  assert.equal(m.topStudents[1].name, 'Bára B');
+  assert.equal(m.neverActivated.count, 2);
+  assert.equal(m.months.length, 12);
+  assert.equal(m.months[11].month, '2026-09');
+  assert.equal(m.months[11].newAccess, 1);
+  assert.equal(m.months[11].activated, 2);
+});
+
+registerTest('měření studentů: bez Kabinetu nespadne a předměty se čtou i ze slugů knih', () => {
+  const m = buildStudentMeasurement({ today: '2026-09-27', faculties: [], webStudents: [], kabinet: null, kabinetError: 'HTTP 502' });
+  assert.equal(m.kabinetOk, false);
+  assert.equal(m.totals.withAccess, 0);
+  assert.equal(normalizeSubject('prvouka-1-rocnik-1-dil'), 'Prvouka');
+  assert.equal(normalizeSubject('Matematika (1. stupeň)'), 'Matematika');
+  assert.equal(normalizeSubject('Český jazyk'), 'Český jazyk');
+  assert.equal(normalizeSubject('6-rocnik-1-dil'), null);
 });
 
 registerTest('studentský program: staré adresy /studenti vedou na novou microsite, ne na starý web', () => {
