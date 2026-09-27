@@ -183,6 +183,15 @@ export const router = createBrowserRouter(
             { path: 'vyzkousejte', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
             /** Stejná stránka, ale trial jde přes Kabinet — souběžně se starou cestou. */
             { path: 'vyzkousejte-kabinet', lazy: lazyNamed(() => import('./components/TrialPage'), 'TrialPage') },
+            { path: 'studenti', lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramPage') },
+            {
+              path: 'studenti/aktualizace',
+              lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramUpdatePage'),
+            },
+            {
+              path: 'studenti/obnovit',
+              lazy: lazyNamed(() => import('./components/StudentProgramPage'), 'StudentProgramRenewPage'),
+            },
             { path: 'akce', lazy: lazyNamed(() => import('./components/AkcePage'), 'AkcePage') },
             {
               path: 'dalsi-produkty',
@@ -265,6 +274,7 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/MarketingContactsPage')),
         },
         { path: 'skoly', lazy: lazyDefault(() => import('./components/admin/SchoolsUploadPage')) },
+        { path: 'studenti', lazy: lazyDefault(() => import('./components/admin/StudentProgramAdminPage')) },
         {
           path: 'growth-agent',
           lazy: lazyDefault(() => import('./components/admin/GrowthAgentPage')),

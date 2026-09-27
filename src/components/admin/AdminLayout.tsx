@@ -108,6 +108,7 @@ const MARKETING_SIDEBAR = [
       { label: 'Registrace', icon: Users, path: '/marketing/registrace' },
       { label: 'Kontakty', icon: Contact, path: '/marketing/kontakty' },
       { label: 'Rejstřík škol', icon: School, path: '/marketing/skoly' },
+      { label: 'Studenti', icon: GraduationCap, path: '/marketing/studenti', badge: 'Nové', badgeColor: 'amber' },
     ],
   },
   {

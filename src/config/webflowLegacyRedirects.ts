@@ -87,13 +87,12 @@ const LEGACY_EXACT_INTERNAL: ExactRule[] = [
   { ruleId: 'exact.mobile-menu.en', path: '/en/mobile-menu', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
   { ruleId: 'exact.mobile-menu.es', path: '/es/mobile-menu-es', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
   { ruleId: 'exact.odhlaseni-newsletter', path: '/cs/odhlaseni-z-newsletteru', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
-  { ruleId: 'exact.studenti', path: '/cs/studenti', target: '/vyzkousejte' },
+  { ruleId: 'exact.studenti', path: '/cs/studenti', target: '/studenti' },
   { ruleId: 'exact.webinar-ty', path: '/cs/webinar-ty', target: '/webinare' },
 ];
 
-const LEGACY_EXACT_EXTERNAL: ExactExternalRule[] = [
-  { ruleId: 'exact.studenti.old-web', path: '/studenti', target: 'https://old.vividbooks.com/cs/studenti' },
-];
+/** Studentský program běží nově přímo na webu (`/studenti`) — na starý web už nic neposíláme. */
+const LEGACY_EXACT_EXTERNAL: ExactExternalRule[] = [];
 
 const LEGACY_PREFIX_APPEND: PrefixAppendRule[] = [
   { ruleId: 'prefix.blog.en', prefix: '/en/blog/', targetPrefix: '/blog/' },
@@ -105,7 +104,7 @@ const LEGACY_PREFIX_COLLAPSE: PrefixCollapseRule[] = [
   { ruleId: 'collapse.dvpp-webinare', prefix: '/dvpp-webinare/', target: '/webinare' },
   { ruleId: 'collapse.jobs', prefix: '/jobs/', target: '/kontakt' },
   { ruleId: 'collapse.kampan', prefix: '/cs/kampan/', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
-  { ruleId: 'collapse.studenti-ucitelstvi', prefix: '/cs/studenti-ucitelstvi/', target: '/vyzkousejte' },
+  { ruleId: 'collapse.studenti-ucitelstvi', prefix: '/cs/studenti-ucitelstvi/', target: '/studenti' },
 ];
 
 const LEGACY_PREDMET_SLUGS = [
@@ -310,7 +309,6 @@ export function pathnameLooksLikeWebflowLegacy(pathname: string): boolean {
     p === '/privacy-policy'
     || p === '/hvezda-vyuky'
     || p === '/hviezda-vyucby'
-    || p === '/studenti'
     || p === '/en'
     || p === '/es'
   )
