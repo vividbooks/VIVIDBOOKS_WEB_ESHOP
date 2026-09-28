@@ -15,6 +15,7 @@ import { flashInvalidField } from '../utils/formFieldHighlight';
 import { APP_ENTRY_PATH } from '../config/publicUrls';
 import {
   checkStudentEmail,
+  fetchStudentProgramFaculties,
   fetchStudentSelf,
   registerStudent,
   renewStudentAccess,
@@ -23,6 +24,7 @@ import {
   verifyStudentToken,
   type CheckEmailResult,
   type RegisterResult,
+  type StudentProgramPublicFaculty,
   type StudentProgramStudentView,
 } from '../utils/studentProgramApi';
 
@@ -155,7 +157,24 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<RegisterResult | null>(null);
+  const [allFaculties, setAllFaculties] = useState<StudentProgramPublicFaculty[]>([]);
   const debouncedEmail = useDebounced(form.universityEmail.trim().toLowerCase(), 500);
+
+  useEffect(() => {
+    fetchStudentProgramFaculties().then(setAllFaculties).catch(() => {});
+  }, []);
+
+  /** Fakulty seskupené po univerzitách, pedagogická fakulta první — pro výběr ve formuláři. */
+  const facultyGroups = useMemo(() => {
+    const map = new Map<string, { university: string; items: StudentProgramPublicFaculty[] }>();
+    for (const f of allFaculties) {
+      const g = map.get(f.universityShort) || { university: f.university, items: [] };
+      g.items.push(f);
+      map.set(f.universityShort, g);
+    }
+    for (const g of map.values()) g.items.sort((a, b) => (a.kind === b.kind ? a.faculty.localeCompare(b.faculty, 'cs') : a.kind === 'pedf' ? -1 : 1));
+    return [...map.entries()].map(([short, g]) => ({ short, ...g }));
+  }, [allFaculties]);
 
   useEffect(() => {
     if (!debouncedEmail || !isValidEmailFormat(debouncedEmail)) {
@@ -170,8 +189,9 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         setEmailCheck(r);
         if (r.ok) {
           setForm((f) => {
-            const stillValid = r.faculties.some((x) => x.id === f.facultyId);
-            return { ...f, facultyId: stillValid ? f.facultyId : r.faculties.length === 1 ? r.faculties[0].id : f.facultyId && r.faculties.some((x) => x.id === f.facultyId) ? f.facultyId : '' };
+            // Vybranou fakultu neměníme; prázdný výběr doplníme, když doména sedí na jedinou fakultu.
+            if (f.facultyId) return f;
+            return { ...f, facultyId: r.faculties.length === 1 ? r.faculties[0].id : '' };
           });
         }
       })
@@ -221,7 +241,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
       flash('sp-uni');
       return;
     }
-    if (emailCheck?.ok && emailCheck.faculties.length > 1 && !form.facultyId) { setFormError('Vyberte prosím fakultu.'); flash('sp-faculty'); return; }
+    if (!form.facultyId) { setFormError('Vyberte prosím univerzitu a fakultu (nebo „Jiná“).'); flash('sp-faculty'); return; }
     const pers = form.personalEmail.trim().toLowerCase();
     if (!pers || !isValidEmailFormat(pers)) { setFormError('Zadejte prosím i osobní e-mail (např. Gmail nebo Seznam) — použijeme ho, až vám školní schránka skončí.'); flash('sp-pers'); return; }
     if (pers === uni) { setFormError('Osobní e-mail musí být jiný než univerzitní.'); flash('sp-pers'); return; }
@@ -244,7 +264,7 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         universityEmail: uni,
         personalEmail: pers,
         phone: form.phone.trim(),
-        facultyId: form.facultyId || (emailCheck?.ok ? emailCheck.faculties[0]?.id || '' : ''),
+        facultyId: form.facultyId && form.facultyId !== 'other' ? form.facultyId : emailCheck?.ok ? emailCheck.faculties[0]?.id || '' : '',
         studyProgramme: form.studyProgramme.trim(),
         subjects,
         schoolStages: stages,
@@ -328,18 +348,19 @@ function StudentRegistrationForm({ presetFacultyId }: { presetFacultyId?: string
         </AnimatePresence>
       </div>
 
-      <AnimatePresence>
-        {uniOk && emailCheck.ok && emailCheck.faculties.length > 1 && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-            <select id="sp-faculty" name="facultyId" value={form.facultyId} onChange={handle} className={`${INPUT_CLASS} ${SELECT_ARROW}`} style={FF}>
-              <option value="" disabled>Fakulta *</option>
-              {emailCheck.faculties.map((f) => (
-                <option key={f.id} value={f.id}>{f.faculty} ({f.facultyShort})</option>
+      <div id="sp-faculty" className="rounded-[14px] p-1 -m-1">
+        <select name="facultyId" value={form.facultyId} onChange={handle} className={`${INPUT_CLASS} ${SELECT_ARROW} ${form.facultyId ? '' : 'text-[#001161]/45'}`} style={FF}>
+          <option value="" disabled>Univerzita / fakulta *</option>
+          {facultyGroups.map((g) => (
+            <optgroup key={g.short} label={g.university}>
+              {g.items.map((f) => (
+                <option key={f.id} value={f.id}>{`${g.short} – ${f.faculty}`}</option>
               ))}
-            </select>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </optgroup>
+          ))}
+          <option value="other">Jiná</option>
+        </select>
+      </div>
 
       <div id="sp-pers" className="rounded-[14px] p-1 -m-1">
         <input name="personalEmail" type="email" placeholder="Osobní e-mail *" value={form.personalEmail} onChange={handle} className={INPUT_CLASS} style={FF} inputMode="email" />
@@ -549,13 +570,6 @@ export function StudentProgramPage() {
 
       <div id="co-najdete" className="scroll-mt-24">
         <StudentMaterialsSection />
-      </div>
-
-      <div className="max-w-[1040px] mx-auto mb-16 flex flex-col items-center gap-3 text-center">
-        <p className="font-['Cooper_Light',serif] text-[#001161] text-[24px] md:text-[28px] leading-tight">Vyzkoušejte to na své příští praxi.</p>
-        <button type="button" onClick={scrollToForm} className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-105 shadow-lg shadow-[#7C3AED]/25 cursor-pointer" style={FF}>
-          Získat přístup zdarma <ArrowRight className="w-4 h-4" />
-        </button>
       </div>
 
       {/* Jak to funguje + formulář */}
