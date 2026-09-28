@@ -1,15 +1,14 @@
 /**
- * Ukázkové sekce microsite /studenti: předměty s obálkami sešitů, co v aplikaci je
- * (lekce, animace a 3D, pracovní listy, testy, vividboard, aplikace, vlastní materiály)
- * a jak s tím pracovat na praxi. Obrázky: obálky ze Supabase Storage (náhled přes
+ * Ukázkové sekce microsite /studenti: hero jako karta na hlavní stránce, předměty s obálkami
+ * sešitů, co v aplikaci je (slider SubjectTabsSection jako na stránkách předmětů) a jak s tím
+ * pracovat na praxi. Obrázky: obálky ze Supabase Storage (náhled přes
  * render/image), snímky obsahu z CDN webu (stejné jako záložky na stránkách předmětů)
  * a z public/.
  */
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
-import {
-  Presentation, Atom, FileText, ClipboardCheck, Sparkles, Shapes, PenTool, GraduationCap, MonitorPlay, Users, BookOpenCheck,
-} from 'lucide-react';
+import React from 'react';
+import { motion } from 'motion/react';
+import { Presentation, Sparkles, GraduationCap, Users, BookOpenCheck, ArrowRight } from 'lucide-react';
+import { SubjectTabsSection, type SubjectExtraTab } from '../SubjectTabsSection';
 import { supabasePublicUrlToTinyRenderUrl } from '../../utils/supabaseImageThumbnail';
 import aplikace3dObjekty from '../../assets/campaign/aplikace-3d-objekty.png';
 
@@ -26,41 +25,62 @@ function hideBroken(e: React.SyntheticEvent<HTMLImageElement>) {
   e.currentTarget.style.visibility = 'hidden';
 }
 
-/* ── Hero: tablet s lekcí a pár obálek ─────────────────────────────────────── */
+/* ── Hero: barevná karta jako na hlavní stránce, vpravo mřížka obálek ─────── */
 
 const HERO_COVERS = [
-  { src: cover('1773586787125-suqqssqwjco.webp'), alt: 'Fyzika 6', className: 'left-[2%] top-[8%] -rotate-[9deg]' },
-  { src: cover('1773603212736-omtxsa1ce8c.webp'), alt: 'Přírodopis 6', className: 'right-[1%] top-[2%] rotate-[7deg]' },
-  { src: cover('1773603917284-gkt509tga48.png'), alt: 'Prvouka 1', className: 'right-[6%] bottom-[2%] rotate-[4deg]' },
+  { file: '1773586787125-suqqssqwjco.webp', alt: 'Fyzika 6' },
+  { file: '1773603212736-omtxsa1ce8c.webp', alt: 'Přírodopis 6' },
+  { file: '1773602692548-4x43oehi9im.webp', alt: 'Matematika 6' },
+  { file: '1773603917284-gkt509tga48.png', alt: 'Prvouka 1' },
+  { file: '1773602656594-qszbmfqb75l.webp', alt: 'Chemie 8' },
+  { file: '1773603310291-vxkn17dwtg.png', alt: 'Matematika 1' },
 ];
+const HERO_TILT = [-5, 3, -2, 4, -4, 2];
 
-export function StudentHeroVisual() {
+export function StudentHeroCard({ onCta, secondaryHref }: { onCta: () => void; secondaryHref: string }) {
   return (
-    <div className="relative mx-auto aspect-[5/4] w-full max-w-[520px]">
-      <div className="absolute inset-[8%] rounded-[40px] bg-gradient-to-br from-[#E8942A]/15 via-[#7C3AED]/10 to-[#10b981]/15 blur-2xl" aria-hidden />
-      <motion.img
-        src="/app-screenshots/nova-1.png"
-        alt="Interaktivní lekce Vividbooks na tabletu"
-        className="absolute inset-x-[6%] top-[10%] w-[88%] drop-shadow-xl"
-        initial={{ opacity: 0, y: 18 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, delay: 0.1 }}
-        onError={hideBroken}
-      />
-      {HERO_COVERS.map((c, i) => (
-        <motion.img
-          key={c.alt}
-          src={c.src}
-          alt={`Pracovní sešit ${c.alt}`}
-          loading="eager"
-          className={`absolute w-[22%] rounded-md shadow-[0_10px_30px_rgba(0,17,97,0.22)] ${c.className}`}
-          initial={{ opacity: 0, y: 24 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, delay: 0.25 + i * 0.12 }}
-          onError={hideBroken}
-        />
-      ))}
-    </div>
+    <section className="relative mx-auto max-w-[1040px] overflow-hidden rounded-[32px] bg-gradient-to-br from-[#7C3AED] to-[#4C1D95] px-6 py-10 md:px-12 md:py-14">
+      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" aria-hidden />
+      <div className="relative grid grid-cols-1 items-center gap-10 lg:grid-cols-[1.1fr_1fr]">
+        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="text-center lg:text-left">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-1.5 text-white" style={FF}>
+            <GraduationCap className="h-4 w-4" />
+            <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
+          </div>
+          <h1 className="mb-5 font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-white md:text-[50px]">
+            Vividbooks zdarma po celou dobu studia.
+          </h1>
+          <p style={FF} className="mx-auto mb-8 max-w-[520px] text-[16px] leading-relaxed text-white/80 md:text-[18px] lg:mx-0">
+            Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
+          </p>
+          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
+            <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-white px-8 py-4 text-[15px] font-bold text-[#5B21B6] shadow-lg shadow-black/10 transition-all hover:scale-105" style={FF}>
+              Získat přístup zdarma <ArrowRight className="h-4 w-4" />
+            </button>
+            <a href={secondaryHref} className="inline-flex items-center gap-2 rounded-full border border-white/35 px-6 py-4 text-[15px] font-bold text-white no-underline transition-all hover:bg-white/10" style={FF}>
+              Co v aplikaci najdete
+            </a>
+          </div>
+          <p style={FF} className="mt-5 text-[12px] text-white/60">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
+        </motion.div>
+        <div className="mx-auto grid w-full max-w-[420px] grid-cols-3 gap-3 sm:gap-4">
+          {HERO_COVERS.map((c, i) => (
+            <motion.img
+              key={c.file}
+              src={cover(c.file)}
+              alt={`Pracovní sešit ${c.alt}`}
+              loading="eager"
+              decoding="async"
+              onError={hideBroken}
+              className="aspect-[0.71] w-full rounded-[6px] object-cover shadow-[0_14px_30px_rgba(20,0,60,0.35)]"
+              initial={{ opacity: 0, y: 20, rotate: 0 }}
+              animate={{ opacity: 1, y: i % 3 === 1 ? 18 : 0, rotate: HERO_TILT[i] }}
+              transition={{ duration: 0.45, delay: 0.1 + i * 0.07 }}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -202,134 +222,80 @@ export function StudentSubjectsSection() {
   );
 }
 
-/* ── Co v aplikaci najdete ────────────────────────────────────────────────── */
+/* ── Co v aplikaci najdete: stejný slider jako na stránkách předmětů ───────── */
 
-type Material = {
-  id: string;
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  text: string;
-  image: string;
-  imageAlt: string;
-  bg: string;
-};
-
-const MATERIALS: Material[] = [
+const MATERIAL_TABS: SubjectExtraTab[] = [
   {
     id: 'lekce',
-    icon: Presentation,
-    title: 'Interaktivní lekce do hodiny',
-    text: 'Hotová hodina krok za krokem: otázka na začátek, výklad s obrázky, diskuze a shrnutí. Stačí promítnout na tabuli — a k tomu metodická inspirace pro učitele.',
-    image: `${CDN}68d92aab56eecbedf1e81d7d_rectangle_2806_4x.webp`,
-    imageAlt: 'Ukázky lekcí fyziky',
-    bg: '#fff3dc',
+    tabText: 'Interaktivní lekce',
+    contentHeadline: 'Hotová hodina krok za krokem',
+    contentRichText: 'Otázka na začátek, výklad s obrázky, diskuze a shrnutí. Stačí promítnout na tabuli — a ke každé lekci metodická inspirace pro učitele.',
+    contentImage: `${CDN}68d92aab56eecbedf1e81d7d_rectangle_2806_4x.webp`,
+    bgColor: '#fff3dc',
+    order: 1,
   },
   {
     id: 'animace',
-    icon: Atom,
-    title: 'Animace, pokusy a 3D modely',
-    text: 'Jevy, které se na tabuli špatně kreslí: animace ve fyzice a chemii, 3D modely v přírodopisu, které žáci otočí ze všech stran.',
-    image: `${CDN}68dab0083048880f302a15b3_rectangle_2823_4x.webp`,
-    imageAlt: '3D modely v přírodopisu',
-    bg: '#edf7ed',
+    tabText: 'Animace a 3D modely',
+    contentHeadline: 'Jevy, které se na tabuli špatně kreslí',
+    contentRichText: 'Animace a pokusy ve fyzice a chemii, 3D modely v přírodopisu, které žáci otočí ze všech stran.',
+    contentImage: `${CDN}68dab0083048880f302a15b3_rectangle_2823_4x.webp`,
+    bgColor: '#edf7ed',
+    order: 2,
   },
   {
     id: 'listy',
-    icon: FileText,
-    title: 'Pracovní listy a učební texty',
-    text: 'Listy k tisku i k vyplnění na tabletu, učební texty ke každé kapitole a badatelské listy k pokusům.',
-    image: `${CDN}68d92b2d13fa972edb64d5bd_rectangle_2808_4x.webp`,
-    imageAlt: 'Pracovní listy fyziky',
-    bg: '#f3edf7',
+    tabText: 'Pracovní listy a texty',
+    contentHeadline: 'Pracovní listy a učební texty',
+    contentRichText: 'Listy k tisku i k vyplnění na tabletu, učební texty ke každé kapitole a badatelské listy k pokusům.',
+    contentImage: `${CDN}68d92b2d13fa972edb64d5bd_rectangle_2808_4x.webp`,
+    bgColor: '#f3edf7',
+    order: 3,
   },
   {
     id: 'testy',
-    icon: ClipboardCheck,
-    title: 'Testy, písemky a kvízy',
-    text: 'Připravené písemky k tisku i online testy, které se vyhodnotí samy. Vyzkoušíte si, jak rychle zjistit, co třída pochopila.',
-    image: `${CDN}68d92bf1ae29b34fe565b73d_rectangle_2807_4x.webp`,
-    imageAlt: 'Testy a výsledky žáků',
-    bg: '#e8f0fb',
+    tabText: 'Testy a písemky',
+    contentHeadline: 'Testy, písemky a kvízy',
+    contentRichText: 'Připravené písemky k tisku i online testy, které se vyhodnotí samy. Vyzkoušíte si, jak rychle zjistit, co třída pochopila.',
+    contentImage: `${CDN}68d92bf1ae29b34fe565b73d_rectangle_2807_4x.webp`,
+    bgColor: '#e8f0fb',
+    order: 4,
   },
   {
     id: 'vividboard',
-    icon: MonitorPlay,
-    title: 'Vividboard: aktivity se třídou',
-    text: 'Hlasování, soutěžní kvízy a interaktivní prezentace. Žáci se připojí kódem ze svých zařízení a vy vidíte odpovědi hned.',
-    image: '/aplikace/news-06-vividboard.png',
-    imageAlt: 'Vividboard',
-    bg: '#f5f0ff',
+    tabText: 'Vividboard',
+    contentHeadline: 'Aktivity se třídou',
+    contentRichText: 'Hlasování, soutěžní kvízy a interaktivní prezentace. Žáci se připojí kódem ze svých zařízení a vy vidíte odpovědi hned.',
+    contentImage: '/aplikace/news-06-vividboard.png',
+    contentImageFit: 'contain',
+    bgColor: '#f5f0ff',
+    order: 5,
   },
   {
     id: 'aplikace',
-    icon: Shapes,
-    title: 'Matematické aplikace',
-    text: 'Tělesa ve 3D, zlomky, algebraické dlaždice a rýsování — manipulativy, se kterými žáci matematiku uvidí, ne jen spočítají.',
-    image: aplikace3dObjekty,
-    imageAlt: 'Aplikace 3D objekty',
-    bg: '#dbe7fa',
+    tabText: 'Matematické aplikace',
+    contentHeadline: 'Matematiku uvidí, ne jen spočítají',
+    contentRichText: 'Tělesa ve 3D, zlomky, algebraické dlaždice a rýsování — interaktivní pomůcky pro výuku matematiky.',
+    contentImage: aplikace3dObjekty,
+    contentImageFit: 'contain',
+    bgColor: '#dbe7fa',
+    order: 6,
   },
   {
     id: 'tvorba',
-    icon: PenTool,
-    title: 'Vlastní materiály',
-    text: 'Upravte hotový list, složte si vlastní hodinu nebo připravte materiál na seminář. Editor dokumentů, pracovních listů a AI pomocník.',
-    image: `${CDN}68d92c355a60001dd4ccba45_rectangle_2810_4x.webp`,
-    imageAlt: 'Tvorba vlastních materiálů',
-    bg: '#fff0e0',
+    tabText: 'Vlastní materiály',
+    contentHeadline: 'Vlastní hodina i materiál na seminář',
+    contentRichText: 'Upravte hotový list, složte si vlastní hodinu nebo připravte materiál na seminář. Editor dokumentů, pracovních listů a AI pomocník.',
+    contentImage: `${CDN}68d92c355a60001dd4ccba45_rectangle_2810_4x.webp`,
+    bgColor: '#fff0e0',
+    order: 7,
   },
 ];
 
 export function StudentMaterialsSection() {
-  const [active, setActive] = useState(MATERIALS[0].id);
-  const m = MATERIALS.find((x) => x.id === active) || MATERIALS[0];
   return (
-    <section className="mx-auto mb-20 max-w-[1040px]">
-      <div className="mb-8 text-center">
-        <p style={FF} className="mb-2 text-[12px] font-bold uppercase tracking-wide text-[#7C3AED]">Podívejte se dovnitř</p>
-        <h2 className="font-['Cooper_Light',serif] text-[28px] leading-tight text-[#001161] md:text-[36px]">Co v aplikaci najdete</h2>
-      </div>
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0" role="tablist">
-          {MATERIALS.map((x) => {
-            const on = x.id === active;
-            return (
-              <button
-                key={x.id}
-                type="button"
-                role="tab"
-                aria-selected={on}
-                onClick={() => setActive(x.id)}
-                className={`flex shrink-0 cursor-pointer items-start gap-3 rounded-2xl border px-4 py-3 text-left transition-all lg:shrink ${on ? 'border-[#7C3AED]/25 bg-white shadow-md shadow-[#7C3AED]/10' : 'border-transparent hover:bg-white/70'}`}
-              >
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${on ? 'bg-[#7C3AED] text-white' : 'bg-[#001161]/6 text-[#001161]/60'}`}>
-                  <x.icon className="h-[18px] w-[18px]" />
-                </span>
-                <span className="min-w-0">
-                  <span style={FF} className={`block whitespace-nowrap text-[14px] font-bold lg:whitespace-normal ${on ? 'text-[#001161]' : 'text-[#001161]/70'}`}>{x.title}</span>
-                  {on && <span style={FF} className="mt-1 hidden text-[13px] leading-relaxed text-[#001161]/65 lg:block">{x.text}</span>}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        <div>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={m.id}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.25 }}
-              className="flex aspect-[4/3.4] items-center justify-center overflow-hidden rounded-[28px] p-6"
-              style={{ background: m.bg }}
-            >
-              <img src={m.image} alt={m.imageAlt} loading="lazy" decoding="async" onError={hideBroken} className="max-h-full max-w-full object-contain" />
-            </motion.div>
-          </AnimatePresence>
-          <p style={FF} className="mt-3 text-[14px] leading-relaxed text-[#001161]/65 lg:hidden">{m.text}</p>
-        </div>
-      </div>
+    <section className="-mx-4 mb-20">
+      <SubjectTabsSection subject="Studenti" displayName="aplikace" light staticTabs={MATERIAL_TABS} sectionHeading="Co v aplikaci najdete" />
     </section>
   );
 }

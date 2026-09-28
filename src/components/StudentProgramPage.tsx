@@ -6,7 +6,7 @@ import {
   School, Clock, Phone, Search, Send, HelpCircle, ArrowRight,
 } from 'lucide-react';
 import { SEOHead } from './SEOHead';
-import { StudentHeroVisual, StudentMaterialsSection, StudentPracticeSection, StudentSubjectsSection } from './studentProgram/StudentShowcase';
+import { StudentHeroCard, StudentMaterialsSection, StudentPracticeSection, StudentSubjectsSection } from './studentProgram/StudentShowcase';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { SubjectCheckbox } from './TrialSubjectCheckbox';
 import { TEACHER_SUBJECTS_1ST, TEACHER_SUBJECTS_2ND } from '../utils/trialSubjectOptions';
@@ -541,30 +541,9 @@ export function StudentProgramPage() {
       />
 
       {/* Hero */}
-      <section className="max-w-[1040px] mx-auto pt-10 md:pt-16 pb-12 grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] gap-8 items-center">
-        <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="text-center lg:text-left">
-          <div className="inline-flex items-center gap-2 rounded-full bg-[#E8942A]/10 text-[#B45309] px-4 py-1.5 mb-6" style={FF}>
-            <GraduationCap className="w-4 h-4" />
-            <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
-          </div>
-          <h1 className="font-['Cooper_Light',serif] text-[#001161] text-[34px] md:text-[50px] leading-[1.1] mb-5">
-            Vividbooks zdarma po celou dobu studia.
-          </h1>
-          <p style={FF} className="text-[#001161]/65 text-[16px] md:text-[18px] leading-relaxed max-w-[560px] mx-auto lg:mx-0 mb-8">
-            Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-start gap-3">
-            <button type="button" onClick={scrollToForm} className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-4 rounded-full transition-all hover:scale-105 shadow-lg shadow-[#7C3AED]/25 cursor-pointer" style={FF}>
-              Získat přístup zdarma <ArrowRight className="w-4 h-4" />
-            </button>
-            <a href="#co-najdete" className="inline-flex items-center gap-2 text-[#001161] font-bold text-[15px] px-6 py-4 rounded-full border border-[#001161]/12 hover:bg-white transition-all no-underline" style={FF}>
-              Co v aplikaci najdete
-            </a>
-          </div>
-          <p style={FF} className="text-[12px] text-[#001161]/45 mt-5">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
-        </motion.div>
-        <StudentHeroVisual />
-      </section>
+      <div className="pt-6 md:pt-10 mb-16">
+        <StudentHeroCard onCta={scrollToForm} secondaryHref="#co-najdete" />
+      </div>
 
       <StudentSubjectsSection />
 
