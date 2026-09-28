@@ -1,5 +1,5 @@
 /**
- * Ukázkové sekce microsite /studenti: hero jako karta na hlavní stránce, předměty s obálkami
+ * Ukázkové sekce microsite /studenti: hero s řadou obálek, předměty s obálkami
  * sešitů, co v aplikaci je (slider SubjectTabsSection jako na stránkách předmětů) a jak s tím
  * pracovat na praxi. Obrázky: obálky ze Supabase Storage (náhled přes
  * render/image), snímky obsahu z CDN webu (stejné jako záložky na stránkách předmětů)
@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { motion } from 'motion/react';
-import { Presentation, Sparkles, GraduationCap, Users, BookOpenCheck, ArrowRight } from 'lucide-react';
+import { Sparkles, GraduationCap, ArrowRight } from 'lucide-react';
 import { SubjectTabsSection, type SubjectExtraTab } from '../SubjectTabsSection';
 import { supabasePublicUrlToTinyRenderUrl } from '../../utils/supabaseImageThumbnail';
 import aplikace3dObjekty from '../../assets/campaign/aplikace-3d-objekty.png';
@@ -25,59 +25,63 @@ function hideBroken(e: React.SyntheticEvent<HTMLImageElement>) {
   e.currentTarget.style.visibility = 'hidden';
 }
 
-/* ── Hero: barevná karta jako na hlavní stránce, vpravo mřížka obálek ─────── */
+/* ── Hero: centrovaný text, pod ním řada obálek všech předmětů ─────────────── */
 
-const HERO_COVERS = [
+const HERO_ROW = [
+  { file: '1773603310291-vxkn17dwtg.png', alt: 'Matematika 1' },
+  { file: '1773603917284-gkt509tga48.png', alt: 'Prvouka 1' },
+  { file: '1773606281525-ufa9y7sb809.png', alt: 'Písanka' },
+  { file: '1773602692548-4x43oehi9im.webp', alt: 'Matematika 6' },
   { file: '1773586787125-suqqssqwjco.webp', alt: 'Fyzika 6' },
   { file: '1773603212736-omtxsa1ce8c.webp', alt: 'Přírodopis 6' },
-  { file: '1773602692548-4x43oehi9im.webp', alt: 'Matematika 6' },
-  { file: '1773603917284-gkt509tga48.png', alt: 'Prvouka 1' },
   { file: '1773602656594-qszbmfqb75l.webp', alt: 'Chemie 8' },
-  { file: '1773603310291-vxkn17dwtg.png', alt: 'Matematika 1' },
 ];
-const HERO_TILT = [-5, 3, -2, 4, -4, 2];
 
-export function StudentHeroCard({ onCta, secondaryHref }: { onCta: () => void; secondaryHref: string }) {
+export function StudentHero({ onCta, secondaryHref }: { onCta: () => void; secondaryHref: string }) {
+  const mid = (HERO_ROW.length - 1) / 2;
   return (
-    <section className="relative mx-auto max-w-[1040px] overflow-hidden rounded-[32px] bg-gradient-to-br from-[#7C3AED] to-[#4C1D95] px-6 py-10 md:px-12 md:py-14">
-      <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-white/10 blur-3xl" aria-hidden />
-      <div className="relative grid grid-cols-1 items-center gap-10 lg:grid-cols-[1.1fr_1fr]">
-        <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="text-center lg:text-left">
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-1.5 text-white" style={FF}>
-            <GraduationCap className="h-4 w-4" />
-            <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
-          </div>
-          <h1 className="mb-5 font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-white md:text-[50px]">
-            Vividbooks zdarma po celou dobu studia.
-          </h1>
-          <p style={FF} className="mx-auto mb-8 max-w-[520px] text-[16px] leading-relaxed text-white/80 md:text-[18px] lg:mx-0">
-            Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
-          </p>
-          <div className="flex flex-col flex-wrap items-center justify-center gap-3 sm:flex-row lg:justify-start">
-            <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-white px-7 py-4 text-[15px] font-bold text-[#5B21B6] shadow-lg shadow-black/10 transition-all hover:scale-105" style={FF}>
-              Získat přístup zdarma <ArrowRight className="h-4 w-4" />
-            </button>
-            <a href={secondaryHref} className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-white/35 px-6 py-4 text-[15px] font-bold text-white no-underline transition-all hover:bg-white/10" style={FF}>
-              Co v aplikaci najdete
-            </a>
-          </div>
-          <p style={FF} className="mt-5 text-[12px] text-white/60">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
-        </motion.div>
-        <div className="mx-auto grid w-full max-w-[420px] grid-cols-3 gap-3 sm:gap-4">
-          {HERO_COVERS.map((c, i) => (
-            <motion.img
-              key={c.file}
-              src={cover(c.file)}
-              alt={`Pracovní sešit ${c.alt}`}
-              loading="eager"
-              decoding="async"
-              onError={hideBroken}
-              className="aspect-[0.71] w-full rounded-[6px] object-cover shadow-[0_14px_30px_rgba(20,0,60,0.35)]"
-              initial={{ opacity: 0, y: 20, rotate: 0 }}
-              animate={{ opacity: 1, y: i % 3 === 1 ? 18 : 0, rotate: HERO_TILT[i] }}
-              transition={{ duration: 0.45, delay: 0.1 + i * 0.07 }}
-            />
-          ))}
+    <section className="mx-auto max-w-[1100px] text-center">
+      <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
+        <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-[#E8942A]/12 px-4 py-1.5 text-[#B45309]" style={FF}>
+          <GraduationCap className="h-4 w-4" />
+          <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
+        </div>
+        <h1 className="mx-auto mb-5 max-w-[820px] font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-[#001161] md:text-[54px]">
+          Vividbooks zdarma po celou dobu studia.
+        </h1>
+        <p style={FF} className="mx-auto mb-8 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/65 md:text-[18px]">
+          Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
+        </p>
+        <div className="flex flex-col flex-wrap items-center justify-center gap-3 sm:flex-row">
+          <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-[#7C3AED] px-7 py-4 text-[15px] font-bold text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-105 hover:bg-[#6D28D9]" style={FF}>
+            Získat přístup zdarma <ArrowRight className="h-4 w-4" />
+          </button>
+          <a href={secondaryHref} className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#001161]/12 bg-white px-6 py-4 text-[15px] font-bold text-[#001161] no-underline transition-all hover:bg-[#f5f7fd]" style={FF}>
+            Co v aplikaci najdete
+          </a>
+        </div>
+        <p style={FF} className="mt-5 text-[12px] text-[#001161]/45">Bez karty · bez závazku · obnovení jedním kliknutím každý rok</p>
+      </motion.div>
+      <div className="relative mt-12 overflow-hidden rounded-[32px] bg-[#f5f7fd] px-4 pt-10">
+        <div className="flex items-end justify-center gap-3 md:gap-5">
+          {HERO_ROW.map((c, i) => {
+            const d = Math.abs(i - mid);
+            return (
+              <motion.img
+                key={c.file}
+                src={cover(c.file)}
+                alt={`Pracovní sešit ${c.alt}`}
+                loading="eager"
+                decoding="async"
+                onError={hideBroken}
+                className={`w-[18%] max-w-[130px] rounded-t-[6px] object-cover shadow-[0_12px_30px_rgba(0,17,97,0.18)] ${d > 2 ? 'hidden sm:block' : ''}`}
+                style={{ aspectRatio: '0.71', marginBottom: `${-d * 18}px` }}
+                initial={{ opacity: 0, y: 40, rotate: 0 }}
+                animate={{ opacity: 1, y: 0, rotate: (i - mid) * 2.5 }}
+                transition={{ duration: 0.5, delay: 0.15 + d * 0.08 }}
+              />
+            );
+          })}
         </div>
       </div>
     </section>
@@ -296,35 +300,6 @@ export function StudentMaterialsSection() {
   return (
     <section className="-mx-4 mb-20">
       <SubjectTabsSection subject="Studenti" displayName="aplikace" light staticTabs={MATERIAL_TABS} sectionHeading="Co v aplikaci najdete" />
-    </section>
-  );
-}
-
-/* ── Na praxi i na seminář ────────────────────────────────────────────────── */
-
-const PRACTICE = [
-  { icon: BookOpenCheck, title: 'Příprava na výstup', text: 'Vyberte lekci k tématu, projděte si metodickou inspiraci a upravte si ji podle třídy.' },
-  { icon: Presentation, title: 'Hodina na praxi', text: 'Promítněte lekci na tabuli, pusťte animaci a rozdejte pracovní listy — nic nechystáte od nuly.' },
-  { icon: Users, title: 'Žáci na svých zařízeních', text: 'S kódem pro žáky se třída připojí ke kvízu nebo aktivitě ve vividboardu a vy hned vidíte odpovědi.' },
-  { icon: GraduationCap, title: 'Seminárka i státnice', text: 'Didaktika na hotových příkladech: jak je postavená hodina, jak se ptát, jak ověřit porozumění.' },
-];
-
-export function StudentPracticeSection() {
-  return (
-    <section className="mx-auto mb-16 max-w-[1040px] rounded-[32px] bg-[#f5f6fa] px-5 py-10 md:px-10">
-      <h2 className="mb-2 text-center font-['Cooper_Light',serif] text-[26px] leading-tight text-[#001161] md:text-[32px]">Na praxi i na seminář</h2>
-      <p style={FF} className="mx-auto mb-8 max-w-[560px] text-center text-[14px] leading-relaxed text-[#001161]/60">Stejné materiály, se kterými učí přes 600 základních škol. Budete je znát dřív, než se postavíte před vlastní třídu.</p>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {PRACTICE.map((p) => (
-          <div key={p.title} className="rounded-[22px] bg-white p-5">
-            <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-[#E8942A]/12">
-              <p.icon className="h-5 w-5 text-[#B45309]" />
-            </div>
-            <p style={FF} className="mb-1 text-[15px] font-bold text-[#001161]">{p.title}</p>
-            <p style={FF} className="text-[13px] leading-relaxed text-[#001161]/65">{p.text}</p>
-          </div>
-        ))}
-      </div>
     </section>
   );
 }

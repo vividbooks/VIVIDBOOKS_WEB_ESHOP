@@ -6,7 +6,7 @@ import {
   School, Clock, Phone, Search, Send, HelpCircle, ArrowRight,
 } from 'lucide-react';
 import { SEOHead } from './SEOHead';
-import { StudentHeroCard, StudentMaterialsSection, StudentPracticeSection, StudentSubjectsSection } from './studentProgram/StudentShowcase';
+import { StudentHero, StudentMaterialsSection, StudentSubjectsSection } from './studentProgram/StudentShowcase';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { SubjectCheckbox } from './TrialSubjectCheckbox';
 import { TEACHER_SUBJECTS_1ST, TEACHER_SUBJECTS_2ND } from '../utils/trialSubjectOptions';
@@ -541,8 +541,8 @@ export function StudentProgramPage() {
       />
 
       {/* Hero */}
-      <div className="pt-6 md:pt-10 mb-16">
-        <StudentHeroCard onCta={scrollToForm} secondaryHref="#co-najdete" />
+      <div className="pt-10 md:pt-16 mb-16">
+        <StudentHero onCta={scrollToForm} secondaryHref="#co-najdete" />
       </div>
 
       <StudentSubjectsSection />
@@ -550,8 +550,6 @@ export function StudentProgramPage() {
       <div id="co-najdete" className="scroll-mt-24">
         <StudentMaterialsSection />
       </div>
-
-      <StudentPracticeSection />
 
       <div className="max-w-[1040px] mx-auto mb-16 flex flex-col items-center gap-3 text-center">
         <p className="font-['Cooper_Light',serif] text-[#001161] text-[24px] md:text-[28px] leading-tight">Vyzkoušejte to na své příští praxi.</p>
