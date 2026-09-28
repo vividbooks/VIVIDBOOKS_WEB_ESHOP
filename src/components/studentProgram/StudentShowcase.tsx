@@ -42,9 +42,9 @@ export function StudentHero({ onCta, secondaryHref }: { onCta: () => void; secon
   return (
     <section className="mx-auto max-w-[1100px] text-center">
       <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-[#E8942A]/12 px-4 py-1.5 text-[#B45309]" style={FF}>
-          <GraduationCap className="h-4 w-4" />
-          <span className="text-[12px] font-bold uppercase tracking-wide">Pro studenty učitelství</span>
+        <div className="mb-7 inline-flex items-center gap-2.5 rounded-full bg-[#E8942A] px-6 py-2.5 text-white shadow-lg shadow-[#E8942A]/30" style={FF}>
+          <GraduationCap className="h-5 w-5" />
+          <span className="text-[15px] font-bold uppercase tracking-wide md:text-[17px]">Pro studenty učitelství</span>
         </div>
         <h1 className="mx-auto mb-5 max-w-[820px] font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-[#001161] md:text-[54px]">
           Vividbooks zdarma po celou dobu studia.
