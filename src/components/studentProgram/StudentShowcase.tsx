@@ -53,11 +53,11 @@ export function StudentHeroCard({ onCta, secondaryHref }: { onCta: () => void; s
           <p style={FF} className="mx-auto mb-8 max-w-[520px] text-[16px] leading-relaxed text-white/80 md:text-[18px] lg:mx-0">
             Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
           </p>
-          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row lg:justify-start">
-            <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-white px-8 py-4 text-[15px] font-bold text-[#5B21B6] shadow-lg shadow-black/10 transition-all hover:scale-105" style={FF}>
+          <div className="flex flex-col flex-wrap items-center justify-center gap-3 sm:flex-row lg:justify-start">
+            <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-white px-7 py-4 text-[15px] font-bold text-[#5B21B6] shadow-lg shadow-black/10 transition-all hover:scale-105" style={FF}>
               Získat přístup zdarma <ArrowRight className="h-4 w-4" />
             </button>
-            <a href={secondaryHref} className="inline-flex items-center gap-2 rounded-full border border-white/35 px-6 py-4 text-[15px] font-bold text-white no-underline transition-all hover:bg-white/10" style={FF}>
+            <a href={secondaryHref} className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-white/35 px-6 py-4 text-[15px] font-bold text-white no-underline transition-all hover:bg-white/10" style={FF}>
               Co v aplikaci najdete
             </a>
           </div>
