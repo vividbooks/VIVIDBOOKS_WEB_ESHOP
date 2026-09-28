@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { motion } from 'motion/react';
-import { Sparkles, GraduationCap, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight } from 'lucide-react';
 import { SubjectTabsSection, type SubjectExtraTab } from '../SubjectTabsSection';
 import { supabasePublicUrlToTinyRenderUrl } from '../../utils/supabaseImageThumbnail';
 import aplikace3dObjekty from '../../assets/campaign/aplikace-3d-objekty.png';
@@ -42,12 +42,8 @@ export function StudentHero({ onCta, secondaryHref }: { onCta: () => void; secon
   return (
     <section className="mx-auto max-w-[1100px] text-center">
       <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
-        <div className="mb-7 inline-flex items-center gap-2 whitespace-nowrap rounded-[12px] bg-[#E8942A] px-4 py-2 text-white sm:gap-2.5 sm:px-5 sm:py-2.5" style={FF}>
-          <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5" />
-          <span className="text-[13px] font-bold uppercase tracking-wide sm:text-[15px] md:text-[17px]">Pro studenty učitelství</span>
-        </div>
-        <h1 className="mx-auto mb-5 max-w-[820px] font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-[#001161] md:text-[54px]">
-          Vividbooks zdarma po celou dobu studia.
+        <h1 className="mx-auto mb-5 max-w-[900px] font-['Cooper_Light',serif] text-[34px] leading-[1.08] text-[#001161] md:text-[54px]">
+          Pro studenty učitelství: Vividbooks zdarma po celou dobu studia.
         </h1>
         <p style={FF} className="mx-auto mb-8 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/65 md:text-[18px]">
           Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
