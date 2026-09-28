@@ -42,7 +42,7 @@ export function StudentHero({ onCta, secondaryHref }: { onCta: () => void; secon
   return (
     <section className="mx-auto max-w-[1100px] text-center">
       <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
-        <div className="mb-7 inline-flex items-center gap-2 whitespace-nowrap rounded-full bg-[#E8942A] px-4 py-2 text-white shadow-lg shadow-[#E8942A]/30 sm:gap-2.5 sm:px-6 sm:py-2.5" style={FF}>
+        <div className="mb-7 inline-flex items-center gap-2 whitespace-nowrap rounded-[12px] bg-[#E8942A] px-4 py-2 text-white sm:gap-2.5 sm:px-5 sm:py-2.5" style={FF}>
           <GraduationCap className="h-4 w-4 sm:h-5 sm:w-5" />
           <span className="text-[13px] font-bold uppercase tracking-wide sm:text-[15px] md:text-[17px]">Pro studenty učitelství</span>
         </div>
@@ -53,10 +53,10 @@ export function StudentHero({ onCta, secondaryHref }: { onCta: () => void; secon
           Interaktivní lekce, animace, pracovní listy a testy pro matematiku, fyziku, chemii, přírodopis, prvouku i češtinu — stejné, se kterými učí přes 600 základních škol. Stačí univerzitní e-mail.
         </p>
         <div className="flex flex-col flex-wrap items-center justify-center gap-3 sm:flex-row">
-          <button type="button" onClick={onCta} className="inline-flex cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-[#7C3AED] px-7 py-4 text-[15px] font-bold text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-105 hover:bg-[#6D28D9]" style={FF}>
+          <button type="button" onClick={onCta} className="inline-flex h-[53px] cursor-pointer items-center gap-2 whitespace-nowrap rounded-[15px] bg-[#7C3AED] px-[31px] text-[15px] font-bold text-white transition-all hover:scale-[1.03] hover:bg-[#6D28D9]" style={FF}>
             Získat přístup zdarma <ArrowRight className="h-4 w-4" />
           </button>
-          <a href={secondaryHref} className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-[#001161]/12 bg-white px-6 py-4 text-[15px] font-bold text-[#001161] no-underline transition-all hover:bg-[#f5f7fd]" style={FF}>
+          <a href={secondaryHref} className="inline-flex h-[53px] items-center gap-2 whitespace-nowrap rounded-[15px] border border-[#001161]/12 bg-white px-[31px] text-[15px] font-bold text-[#001161] no-underline transition-all hover:bg-[#f5f7fd]" style={FF}>
             Co v aplikaci najdete
           </a>
         </div>
