@@ -22788,6 +22788,98 @@ app.post('/make-server-93a20b6f/admin/ecomail/import-mailchimp', async (c) => {
   }
 });
 
+/**
+ * Migrace kontaktů z databáze webu (tabulka `subscribers`) do seznamu newsletteru v Ecomailu.
+ * Mailchimp účet je deaktivovaný, databáze drží jeho kopii z 2. 9. 2026 + pozdější změny.
+ * Bere jen kontakty se souhlasem: člen newsletterového seznamu převzatého z Mailchimpu,
+ * nebo `merge_fields.consented_at` (double opt-in na webu). Stav: odhlášený kdekoli → 2,
+ * cleaned → 4, jinak subscribed → 1; pending se přeskakuje.
+ * Po dávkách `{ offset, count }` (count ≤ 3000) přes subscribers seřazené podle id. `dryRun: true` jen spočítá.
+ */
+app.post('/make-server-93a20b6f/admin/ecomail/import-db', async (c) => {
+  const denied = await requireAdminOrEcomailToken(c);
+  if (denied) return denied;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const offset = Math.max(0, Number(body?.offset) || 0);
+    const count = Math.min(3000, Math.max(1, Number(body?.count) || 3000));
+    const dryRun = body?.dryRun === true;
+    const srEnv = getServiceRoleEnv();
+    if (!srEnv) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
+    const sb = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+    const listId = body?.listId ? Number(body.listId) : await resolveNewsletterListId();
+
+    const subs: any[] = [];
+    for (let off = offset; off < offset + count; off += 1000) {
+      const to = Math.min(off + 1000, offset + count) - 1;
+      const { data, error } = await sb
+        .from('subscribers')
+        .select('id,email,first_name,last_name,status,merge_fields')
+        .order('id', { ascending: true })
+        .range(off, to);
+      if (error) throw new Error(`subscribers: ${error.message}`);
+      subs.push(...(data || []));
+      if (!data || data.length < to - off + 1) break;
+    }
+
+    const ids = subs.map((s) => s.id);
+    const listStatus = new Map<string, string>();
+    const tagNames = new Map<string, string[]>();
+    for (let i = 0; i < ids.length; i += 200) {
+      const chunk = ids.slice(i, i + 200);
+      const [lists, tags] = await Promise.all([
+        sb.from('subscriber_lists').select('subscriber_id,status').in('subscriber_id', chunk),
+        sb.from('subscriber_tags').select('subscriber_id,tags(name)').in('subscriber_id', chunk),
+      ]);
+      if (lists.error) throw new Error(`subscriber_lists: ${lists.error.message}`);
+      if (tags.error) throw new Error(`subscriber_tags: ${tags.error.message}`);
+      for (const r of lists.data || []) listStatus.set(r.subscriber_id, String(r.status || ''));
+      for (const r of (tags.data || []) as any[]) {
+        const name = String(r?.tags?.name || '').trim().slice(0, 50);
+        if (!name) continue;
+        const arr = tagNames.get(r.subscriber_id) || [];
+        if (arr.length < 30) arr.push(name);
+        tagNames.set(r.subscriber_id, arr);
+      }
+    }
+
+    const skippedReasons: Record<string, number> = {};
+    const skip = (why: string) => { skippedReasons[why] = (skippedReasons[why] || 0) + 1; };
+    const rows: any[] = [];
+    for (const s of subs) {
+      const email = String(s.email || '').trim().toLowerCase();
+      if (!email) { skip('bez e-mailu'); continue; }
+      const inList = listStatus.has(s.id);
+      const consented = !!s.merge_fields?.consented_at;
+      if (!inList && !consented) { skip('bez souhlasu'); continue; }
+      const statuses = [String(s.status || ''), listStatus.get(s.id) || ''];
+      let status: 1 | 2 | 4;
+      if (statuses.includes('unsubscribed')) status = 2;
+      else if (statuses.includes('cleaned')) status = 4;
+      else if (statuses.includes('subscribed')) status = 1;
+      else { skip(`stav ${statuses.filter(Boolean).join('/') || '?'}`); continue; }
+      const tags = tagNames.get(s.id) || [];
+      rows.push({
+        email,
+        status,
+        ...(s.first_name ? { name: String(s.first_name).slice(0, 100) } : {}),
+        ...(s.last_name ? { surname: String(s.last_name).slice(0, 100) } : {}),
+        ...(tags.length ? { tags } : {}),
+        source: 'web-import',
+      });
+    }
+    const byStatus = rows.reduce((acc: Record<string, number>, r) => ((acc[r.status] = (acc[r.status] || 0) + 1), acc), {});
+    let inserts = 0;
+    if (!dryRun && rows.length) inserts = (await ecomailSubscribeBulk(listId, rows)).inserts;
+    const nextOffset = offset + subs.length;
+    console.log(`[Ecomail import-db] ${offset}–${nextOffset}: ${rows.length} řádků, inserts ${inserts}${dryRun ? ' (dry run)' : ''}`);
+    return c.json({ ok: true, listId, offset, fetched: subs.length, rows: rows.length, inserts, byStatus, skippedReasons, nextOffset, done: subs.length < count });
+  } catch (e: any) {
+    console.log(`[Ecomail import-db] ${e?.message || e}`);
+    return c.json({ ok: false, error: e?.message || String(e) }, 502);
+  }
+});
+
 app.post('/make-server-93a20b6f/admin/ecomail/create-draft', async (c) => {
   const gate = await requireAdminJwt(c.req.raw);
   if (gate instanceof Response) return gate;
