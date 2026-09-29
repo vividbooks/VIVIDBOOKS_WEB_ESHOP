@@ -167,14 +167,55 @@ export type EcomailBulkSubscriber = {
   source?: string;
 };
 
-/** Hromadný zápis (max 3000 na volání, bez double opt-in). Dřív odhlášené neobnovuje. */
-export async function ecomailSubscribeBulk(listId: number, rows: EcomailBulkSubscriber[]): Promise<{ inserts: number }> {
-  const r = await ecomailFetch(`/lists/${listId}/subscribe-bulk`, {
-    method: 'POST',
-    body: { subscriber_data: rows.slice(0, 3000), update_existing: true, resubscribe: false, trigger_autoresponders: false },
-  });
-  if (!r.ok) throw new Error(errorDetail(r));
-  return { inserts: Number(r.data?.inserts ?? 0) };
+/** Ecomail měří délku tagu v bajtech (max 50) — čeština s diakritikou by jinak přetekla. */
+function truncateUtf8(value: string, maxBytes: number): string {
+  const enc = new TextEncoder();
+  let out = value;
+  while (out && enc.encode(out).length > maxBytes) out = out.slice(0, -1);
+  return out.trim();
+}
+
+/**
+ * Hromadný zápis (max 3000 na volání, bez double opt-in). Dřív odhlášené neobnovuje.
+ * Ecomail při jediné vadné položce (neplatný e-mail, dlouhý tag) odmítne celou dávku s 422 —
+ * vadné řádky vyřadíme (u tagů jen tagy) a dávku pošleme znovu.
+ */
+export async function ecomailSubscribeBulk(
+  listId: number,
+  input: EcomailBulkSubscriber[],
+): Promise<{ inserts: number; rejected: { email: string; reason: string }[] }> {
+  let rows = input.slice(0, 3000).map((r) => ({
+    ...r,
+    ...(r.tags ? { tags: [...new Set(r.tags.map((t) => truncateUtf8(t, 50)).filter(Boolean))] } : {}),
+  }));
+  const rejected: { email: string; reason: string }[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await ecomailFetch(`/lists/${listId}/subscribe-bulk`, {
+      method: 'POST',
+      body: { subscriber_data: rows, update_existing: true, resubscribe: false, trigger_autoresponders: false },
+    });
+    if (r.ok) return { inserts: Number(r.data?.inserts ?? 0), rejected };
+    if (r.status !== 422 || !r.data || typeof r.data !== 'object') throw new Error(errorDetail(r));
+    const errors = (r.data.errors ?? r.data) as Record<string, Record<string, string[]>>;
+    const drop = new Set<number>();
+    let touched = false;
+    for (const [key, fields] of Object.entries(errors)) {
+      const idx = Number(key.match(/^subscriber_data\.(\d+)$/)?.[1]);
+      if (!Number.isInteger(idx) || !rows[idx] || !fields || typeof fields !== 'object') continue;
+      const fieldNames = Object.keys(fields);
+      if (fieldNames.every((f) => f.startsWith('tags'))) {
+        const { tags: _drop, ...rest } = rows[idx];
+        rows[idx] = rest;
+      } else {
+        drop.add(idx);
+        rejected.push({ email: rows[idx].email, reason: JSON.stringify(fields).slice(0, 200) });
+      }
+      touched = true;
+    }
+    if (!touched) throw new Error(errorDetail(r));
+    rows = rows.filter((_, i) => !drop.has(i));
+  }
+  throw new Error('Ecomail subscribe-bulk: dávka neprošla ani po vyřazení vadných řádků');
 }
 
 /** Statistiky kampaně: doručení, otevření, prokliky, bounce, odhlášení, spam. */

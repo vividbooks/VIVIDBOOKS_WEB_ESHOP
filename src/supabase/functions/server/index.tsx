@@ -22870,10 +22870,11 @@ app.post('/make-server-93a20b6f/admin/ecomail/import-db', async (c) => {
     }
     const byStatus = rows.reduce((acc: Record<string, number>, r) => ((acc[r.status] = (acc[r.status] || 0) + 1), acc), {});
     let inserts = 0;
-    if (!dryRun && rows.length) inserts = (await ecomailSubscribeBulk(listId, rows)).inserts;
+    let rejected: { email: string; reason: string }[] = [];
+    if (!dryRun && rows.length) ({ inserts, rejected } = await ecomailSubscribeBulk(listId, rows));
     const nextOffset = offset + subs.length;
     console.log(`[Ecomail import-db] ${offset}–${nextOffset}: ${rows.length} řádků, inserts ${inserts}${dryRun ? ' (dry run)' : ''}`);
-    return c.json({ ok: true, listId, offset, fetched: subs.length, rows: rows.length, inserts, byStatus, skippedReasons, nextOffset, done: subs.length < count });
+    return c.json({ ok: true, listId, offset, fetched: subs.length, rows: rows.length, inserts, rejected, byStatus, skippedReasons, nextOffset, done: subs.length < count });
   } catch (e: any) {
     console.log(`[Ecomail import-db] ${e?.message || e}`);
     return c.json({ ok: false, error: e?.message || String(e) }, 502);
