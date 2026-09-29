@@ -1,6 +1,7 @@
 import type postgres from 'npm:postgres';
 import { computeOrderTrackingToken } from './order-tracking-token.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from './email-force-light.ts';
+import { sendTransactionalMail, transactionalMailKey } from './transactional-mail.ts';
 import {
   VB_EMAIL_NAVY,
   buildVividbooksBrandCta,
@@ -442,7 +443,7 @@ async function sendMandrillMessage(params: {
   html: string;
   replyTo: string;
 }) {
-  const response = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+  const response = await sendTransactionalMail({
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -476,9 +477,9 @@ async function sendMandrillMessage(params: {
  * Volá se po odeslání potvrzení zákazníkovi; chyba nesmí shodit zákaznický e-mail — volající ji jen zaloguje.
  */
 export async function sendPosterOrderAdminNotification(sql: postgres.Sql, orderId: string) {
-  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  const mandrillKey = transactionalMailKey();
   if (!mandrillKey) {
-    throw new Error('Missing MANDRILL_API_KEY.');
+    throw new Error('Missing RESEND_API_KEY (transakční e-maily).');
   }
   const { order, items } = await loadOrderEmailData(sql, orderId);
   if (!isPosterOrder(order)) {
@@ -669,9 +670,9 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
 }
 
 export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: string; emailType: OrderEmailType }) {
-  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  const mandrillKey = transactionalMailKey();
   if (!mandrillKey) {
-    throw new Error('Missing MANDRILL_API_KEY.');
+    throw new Error('Missing RESEND_API_KEY (transakční e-maily).');
   }
 
   const from = parseFromHeader(Deno.env.get('EMAIL_FROM') || 'VividBooks <objednavky@vividbooks.com>');

@@ -8,6 +8,14 @@ import md5 from 'npm:md5';
 import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
+import {
+  ecomailListLists,
+  ecomailSendCampaignTest,
+  ecomailSubscribeNewsletter,
+  ecomailUpsertCampaignDraft,
+  getEcomailSender,
+  resolveNewsletterListId,
+} from './ecomailClient.ts';
 import { upsertSubscriber, getServiceRoleEnv } from './subscribersUpsert.ts';
 import {
   identityUpsertAuthorized,
@@ -57,6 +65,7 @@ import { sanitizeWebinarLearningsHtml } from '../../../utils/webinarLearningsHtm
 import { domainAcceptsMailForForms } from '../../../../supabase/functions/_shared/email-mx.ts';
 import { parseFreeFormAddress } from '../../../../supabase/functions/_shared/czech-address-enrichment.ts';
 import { distributorContactPersonName } from '../../../../supabase/functions/_shared/pipedrive-distributor-person.ts';
+import { sendTransactionalMail, transactionalMailKey } from '../../../../supabase/functions/_shared/transactional-mail.ts';
 import {
   PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS,
   buildPipedrivePersonSubjectFieldPayload,
@@ -3547,10 +3556,10 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     let mandrillSync: MandrillSyncState = {
       ok: false,
       skipped: true,
-      detail: 'Chybí MANDRILL_API_KEY v Supabase (Edge Functions → Secrets). Bez něj se potvrzovací e-mail neodešle.',
+      detail: 'Chybí RESEND_API_KEY v Supabase (Edge Functions → Secrets). Bez něj se potvrzovací e-mail neodešle.',
     };
 
-    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+    const mandrillKey = transactionalMailKey();
     if (suppressLiveRegistrationEmail) {
       mandrillSync = {
         ok: true,
@@ -3605,6 +3614,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+    /* Newslettery jdou přes Ecomail; Mailchimp níž zatím drží štítky webinářů. */
+    if (newsletter) await ecomailSubscribeNewsletter({ email: cleanEmail, name: name, source: 'webinar-registrace' });
 
     type McSync = {
       ok: boolean;
@@ -4257,6 +4268,8 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const newsletter = !!reg.newsletter;
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+    /* Newslettery jdou přes Ecomail; Mailchimp níž zatím drží štítky webinářů. */
+    if (newsletter) await ecomailSubscribeNewsletter({ email: cleanEmail, name: participantName, source: 'dvpp-certifikat' });
 
     type McMini = { ok: boolean; skipped?: boolean; detail?: string };
     let mailchimp: McMini = { ok: false, skipped: true, detail: 'Mailchimp není nakonfigurován.' };
@@ -4390,6 +4403,8 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+    /* Newslettery jdou přes Ecomail; Mailchimp níž zatím drží štítky webinářů. */
+    if (newsletter) await ecomailSubscribeNewsletter({ email: cleanEmail, name: name, source: 'dvpp-video' });
 
     if (mcApiKey && audienceId) {
       try {
@@ -4470,7 +4485,7 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
     }
 
     // ── Mandrill confirmation email ────────────────────────────────
-    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+    const mandrillKey = transactionalMailKey();
     if (mandrillKey) {
       try {
         const firstName = czechFirstNameVocative(name.trim().split(' ')[0] || name.trim());
@@ -4501,7 +4516,7 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
             `&copy; ${new Date().getFullYear()} Vividbooks</p>`,
         });
 
-        await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+        await sendTransactionalMail({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -7160,10 +7175,10 @@ async function sendMandrillWebinarRegistrationConfirmationResult(opts: {
   html: string;
   attachments: Array<{ type: string; name: string; content: string }>;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  const mandrillKey = transactionalMailKey();
   if (!mandrillKey) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
   try {
-    const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+    const mailRes = await sendTransactionalMail({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -7201,7 +7216,7 @@ async function sendMandrillHtmlResult(opts: {
   /** Metadata (jen řetězce) — např. webinar_id pro webhook „open“ u follow-up e-mailů. */
   metadata?: Record<string, string>;
 }): Promise<{ ok: boolean; detail?: string }> {
-  const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+  const mandrillKey = transactionalMailKey();
   if (!mandrillKey) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
   try {
     const meta =
@@ -7210,7 +7225,7 @@ async function sendMandrillHtmlResult(opts: {
             Object.entries(opts.metadata).map(([k, v]) => [k, String(v ?? '').slice(0, 500)]),
           )
         : undefined;
-    const mailRes = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+    const mailRes = await sendTransactionalMail({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -7712,7 +7727,7 @@ app.post('/make-server-93a20b6f/cron/webinar-reminders', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     const markPast = await markPastWebinarsInCollection();
-    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+    const mandrillKey = transactionalMailKey();
     if (!mandrillKey) {
       return c.json({ ok: true, skipped: 'MANDRILL_API_KEY missing', sent: 0, markPastUpdated: markPast.updated });
     }
@@ -7817,8 +7832,8 @@ async function adminWebinarReminderBulkSendHandler(c: Context) {
     const force = body?.force === true;
     if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
 
-    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
-      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    if (!transactionalMailKey()) {
+      return c.json({ error: 'Transakční e-maily nejsou nastavené (RESEND_API_KEY v Edge Functions secrets).' }, 503);
     }
 
     const items = (await getCollection(WEBINARS_KEY)) as any[];
@@ -7936,8 +7951,8 @@ app.post('/make-server-93a20b6f/admin/webinar-reminder-test-send', async (c) => 
     const kind = body?.kind === 't30' ? 't30' : 'morning';
     if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
 
-    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
-      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    if (!transactionalMailKey()) {
+      return c.json({ error: 'Transakční e-maily nejsou nastavené (RESEND_API_KEY v Edge Functions secrets).' }, 503);
     }
 
     const items = (await getCollection(WEBINARS_KEY)) as any[];
@@ -8009,8 +8024,8 @@ app.post('/make-server-93a20b6f/admin/webinar-registration-test-send', async (c)
     const webinarId = String(body?.webinarId || '').trim();
     if (!webinarId) return c.json({ error: 'Chybí webinarId.' }, 400);
 
-    if (!Deno.env.get('MANDRILL_API_KEY')?.trim()) {
-      return c.json({ error: 'MANDRILL_API_KEY není nastaven v Edge Functions secrets.' }, 503);
+    if (!transactionalMailKey()) {
+      return c.json({ error: 'Transakční e-maily nejsou nastavené (RESEND_API_KEY v Edge Functions secrets).' }, 503);
     }
 
     const items = (await getCollection(WEBINARS_KEY)) as any[];
@@ -9048,6 +9063,8 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
+    /* Newslettery jdou přes Ecomail; Mailchimp níž zatím drží štítky webinářů. */
+    if (newsletter) await ecomailSubscribeNewsletter({ email: cleanEmail, name: name, source: 'newsletter-form' });
 
     if (mcApiKey && audienceId) {
       try {
@@ -13541,6 +13558,7 @@ app.get('/make-server-93a20b6f/newsletter/confirm', async (c) => {
       tags: ['newsletter'],
     });
     if (!up.ok) return htmlPage('Chyba', 'Potvrzení se nepodařilo uložit. Zkuste to prosím později.', false);
+    await ecomailSubscribeNewsletter({ email: verified.email, source: 'newsletter-optin' });
 
     /* Automatizace: newsletter welcome flow (trigger subscriber_created + source newsletter). */
     await enrollInFlows(sbMailing, { type: 'subscriber_created', source: 'newsletter' }, up.subscriberId).catch(() => {});
@@ -21916,7 +21934,7 @@ app.post('/make-server-93a20b6f/orders', async (c) => {
       }
     }
 
-    const mandrillKey = Deno.env.get('MANDRILL_API_KEY');
+    const mandrillKey = transactionalMailKey();
     if (mandrillKey && email && !paidViaStripe) {
       try {
         const itemsHtml = items
@@ -21963,7 +21981,7 @@ app.post('/make-server-93a20b6f/orders', async (c) => {
               : ''),
         });
 
-        await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+        await sendTransactionalMail({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -22664,6 +22682,59 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
     return c.json({ error: `MC draft: ${e.message}` }, 500);
   }
 });
+
+/* ── Ecomail — newslettery (náhrada Mailchimp kampaní) ─────────────────────────
+ * EmailBuilder tu založí/aktualizuje draft kampaně; odeslání se spouští v Ecomailu.
+ * Vyžaduje admin JWT (X-User-Access-Token), legacy anon klient sem nesmí. */
+
+app.get('/make-server-93a20b6f/admin/ecomail/lists', async (c) => {
+  const gate = await requireAdminJwt(c.req.raw);
+  if (gate instanceof Response) return gate;
+  try {
+    const lists = await ecomailListLists();
+    const configured = Number(Deno.env.get('ECOMAIL_LIST_NEWSLETTER') || '') || null;
+    return c.json({ ok: true, lists, newsletterListId: configured, sender: getEcomailSender() });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 502);
+  }
+});
+
+app.post('/make-server-93a20b6f/admin/ecomail/create-draft', async (c) => {
+  const gate = await requireAdminJwt(c.req.raw);
+  if (gate instanceof Response) return gate;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const subject = String(body?.subject || '').trim();
+    const bodyContent = String(body?.bodyContent || '');
+    if (!subject) return c.json({ error: 'Chybí předmět.' }, 400);
+    if (bodyContent.length < 40) return c.json({ error: 'Tělo mailu je prázdné.' }, 400);
+
+    /* Stejný obal jako náhled v EmailBuilderu a testovací odeslání. */
+    const html = vividbooksEmailTestMatchEditorTemplate({
+      body: bodyContent,
+      preheader: String(body?.previewText || ''),
+      outerBackground: typeof body?.outerBackground === 'string' ? body.outerBackground : undefined,
+      title: subject,
+    });
+    const listId = await resolveNewsletterListId();
+    const result = await ecomailUpsertCampaignDraft(
+      { title: `[Web] ${subject}`, subject, html, listId },
+      body?.campaignId,
+    );
+    const testTo = String(body?.testEmail || '').trim().toLowerCase();
+    let testSent = false;
+    if (testTo) {
+      await ecomailSendCampaignTest(result.id, [testTo]);
+      testSent = true;
+    }
+    console.log(`[Ecomail] Draft ${result.updated ? 'aktualizován' : 'založen'}: ${result.id} "${subject}" → seznam ${listId}`);
+    return c.json({ ok: true, campaignId: String(result.id), updated: result.updated, ecomailUrl: result.url, listId, testSent });
+  } catch (e: any) {
+    console.log(`[Ecomail] create-draft: ${e?.message || e}`);
+    return c.json({ error: e?.message || String(e) }, 502);
+  }
+});
+
 
 /** Povolené adresy pro „Send test“ z editoru kampaní — sdílené s Resend testem (MAILING_TEST_EMAILS). */
 const MAILCHIMP_TEST_EMAIL_ALLOWLIST = getMailingTestEmails();

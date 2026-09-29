@@ -43,6 +43,7 @@ import {
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { sendResendEmail } from './resendClient.ts';
+import { getTransactionalProvider, sendTransactionalMail } from '../../../../supabase/functions/_shared/transactional-mail.ts';
 import {
   interpretStudentAccess,
   renewalStartsOn,
@@ -222,7 +223,7 @@ function siteUrl(origin: string, path: string): string {
   return `${origin.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-/* ── Mandrill (transakční e-maily, stejné nastavení jako zbytek serveru) ──────── */
+/* ── Transakční e-maily (Resend, nouzově Mandrill — viz _shared/transactional-mail.ts) ── */
 
 async function sendMandrill(opts: {
   toEmail: string;
@@ -234,9 +235,8 @@ async function sendMandrill(opts: {
   tags?: string[];
 }): Promise<{ ok: boolean; detail?: string }> {
   const key = Deno.env.get('MANDRILL_API_KEY');
-  if (!key) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
   try {
-    const res = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+    const res = await sendTransactionalMail({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -259,10 +259,12 @@ async function sendMandrill(opts: {
     const status = first?.status;
     if (!res.ok || (status && status !== 'sent' && status !== 'queued' && status !== 'scheduled')) {
       const detail = `${res.status} ${status || ''} ${first?.reject_reason || (body && !Array.isArray(body) ? JSON.stringify(body).slice(0, 160) : '')}`.trim();
+      if (getTransactionalProvider() === 'resend') return { ok: false, detail: `Resend: ${detail}` };
       return await sendViaResendFallback(opts, `Mandrill: ${detail}`);
     }
     return { ok: true };
   } catch (e) {
+    if (getTransactionalProvider() === 'resend') return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     return await sendViaResendFallback(opts, e instanceof Error ? e.message : String(e));
   }
 }
