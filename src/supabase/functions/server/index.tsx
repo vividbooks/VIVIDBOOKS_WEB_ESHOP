@@ -22690,7 +22690,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
  * Vyžaduje admin JWT (X-User-Access-Token), legacy anon klient sem nesmí. */
 
 app.get('/make-server-93a20b6f/admin/ecomail/lists', async (c) => {
-  const denied = await requireAdminOrServiceRole(c);
+  const denied = await requireAdminOrEcomailToken(c);
   if (denied) return denied;
   try {
     const lists = await ecomailListLists();
@@ -22701,17 +22701,20 @@ app.get('/make-server-93a20b6f/admin/ecomail/lists', async (c) => {
   }
 });
 
-/** Admin JWT, nebo service role (jednorázové operace z CLI, např. migrace kontaktů). */
-async function requireAdminOrServiceRole(c: Context): Promise<Response | null> {
-  const bearer = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
-  if (serviceKey && bearer && bearer === serviceKey) return null;
+/**
+ * Admin JWT, nebo token z CLI (hlavička `X-Ecomail-Admin-Token` = secret ECOMAIL_ADMIN_TOKEN)
+ * pro jednorázové operace, např. migraci kontaktů.
+ */
+async function requireAdminOrEcomailToken(c: Context): Promise<Response | null> {
+  const token = (c.req.header('X-Ecomail-Admin-Token') || '').trim();
+  const expected = Deno.env.get('ECOMAIL_ADMIN_TOKEN')?.trim();
+  if (expected && expected.length >= 32 && token === expected) return null;
   const gate = await requireAdminJwt(c.req.raw);
   return gate instanceof Response ? gate : null;
 }
 
 app.get('/make-server-93a20b6f/admin/ecomail/campaign-stats/:id', async (c) => {
-  const denied = await requireAdminOrServiceRole(c);
+  const denied = await requireAdminOrEcomailToken(c);
   if (denied) return denied;
   try {
     const stats = await ecomailCampaignStats(Number(c.req.param('id')));
@@ -22728,7 +22731,7 @@ app.get('/make-server-93a20b6f/admin/ecomail/campaign-stats/:id', async (c) => {
  * bez resubscribe). `dryRun: true` jen spočítá.
  */
 app.post('/make-server-93a20b6f/admin/ecomail/import-mailchimp', async (c) => {
-  const denied = await requireAdminOrServiceRole(c);
+  const denied = await requireAdminOrEcomailToken(c);
   if (denied) return denied;
   try {
     const body = await c.req.json().catch(() => ({}));
