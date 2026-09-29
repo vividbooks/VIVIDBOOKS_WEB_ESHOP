@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { useDvppVideos, type DvppVideo } from '../contexts/DvppVideosContext';
@@ -170,6 +170,24 @@ function matchHowToWebinar(card: HowToCard, webinars: Webinar[]): Webinar | unde
 function matchDvppVideoForCard(webinar: Webinar, videos: DvppVideo[]): DvppVideo | undefined {
   const wSlug = String(webinar.slug || webinar.id || '');
   return videos.find((v) => v.webinarSlugForSurvey === wSlug);
+}
+
+/**
+ * Odkaz podle slugu webináře: záznam (když už proběhl a je nahraný), jinak stránka webináře.
+ * Používají ho bobánky v hero slideru (`webinar:<slug>`).
+ */
+export function useWebinarRecordingHref(): (slug: string) => string {
+  const { webinars } = useWebinars();
+  const { videos: dvppVideos } = useDvppVideos();
+  return useCallback(
+    (slug: string) => {
+      const live = webinars.find((w) => (w.slug || w.id) === slug);
+      if (!live) return `/webinar/${slug}`;
+      const recording = live.isPast ? matchDvppVideoForCard(live, dvppVideos) : undefined;
+      return recording ? `/webinare/zaznam/${recording.id}` : `/webinar/${live.slug || live.id}`;
+    },
+    [webinars, dvppVideos],
+  );
 }
 
 export function SubjectHowToWebinarsSection() {

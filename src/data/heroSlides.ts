@@ -759,6 +759,48 @@ export function parseHeroTitleUnderlines(raw: unknown): [number, number][] {
 }
 
 /** Bloky textového sloupce hero (CMS / vizuální editor). */
+/**
+ * Bobánek na obrázku u layoutu `left-image` — bílá bublina s odkazem.
+ * `x`/`y` = střed bubliny v % plochy obrázku. Odkaz `webinar:<slug>` vede na záznam webináře,
+ * jakmile existuje, jinak na jeho stránku (viz `useWebinarRecordingHref`).
+ */
+export interface HeroBubble {
+  label: string;
+  link: string;
+  x: number;
+  y: number;
+}
+
+/** Bobánky z CMS — JSON pole `[{label, link, x, y}]`, nebo už pole. */
+export function parseHeroBubbles(raw: unknown): HeroBubble[] {
+  let arr: unknown = raw;
+  if (typeof raw === 'string') {
+    const t = raw.trim();
+    if (!t) return [];
+    try {
+      arr = JSON.parse(t);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(arr)) return [];
+  const out: HeroBubble[] = [];
+  for (const row of arr) {
+    if (!row || typeof row !== 'object') continue;
+    const r = row as Record<string, unknown>;
+    const label = typeof r.label === 'string' ? r.label.trim() : '';
+    if (!label) continue;
+    const clampPct = (v: unknown) => Math.min(100, Math.max(0, Number(v) || 0));
+    out.push({
+      label,
+      link: typeof r.link === 'string' ? r.link.trim() : '',
+      x: clampPct(r.x),
+      y: clampPct(r.y),
+    });
+  }
+  return out;
+}
+
 export const HERO_CONTENT_BLOCK_IDS = ['title', 'subtitle', 'badges', 'bottom', 'cta'] as const;
 export type HeroContentBlockId = (typeof HERO_CONTENT_BLOCK_IDS)[number];
 
@@ -907,6 +949,10 @@ export interface HeroSlide {
   heroVideo?: string;
   heroVideoPoster?: string;
   heroVideoPlaybackRate?: number;
+  /** Layout `left-image`: bobánky s odkazy přes obrázek (JSON `[{label, link, x, y}]`). */
+  heroBubbles?: string | HeroBubble[];
+  /** `row` = řada u spodního okraje obrázku, `text` = pod textem slidu; jinak volně podle x/y. */
+  heroBubblesLayout?: 'free' | 'row' | 'text';
 }
 
 /** Slide „Nová aplikace“ — video hero pro homepage slider. */

@@ -13,7 +13,7 @@ import { fetchJsonWithRetry } from '../utils/fetchWithRetry';
 import { parseHeroPhoneDiff } from '../utils/heroPhoneOverrides';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { WebinarsSection } from './WebinarsSection';
-import { SubjectHowToWebinarsSection } from './SubjectHowToWebinarsSection';
+import { useWebinarRecordingHref } from './SubjectHowToWebinarsSection';
 import { BlogSection } from './BlogSection';
 import { SEOHead } from './SEOHead';
 import {
@@ -68,6 +68,8 @@ import {
   heroBooksFanBelowShelfMinPx,
   heroBooksFanBelowCollageTopBleedPx,
   heroFullImageCardSurfaceStyle,
+  parseHeroBubbles,
+  type HeroBubble,
   type HeroContentBlockId,
   type HeroHeadingPreset,
   type HeroTitleTiltMode,
@@ -218,6 +220,87 @@ function HeroSlideCtaButton({
       <button type="button" onClick={onClick} className={btn} style={accentStyle}>
         {label}
       </button>
+    </div>
+  );
+}
+
+/** Bobánky přes obrázek u layoutu `left-image`; na úzkém viewportu jako řada pod sebou u spodního okraje. */
+function HeroBubblesOverlay({
+  bubbles,
+  narrow,
+  row,
+  inText,
+}: {
+  bubbles: HeroBubble[] | undefined;
+  narrow?: boolean;
+  row?: boolean;
+  inText?: boolean;
+}) {
+  const navigate = useNavigate();
+  const resolveWebinarHref = useWebinarRecordingHref();
+  if (!bubbles?.length) return null;
+  const hrefFor = (link: string) =>
+    link.startsWith('webinar:') ? resolveWebinarHref(link.slice('webinar:'.length).trim()) : link;
+  const open = (e: React.MouseEvent, link: string) => {
+    e.stopPropagation();
+    const href = hrefFor(link);
+    if (!href) return;
+    if (/^https?:\/\//i.test(href)) window.open(href, '_blank', 'noopener,noreferrer');
+    else navigate(href);
+  };
+  const bubbleCls =
+    "whitespace-nowrap rounded-full bg-white font-['Fenomen_Sans',sans-serif] font-extrabold leading-none tracking-tight text-[#001161] shadow-[0_6px_20px_rgba(0,17,97,0.16)] transition hover:scale-105 hover:shadow-[0_10px_26px_rgba(0,17,97,0.22)] active:scale-95 cursor-pointer";
+  if (inText) {
+    return (
+      <div className="mt-4 flex max-w-[34rem] flex-wrap gap-2 @max-[519px]:mt-3 @max-[519px]:gap-1.5">
+        {bubbles.map((b) => (
+          <button
+            key={b.label}
+            type="button"
+            onClick={(e) => open(e, b.link)}
+            className="cursor-pointer whitespace-nowrap rounded-lg bg-[#e6dbbd] px-3 py-2 font-['Fenomen_Sans',sans-serif] text-[13px] font-extrabold leading-none text-[#001161] transition hover:bg-[#d9cca5] active:scale-95 md:text-[14px] @max-[519px]:px-2.5 @max-[519px]:py-1.5 @max-[519px]:text-[12px]"
+          >
+            {b.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (row && !narrow) {
+    return (
+      <div className="absolute inset-x-3 bottom-5 z-20 flex flex-wrap justify-center gap-1.5">
+        {bubbles.map((b) => (
+          <button key={b.label} type="button" onClick={(e) => open(e, b.link)} className={`${bubbleCls} px-2.5 py-2 text-[12px] xl:px-3 xl:text-[13px]`}>
+            {b.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (narrow) {
+    return (
+      <div className="absolute inset-x-3 bottom-3 z-20 flex flex-wrap justify-center gap-1.5">
+        {bubbles.map((b) => (
+          <button key={b.label} type="button" onClick={(e) => open(e, b.link)} className={`${bubbleCls} px-2.5 py-1.5 text-[11.5px]`}>
+            {b.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20">
+      {bubbles.map((b) => (
+        <button
+          key={b.label}
+          type="button"
+          onClick={(e) => open(e, b.link)}
+          className={`${bubbleCls} pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 px-3.5 py-2 text-[13px] md:text-[14px]`}
+          style={{ left: `${b.x}%`, top: `${b.y}%` }}
+        >
+          {b.label}
+        </button>
+      ))}
     </div>
   );
 }
@@ -967,6 +1050,11 @@ export default function CatalogGrid() {
         heroImageScalePct: clampHeroImageScalePct(s.heroImageScalePct),
         heroImagePosXPct: clampHeroImagePosPct(s.heroImagePosXPct),
         heroImagePosYPct: clampHeroImagePosPct(s.heroImagePosYPct),
+        heroBubbles: parseHeroBubbles(s.heroBubbles),
+        heroBubblesLayout:
+          s.heroBubblesLayout === 'row' || s.heroBubblesLayout === 'text'
+            ? (s.heroBubblesLayout as 'row' | 'text')
+            : ('free' as const),
         heroFullImageCardBgHex: normalizeHeroFullImageCardBgHex(s.heroFullImageCardBgHex),
         heroFullImageCardOpacityPct: clampHeroFullImageCardOpacityPct(s.heroFullImageCardOpacityPct),
         heroFullImageCardBlurPx: clampHeroFullImageCardBlurPx(s.heroFullImageCardBlurPx),
@@ -1928,6 +2016,9 @@ export default function CatalogGrid() {
                           accentForUi={accentForUi}
                           navigate={navigate}
                         />
+                        {(slideView as any).heroBubblesLayout === 'text' && (
+                          <HeroBubblesOverlay bubbles={(slideView as any).heroBubbles} inText />
+                        )}
                       </div>
                       <div className="relative min-h-0 min-w-0 flex-1 basis-0 overflow-hidden">
                         <img
@@ -1942,6 +2033,9 @@ export default function CatalogGrid() {
                             50,
                           )}
                         />
+                        {(slideView as any).heroBubblesLayout !== 'text' && (
+                          <HeroBubblesOverlay bubbles={(slideView as any).heroBubbles} narrow />
+                        )}
                       </div>
                     </div>
                   ) : (
@@ -1963,6 +2057,9 @@ export default function CatalogGrid() {
                           accentForUi={accentForUi}
                           navigate={navigate}
                         />
+                        {(slideView as any).heroBubblesLayout === 'text' && (
+                          <HeroBubblesOverlay bubbles={(slideView as any).heroBubbles} inText />
+                        )}
                       </div>
                       <div
                         className={`relative min-h-0 w-full min-w-0 flex-1 basis-0 shrink-0 self-stretch overflow-hidden @max-[519px]:rounded-none @min-[520px]:flex-none @min-[520px]:h-full @min-[520px]:min-h-0 @min-[520px]:min-w-0 @min-[520px]:w-full @min-[520px]:self-stretch @min-[520px]:rounded-2xl @min-[520px]:m-0 ${
@@ -1981,6 +2078,12 @@ export default function CatalogGrid() {
                             (slideView as any).heroImagePosYPct,
                           )}
                         />
+                        {(slideView as any).heroBubblesLayout !== 'text' && (
+                          <HeroBubblesOverlay
+                            bubbles={(slideView as any).heroBubbles}
+                            row={(slideView as any).heroBubblesLayout === 'row'}
+                          />
+                        )}
                       </div>
                     </div>
                   )
@@ -2087,7 +2190,6 @@ export default function CatalogGrid() {
       </div>
       )}
 
-      {!isDistributorMode && <SubjectHowToWebinarsSection />}
 
       {/* Product groups */}
       <div className="px-4 md:px-8 mt-8">
