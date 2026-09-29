@@ -22882,8 +22882,8 @@ app.post('/make-server-93a20b6f/admin/ecomail/import-db', async (c) => {
 });
 
 app.post('/make-server-93a20b6f/admin/ecomail/create-draft', async (c) => {
-  const gate = await requireAdminJwt(c.req.raw);
-  if (gate instanceof Response) return gate;
+  const denied = await requireAdminOrEcomailToken(c);
+  if (denied) return denied;
   try {
     const body = await c.req.json().catch(() => ({}));
     const subject = String(body?.subject || '').trim();
