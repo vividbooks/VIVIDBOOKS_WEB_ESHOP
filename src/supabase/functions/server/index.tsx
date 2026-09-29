@@ -9,7 +9,9 @@ import { runMailchimpContactsMigrate } from './mailchimpContactsMigrate.ts';
 import { mailingTagCreate, mailingTagsList, mailingSubscriberTagsPatch } from './mailingTagsAdmin.ts';
 import { sendResendEmail } from './resendClient.ts';
 import {
+  ecomailCampaignStats,
   ecomailListLists,
+  ecomailSubscribeBulk,
   ecomailSendCampaignTest,
   ecomailSubscribeNewsletter,
   ecomailUpsertCampaignDraft,
@@ -22688,13 +22690,97 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
  * Vyžaduje admin JWT (X-User-Access-Token), legacy anon klient sem nesmí. */
 
 app.get('/make-server-93a20b6f/admin/ecomail/lists', async (c) => {
-  const gate = await requireAdminJwt(c.req.raw);
-  if (gate instanceof Response) return gate;
+  const denied = await requireAdminOrServiceRole(c);
+  if (denied) return denied;
   try {
     const lists = await ecomailListLists();
     const configured = Number(Deno.env.get('ECOMAIL_LIST_NEWSLETTER') || '') || null;
     return c.json({ ok: true, lists, newsletterListId: configured, sender: getEcomailSender() });
   } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 502);
+  }
+});
+
+/** Admin JWT, nebo service role (jednorázové operace z CLI, např. migrace kontaktů). */
+async function requireAdminOrServiceRole(c: Context): Promise<Response | null> {
+  const bearer = (c.req.header('Authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.trim();
+  if (serviceKey && bearer && bearer === serviceKey) return null;
+  const gate = await requireAdminJwt(c.req.raw);
+  return gate instanceof Response ? gate : null;
+}
+
+app.get('/make-server-93a20b6f/admin/ecomail/campaign-stats/:id', async (c) => {
+  const denied = await requireAdminOrServiceRole(c);
+  if (denied) return denied;
+  try {
+    const stats = await ecomailCampaignStats(Number(c.req.param('id')));
+    return c.json({ ok: true, stats });
+  } catch (e: any) {
+    return c.json({ ok: false, error: e?.message || String(e) }, 502);
+  }
+});
+
+/**
+ * Migrace kontaktů z Mailchimpu (audience newsletteru) do seznamu newsletteru v Ecomailu.
+ * Po dávkách: `{ offset, count }` (count ≤ 3000). Stavy: subscribed → 1, unsubscribed → 2, cleaned → 4;
+ * pending (nepotvrzený double opt-in) se přeskakuje. Opakované spuštění je bezpečné (update_existing,
+ * bez resubscribe). `dryRun: true` jen spočítá.
+ */
+app.post('/make-server-93a20b6f/admin/ecomail/import-mailchimp', async (c) => {
+  const denied = await requireAdminOrServiceRole(c);
+  if (denied) return denied;
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const offset = Math.max(0, Number(body?.offset) || 0);
+    const count = Math.min(3000, Math.max(1, Number(body?.count) || 3000));
+    const dryRun = body?.dryRun === true;
+    const { mcBase, mcAuth } = getMailchimpAuth();
+    const mcListId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
+    if (!mcListId) return c.json({ ok: false, error: 'Chybí MAILCHIMP_AUDIENCE_NEWSLETTER' }, 500);
+    const listId = body?.listId ? Number(body.listId) : await resolveNewsletterListId();
+
+    const members: any[] = [];
+    let total = 0;
+    for (let off = offset; off < offset + count; off += 1000) {
+      const page = Math.min(1000, offset + count - off);
+      const url = `${mcBase}/lists/${mcListId}/members?count=${page}&offset=${off}` +
+        '&fields=total_items,members.email_address,members.status,members.merge_fields.FNAME,members.merge_fields.LNAME,members.tags.name';
+      const res = await fetch(url, { headers: { Authorization: `Basic ${mcAuth}` } });
+      if (!res.ok) throw new Error(`Mailchimp ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const data = await res.json();
+      total = Number(data?.total_items || 0);
+      const batch = Array.isArray(data?.members) ? data.members : [];
+      members.push(...batch);
+      if (batch.length < page) break;
+    }
+
+    const statusMap: Record<string, 1 | 2 | 4> = { subscribed: 1, unsubscribed: 2, cleaned: 4 };
+    const rows = members
+      .filter((m) => statusMap[m?.status] && m?.email_address)
+      .map((m) => {
+        const tags = (Array.isArray(m.tags) ? m.tags : [])
+          .map((t: any) => String(t?.name || '').trim().slice(0, 50))
+          .filter(Boolean)
+          .slice(0, 30);
+        return {
+          email: String(m.email_address).trim().toLowerCase(),
+          status: statusMap[m.status],
+          ...(m.merge_fields?.FNAME ? { name: String(m.merge_fields.FNAME).slice(0, 100) } : {}),
+          ...(m.merge_fields?.LNAME ? { surname: String(m.merge_fields.LNAME).slice(0, 100) } : {}),
+          ...(tags.length ? { tags } : {}),
+          source: 'mailchimp-import',
+        };
+      });
+    const byStatus = rows.reduce((acc: Record<string, number>, r) => ((acc[r.status] = (acc[r.status] || 0) + 1), acc), {});
+    const skipped = members.length - rows.length;
+    let inserts = 0;
+    if (!dryRun && rows.length) inserts = (await ecomailSubscribeBulk(listId, rows)).inserts;
+    const nextOffset = offset + members.length;
+    console.log(`[Ecomail import] ${offset}–${nextOffset}/${total}: ${rows.length} řádků, inserts ${inserts}, přeskočeno ${skipped}${dryRun ? ' (dry run)' : ''}`);
+    return c.json({ ok: true, listId, total, offset, fetched: members.length, sent: dryRun ? 0 : rows.length, inserts, byStatus, skipped, nextOffset, done: nextOffset >= total || members.length === 0 });
+  } catch (e: any) {
+    console.log(`[Ecomail import] ${e?.message || e}`);
     return c.json({ ok: false, error: e?.message || String(e) }, 502);
   }
 });

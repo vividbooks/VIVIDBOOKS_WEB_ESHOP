@@ -157,3 +157,29 @@ export async function ecomailSubscribeNewsletter(opts: {
     return { ok: false, detail };
   }
 }
+
+export type EcomailBulkSubscriber = {
+  email: string;
+  status: 1 | 2 | 4;
+  name?: string;
+  surname?: string;
+  tags?: string[];
+  source?: string;
+};
+
+/** Hromadný zápis (max 3000 na volání, bez double opt-in). Dřív odhlášené neobnovuje. */
+export async function ecomailSubscribeBulk(listId: number, rows: EcomailBulkSubscriber[]): Promise<{ inserts: number }> {
+  const r = await ecomailFetch(`/lists/${listId}/subscribe-bulk`, {
+    method: 'POST',
+    body: { subscriber_data: rows.slice(0, 3000), update_existing: true, resubscribe: false, trigger_autoresponders: false },
+  });
+  if (!r.ok) throw new Error(errorDetail(r));
+  return { inserts: Number(r.data?.inserts ?? 0) };
+}
+
+/** Statistiky kampaně: doručení, otevření, prokliky, bounce, odhlášení, spam. */
+export async function ecomailCampaignStats(campaignId: number): Promise<Record<string, number>> {
+  const r = await ecomailFetch(`/campaigns/${campaignId}/stats`);
+  if (!r.ok) throw new Error(errorDetail(r));
+  return r.data?.stats ?? r.data ?? {};
+}
