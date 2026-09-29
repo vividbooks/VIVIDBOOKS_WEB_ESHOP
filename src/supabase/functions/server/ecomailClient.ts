@@ -224,3 +224,13 @@ export async function ecomailCampaignStats(campaignId: number): Promise<Record<s
   if (!r.ok) throw new Error(errorDetail(r));
   return r.data?.stats ?? r.data ?? {};
 }
+
+/**
+ * Mailchimp účet je od září 2026 deaktivovaný (API vrací 403 „User Disabled“), newslettery jdou přes Ecomail.
+ * Klíč vracíme jen při `MAILCHIMP_ENABLED=1` — jinak všechna volání Mailchimpu jdou do větve „není nastaveno“
+ * a registrace nehlásí selhanou integraci.
+ */
+export function getMailchimpApiKey(): string | undefined {
+  const enabled = ['1', 'true'].includes(String(Deno.env.get('MAILCHIMP_ENABLED') || '').trim().toLowerCase());
+  return enabled ? Deno.env.get('MAILCHIMP_API_KEY') || undefined : undefined;
+}

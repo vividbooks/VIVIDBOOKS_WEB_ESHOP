@@ -15,6 +15,7 @@ import {
   ecomailSendCampaignTest,
   ecomailSubscribeNewsletter,
   ecomailUpsertCampaignDraft,
+  getMailchimpApiKey,
   getEcomailSender,
   resolveNewsletterListId,
 } from './ecomailClient.ts';
@@ -3612,7 +3613,7 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     }
 
     // Mailchimp integration — výsledek uložíme do KV pro admin (Registrace)
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
@@ -3724,9 +3725,8 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
       mailchimpSync = {
         ok: false,
         skipped: true,
-        detail: 'Chybí MAILCHIMP_API_KEY nebo audience (NEWSLETTER / NO_NEWSLETTER).',
+        detail: 'Mailchimp je vypnutý (newslettery jdou přes Ecomail).',
       };
-      console.log(`[Mailchimp] Preskoceno - chybi API klic nebo audience ID`);
     }
 
     /** Dual-write: Postgres subscribers (vlastní mailing) — neblokuje registraci. */
@@ -3875,12 +3875,12 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
     const integrationSummary = {
       overall: (mandrillFailed || mailchimpFailed || pipedriveFailed
         ? 'error'
-        : (mandrillSync.skipped || mailchimpSync.skipped || pipedriveSync.skipped)
+        : (mandrillSync.skipped || (mailchimpSync.skipped && !!getMailchimpApiKey()) || pipedriveSync.skipped)
           ? 'partial'
           : 'ok') as 'ok' | 'partial' | 'error',
       headline: mandrillFailed || mailchimpFailed || pipedriveFailed
         ? 'Alespoň jedna externí integrace selhala — viz krok níže a Supabase Edge Logs.'
-        : (mandrillSync.skipped || mailchimpSync.skipped || pipedriveSync.skipped)
+        : (mandrillSync.skipped || (mailchimpSync.skipped && !!getMailchimpApiKey()) || pipedriveSync.skipped)
           ? 'Některý krok přeskočen (není nastaven klíč nebo audience).'
           : 'Všechny naplánované kroky proběhly v pořádku.',
     };
@@ -4265,7 +4265,7 @@ app.post('/make-server-93a20b6f/webinar-dvpp-certificate-profile', async (c) => 
 
     const reg = merged as Record<string, unknown>;
 
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const newsletter = !!reg.newsletter;
@@ -4401,7 +4401,7 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
     console.log(`[DvppVideo] Registrace ulozena: ${name} (${cleanEmail}) -> ${videoId}`);
 
     // ── Mailchimp ──────────────────────────────────────────────────
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
@@ -4573,7 +4573,7 @@ app.get('/make-server-93a20b6f/verify-token/:token', async (c) => {
 
     if (!data.trialActivated) {
       await kv.set(`trial_token_${token}`, { ...data, trialActivated: true, activatedAt: new Date().toISOString() });
-      const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+      const mcApiKey = getMailchimpApiKey();
       if (mcApiKey) {
         try {
           const subscriberHash = md5(data.email);
@@ -8412,7 +8412,7 @@ async function mailchimpCollectCandidateTagNamesForWebinar(
 
 /** Vybere tag s nejvyšším počtem v **jedné** admin audience (shoda s MC UI). */
 async function mailchimpBestTagForWebinar(w: any): Promise<{ count: number | null; tag: string }> {
-  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const mcApiKey = getMailchimpApiKey();
   const adminListId = getMailchimpAdminListId();
   const slug = String(w.slug || w.id || '').trim() || w.id;
   const fallbackTag = `webinar-${slug}`;
@@ -8439,7 +8439,7 @@ async function mailchimpBestTagForWebinar(w: any): Promise<{ count: number | nul
 
 /** Počet kontaktů s tagem jen v admin audience (nesčítat dva listy). */
 async function mailchimpTagCountOnAdminList(tagName: string): Promise<number | null> {
-  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const mcApiKey = getMailchimpApiKey();
   const listId = getMailchimpAdminListId();
   if (!mcApiKey || !listId) return null;
   const dc = mcApiKey.split('-').pop() || 'us19';
@@ -8495,7 +8495,7 @@ async function mailchimpFetchFollowupRecipientsForWebinar(
   tag: string;
   error?: string;
 }> {
-  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const mcApiKey = getMailchimpApiKey();
   const adminListId = getMailchimpAdminListId();
   if (!mcApiKey || !adminListId) {
     return { rows: [], tag: '', error: 'Mailchimp není nakonfigurován (MAILCHIMP_API_KEY / audience).' };
@@ -8663,7 +8663,7 @@ app.get('/make-server-93a20b6f/admin/registrace', async (c) => {
 app.get('/make-server-93a20b6f/admin/registrace/mailchimp-csv/:webinarId', async (c) => {
   try {
     const webinarId = c.req.param('webinarId');
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const adminListId = getMailchimpAdminListId();
     if (!mcApiKey || !adminListId) {
       return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
@@ -8731,7 +8731,7 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-csv/:webinarId', async
 app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', async (c) => {
   try {
     const webinarId = c.req.param('webinarId');
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const adminListId = getMailchimpAdminListId();
     if (!mcApiKey || !adminListId) {
       return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
@@ -8798,7 +8798,7 @@ app.get('/make-server-93a20b6f/admin/registrace/mailchimp-members/:webinarId', a
 /** Našeptávač názvů tagů v admin audience (Mailchimp tag-search + member_count u každého). */
 async function adminMailchimpTagSuggestHandler(c: Context) {
   try {
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const adminListId = getMailchimpAdminListId();
     if (!mcApiKey || !adminListId) {
       return c.json({ error: 'Chybí Mailchimp API nebo audience (MAILCHIMP_AUDIENCE_PRIMARY / NEWSLETTER).' }, 503);
@@ -8858,7 +8858,7 @@ async function marketingContactsSyncFromMailchimp(opts: { reset?: boolean }): Pr
     }
   }
 
-  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const mcApiKey = getMailchimpApiKey();
   const listId = getMailchimpAdminListId();
   const sb = getServiceSupabaseClient();
   if (!mcApiKey || !listId) throw new Error('Mailchimp nebo audience není nastaveno.');
@@ -9061,7 +9061,7 @@ app.post('/make-server-93a20b6f/newsletter-subscribe', async (c) => {
     const emailGate = await assertEmailDeliverable(cleanEmail);
     if (!emailGate.ok) return c.json({ error: emailGate.message }, 400);
 
-    const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+    const mcApiKey = getMailchimpApiKey();
     const newsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER');
     const noNewsletterAudienceId = Deno.env.get('MAILCHIMP_AUDIENCE_NO_NEWSLETTER');
     const audienceId = newsletter ? newsletterAudienceId : noNewsletterAudienceId;
@@ -9684,7 +9684,7 @@ app.post('/make-server-93a20b6f/admin/migrate-mailchimp-contacts', async (c) => 
           Deno.env.get('MAILCHIMP_AUDIENCE_NEWSLETTER')?.trim() || getMailchimpAdminListId() || '';
       }
     }
-    const apiKey = Deno.env.get('MAILCHIMP_API_KEY')?.trim();
+    const apiKey = getMailchimpApiKey()?.trim();
     if (!apiKey || !listIdMc) {
       return c.json({
         ok: false,
@@ -9880,7 +9880,7 @@ app.get('/make-server-93a20b6f/admin/mailing/engagement-diagnostics', async (c) 
 app.post('/make-server-93a20b6f/admin/mailing/sync-mailchimp-ratings', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const apiKey = Deno.env.get('MAILCHIMP_API_KEY')?.trim();
+    const apiKey = getMailchimpApiKey()?.trim();
     if (!apiKey) return c.json({ ok: false, error: 'Chybí MAILCHIMP_API_KEY.' }, 500);
     const listIdMc =
       (typeof body?.listId === 'string' && body.listId.trim())
@@ -22258,7 +22258,7 @@ app.post('/make-server-93a20b6f/slack/events', async (c) => {
 const MC_CAMPAIGNS_KEY = 'vividbooks_mc_campaigns_v1';
 
 function getMailchimpAuth() {
-  const mcApiKey = Deno.env.get('MAILCHIMP_API_KEY');
+  const mcApiKey = getMailchimpApiKey();
   if (!mcApiKey) throw new Error('MAILCHIMP_API_KEY neni nastaven');
   const dc = mcApiKey.split('-').pop() || 'us19';
   const mcBase = `https://${dc}.api.mailchimp.com/3.0`;
@@ -22663,7 +22663,7 @@ app.post('/make-server-93a20b6f/admin/mailchimp/create-draft', async (c) => {
       }
     }
 
-    const dc = (Deno.env.get('MAILCHIMP_API_KEY') || '').split('-').pop() || 'us19';
+    const dc = (getMailchimpApiKey() || '').split('-').pop() || 'us19';
     const mailchimpUrl = `https://${dc}.admin.mailchimp.com/campaigns/edit?id=${webId}`;
     console.log(`[MC Draft] OK (${updatedExisting ? 'updated' : 'created'}): ${mailchimpUrl}`);
     return c.json({
