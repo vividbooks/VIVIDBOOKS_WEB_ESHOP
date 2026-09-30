@@ -1,7 +1,7 @@
 import { Phone } from 'lucide-react';
-import { Link, useNavigate } from 'react-router';
+import { Link } from 'react-router';
 import { useCart } from '../contexts/CartContext';
-import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { APP_ENTRY_PATH, APP_PREVIEW_URL } from '../config/publicUrls';
 import { presenceFirstName, useVividbooksPresence } from '@/lib/vividbooksPresence';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -10,7 +10,6 @@ const BTN_BASE =
   "flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-['Fenomen_Sans',sans-serif] text-[14px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97]";
 
 export function TopNav() {
-  const navigate = useNavigate();
   const { itemCount, toggleCart } = useCart();
   const presence = useVividbooksPresence();
   const presenceName = presenceFirstName(presence);
@@ -31,11 +30,7 @@ export function TopNav() {
         {/* Přihlášenému už zkoušku zdarma nenabízíme — pozná se podle presence cookie. */}
         {!presenceName && (
           <a
-            href="/vyzkousejte"
-            onClick={(e) => {
-              e.preventDefault();
-              navigate('/vyzkousejte');
-            }}
+            href={APP_PREVIEW_URL}
             className={`${BTN_BASE} bg-[#7C3AED] hover:bg-[#6D28D9] text-white shadow-sm`}
           >
             {'Vyzkou\u0161et zdarma'}

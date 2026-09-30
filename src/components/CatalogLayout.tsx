@@ -5,7 +5,7 @@ import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ShoppingCart } fro
 import svgPaths from '../imports/svg-3hoiegevxq';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { TopNav } from './TopNav';
-import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { APP_ENTRY_PATH, APP_PREVIEW_URL } from '../config/publicUrls';
 import { CartIcon } from './checkout/CartIcon';
 import { CatalogContext } from '../contexts/CatalogContext';
 import { useCart } from '../contexts/CartContext';
@@ -401,7 +401,7 @@ export default function CatalogLayout() {
                 {/* CTA buttons */}
                 <div className="px-[calc(1rem*0.85)] pt-[calc(1rem*0.85)] pb-[calc(0.5rem*0.85)] flex flex-col gap-[calc(0.5rem*0.85)] shrink-0">
                   <button
-                    onClick={() => { navigate('/vyzkousejte'); setMobileSidebarOpen(false); }}
+                    onClick={() => { setMobileSidebarOpen(false); window.location.href = APP_PREVIEW_URL; }}
                     className="w-full py-[calc(0.75rem*0.85)] rounded-[999px] bg-[#7C3AED] text-white font-['Fenomen_Sans',sans-serif] text-[15px] font-bold"
                   >
                     Vyzkoušet zdarma
