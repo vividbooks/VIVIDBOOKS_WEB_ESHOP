@@ -3,6 +3,7 @@
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { slugTag } from './mailchimpContactsMigrate.ts';
+import { getMailchimpApiKey } from './ecomailClient.ts';
 
 export type MailingTagListRow = {
   id: string;
@@ -183,7 +184,7 @@ export async function mailingSubscriberTagsPatch(
   let mailchimpDetail: string | undefined;
 
   if (body.syncMailchimp === true && (addNames.length > 0 || removeTagIds.length > 0)) {
-    const apiKey = Deno.env.get('MAILCHIMP_API_KEY')?.trim();
+    const apiKey = getMailchimpApiKey()?.trim();
     const prefix = Deno.env.get('MAILCHIMP_SERVER_PREFIX')?.trim();
     const fromKey = (() => {
       const i = (apiKey || '').lastIndexOf('-');

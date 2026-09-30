@@ -43,6 +43,7 @@ import {
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
 import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { sendResendEmail } from './resendClient.ts';
+import { getTransactionalProvider, sendTransactionalMail } from '../../../../supabase/functions/_shared/transactional-mail.ts';
 import {
   interpretStudentAccess,
   renewalStartsOn,
@@ -51,7 +52,9 @@ import {
   teacherCodeEmailBlock,
 } from './studentProgramAccess.ts';
 import {
+  buildDailyFacultyTable,
   buildStudentMeasurement,
+  type DailyStudent,
   type KabinetStudent,
   type MeasurementFaculty,
   type MeasurementWebStudent,
@@ -222,7 +225,7 @@ function siteUrl(origin: string, path: string): string {
   return `${origin.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
-/* ── Mandrill (transakční e-maily, stejné nastavení jako zbytek serveru) ──────── */
+/* ── Transakční e-maily (Resend, nouzově Mandrill — viz _shared/transactional-mail.ts) ── */
 
 async function sendMandrill(opts: {
   toEmail: string;
@@ -234,9 +237,8 @@ async function sendMandrill(opts: {
   tags?: string[];
 }): Promise<{ ok: boolean; detail?: string }> {
   const key = Deno.env.get('MANDRILL_API_KEY');
-  if (!key) return { ok: false, detail: 'MANDRILL_API_KEY missing' };
   try {
-    const res = await fetch('https://mandrillapp.com/api/1.0/messages/send', {
+    const res = await sendTransactionalMail({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -259,10 +261,12 @@ async function sendMandrill(opts: {
     const status = first?.status;
     if (!res.ok || (status && status !== 'sent' && status !== 'queued' && status !== 'scheduled')) {
       const detail = `${res.status} ${status || ''} ${first?.reject_reason || (body && !Array.isArray(body) ? JSON.stringify(body).slice(0, 160) : '')}`.trim();
+      if (getTransactionalProvider() === 'resend') return { ok: false, detail: `Resend: ${detail}` };
       return await sendViaResendFallback(opts, `Mandrill: ${detail}`);
     }
     return { ok: true };
   } catch (e) {
+    if (getTransactionalProvider() === 'resend') return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     return await sendViaResendFallback(opts, e instanceof Error ? e.message : String(e));
   }
 }
@@ -2042,28 +2046,38 @@ export function registerStudentProgramRoutes(app: Hono, deps: StudentProgramDeps
         const { data: all } = await sb.from('student_program_students').select('*');
         const everyone = (all || []) as StudentRow[];
         const newVerified = everyone.filter((s) => s.verified_at && String(s.verified_at) >= since);
-        const newRegistered = everyone.filter((s) => String(s.created_at || '') >= since);
+        const newRegistered = everyone.filter((s) => String(s.created_at || '') >= since && !String(s.source || '').startsWith('import-'));
         const renewed = everyone.filter((s) => s.renewed_at && String(s.renewed_at) >= since);
         const responded = everyone.filter((s) => s.last_response_at && String(s.last_response_at) >= since && !(s.renewed_at && String(s.renewed_at) >= since));
         const goals = await readGoals();
         const ov = buildOverview(everyone, faculties, goals, settings);
+        const daily = buildDailyFacultyTable(everyone as unknown as DailyStudent[], faculties, since);
         const somethingHappened = newVerified.length || newRegistered.length || renewed.length || responded.length || summary.expired || ov.queues.studentsWithoutCodes;
         if (somethingHappened) {
           const facById = new Map(faculties.map((f) => [f.id, f]));
-          const li = (s: StudentRow) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(facById.get(String(s.faculty_id))?.faculty_short || '?')} (${esc(s.university_email)})</li>`;
+          const li = (s: StudentRow) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(facById.get(String(s.faculty_id))?.faculty_short || matchUniversityEmail(s.university_email)?.universityShort || '?')} (${esc(s.university_email)})</li>`;
+          /** Seznam jmen jen do 20 lidí, zbytek je v tabulce po fakultách. */
+          const names = (list: StudentRow[]) => list.slice(0, 20).map(li).join('') + (list.length > 20 ? `<li>… a dalších ${list.length - 20}</li>` : '');
+          const td = 'padding:4px 8px;border-bottom:1px solid #eef0f6;';
+          const facultyTable = daily.rows.length
+            ? `<p style="margin:0 0 6px;font-weight:700;">Za posledních 24 hodin po fakultách</p><table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:13px;margin:0 0 16px;width:100%;"><tr style="color:#64748b;text-align:left;"><th style="${td}">Fakulta</th><th style="${td}text-align:right;">Registrace</th><th style="${td}text-align:right;">z toho odkaz fakulty</th><th style="${td}text-align:right;">Aktivace</th><th style="${td}text-align:right;">Aktivních celkem</th></tr>${daily.rows
+                .map((r) => `<tr><td style="${td}">${esc(r.label)}</td><td style="${td}text-align:right;">${r.registered}</td><td style="${td}text-align:right;">${r.viaFacultyLink}</td><td style="${td}text-align:right;">${r.activated}</td><td style="${td}text-align:right;">${r.activeTotal}</td></tr>`)
+                .join('')}<tr style="font-weight:700;"><td style="${td}">Celkem</td><td style="${td}text-align:right;">${daily.total.registered}</td><td style="${td}text-align:right;">${daily.total.viaFacultyLink}</td><td style="${td}text-align:right;">${daily.total.activated}</td><td style="${td}text-align:right;">${daily.total.activeTotal}</td></tr></table>`
+            : '';
           const content = [
             h2(`Studentský program — denní přehled ${now.toLocaleDateString('cs-CZ')}`),
             p(`<strong>${ov.totals.active}</strong> aktivních studentů z cíle ${goals.targetStudents} (${ov.progress.studentsPct ?? 0} %). Pokrytí PedF: ${ov.coverage.pedfCovered}/${ov.coverage.pedfTotal}. Partnerské fakulty: ${ov.coverage.partners}.`),
-            newRegistered.length ? `<p style="margin:0 0 6px;font-weight:700;">Nové registrace (${newRegistered.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${newRegistered.map(li).join('')}</ul>` : '',
-            newVerified.length ? `<p style="margin:0 0 6px;font-weight:700;">Ověřeno a kódy (${newVerified.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${newVerified.map(li).join('')}</ul>` : '',
-            renewed.length ? `<p style="margin:0 0 6px;font-weight:700;">Obnovili na další rok (${renewed.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${renewed.map(li).join('')}</ul>` : '',
+            facultyTable,
+            newRegistered.length ? `<p style="margin:0 0 6px;font-weight:700;">Nové registrace (${newRegistered.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${names(newRegistered)}</ul>` : '',
+            newVerified.length ? `<p style="margin:0 0 6px;font-weight:700;">Ověřeno a kódy (${newVerified.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${names(newVerified)}</ul>` : '',
+            renewed.length ? `<p style="margin:0 0 6px;font-weight:700;">Obnovili na další rok (${renewed.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${names(renewed)}</ul>` : '',
             responded.length ? `<p style="margin:0 0 6px;font-weight:700;">Aktualizovali údaje (${responded.length})</p><ul style="margin:0 0 16px;padding-left:20px;">${responded.map((s) => `<li>${esc(s.first_name)} ${esc(s.last_name)} — ${esc(s.status)}${s.employer_school_name ? `, škola: ${esc(s.employer_school_name)}` : ''}${s.uses_in_practice === true ? ', používá' : s.uses_in_practice === false ? ', nepoužívá' : ''}</li>`).join('')}</ul>` : '',
             summary.reminders || summary.expired ? p(`Dnes: ${summary.reminders} výzev k obnovení, ${summary.expired} přístupů skončilo bez obnovení.`) : '',
             ov.queues.renewalDueCount ? p(`Čeká na obnovení (do ${settings.renewalReminderDays} dnů): <strong>${ov.queues.renewalDueCount}</strong> studentů.`) : '',
             ov.queues.studentsWithoutCodes ? p(`<span style="color:#b91c1c;">${ov.queues.studentsWithoutCodes} ověřených studentů je bez kódů — v adminu „Založit kódy“.</span>`) : '',
             `<p style="margin:20px 0 0;text-align:center;">${buildVividbooksBrandCta(siteUrl(origin, '/marketing/studenti'), 'Otevřít admin Studenti')}</p>`,
           ].join('');
-          const sent = await sendMandrill({ toEmail: settings.digestEmail, subject: `[Studenti] ${ov.totals.active} aktivních · ${newRegistered.length} nových · ${renewed.length} obnovilo`, html: shell('Denní přehled', content, 'Interní přehled'), tags: ['digest'] });
+          const sent = await sendMandrill({ toEmail: settings.digestEmail, subject: `[Studenti] ${ov.totals.active} aktivních · ${daily.total.registered} registrací · ${daily.total.activated} aktivací · ${renewed.length} obnovilo`, html: shell('Denní přehled', content, 'Interní přehled'), tags: ['digest'] });
           summary.digestSent = sent.ok;
         }
       } catch (e) {

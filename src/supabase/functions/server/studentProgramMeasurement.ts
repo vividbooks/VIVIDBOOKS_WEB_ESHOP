@@ -329,3 +329,76 @@ export function buildStudentMeasurement(input: {
     sources: { web: webStudents.length, kabinet: kabinet.length, matched: usedCodes.size },
   };
 }
+
+/* ── Denní přehled registrací po fakultách (digest z cronu) ─────────────────── */
+
+export type DailyStudent = {
+  status: string;
+  faculty_id: string | null;
+  university_email: string;
+  created_at?: string | null;
+  verified_at?: string | null;
+  source?: string | null;
+  utm?: Record<string, unknown> | null;
+};
+
+export type DailyFacultyRow = {
+  key: string;
+  label: string;
+  /** Nové registrace z formuláře (bez importů) od `since`. */
+  registered: number;
+  /** Z toho přišli přes odkaz s předvybranou fakultou (`?f=`). */
+  viaFacultyLink: number;
+  /** Ověřili e-mail a mají přístup (včetně aktivace z kampaně) od `since`. */
+  activated: number;
+  /** Aktivních studentů celkem. */
+  activeTotal: number;
+};
+
+const ACTIVE_STATUSES = new Set(['active', 'graduating', 'alumni']);
+
+export function buildDailyFacultyTable(
+  students: DailyStudent[],
+  faculties: Array<Pick<MeasurementFaculty, 'id' | 'faculty_short' | 'university_short'>>,
+  sinceIso: string,
+): { rows: DailyFacultyRow[]; total: DailyFacultyRow } {
+  const facById = new Map(faculties.map((f) => [f.id, f]));
+  const rows = new Map<string, DailyFacultyRow>();
+  const total: DailyFacultyRow = { key: '_total', label: 'Celkem', registered: 0, viaFacultyLink: 0, activated: 0, activeTotal: 0 };
+  for (const s of students) {
+    const fac = s.faculty_id ? facById.get(s.faculty_id) : null;
+    let key: string;
+    let label: string;
+    if (fac) {
+      key = fac.id;
+      label = fac.faculty_short;
+    } else {
+      const hit = matchUniversityEmail(s.university_email);
+      key = hit ? `uni:${hit.universityShort}` : '_none';
+      label = hit ? `${hit.universityShort} (fakulta neuvedena)` : 'Nezařazeno';
+    }
+    const row = rows.get(key) || { key, label, registered: 0, viaFacultyLink: 0, activated: 0, activeTotal: 0 };
+    const isImport = String(s.source || '').startsWith('import-');
+    if (!isImport && String(s.created_at || '') >= sinceIso) {
+      row.registered += 1;
+      total.registered += 1;
+      if (s.utm && typeof s.utm === 'object' && (s.utm as Record<string, unknown>).f) {
+        row.viaFacultyLink += 1;
+        total.viaFacultyLink += 1;
+      }
+    }
+    if (s.verified_at && String(s.verified_at) >= sinceIso) {
+      row.activated += 1;
+      total.activated += 1;
+    }
+    if (ACTIVE_STATUSES.has(s.status)) {
+      row.activeTotal += 1;
+      total.activeTotal += 1;
+    }
+    rows.set(key, row);
+  }
+  const list = [...rows.values()]
+    .filter((r) => r.registered || r.activated)
+    .sort((a, b) => b.registered + b.activated - (a.registered + a.activated) || b.activeTotal - a.activeTotal || a.label.localeCompare(b.label, 'cs'));
+  return { rows: list, total };
+}

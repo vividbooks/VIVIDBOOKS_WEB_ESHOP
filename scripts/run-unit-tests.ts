@@ -131,7 +131,7 @@ import {
   studentAccessRequest,
   teacherCodeEmailBlock,
 } from '../src/supabase/functions/server/studentProgramAccess.ts';
-import { buildStudentMeasurement, normalizeSubject } from '../src/supabase/functions/server/studentProgramMeasurement.ts';
+import { buildDailyFacultyTable, buildStudentMeasurement, normalizeSubject } from '../src/supabase/functions/server/studentProgramMeasurement.ts';
 
 type UnitTest = {
   name: string;
@@ -2024,6 +2024,29 @@ registerTest('měření studentů: bez Kabinetu nespadne a předměty se čtou i
   assert.equal(normalizeSubject('Matematika (1. stupeň)'), 'Matematika');
   assert.equal(normalizeSubject('Český jazyk'), 'Český jazyk');
   assert.equal(normalizeSubject('6-rocnik-1-dil'), null);
+});
+
+registerTest('denní přehled studentů: registrace a aktivace po fakultách, importy se nepočítají jako registrace', () => {
+  const since = '2026-09-29T07:00:00Z';
+  const t = buildDailyFacultyTable(
+    [
+      { status: 'active', faculty_id: 'mu-pdf', university_email: 'a@muni.cz', created_at: '2026-09-29T09:00:00Z', verified_at: '2026-09-29T09:05:00Z', source: 'web-studenti', utm: { f: 'mu-pdf' } },
+      { status: 'pending', faculty_id: 'mu-pdf', university_email: 'b@muni.cz', created_at: '2026-09-29T10:00:00Z', source: 'web-studenti', utm: {} },
+      { status: 'active', faculty_id: null, university_email: 'c@natur.cuni.cz', created_at: '2026-09-28T09:00:00Z', verified_at: '2026-09-29T08:00:00Z', source: 'import-kabinet', utm: { campaign: 'aktivace' } },
+      { status: 'pending', faculty_id: null, university_email: 'd@cuni.cz', created_at: '2026-09-29T09:00:00Z', source: 'import-kabinet' },
+      { status: 'active', faculty_id: 'mu-pdf', university_email: 'e@muni.cz', created_at: '2026-09-01T09:00:00Z', verified_at: '2026-09-01T09:00:00Z', source: 'web-studenti' },
+    ],
+    [{ id: 'mu-pdf', faculty_short: 'PdF MU', university_short: 'MU' }],
+    since,
+  );
+  assert.deepEqual(t.total, { key: '_total', label: 'Celkem', registered: 2, viaFacultyLink: 1, activated: 2, activeTotal: 3 });
+  assert.equal(t.rows[0].label, 'PdF MU');
+  assert.equal(t.rows[0].registered, 2);
+  assert.equal(t.rows[0].activated, 1);
+  assert.equal(t.rows[1].label, 'UK (fakulta neuvedena)');
+  assert.equal(t.rows[1].activated, 1);
+  assert.equal(t.rows[1].registered, 0);
+  assert.equal(t.rows.length, 2, 'řádek bez registrace i aktivace se nevypisuje');
 });
 
 registerTest('studentský program: staré adresy /studenti vedou na novou microsite, ne na starý web', () => {

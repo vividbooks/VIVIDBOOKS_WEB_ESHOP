@@ -2158,8 +2158,8 @@ export default function CatalogGrid() {
       />
       ) : null}
 
-      {/* Dočasně skrytý — dnešní webinář je první dlaždice ve slideru pod hero. */}
-      {false && (nextWebinarForBobanak || customBobanak) && (
+      {/* Bobánek s nejbližším webinářem (nebo vlastním upozorněním z CMS) pod sliderem. */}
+      {!isDistributorMode && (nextWebinarForBobanak || customBobanak) && (
       <div className="flex justify-center px-4 mt-5 mb-1">
         <div
           className="inline-flex items-center gap-3 bg-[#FEF0E4] border border-[#F4C49E] text-[#001161] rounded-2xl px-5 py-2.5 shadow-sm cursor-pointer hover:shadow-md transition-shadow"
