@@ -1076,8 +1076,8 @@ export default function CatalogGrid() {
     return [
       // â”€â”€ WebinÃ¡Å™ slide â€” VÅ½DY PRVNÃ, kdyÅ¾ je aktivnÃ­ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       ...(upcomingWebinarSlide?.showInSlider ? [{
-        bg: upcomingWebinarSlide.isLive ? 'bg-[#dc2626]' : 'bg-[#1e3a8a]',
-        bgStyle: upcomingWebinarSlide.isLive ? '#dc2626' : '#1e3a8a',
+        bg: 'bg-[#001161]',
+        bgStyle: '#001161',
         title: upcomingWebinarSlide.isLive ? 'Live webinář' : 'Webinář brzy',
         subtitle: upcomingWebinarSlide.webinar.title,
         badges: upcomingWebinarSlide.isLive
@@ -1574,122 +1574,83 @@ export default function CatalogGrid() {
                 ) : (
                 <>
                 {slideView.layout === 'webinar' ? (
-                  /* â”€â”€ WebinÃ¡Å™ layout: pulsujÃ­cÃ­ koleÄko + countdown + thumbnail â”€â”€ */
-                  <div className="flex min-h-0 min-w-0 flex-1 items-center gap-4 z-10">
-                    <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-start overflow-hidden pl-8 pr-8 md:pl-14 md:pr-10">
-                      {/* PulsujÃ­cÃ­ koleÄko + label */}
-                      <div className="flex items-center gap-2.5 mb-3">
-                        <span className="relative flex h-3.5 w-3.5 shrink-0">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-orange-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-orange-400"></span>
-                        </span>
-                        <span className="text-white/70 text-[11px] uppercase tracking-widest font-bold leading-none" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
-                          {(slideView as any)._isLive ? 'Právě probíhá' : 'Začíná za chvíli'}
-                        </span>
-                      </div>
-                      {/* Nadpis (menÅ¡Ã­) */}
-                      <h1
-                        className="font-['Cooper_Light',serif] leading-[1.05] mb-1 tracking-tight break-words whitespace-pre-line"
-                        style={{
-                          fontSize: heroHeadingFontSizeClamp(slideView.title, 'webinar'),
-                          WebkitFontSmoothing: 'antialiased',
-                          transform: 'translateZ(0.02px)',
-                        }}
-                        title={slideView.title}
-                      >
-                        {slideView.title}
-                      </h1>
-                      {/* Název webináře */}
-                      <p
-                        className="text-white/65 text-[13px] md:text-[15px] mb-3 whitespace-pre-line leading-snug break-words"
-                        style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
-                        title={slideView.subtitle}
-                      >
-                        {slideView.subtitle}
-                      </p>
-                      {/* OdpoÄÃ­tÃ¡vÃ¡nÃ­ */}
-                      {!(slideView as any)._isLive && (
-                        <div className="flex items-end gap-1.5 mb-5">
-                          {[
-                            { v: webinarCountdown.hours,   l: 'h'   },
-                            { v: webinarCountdown.minutes, l: 'min' },
-                          ].map(({ v, l }, i) => (
-                            <React.Fragment key={l}>
-                              {i > 0 && <span className="text-white/25 text-[20px] font-thin pb-3">:</span>}
-                              <div className="flex flex-col items-center">
-                                <div className="bg-white/15 backdrop-blur-sm rounded-xl w-[48px] md:w-[56px] h-[44px] md:h-[52px] flex items-center justify-center">
-                                  <span className="text-white font-black text-[20px] md:text-[24px] leading-none tabular-nums" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
-                                    {String(v).padStart(2, '0')}
-                                  </span>
-                                </div>
-                                <span className="text-white/40 text-[9px] uppercase tracking-wide mt-1 font-bold" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>{l}</span>
-                              </div>
-                            </React.Fragment>
-                          ))}
-                        </div>
-                      )}
-                      {/* Badges */}
-                      <div className="mb-3 flex flex-wrap gap-2">
-                        {slideView.badges.map(b => <CheckBadge key={b} label={b} light />)}
-                      </div>
-                      {/* CTA */}
-                      <p
-                        className="text-[15px] md:text-[18px] xl:text-[20px] break-words whitespace-pre-line leading-snug"
-                        style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
-                        title={slideView.bottom}
-                      >
-                        {slideView.bottom}
-                      </p>
-                    </div>
-                    {/* Thumbnail vpravo â€” jako WebinarCard dlaÅ¾dice */}
-                    <div className="hidden w-[40%] shrink-0 items-center justify-end py-4 pr-6 md:flex lg:pr-10">
-                      <div
-                        className="flex w-full max-w-[320px] flex-col overflow-hidden rounded-[20px] bg-[#F0F2F8] shadow-[0_8px_40px_rgba(0,0,0,0.4)] lg:max-w-[380px] xl:max-w-[440px] 2xl:max-w-[500px]"
-                        onClick={e => { e.stopPropagation(); const w = (slideView as any)._webinar; navigate(`/webinar/${w?.slug || w?.id}`); }}
-                      >
-                        {/* Cover image â€” omezenÃ¡ vÃ½Å¡ka, aby neroztahovala celÃ½ hero */}
-                        <div className="relative aspect-video max-h-[100px] w-full shrink-0 overflow-hidden rounded-t-[20px] sm:max-h-[110px] md:max-h-[125px] lg:max-h-[140px]">
-                          <img
-                            src={(slideView as any).image}
-                            alt={slideView.title}
-                            className="absolute inset-0 size-full object-cover"
-                            loading={heroSlideImagePriority ? 'eager' : 'lazy'}
-                            ref={(imgEl) => { if (imgEl) imgEl.fetchPriority = heroSlideImagePriority ? 'high' : 'low'; }}
-                          />
-                        </div>
-                        {/* Bottom info bar */}
-                        <div className="flex items-center gap-2.5 px-3 py-2.5 bg-white/0">
-                          {/* Date badge */}
-                          <div className="shrink-0 flex flex-col items-center bg-white rounded-[10px] px-2 py-1.5 min-w-[40px]">
-                            <span className="font-['Fenomen_Sans',sans-serif] font-black text-[#001158] text-[16px] leading-none">
-                              {(slideView as any)._webinar?.day}
+                  /* Webinář (živě / za chvíli): název + přednášející + CTA vlevo, velký náhled vpravo. */
+                  (() => {
+                    const w = (slideView as any)._webinar;
+                    const live = Boolean((slideView as any)._isLive);
+                    const full = String(w?.title || slideView.subtitle || '');
+                    const cut = full.indexOf(':');
+                    const head = cut > 0 ? full.slice(0, cut).trim() : full;
+                    const rest = cut > 0 ? full.slice(cut + 1).trim() : '';
+                    const goLive = (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      navigate(live ? `/webinar/${w?.slug || w?.id}/live` : `/webinar/${w?.slug || w?.id}`);
+                    };
+                    return (
+                      <div className="z-10 flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center gap-3 font-['Fenomen_Sans',sans-serif] md:flex-row md:gap-6">
+                        <div className="flex min-w-0 flex-col items-center justify-center px-12 text-center md:min-h-0 md:flex-1 md:items-start md:px-0 md:pl-10 md:pr-4 md:text-left">
+                          <span className="mb-2 inline-flex items-center gap-2 rounded-full md:mb-4 bg-[#ff3b30] px-3 py-1.5 text-[12px] font-extrabold uppercase tracking-[0.12em] text-white md:text-[13px]">
+                            <span className="relative flex h-2.5 w-2.5">
+                              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-80" />
+                              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-white" />
                             </span>
-                            <span className="font-['Fenomen_Sans',sans-serif] text-[9px] text-[#001158]/60 leading-tight">
-                              {(slideView as any)._webinar?.monthName}
-                            </span>
-                            <span className="font-['Fenomen_Sans',sans-serif] font-bold text-[10px] leading-none mt-0.5" style={{ color: '#FF8C00' }}>
-                              {(slideView as any)._webinar?.time}
-                            </span>
-                          </div>
-                          {/* Title */}
-                          <p className="font-['Fenomen_Sans',sans-serif] text-[#001158] text-[12px] font-semibold leading-snug flex-1 line-clamp-2">
-                            {(slideView as any)._webinar?.title}
-                          </p>
-                          {/* CTA */}
+                            {live ? 'Živě' : 'Začíná za chvíli'}
+                          </span>
+                          <h1 className="mb-1 text-[22px] font-bold leading-[1.08] md:mb-2 tracking-[-0.01em] text-white md:text-[36px] xl:text-[44px]">
+                            {head}
+                          </h1>
+                          {rest && (
+                            <p className="mb-3 hidden max-w-[34rem] text-[14px] md:block leading-snug text-white/75 md:text-[17px] xl:text-[19px]">{rest}</p>
+                          )}
+                          {w?.lecturer && (
+                            <p className="mb-3 text-[12.5px] font-bold text-[#ffdd00] md:mb-5 md:text-[14px]">{w.lecturer}</p>
+                          )}
+                          {!live && (
+                            <div className="mb-5 flex items-end gap-1.5">
+                              {[
+                                { v: webinarCountdown.hours, l: 'h' },
+                                { v: webinarCountdown.minutes, l: 'min' },
+                              ].map(({ v, l }, i) => (
+                                <React.Fragment key={l}>
+                                  {i > 0 && <span className="pb-3 text-[20px] font-thin text-white/25">:</span>}
+                                  <div className="flex flex-col items-center">
+                                    <div className="flex h-[44px] w-[52px] items-center justify-center rounded-xl bg-white/12">
+                                      <span className="text-[22px] font-black leading-none tabular-nums text-white">{String(v).padStart(2, '0')}</span>
+                                    </div>
+                                    <span className="mt-1 text-[9px] font-bold uppercase tracking-wide text-white/45">{l}</span>
+                                  </div>
+                                </React.Fragment>
+                              ))}
+                            </div>
+                          )}
                           <button
-                            className="shrink-0 bg-[#FF8C00] hover:bg-[#e67d00] text-white font-['Fenomen_Sans',sans-serif] font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all hover:scale-105 active:scale-95 cursor-pointer whitespace-nowrap"
-                            onClick={e => {
-                              e.stopPropagation();
-                              const w = (slideView as any)._webinar;
-                              navigate(`/webinar/${w?.slug || w?.id}`);
-                            }}
+                            type="button"
+                            onClick={goLive}
+                            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-[#ffdd00] px-4 py-2.5 text-[14px] md:px-5 md:py-3 font-extrabold text-[#001161] transition hover:scale-[1.03] active:scale-95 md:text-[16px]"
                           >
-                            {(slideView as any)._isLive ? 'Vstoupit' : 'P\u0159ihl\u00e1sit se'}
+                            {live ? 'Vstoupit do vysílání' : 'Přihlásit se'} <span aria-hidden>→</span>
                           </button>
                         </div>
+                        <div className="relative flex w-[58%] max-w-[240px] shrink-0 items-center justify-center md:h-full md:w-[46%] md:max-w-none">
+                          <div
+                            className="relative w-full max-w-[520px] cursor-pointer"
+                            style={{ transform: 'rotate(2deg)' }}
+                            onClick={goLive}
+                          >
+                            <div className="absolute inset-0 rounded-[22px] bg-[#ff3b30]" style={{ transform: 'rotate(-6deg) translate(4%, 6%)' }} />
+                            <div className="relative overflow-hidden rounded-[22px] border-[6px] border-white bg-white shadow-[0_24px_60px_-12px_rgba(0,0,0,0.55)]">
+                              <img
+                                src={(slideView as any).image}
+                                alt={full}
+                                className="block aspect-video w-full object-cover"
+                                loading={heroSlideImagePriority ? 'eager' : 'lazy'}
+                              />
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
+                    );
+                  })()
                 ) : (slideView as any).layout === 'books-fan-above' ? (
                   /* â”€â”€ ObÃ¡lky nahoÅ™e + text pod: na ÃºzkÃ©m slidu pod sebou bez pÅ™ekryvu; na Å¡irokÃ©m pÅ¯vodnÃ­ pÅ™ekryv. */
                   <div className="relative z-10 h-full min-h-0 w-full flex-1 overflow-visible">
