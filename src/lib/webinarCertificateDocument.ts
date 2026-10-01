@@ -348,7 +348,7 @@ const COPY: Record<
     titleSub: 'o účasti v online vzdělávacím programu',
     lead: 'Potvrzujeme, že',
     body: 'absolvoval(a) online vzdělávací program',
-    note: 'Program byl zakončen dotazníkovým šetřením a ověřením znalostí.',
+    note: 'Program byl zakončen dotazníkovým šetřením a ověřením znalostí. Osvědčení o průběžném vzdělávání podle § 10 vyhlášky č. 317/2005 Sb.',
     seal: ['Vividbooks', 'DVPP', 'ověřeno'],
   },
   feedback: {
