@@ -27912,9 +27912,14 @@ registerDvppRoutes(app, {
     return { topics: data.topics ?? [], videos };
   },
   cronSecretOk: (c) => {
-    const secret = Deno.env.get('MAILING_CRON_SECRET')?.trim();
-    const got = c.req.header('x-cron-secret')?.trim() || c.req.query('secret')?.trim() || '';
-    return !!secret && got === secret;
+    // Stejně jako /cron/student-program: přijme MAILING_CRON_SECRET i WEBINAR_REMINDER_CRON_SECRET,
+    // v hlavičce X-Cron-Secret nebo jako Bearer token (pg_cron úlohy posílají obojí).
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
   },
   loadWebinars: async () => ((await getCollection(WEBINARS_KEY)) as Array<Record<string, unknown>>) || [],
   buildEmailTemplate: (d) => vividbooksEmailTemplate({ headline: d.headline, body: d.body, ctaText: d.ctaText, ctaUrl: d.ctaUrl, preheader: d.preheader }),
