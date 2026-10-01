@@ -2,6 +2,12 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-10-01 · po nasazení
+
+### ✅
+- PR #104 sloučený, Edge funkce nasazená, veřejný katalog `/dvpp/catalog` odpovídá 200.
+- `/cron/dvpp-recount` ověřuje secret stejně jako `/cron/student-program` (oba cron secrety, hlavička i Bearer). Původní kontrola znala jen `MAILING_CRON_SECRET` v hlavičce, kterou pg_cron úloha neposílala, takže noční přepočet končil 401.
+
 ## 2026-09-05 (PR #104, review) · opravy z Cursor Bugbot
 
 ### ✅
