@@ -185,8 +185,7 @@ export function NovinkaDetailPage({ post }: NovinkaDetailPageProps) {
             <img
               src={coverImage}
               alt={post.title}
-              className="w-full rounded-[20px] object-cover"
-              style={{ maxHeight: '420px' }}
+              className="article-body-img w-full h-auto rounded-[20px]"
             />
           </div>
         )}

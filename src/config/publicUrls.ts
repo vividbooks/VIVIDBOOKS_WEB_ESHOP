@@ -10,6 +10,11 @@ export const API_SITE_ORIGIN = 'https://api.vividbooks.com';
 
 /** Rozcestník „nová, nebo původní aplikace“. Sem míří odkazy do aplikace napříč webem. */
 export const APP_ENTRY_PATH = '/otevrit';
+/**
+ * „Vyzkoušet zdarma“: ukázka aplikace bez přihlášení (3 minuty), pak výzva
+ * k registraci na /vyzkousejte. Registrační formulář sám zůstává beze změny.
+ */
+export const APP_PREVIEW_URL = `${APP_SITE_ORIGIN}/vyzkouset?to=/knihovna`;
 /** @deprecated Starý Shoptet — nový katalog je na www.vividbooks.com */
 export const ESHOP_SITE_ORIGIN = MARKETING_ORIGIN_PRIMARY_DEFAULT;
 

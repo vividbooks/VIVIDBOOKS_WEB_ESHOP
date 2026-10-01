@@ -7,6 +7,13 @@
  * odkaz na záznam 2. stupně — jediná odlišná číslice leží až za porovnávaným prefixem.
  * Proto tu fuzzy větev drží dvě pojistky: čísla v názvu musí sedět a při víc kandidátech
  * vyhrává ten nejpodobnější (při remíze se nepáruje nic).
+ *
+ * 16.–18. 9. 2026 to samé bez číslice: „Jak nadchnout žáky pro prvouku?“ a „…pro chemii?“
+ * se spárovaly na záznam fyziky, protože jediné odlišné slovo je až za 70% hranicí.
+ * Uložení v adminu pak záznam fyziky dvakrát přepsalo a tři rozesílky ukazovaly na jedno id.
+ * Fuzzy proto už neporovnává prefix, ale slova: po odstranění výplně („webinář“, „záznam“,
+ * „DVPP“) a koncovek musí být slova jednoho názvu podmnožinou druhého. Slovo nahrazené jiným
+ * párování zablokuje — chybějící záznam je platný stav, špatný odkaz v rozeslaném mailu ne.
  */
 
 export interface DvppVideoLike {
@@ -65,13 +72,51 @@ function bigramSimilarity(a: string, b: string): number {
   return (2 * shared) / (a.length - 1 + (b.length - 1));
 }
 
-/** Původní heuristika: názvy si sednou na prvních ~70 % délky toho druhého. */
-function prefixOverlaps(wTitle: string, vTitle: string): boolean {
-  if (wTitle.length <= 5 || vTitle.length === 0) return false;
-  return (
-    vTitle.includes(wTitle.slice(0, Math.floor(wTitle.length * 0.7))) ||
-    wTitle.includes(vTitle.slice(0, Math.floor(vTitle.length * 0.7)))
-  );
+/**
+ * Slova, která název záznamu mívá navíc oproti názvu webináře („Webinář: …“, „… – záznam“).
+ * Nic z toho nenese význam, který by odlišil dva webináře.
+ */
+const DVPP_MATCH_FILLER_WORDS = new Set(['webinar', 'webinare', 'webinaru', 'zaznam', 'zaznamu', 'dvpp']);
+
+/**
+ * Koncovky, kterými se liší tvary téhož slova v názvech („Vividboardem“ / „Vividboard“,
+ * „matematiky“ / „matematika“, „ročník“ / „ročníku“). Odřezávají se jen tehdy, když zbude
+ * aspoň tříznakový kmen. Různé předměty se tím nesplynou: prvouk ≠ chemi ≠ fyzik.
+ */
+const DVPP_MATCH_WORD_ENDINGS = ['ami', 'emi', 'ech', 'ich', 'ych', 'ovi', 'ove', 'em', 'um', 'ou', 'ym', 'im', 'am', 'a', 'e', 'i', 'o', 'u', 'y'];
+
+function dvppMatchWordStem(word: string): string {
+  for (const ending of DVPP_MATCH_WORD_ENDINGS) {
+    if (word.length - ending.length >= 3 && word.endsWith(ending)) return word.slice(0, -ending.length);
+  }
+  return word;
+}
+
+/** Kmeny slov názvu bez diakritiky a bez výplně — množina, kterou jde porovnat na podmnožinu. */
+export function dvppMatchWordStems(raw: unknown): Set<string> {
+  const stems = new Set<string>();
+  for (const word of String(raw ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)) {
+    if (!word || DVPP_MATCH_FILLER_WORDS.has(word)) continue;
+    stems.add(dvppMatchWordStem(word));
+  }
+  return stems;
+}
+
+/**
+ * Názvy si odpovídají, když slova jednoho jsou podmnožinou slov druhého. Delší název smí mít
+ * slova navíc („Úvod do Vividbooks v listopadu“ → „Úvod do Vividbooks“, „Tomáš Kováč: Jak se
+ * stát…“ → „Jak se stát…“), ale žádné slovo nesmí být nahrazeno jiným — „pro prvouku“ a
+ * „pro chemii“ mají každé své slovo, které tomu druhému chybí.
+ */
+export function dvppMatchWordsNested(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  for (const stem of small) if (!large.has(stem)) return false;
+  return true;
 }
 
 /**
@@ -79,8 +124,10 @@ function prefixOverlaps(wTitle: string, vTitle: string): boolean {
  * volající si buď postaví položku katalogu z webináře (`mergePastWebinarsIntoDvppVideos`),
  * nebo použije `webinar.id` jako id stránky záznamu.
  *
- * Pořadí: přesná shoda slugu/id, pak fuzzy podle názvu. Fuzzy nikdy nespáruje záznamy,
- * které se liší čísly v názvu, a při víc rovnocenných kandidátech radši nevrátí nic —
+ * Pořadí: přesná shoda id, přesná shoda slugu, pak podle názvu. Id má přednost před slugem,
+ * protože slug záznamu se dá v adminu přepsat (přesně to se stalo 16. 9. 2026), kdežto id
+ * záznamu vzniklého z webináře je webinar.id napořád. Podle názvu se páruje jen při stejných
+ * číslech a vnořených množinách slov; při víc rovnocenných kandidátech se radši nevrátí nic —
  * špatný odkaz v rozeslaném e-mailu je horší než žádné párování.
  */
 export function matchDvppVideoForWebinar<T extends DvppVideoLike>(
@@ -90,12 +137,22 @@ export function matchDvppVideoForWebinar<T extends DvppVideoLike>(
   const videos = Array.isArray(dvppVideos) ? dvppVideos : [];
   if (videos.length === 0) return null;
 
+  const wId = String(webinar?.id ?? '').trim();
+  if (wId) {
+    const byId = videos.find((v) => String(v?.id ?? '').trim() === wId);
+    if (byId) return byId;
+  }
+
   const wSlug = normDvppMatchText(webinar?.slug ?? webinar?.id ?? '');
-  const bySlug = videos.find((v) => normDvppMatchText(v?.slug ?? v?.id ?? '') === wSlug);
-  if (bySlug) return bySlug;
+  if (wSlug) {
+    const bySlug = videos.find((v) => normDvppMatchText(v?.slug ?? v?.id ?? '') === wSlug);
+    if (bySlug) return bySlug;
+  }
 
   const wTitleRaw = String(webinar?.title ?? '');
   const wTitle = normDvppMatchText(wTitleRaw);
+  const wWords = dvppMatchWordStems(wTitleRaw);
+  if (wWords.size === 0) return null;
   const wNumbers = numericFingerprint(wTitleRaw);
 
   let best: T | null = null;
@@ -105,8 +162,8 @@ export function matchDvppVideoForWebinar<T extends DvppVideoLike>(
   for (const v of videos) {
     const vTitleRaw = String(v?.name ?? v?.title ?? '');
     if (numericFingerprint(vTitleRaw) !== wNumbers) continue;
+    if (!dvppMatchWordsNested(wWords, dvppMatchWordStems(vTitleRaw))) continue;
     const vTitle = normDvppMatchText(vTitleRaw);
-    if (!prefixOverlaps(wTitle, vTitle)) continue;
 
     const score = bigramSimilarity(wTitle, vTitle);
     if (score > bestScore) {

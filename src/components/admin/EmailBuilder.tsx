@@ -171,6 +171,9 @@ interface EmailDraft {
   status: 'draft' | 'pushed' | 'sent';
   mailchimpCampaignId?: string;
   mailchimpUrl?: string;
+  /** Draft kampaně v Ecomailu (newslettery) — další push aktualizuje tutéž kampaň. */
+  ecomailCampaignId?: string;
+  ecomailUrl?: string;
   /** ID kampaně ve vlastním mailingu (Postgres `campaigns`) — vazba draft ↔ kampaň. */
   mailingCampaignId?: string;
   /** ISO čas plánovaného odeslání (uloží se s draftem; Mailchimp push zatím neplánuje). */
@@ -7005,7 +7008,11 @@ export default function EmailBuilder() {
     });
   }, []);
 
-  const pushToMailchimp = async () => {
+  const pushToMailchimp = () => pushDraftToProvider('mailchimp');
+  const pushToEcomail = () => pushDraftToProvider('ecomail');
+
+  const pushDraftToProvider = async (provider: 'mailchimp' | 'ecomail') => {
+    const label = provider === 'ecomail' ? 'Ecomail' : 'Mailchimp';
     const snap0 = selectedRef.current;
     if (!snap0) return;
     if (!String(snap0.subject || '').trim()) {
@@ -7014,7 +7021,7 @@ export default function EmailBuilder() {
     }
     setPushing(true);
     try {
-      /* Nejdřív propsat náhled (výměna fotky) do draftu, jinak jde do MC stará verze. */
+      /* Nejdřív propsat náhled (výměna fotky) do draftu, jinak jde ven stará verze. */
       const snap = flushLivePreviewBodyHtml(snap0);
       if (snap.bodyHtml !== snap0.bodyHtml) {
         setSelected(snap);
@@ -7029,7 +7036,7 @@ export default function EmailBuilder() {
         throw new Error('Tělo mailu je prázdné — zkontrolujte náhled a uložte draft.');
       }
 
-      const r = await fetchWithAdminAuth(`${SERVER}/admin/mailchimp/create-draft`, {
+      const r = await fetchWithAdminAuth(`${SERVER}/admin/${provider}/create-draft`, {
         method: 'POST',
         json: true,
         body: JSON.stringify({
@@ -7041,46 +7048,51 @@ export default function EmailBuilder() {
           ctaText: saved.ctaText,
           ctaUrl: saved.ctaUrl || previewCtaUrl(),
           audience: saved.audience || 'newsletter',
-          /** Aktualizuj tutéž MC kampaň místo zakládání nové (starý odkaz = starý obrázek). */
-          campaignId: saved.mailchimpCampaignId || undefined,
+          /** Aktualizuj tutéž kampaň místo zakládání nové (starý odkaz = starý obrázek). */
+          campaignId: (provider === 'ecomail' ? saved.ecomailCampaignId : saved.mailchimpCampaignId) || undefined,
         }),
       });
       let data: Record<string, unknown> = {};
       try {
         data = (await r.json()) as Record<string, unknown>;
       } catch {
-        throw new Error(`Mailchimp API vrátilo neplatnou odpověď (HTTP ${r.status}).`);
+        throw new Error(`${label} API vrátilo neplatnou odpověď (HTTP ${r.status}).`);
       }
       if (!r.ok || data.error) {
         throw new Error(String(data.error || `HTTP ${r.status}`));
       }
 
-      const mcUrl = String(data.mailchimpUrl || data.archiveUrl || data.webUrl || '').trim();
+      const mcUrl = String(data.ecomailUrl || data.mailchimpUrl || data.archiveUrl || data.webUrl || '').trim();
       const updated = normalizeDraftForBuilder({
         ...saved,
         status: 'pushed' as const,
-        mailchimpCampaignId: String(data.campaignId || saved.mailchimpCampaignId || ''),
-        mailchimpUrl: mcUrl || saved.mailchimpUrl,
+        ...(provider === 'ecomail'
+          ? {
+              ecomailCampaignId: String(data.campaignId || saved.ecomailCampaignId || ''),
+              ecomailUrl: mcUrl || saved.ecomailUrl,
+            }
+          : {
+              mailchimpCampaignId: String(data.campaignId || saved.mailchimpCampaignId || ''),
+              mailchimpUrl: mcUrl || saved.mailchimpUrl,
+            }),
         updatedAt: new Date().toISOString(),
       });
       setSelected(updated);
       setDrafts(prev => prev.map(d => (d.id === updated.id ? updated : d)));
       await saveDraft(updated, { quiet: true });
       toast.success(
-        data.updated
-          ? 'Mailchimp draft aktualizován (stejná kampaň).'
-          : 'Pushnutno do Mailchimpu (nový draft).',
+        data.updated ? `${label}: draft aktualizován (stejná kampaň).` : `${label}: založen nový draft kampaně.`,
       );
       if (mcUrl) {
         try {
           window.open(mcUrl, '_blank', 'noopener,noreferrer');
         } catch {
-          toast.message(`Mailchimp: ${mcUrl}`);
+          toast.message(`${label}: ${mcUrl}`);
         }
       }
     } catch (e: unknown) {
-      console.error('Push to Mailchimp error:', e);
-      toast.error(`Mailchimp chyba: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(`Push to ${label} error:`, e);
+      toast.error(`${label} chyba: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setPushing(false);
     }
@@ -8728,6 +8740,17 @@ export default function EmailBuilder() {
 
                 <button
                   type="button"
+                  onClick={() => void pushToEcomail()}
+                  disabled={pushing || !selected.subject.trim()}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-[#7C3AED]/40 bg-white px-4 py-2.5 text-[12px] font-bold text-[#7C3AED] hover:bg-[#7C3AED]/5 disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                  style={F}
+                >
+                  {pushing ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Send className="w-4 h-4" aria-hidden />}
+                  Poslat do Ecomailu (newsletter)
+                </button>
+
+                <button
+                  type="button"
                   onClick={() => void pushToMailchimp()}
                   disabled={pushing || !selected.subject.trim()}
                   className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#001161]/60 hover:border-[#7C3AED]/35 hover:text-[#7C3AED] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
@@ -9613,22 +9636,22 @@ export default function EmailBuilder() {
 
                 <button
                   type="button"
-                  onClick={pushToMailchimp}
+                  onClick={() => void pushToEcomail()}
                   disabled={pushing || !selected.subject}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#7C3AED] text-white hover:bg-[#6D28D9] disabled:opacity-50 transition-all cursor-pointer shrink-0"
                   style={F}
                 >
                   {pushing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
-                  Do Mailchimpu
+                  Do Ecomailu
                 </button>
 
-                {selected.mailchimpUrl && (
+                {selected.ecomailUrl && (
                   <a
-                    href={selected.mailchimpUrl}
+                    href={selected.ecomailUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="p-1.5 rounded-lg hover:bg-gray-100 transition-all shrink-0"
-                    title="Otevřít v Mailchimpu"
+                    title="Otevřít v Ecomailu"
                   >
                     <ExternalLink className="w-3.5 h-3.5 text-[#7C3AED]" />
                   </a>

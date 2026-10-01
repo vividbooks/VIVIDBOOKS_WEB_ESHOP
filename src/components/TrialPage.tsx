@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Phone, CheckCircle, BookOpen, Sparkles, User, Search, Building2, AlertCircle, CheckCircle2, Clock, Loader2, Mail, Users, MessageCircle, ExternalLink } from 'lucide-react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { SEOHead } from './SEOHead';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { flashInvalidField } from '../utils/formFieldHighlight';
 import {
-  submitFreeTrialAjax,
+  resolveTrialBackend,
+  submitTrial,
   type FreeTrialFields,
   type FreeTrialSubmitResult,
 } from '../utils/trialSubmit';
@@ -643,6 +644,10 @@ export function TrialRegistrationForm({
   defaultSubjects2nd,
   initial,
 }: TrialRegistrationFormProps = {}) {
+  /** `/vyzkousejte-kabinet` (nebo `?backend=kabinet`) posílá trial přes Kabinet. */
+  const { pathname, search } = useLocation();
+  const trialBackend = resolveTrialBackend(pathname, search);
+
   // School + Pipedrive
   const [schoolName, setSchoolName] = useState(initial?.schoolName || '');
   const [ico, setIco] = useState(initial?.ico || '');
@@ -895,7 +900,7 @@ export function TrialRegistrationForm({
       schoolStages: isDeputy ? schoolStages : [],
     };
     try {
-      const result = await submitFreeTrialAjax(payload);
+      const result = await submitTrial(payload, trialBackend);
       if (result.status === 'error') {
         if (result.code === 'email_used_in_school') {
           setEmailUsedInSchool(true);
@@ -912,7 +917,7 @@ export function TrialRegistrationForm({
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Nepodařilo se odeslat formulář.';
       setFormError(msg);
-      console.error('[TrialPage] free-trial-ajax:', err);
+      console.error(`[TrialPage] odeslání trialu (${trialBackend}):`, err);
     } finally {
       setSubmitting(false);
     }

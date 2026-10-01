@@ -110,6 +110,7 @@ const MARKETING_SIDEBAR = [
       { label: 'Kontakty', icon: Contact, path: '/marketing/kontakty' },
       { label: 'Rejstřík škol', icon: School, path: '/marketing/skoly' },
       { label: 'DVPP zdarma', icon: Award, path: '/marketing/dvpp', badge: 'Nové', badgeColor: 'purple' },
+      { label: 'Studenti', icon: GraduationCap, path: '/marketing/studenti', badge: 'Nové', badgeColor: 'amber' },
     ],
   },
   {

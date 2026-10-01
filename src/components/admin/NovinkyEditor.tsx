@@ -657,7 +657,7 @@ export default function NovinkyEditor() {
               <div className="flex-1 overflow-y-auto bg-white">
                 <div className="max-w-[720px] mx-auto px-8 py-10">
                   {selected.coverImage && (
-                    <img src={selected.coverImage} className="w-full h-[320px] object-cover rounded-2xl mb-8" alt="" />
+                    <img src={selected.coverImage} className="article-body-img w-full h-auto rounded-2xl mb-8" alt="" />
                   )}
                   <div className="flex items-center gap-2 text-[12px] text-gray-400 mb-3">
                     {selected.date && <span>{selected.date}</span>}

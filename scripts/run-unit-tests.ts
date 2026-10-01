@@ -23,6 +23,15 @@ import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
+  buildExistingBaseOrderLookupParams,
+  findExistingBaseOrderId,
+} from '../supabase/functions/_shared/basecom-find-existing-order.ts';
+import {
+  deliveryInfoFromOrderRow,
+  hasSeparateDeliveryAddress,
+  orderDeliveryColumnsFromShipping,
+} from '../supabase/functions/_shared/checkout-delivery-address.ts';
+import {
   enrichCzechAddressParts,
   geocodeFreeFormAddressViaGoogle,
   geocodeFreeFormAddressViaNominatim,
@@ -111,6 +120,22 @@ import {
   mergeMcpServers,
 } from './mcp/install-cursor-mcp.mjs';
 import { saveWebinarSurveyPartialAnswer } from '../src/utils/webinarSurveyPartialSave.ts';
+import {
+  accessValidUntilFromGraduation,
+  graduationMonthToDate,
+  matchUniversityEmail,
+  STUDENT_PROGRAM_FACULTIES,
+  STUDENT_PROGRAM_PEDF_COUNT,
+} from '../supabase/functions/_shared/student-program-faculties.ts';
+import { resolveWebflowLegacyRedirect } from '../src/config/webflowLegacyRedirects.ts';
+import {
+  addMonthsIsoDay,
+  interpretStudentAccess,
+  renewalStartsOn,
+  studentAccessRequest,
+  teacherCodeEmailBlock,
+} from '../src/supabase/functions/server/studentProgramAccess.ts';
+import { buildDailyFacultyTable, buildStudentMeasurement, normalizeSubject } from '../src/supabase/functions/server/studentProgramMeasurement.ts';
 
 type UnitTest = {
   name: string;
@@ -221,6 +246,33 @@ registerTest('verifyOrderTrackingToken accepts valid token and rejects invalid t
   const badToken = `${token.slice(1)}a`;
   const malformed = await verifyOrderTrackingToken(orderId, secret, badToken);
   assert.equal(malformed, false);
+});
+
+registerTest('findExistingBaseOrderId finds the Base order already created for an e-shop order number', () => {
+  const orders = [
+    { order_id: 501, extra_field_1: 'VB-2026-0001' },
+    { order_id: 777, extra_field_1: ' vb-2026-0042 ' },
+    { order_id: 640, extra_field_1: 'VB-2026-0042' },
+    { order_id: 0, extra_field_1: 'VB-2026-0042' },
+  ];
+  // shoda bez ohledu na mezery a velikost písmen; při více shodách nejstarší (původní) objednávka
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-0042'), '640');
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-0001'), '501');
+  // nic nenalezeno → export smí objednávku založit
+  assert.equal(findExistingBaseOrderId(orders, 'VB-2026-9999'), null);
+  assert.equal(findExistingBaseOrderId([], 'VB-2026-0042'), null);
+  assert.equal(findExistingBaseOrderId(undefined, 'VB-2026-0042'), null);
+  // prázdné číslo objednávky se nesmí spárovat s objednávkami, které pole nemají vyplněné
+  assert.equal(findExistingBaseOrderId([{ order_id: 5, extra_field_1: '' }, { order_id: 6 }], ''), null);
+});
+
+registerTest('buildExistingBaseOrderLookupParams searches from the day before the order, including unconfirmed orders', () => {
+  const params = buildExistingBaseOrderLookupParams({ created_at: '2026-09-17T10:00:00.000Z', customer_email: ' ucitel@skola.cz ' });
+  assert.equal(params.date_from, Math.floor(Date.parse('2026-09-16T10:00:00.000Z') / 1000));
+  assert.equal(params.get_unconfirmed_orders, true);
+  assert.equal(params.filter_email, 'ucitel@skola.cz');
+  // bez e-mailu se filtr neposílá (Base by jinak nevrátil nic)
+  assert.equal('filter_email' in buildExistingBaseOrderLookupParams({ created_at: '2026-09-17T10:00:00.000Z', customer_email: '' }), false);
 });
 
 registerTest('trimCompanyNameForBase keeps short names, normalizes whitespace, trims to Base limit', () => {
@@ -1925,6 +1977,197 @@ registerTest('dvpp: dedupeVideosByName sloučí duplicitní CMS záznamy, předn
   assert.deepEqual(dedupeVideosByName([{ id: 'a', name: 'A' }, { id: 'b', name: 'a' }]).map((v) => v.id), ['a']);
 });
 
+/* ── Studentský program: fakulty, univerzitní e-maily, konec studia ─────────── */
+
+registerTest('studentský program: seznam fakult má 9 pedagogických fakult a unikátní id', () => {
+  assert.equal(STUDENT_PROGRAM_PEDF_COUNT, 9);
+  const ids = STUDENT_PROGRAM_FACULTIES.map((f) => f.id);
+  assert.equal(new Set(ids).size, ids.length, 'id fakult musí být unikátní');
+  for (const f of STUDENT_PROGRAM_FACULTIES) {
+    assert.match(f.ico, /^\d{8}$/, `${f.id}: IČO musí mít 8 číslic`);
+    assert.ok(f.emailDomains.length > 0, `${f.id}: chybí doména`);
+  }
+});
+
+registerTest('studentský program: univerzitní e-mail se pozná i na subdoméně, pedagogická fakulta je první', () => {
+  const uk = matchUniversityEmail('jan.novak@student.pedf.cuni.cz');
+  assert.ok(uk);
+  assert.equal(uk.universityShort, 'UK');
+  assert.equal(uk.faculties[0].id, 'uk-pedf');
+  assert.ok(uk.faculties.some((f) => f.id === 'uk-mff'));
+
+  const mu = matchUniversityEmail('123456@mail.muni.cz');
+  assert.ok(mu);
+  assert.equal(mu.faculties[0].kind, 'pedf');
+
+  const zcu = matchUniversityEmail('SOVA@students.zcu.cz');
+  assert.ok(zcu);
+  assert.equal(zcu.faculties[0].id, 'zcu-fpe');
+});
+
+registerTest('studentský program: soukromé a cizí domény univerzitní nejsou', () => {
+  assert.equal(matchUniversityEmail('někdo@gmail.com'), null);
+  assert.equal(matchUniversityEmail('ucitel@zsnovak.cz'), null);
+  assert.equal(matchUniversityEmail('bezzavinace'), null);
+  /** Podobná doména nesmí projít jen kvůli koncovce. */
+  assert.equal(matchUniversityEmail('x@notcuni.cz'), null);
+});
+
+registerTest('studentský program: konec studia → poslední den měsíce a přístup +6 měsíců', () => {
+  assert.equal(graduationMonthToDate('2027-06'), '2027-06-30');
+  assert.equal(graduationMonthToDate('2028-02'), '2028-02-29');
+  assert.equal(graduationMonthToDate('2027-13'), null);
+  assert.equal(graduationMonthToDate('nesmysl'), null);
+  assert.equal(accessValidUntilFromGraduation('2027-06-30'), '2027-12-30');
+  assert.equal(accessValidUntilFromGraduation('2027-08-31'), '2028-02-29');
+  assert.equal(accessValidUntilFromGraduation('2027-12-31'), '2028-06-30');
+});
+
+registerTest('studentský program: založení přes Kabinet posílá jméno, fakultu a roční období bez kódu', () => {
+  const body = studentAccessRequest(
+    { university_email: ' Jana.Nova@MUNI.cz ', personal_email: 'jana@seznam.cz', first_name: 'Jana', last_name: 'Nová', teacher_code: 'ABC123' },
+    'Pedagogická fakulta',
+    '2026-09-27',
+    12,
+  );
+  assert.deepEqual(body, {
+    universityEmail: 'jana.nova@muni.cz',
+    personalEmail: 'jana@seznam.cz',
+    firstName: 'Jana',
+    lastName: 'Nová',
+    faculty: 'Pedagogická fakulta',
+    startsOn: '2026-09-27',
+    endsOn: '2027-09-27',
+  });
+});
+
+registerTest('studentský program: obnova posílá kód studenta a navazuje na současný konec', () => {
+  const s = { university_email: 'a@muni.cz', teacher_code: 'ABC123', codes_valid_until: '2027-09-27' };
+  assert.equal(renewalStartsOn(s, '2027-09-01'), '2027-09-27');
+  assert.equal(renewalStartsOn(s, '2027-10-05'), '2027-10-05');
+  assert.equal(renewalStartsOn({ codes_valid_until: null, access_valid_until: null }, '2027-10-05'), '2027-10-05');
+  const body = studentAccessRequest(s, null, '2027-09-27', 12, true);
+  assert.equal(body.teacherCode, 'ABC123');
+  assert.equal(body.endsOn, '2028-09-27');
+  assert.equal(studentAccessRequest(s, null, '2027-09-27', 12).teacherCode, undefined);
+  assert.equal(addMonthsIsoDay('2027-01-31', 1), '2027-02-28');
+});
+
+registerTest('studentský program: odpověď Kabinetu je úspěch jen s kódem a koncem licence', () => {
+  const ok = interpretStudentAccess(200, { ok: true, action: 'created', teacherCode: 'abc123', studentCode: 'zzz999', endsOn: '2027-09-27' }, '');
+  assert.deepEqual(ok, { ok: true, action: 'created', teacherCode: 'ABC123', studentCode: 'ZZZ999', endsOn: '2027-09-27' });
+  const existing = interpretStudentAccess(200, { ok: true, action: 'existing', teacherCode: 'ABC123', studentCode: null, endsOn: '2027-09-27' }, '');
+  assert.equal(existing.ok && existing.action, 'existing');
+  const conflict = interpretStudentAccess(409, { ok: false, error: 'Starý systém vrátil cizí školu.', code: 'legacy_school_exists' }, '');
+  assert.equal(conflict.ok, false);
+  assert.ok(!conflict.ok && conflict.reason.includes('legacy_school_exists'));
+  assert.equal(interpretStudentAccess(200, { ok: true, teacherCode: 'ABC123' }, '').ok, false);
+  const net = interpretStudentAccess(0, null, 'timeout');
+  assert.ok(!net.ok && net.reason.startsWith('síť'));
+});
+
+registerTest('studentský program: e-mail ukazuje jen učitelský kód', () => {
+  const html = teacherCodeEmailBlock('ABC<1>');
+  assert.ok(html.includes('ABC&lt;1&gt;'));
+  assert.ok(!/žák/i.test(html));
+});
+
+registerTest('měření studentů: web i Kabinet, univerzita z fakulty nebo domény, trychtýř a pořadí', () => {
+  const usage = (activeDays: number, activeDays30: number, pupilDays = 0, subjects: string[] = []) => ({
+    firstOn: '2026-09-01', lastOn: '2026-09-20', activeDays, activeDays30, pupilDays, subjects,
+    actions: { library_lesson_opened: 4, lesson_presented: 1 }, actions30: {},
+  });
+  const m = buildStudentMeasurement({
+    today: '2026-09-27',
+    now: '2026-09-27T12:00:00Z',
+    faculties: [
+      { id: 'mu-pdf', university: 'Masarykova univerzita', university_short: 'MU', faculty_short: 'PdF MU', kind: 'pedf', estimated_students: 100 },
+      { id: 'uk-pedf', university: 'Univerzita Karlova', university_short: 'UK', faculty_short: 'PedF UK', kind: 'pedf', estimated_students: 200 },
+    ],
+    webStudents: [
+      { id: 'w1', status: 'active', faculty_id: 'mu-pdf', university_email: 'a@gmail.com', teacher_code: 'AAA111', created_at: '2026-09-20', verified_at: '2026-09-20', renewal_count: 1 },
+      { id: 'w2', status: 'pending', faculty_id: 'uk-pedf', university_email: 'b@cuni.cz', teacher_code: null },
+    ],
+    kabinet: [
+      { teacherCode: 'AAA111', email: 'a@gmail.com', name: 'Student univerzity: A', createdAt: '2026-09-20', accessUntil: '2027-09-20', usage: usage(6, 2, 1, ['Fyzika', '6-rocnik-1-dil']) },
+      { teacherCode: 'BBB222', email: '123@muni.cz', name: 'Student univerzity: Bára B', createdAt: '2025-10-01', accessUntil: '2026-10-01', usage: usage(1, 0, 0, ['Matematika (2. stupeň)']) },
+      { teacherCode: 'CCC333', email: 'x@cuni.cz', name: 'Student univerzity: C', createdAt: '2026-01-10', accessUntil: '2027-01-10', usage: null },
+      { teacherCode: 'DDD444', email: 'x@gmail.com', name: 'Student univerzity: D', createdAt: '2026-01-10', accessUntil: '2025-01-10', usage: null },
+    ],
+  });
+  assert.deepEqual(m.sources, { web: 2, kabinet: 4, matched: 1 });
+  assert.equal(m.totals.withAccess, 4);
+  assert.equal(m.totals.accessActive, 3);
+  assert.equal(m.totals.activated, 2);
+  assert.equal(m.totals.active30, 1);
+  assert.equal(m.totals.regular, 1);
+  assert.equal(m.totals.withPupils, 1);
+  assert.equal(m.totals.pending, 1);
+  assert.equal(m.totals.renewed, 1);
+  const mu = m.universities.find((u) => u.key === 'MU')!;
+  assert.equal(mu.withAccess, 2, 'w1 podle fakulty, BBB222 podle domény muni.cz');
+  assert.equal(mu.activationRate, 100);
+  assert.equal(mu.active30Rate, 50);
+  assert.equal(mu.penetration, 2);
+  assert.equal(m.universities[0].key, 'MU', 'první je univerzita s nejvíc aktivními za 30 dní');
+  const uk = m.universities.find((u) => u.key === 'UK')!;
+  assert.equal(uk.pending, 1);
+  assert.equal(uk.withAccess, 1);
+  assert.equal(m.universities.find((u) => u.key === '_none')!.withAccess, 1);
+  assert.deepEqual(m.subjects.map((s) => s.subject).sort(), ['Fyzika', 'Matematika']);
+  assert.equal(m.topStudents[0].name, 'A');
+  assert.equal(m.topStudents[1].name, 'Bára B');
+  assert.equal(m.neverActivated.count, 2);
+  assert.equal(m.months.length, 12);
+  assert.equal(m.months[11].month, '2026-09');
+  assert.equal(m.months[11].newAccess, 1);
+  assert.equal(m.months[11].activated, 2);
+});
+
+registerTest('měření studentů: bez Kabinetu nespadne a předměty se čtou i ze slugů knih', () => {
+  const m = buildStudentMeasurement({ today: '2026-09-27', faculties: [], webStudents: [], kabinet: null, kabinetError: 'HTTP 502' });
+  assert.equal(m.kabinetOk, false);
+  assert.equal(m.totals.withAccess, 0);
+  assert.equal(normalizeSubject('prvouka-1-rocnik-1-dil'), 'Prvouka');
+  assert.equal(normalizeSubject('Matematika (1. stupeň)'), 'Matematika');
+  assert.equal(normalizeSubject('Český jazyk'), 'Český jazyk');
+  assert.equal(normalizeSubject('6-rocnik-1-dil'), null);
+});
+
+registerTest('denní přehled studentů: registrace a aktivace po fakultách, importy se nepočítají jako registrace', () => {
+  const since = '2026-09-29T07:00:00Z';
+  const t = buildDailyFacultyTable(
+    [
+      { status: 'active', faculty_id: 'mu-pdf', university_email: 'a@muni.cz', created_at: '2026-09-29T09:00:00Z', verified_at: '2026-09-29T09:05:00Z', source: 'web-studenti', utm: { f: 'mu-pdf' } },
+      { status: 'pending', faculty_id: 'mu-pdf', university_email: 'b@muni.cz', created_at: '2026-09-29T10:00:00Z', source: 'web-studenti', utm: {} },
+      { status: 'active', faculty_id: null, university_email: 'c@natur.cuni.cz', created_at: '2026-09-28T09:00:00Z', verified_at: '2026-09-29T08:00:00Z', source: 'import-kabinet', utm: { campaign: 'aktivace' } },
+      { status: 'pending', faculty_id: null, university_email: 'd@cuni.cz', created_at: '2026-09-29T09:00:00Z', source: 'import-kabinet' },
+      { status: 'active', faculty_id: 'mu-pdf', university_email: 'e@muni.cz', created_at: '2026-09-01T09:00:00Z', verified_at: '2026-09-01T09:00:00Z', source: 'web-studenti' },
+    ],
+    [{ id: 'mu-pdf', faculty_short: 'PdF MU', university_short: 'MU' }],
+    since,
+  );
+  assert.deepEqual(t.total, { key: '_total', label: 'Celkem', registered: 2, viaFacultyLink: 1, activated: 2, activeTotal: 3 });
+  assert.equal(t.rows[0].label, 'PdF MU');
+  assert.equal(t.rows[0].registered, 2);
+  assert.equal(t.rows[0].activated, 1);
+  assert.equal(t.rows[1].label, 'UK (fakulta neuvedena)');
+  assert.equal(t.rows[1].activated, 1);
+  assert.equal(t.rows[1].registered, 0);
+  assert.equal(t.rows.length, 2, 'řádek bez registrace i aktivace se nevypisuje');
+});
+
+registerTest('studentský program: staré adresy /studenti vedou na novou microsite, ne na starý web', () => {
+  const cs = resolveWebflowLegacyRedirect('/cs/studenti');
+  assert.equal(cs.kind, 'internal');
+  assert.equal(cs.kind === 'internal' && cs.target, '/studenti');
+  const thanks = resolveWebflowLegacyRedirect('/cs/studenti-ucitelstvi/dekujeme');
+  assert.equal(thanks.kind, 'internal');
+  assert.equal(thanks.kind === 'internal' && thanks.target, '/studenti');
+  const direct = resolveWebflowLegacyRedirect('/studenti');
+  assert.notEqual(direct.kind, 'external', '/studenti je nová stránka webu, nesmí přesměrovat na old.vividbooks.com');
+});
+
 registerTest('parseSchoolBundleLineQuantity reads n× from name or explicit quantity', () => {
   assert.equal(parseSchoolBundleLineQuantity({ name: '2× Fyzika PS' }), 2);
   assert.equal(parseSchoolBundleLineQuantity({ name: '10x Chemie' }), 10);
@@ -2124,6 +2367,106 @@ registerTest('párování záznamu vybere nejpodobnější název, při remíze 
   );
 });
 
+registerTest('párování záznamu nepřeskočí předmět v názvu (prvouka není chemie)', () => {
+  /**
+   * Regrese z 16.–18. 9. 2026: „Jak nadchnout žáky pro prvouku?“ a „…pro chemii?“ se párovaly
+   * na záznam fyziky. Jediné odlišné slovo je poslední, tedy za 70% hranicí prefixu, a čísla
+   * v názvech nejsou — obě pojistky z minulé regrese mlčely. Uložení v adminu pak záznam
+   * fyziky přepsalo prvoukou a o dva dny později chemií; tři rozesílky ukazovaly na jedno id.
+   */
+  const fyzika = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-fyziku',
+    name: 'Jak nadchnout žáky pro fyziku?',
+  };
+  const prvouka = {
+    id: 'jak-nadchnout-zaky-pro-prvouku-2026',
+    slug: 'jak-nadchnout-zaky-pro-prvouku',
+    title: 'Jak nadchnout žáky pro prvouku?',
+  };
+  const chemie = {
+    id: 'jak-nadchnout-zaky-pro-chemii-2026',
+    slug: 'jak-nadchnout-zaky-pro-chemii',
+    title: 'Jak nadchnout žáky pro chemii?',
+  };
+
+  assert.equal(matchDvppVideoForWebinar(prvouka, [fyzika]), null);
+  assert.equal(matchDvppVideoForWebinar(chemie, [fyzika]), null);
+
+  /** Pět webinářů „Jak nadchnout žáky pro …“ se navzájem nikdy nespáruje. */
+  const rada = [
+    { id: 'p', slug: 'p', name: 'Jak nadchnout žáky pro prvouku?' },
+    { id: 'c', slug: 'c', name: 'Jak nadchnout žáky pro chemii?' },
+    { id: 'f', slug: 'f', name: 'Jak nadchnout žáky pro fyziku?' },
+    { id: 'm1', slug: 'm1', name: 'Jak nadchnout žáky pro matematiku na 1. stupni?' },
+    { id: 'm2', slug: 'm2', name: 'Jak nadchnout žáky pro matematiku na 2. stupni?' },
+  ];
+  for (const w of rada) {
+    const cizi = rada.filter((v) => v.id !== w.id);
+    assert.equal(matchDvppVideoForWebinar({ id: `w-${w.id}`, slug: `w-${w.id}`, title: w.name }, cizi), null, w.name);
+  }
+
+  /** Delší název se slovy navíc a jiné skloňování se párují dál — přesně tak vypadají starší záznamy. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'uvod-do-vividbooks-v-listopadu', title: 'Úvod do Vividbooks v listopadu' },
+      [{ id: 'v', slug: 'uvod-do-vividbooks', name: 'Úvod do Vividbooks' }],
+    )?.id,
+    'v',
+  );
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'w', title: 'Jednoduchá tvorba interaktivních materiálů s Vividboardem' },
+      [{ id: 'v', slug: 'v', name: 'Jednoduchá tvorba interaktivních materiálů s nástrojem Vividboard' }],
+    )?.id,
+    'v',
+  );
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'w', title: '🥳 👨🏻‍🏫 Představení Vividbooks matematiky – 7. ročník' },
+      [{ id: 'v', slug: 'v', name: 'Vividbooks matematika 7. ročníku' }],
+    )?.id,
+    'v',
+  );
+
+  /** Stejná slova v jiném pořadí nebo s jinou interpunkcí se párují dál. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'w', slug: 'jiny-slug', title: 'Jak nadchnout žáky pro fyziku?' },
+      [{ id: 'v', slug: 'v', name: 'Záznam webináře: Jak nadchnout žáky pro fyziku' }],
+    )?.id,
+    'v',
+  );
+});
+
+registerTest('párování záznamu: id má přednost před slugem, který mohl admin přepsat', () => {
+  /**
+   * Přesně stav katalogu 18. 9. 2026: záznam s id fyziky nesl po dvou přepsáních slug i název
+   * chemie. Webinář fyziky má dostat svůj záznam podle id, webinář chemie nesmí dostat cizí
+   * záznam jen proto, že na něm zůstal jeho slug — dostane ho jen tehdy, když se id shoduje.
+   */
+  const prepsany = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-chemii',
+    name: 'Jak nadchnout žáky pro chemii?',
+  };
+  const fyzika = {
+    id: 'jak-nadchnout-zaky-pro-fyziku-2026',
+    slug: 'jak-nadchnout-zaky-pro-fyziku',
+    title: 'Jak nadchnout žáky pro fyziku?',
+  };
+  assert.equal(matchDvppVideoForWebinar(fyzika, [prepsany])?.id, 'jak-nadchnout-zaky-pro-fyziku-2026');
+
+  /** Slug je pořád platná druhá cesta — starší záznamy z Webflow mají vlastní id. */
+  assert.equal(
+    matchDvppVideoForWebinar(
+      { id: 'webinar-1700000000000', slug: 'stredobod-interaktivni-vyuky', title: 'Středobod interaktivní výuky' },
+      [{ id: '67d07ca261377ed42f76ea12', slug: 'stredobod-interaktivni-vyuky', name: 'Středobod' }],
+    )?.id,
+    '67d07ca261377ed42f76ea12',
+  );
+});
+
 registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí cenu z formuláře', () => {
   const catalog = new Map<string, unknown>([['ps-mat-6-1', { id: 'ps-mat-6-1', price: '125,-' }]]);
   assert.deepEqual(
@@ -2141,6 +2484,51 @@ registerTest('mapSchoolInquiryToPipedriveOrderItems: cena z katalogu přebíjí 
     ),
     [{ product_id: 'mimo-katalog', quantity: 2, unit_price: 9000 }],
   );
+});
+
+registerTest('orderDeliveryColumnsFromShipping: jiná doručovací adresa z pokladny → orders.delivery_*', () => {
+  // Přepínač zapnutý → adresa se uloží (ořezaná), prázdný příjemce = null.
+  assert.deepEqual(
+    orderDeliveryColumnsFromShipping({
+      differentAddress: true,
+      deliveryAddress: {
+        recipientName: '  Kateřina Kupková, ZŠ a MŠ Ostrava-Výškovice ',
+        street: ' Šeříková 682/33 ',
+        city: 'Ostrava-Výškovice',
+        zip: '70030',
+      },
+    }),
+    {
+      delivery_recipient_name: 'Kateřina Kupková, ZŠ a MŠ Ostrava-Výškovice',
+      delivery_street: 'Šeříková 682/33',
+      delivery_city: 'Ostrava-Výškovice',
+      delivery_zip: '70030',
+    },
+  );
+  assert.equal(
+    orderDeliveryColumnsFromShipping({ differentAddress: true, deliveryAddress: { recipientName: '', street: 'Ul. 1', city: '', zip: '' } })
+      .delivery_recipient_name,
+    null,
+  );
+  // Přepínač vypnutý (nebo bez ulice) → samé null = doručit na fakturační adresu.
+  const empty = { delivery_recipient_name: null, delivery_street: null, delivery_city: null, delivery_zip: null };
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ differentAddress: false, deliveryAddress: { street: 'Ul. 1' } }), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ differentAddress: true, deliveryAddress: { street: '  ' } }), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping({ method: 'gls', price: 8900 } as never), empty);
+  assert.deepEqual(orderDeliveryColumnsFromShipping(undefined), empty);
+});
+
+registerTest('hasSeparateDeliveryAddress / deliveryInfoFromOrderRow: zpět z řádku orders', () => {
+  const row = { delivery_recipient_name: null, delivery_street: 'Šeříková 682/33', delivery_city: 'Ostrava', delivery_zip: '70030' };
+  assert.equal(hasSeparateDeliveryAddress(row), true);
+  assert.equal(hasSeparateDeliveryAddress({ delivery_street: '   ' }), false);
+  assert.equal(hasSeparateDeliveryAddress({}), false);
+  assert.equal(hasSeparateDeliveryAddress(null), false);
+  assert.deepEqual(deliveryInfoFromOrderRow(row), {
+    differentAddress: true,
+    deliveryAddress: { recipientName: '', street: 'Šeříková 682/33', city: 'Ostrava', zip: '70030' },
+  });
+  assert.deepEqual(deliveryInfoFromOrderRow({ delivery_street: null }), { differentAddress: false });
 });
 
 await run();

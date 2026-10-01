@@ -420,6 +420,26 @@ const HERO_SLIDE_FIELDS: FieldDef[] = [
     showIf: (d) => d.layout === 'hero-full-image',
   },
   {
+    key: 'heroBubbles',
+    label: 'Bobánky přes obrázek (JSON)',
+    type: 'textarea',
+    fullWidth: true,
+    placeholder: '[{"label":"Fyzika","link":"webinar:jak-nadchnout-zaky-pro-fyziku","x":30,"y":20}]',
+    hint: 'Bílé bubliny s odkazem přes obrázek. x/y = střed bubliny v % obrázku. Odkaz „webinar:<slug>“ vede na záznam, jakmile je nahraný, jinak na stránku webináře. Na mobilu se bobánky seřadí u spodního okraje obrázku.',
+    showIf: (d) => d.layout === 'left-image',
+  },
+  {
+    key: 'heroBubblesLayout',
+    label: 'Rozložení bobánků',
+    type: 'select',
+    options: [
+      { value: 'free', label: 'Volně podle x/y' },
+      { value: 'row', label: 'V řadě u spodního okraje obrázku' },
+      { value: 'text', label: 'Pod textem slidu (vlevo)' },
+    ],
+    showIf: (d) => d.layout === 'left-image',
+  },
+  {
     key: 'bookProductIds',
     label: 'ID produktů (obálky)',
     type: 'textarea',

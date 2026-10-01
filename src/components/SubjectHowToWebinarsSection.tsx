@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useWebinars } from '../contexts/WebinarsContext';
 import { useDvppVideos, type DvppVideo } from '../contexts/DvppVideosContext';
@@ -26,6 +26,43 @@ type HowToCard = {
 
 function isSameLocalDay(w: Pick<HowToCard, 'day' | 'monthNum' | 'year'>, now = new Date()): boolean {
   return w.day === now.getDate() && (w.monthNum || 0) === now.getMonth() + 1 && w.year === now.getFullYear();
+}
+
+/** Stejná tolerance jako ve WebinarsContext — webinář je „nadcházející“ ještě 150 min po startu. */
+const RUNNING_GRACE_MS = 150 * 60 * 1000;
+
+type SortableCard = HowToCard & { live?: Webinar };
+
+function cardStartMs(card: SortableCard): number {
+  const day = card.live?.day ?? card.day;
+  const monthNum = card.live?.monthNum ?? card.monthNum;
+  const year = card.live?.year ?? card.year;
+  const time = card.live?.time ?? card.time;
+  const [h, m] = String(time || '18:00').split(':').map(Number);
+  return new Date(year, (monthNum || 1) - 1, day || 1, h || 0, m || 0).getTime();
+}
+
+/**
+ * Pořadí podle aktuálnosti: dnešní webinář první (i když už proběhl — pořád je nejčerstvější),
+ * pak nejbližší nadcházející, nakonec proběhlé od nejnovějšího záznamu.
+ */
+function sortByRecency<T extends SortableCard>(items: T[], nowMs: number): T[] {
+  const now = new Date(nowMs);
+  const rank = (c: T): 0 | 1 | 2 => {
+    const when = {
+      day: c.live?.day ?? c.day,
+      monthNum: c.live?.monthNum ?? c.monthNum,
+      year: c.live?.year ?? c.year,
+    };
+    if (isSameLocalDay(when, now)) return 0;
+    return !c.live?.isPast && cardStartMs(c) + RUNNING_GRACE_MS > nowMs ? 1 : 2;
+  };
+  return [...items].sort((a, b) => {
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return ra === 2 ? cardStartMs(b) - cardStartMs(a) : cardStartMs(a) - cardStartMs(b);
+  });
 }
 
 const HOW_TO_CARDS: HowToCard[] = [
@@ -135,6 +172,24 @@ function matchDvppVideoForCard(webinar: Webinar, videos: DvppVideo[]): DvppVideo
   return videos.find((v) => v.webinarSlugForSurvey === wSlug);
 }
 
+/**
+ * Odkaz podle slugu webináře: záznam (když už proběhl a je nahraný), jinak stránka webináře.
+ * Používají ho bobánky v hero slideru (`webinar:<slug>`).
+ */
+export function useWebinarRecordingHref(): (slug: string) => string {
+  const { webinars } = useWebinars();
+  const { videos: dvppVideos } = useDvppVideos();
+  return useCallback(
+    (slug: string) => {
+      const live = webinars.find((w) => (w.slug || w.id) === slug);
+      if (!live) return `/webinar/${slug}`;
+      const recording = live.isPast ? matchDvppVideoForCard(live, dvppVideos) : undefined;
+      return recording ? `/webinare/zaznam/${recording.id}` : `/webinar/${live.slug || live.id}`;
+    },
+    [webinars, dvppVideos],
+  );
+}
+
 export function SubjectHowToWebinarsSection() {
   const navigate = useNavigate();
   const { webinars } = useWebinars();
@@ -162,17 +217,20 @@ export function SubjectHowToWebinarsSection() {
       .filter((w) => !w.isPast && isSameLocalDay(w, now))
       .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')))[0];
 
-    if (!today) return series;
+    if (!today) return sortByRecency(series, now.getTime());
     const todaySlug = today.slug || today.id;
     if (series.some((card) => card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug))) {
-      return series.map((card) =>
-        card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug)
-          ? { ...card, featuredToday: true }
-          : card,
+      return sortByRecency(
+        series.map((card) =>
+          card.slug === todaySlug || (card.live && (card.live.slug || card.live.id) === todaySlug)
+            ? { ...card, featuredToday: true }
+            : card,
+        ),
+        now.getTime(),
       );
     }
 
-    return [
+    return sortByRecency([
       {
         subject: today.title,
         subjectFor: today.title,
@@ -189,7 +247,7 @@ export function SubjectHowToWebinarsSection() {
         href: `/webinar/${todaySlug}`,
       },
       ...series,
-    ];
+    ], now.getTime());
   }, [webinars, dvppVideos]);
 
   const scrollByDir = (dir: -1 | 1) => {

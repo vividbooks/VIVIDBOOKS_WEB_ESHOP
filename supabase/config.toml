@@ -33,3 +33,8 @@ verify_jwt = false
 # nebo orderId + admin JWT přes requireAdminJwt() pro administraci.
 [functions.idoklad-invoice-pdf]
 verify_jwt = false
+
+# Most z veřejného webu na Kabinet. Prohlížeč posílá jen anon klíč; tajemství doplňuje
+# funkce z KABINET_SECRET a kódy školy z odpovědí maže, ať je nedostane nikdo se znalostí IČO.
+[functions.kabinet-trial]
+verify_jwt = false
