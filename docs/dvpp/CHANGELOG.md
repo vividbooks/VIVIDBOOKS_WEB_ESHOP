@@ -2,6 +2,13 @@
 
 Stav podle kroků z kapitoly 11 strategie. ✅ hotovo v repu · 🔧 rozpracováno · ⏳ čeká.
 
+## 2026-10-01 · tematické řady v knihovně
+
+### ✅
+- Knihovna má deset řad (KV `vividbooks_dvpp_series_v1`): Speciál matematiky, Jak na nové RVP, Představení předmětů, Umělá inteligence, Profesní rozvoj, Interaktivní výuka s Vividboardem, Jak na aplikaci Vividbooks, Speciál přírodních věd, Speciál 1. stupně, Pro vedení školy. Hodiny = součet délek záznamů z YouTube.
+- Katalog: nový řádek „Nejnovější záznamy“ před řadami; řádky podle témat ukazují jen záznamy, které nejsou v žádné řadě (prázdné téma zmizí), takže se knihovna neopakuje.
+- Přehrávač: „související“ bere další díly téže řady, záznam mimo řady sousedy z tématu.
+
 ## 2026-10-01 · po nasazení
 
 ### ✅

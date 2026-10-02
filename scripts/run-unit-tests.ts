@@ -18,7 +18,7 @@ import {
 import {
   estimateTeachersFromPupils, isDirectorPosition, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom, resolveAccessLevel, schoolDomainFromEmail, schoolStatusFrom, staffroomCodeFromRandom, teacherTypeFromAnswers, domainFromWebOrEmail, directorTrustedByDomain, maskEmail,
 } from '../src/supabase/functions/server/dvpp/milestones.ts';
-import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName } from '../src/supabase/functions/server/dvpp/content.ts';
+import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName, topicRowsOutsideSeries, newestVideos } from '../src/supabase/functions/server/dvpp/content.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
@@ -1975,6 +1975,23 @@ registerTest('dvpp: dedupeVideosByName sloučí duplicitní CMS záznamy, předn
   ];
   assert.deepEqual(dedupeVideosByName(dup).map((v) => v.id), ['w2', 'x', 'y']);
   assert.deepEqual(dedupeVideosByName([{ id: 'a', name: 'A' }, { id: 'b', name: 'a' }]).map((v) => v.id), ['a']);
+});
+
+registerTest('dvpp: řádky podle témat neopakují záznamy z řad a prázdné téma zmizí', () => {
+  const topics = [{ id: 't1', name: 'Matematika ', slug: 'matematika' }, { id: 't2', name: 'Fyzika', slug: 'fyzika' }];
+  const videos = [
+    { id: 'a', topicIds: ['t1'] }, { id: 'b', topicIds: ['t1'] }, { id: 'c', topicIds: ['t2'] }, { id: 'd', topicIds: [] },
+  ];
+  const bez = topicRowsOutsideSeries(videos, topics, new Set());
+  assert.deepEqual(bez.map((r) => [r.key, r.videos.map((v) => v.id)]), [['topic:matematika', ['a', 'b']], ['topic:fyzika', ['c']], ['topic:ostatni', ['d']]]);
+  assert.equal(bez[0].title, 'Matematika');
+  const s = topicRowsOutsideSeries(videos, topics, new Set(['a', 'c', 'd']));
+  assert.deepEqual(s.map((r) => [r.key, r.videos.map((v) => v.id)]), [['topic:matematika', ['b']]]);
+});
+
+registerTest('dvpp: nejnovější záznamy podle data vysílání, bez data vynechá', () => {
+  const v = [{ id: 'x', airedAt: '2025-01-01' }, { id: 'y' }, { id: 'z', airedAt: '2026-09-17' }, { id: 'w', airedAt: '2026-05-05' }];
+  assert.deepEqual(newestVideos(v, 2).map((x) => x.id), ['z', 'w']);
 });
 
 /* ── Studentský program: fakulty, univerzitní e-maily, konec studia ─────────── */

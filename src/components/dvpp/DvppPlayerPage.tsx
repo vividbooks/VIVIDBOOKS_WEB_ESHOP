@@ -46,7 +46,10 @@ export function DvppPlayerPage() {
 
   const related = useMemo(() => {
     if (!catalog || !video) return [];
-    const row = catalog.rows.find((r) => r.key.startsWith('topic:') && r.videos.some((v) => v.id === video.id));
+    /* Další díly téže řady; záznam mimo řady bere sousedy z řádku podle tématu. */
+    const has = (r: (typeof catalog.rows)[number]) => r.videos.some((v) => v.id === video.id);
+    const row = catalog.rows.find((r) => r.key.startsWith('series:') && has(r))
+      || catalog.rows.find((r) => r.key.startsWith('topic:') && has(r));
     return (row?.videos || []).filter((v) => v.id !== video.id).slice(0, 8);
   }, [catalog, video]);
 

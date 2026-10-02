@@ -2,11 +2,12 @@
  * DVPP zdarma — katalog knihovny („Netflix“ řádky).
  *
  * Záznamy dál žijí v KV (`vividbooks_dvpp_videos_v2` + minulé webináře), tady se z nich skládají
- * řádky pro přihlášeného: Pokračovat ve sledování · Doporučeno pro vás · Řady · Nejsledovanější ·
- * Podle tématu. Řady jsou v KV `vividbooks_dvpp_series_v1` (editace v adminu).
+ * řádky pro přihlášeného: Pokračovat ve sledování · Doporučeno pro vás ·
+ * Nejnovější · Řady · Nejsledovanější · Podle tématu. Řady jsou v KV `vividbooks_dvpp_series_v1`
+ * (editace v adminu); záznam zařazený v řadě se v řádcích podle témat už neopakuje.
  */
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { dedupeVideosByName } from './content.ts';
+import { dedupeVideosByName, newestVideos, topicRowsOutsideSeries } from './content.ts';
 import * as kv from '../kv_store.tsx';
 import { resolveAccessLevel, STARTER_RECORDINGS_LIMIT, type AccessLevel } from './milestones.ts';
 import { getStaffroom } from './staffroom.ts';
@@ -183,8 +184,13 @@ export async function buildCatalog(
     .slice(0, 12);
   if (rec.length) rows.push({ key: 'recommended', title: 'Doporučeno pro vás', subtitle: 'Podle vašich předmětů', videos: rec });
 
+  const newest = newestVideos(decorated, 10);
+  if (newest.length) rows.push({ key: 'newest', title: 'Nejnovější záznamy', videos: newest });
+
   const series = await getSeries();
+  const inSeries = new Set<string>();
   for (const s of series) {
+    for (const id of s.videoIds) if (dbyId.has(id)) inSeries.add(id);
     const vids = s.videoIds.map((id) => dbyId.get(id)).filter(Boolean) as CatalogVideo[];
     if (vids.length) rows.push({ key: `series:${s.id}`, title: s.title, subtitle: `${vids.length} díl${vids.length === 1 ? '' : vids.length < 5 ? 'y' : 'ů'} · ${s.hours} h DVPP`, videos: vids });
   }
@@ -193,12 +199,7 @@ export async function buildCatalog(
   if (top.length) rows.push({ key: 'top', title: 'Nejsledovanější tento měsíc', videos: top });
 
   const sortedTopics = [...topics].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || a.name.localeCompare(b.name, 'cs'));
-  for (const t of sortedTopics) {
-    const vids = decorated.filter((v) => (v.topicIds || []).includes(t.id));
-    if (vids.length) rows.push({ key: `topic:${t.slug}`, title: t.name, videos: vids });
-  }
-  const untagged = decorated.filter((v) => !(v.topicIds || []).length);
-  if (untagged.length) rows.push({ key: 'topic:ostatni', title: 'Další záznamy', videos: untagged });
+  rows.push(...topicRowsOutsideSeries(decorated, sortedTopics, inSeries));
 
   void byId;
   return { rows, series, topics: sortedTopics, access, videos: decorated };
