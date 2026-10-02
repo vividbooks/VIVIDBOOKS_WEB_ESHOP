@@ -16,8 +16,7 @@
  *
  * Bez --apply jen vypíše JSON náhled a počty (dry run).
  *
- * Pozn.: Pro „Přidat do košíku“ přes Stripe je potřeba doplnit shopifyVariantId
- * (např. nástrojem ShopifyLinker v adminu). shoptetId = kód varianty (SKU) pro sklad.
+ * Pozn.: shoptetId = kód varianty (SKU) — identita v košíku, na skladu i v Base.com.
  *
  * Parsování je v adminu sdílené přes src/utils/shoptetProductsXmlImport.ts — při úpravě
  * filtrů/kategorií uprav i tento skript, nebo použij Admin → Migrace obsahu.

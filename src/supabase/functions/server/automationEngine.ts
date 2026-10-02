@@ -33,7 +33,12 @@ export type AutomationTriggerType =
   | 'tag_added'
   | 'trial_activated'
   | 'webinar_registered'
-  | 'order_paid';
+  | 'order_paid'
+  /* DVPP zdarma (docs/dvpp/FLOWS.md) */
+  | 'dvpp_confirmed'
+  | 'dvpp_certificate'
+  | 'dvpp_referral_confirmed'
+  | 'dvpp_staffroom_unlocked';
 
 export type AutomationEvent = {
   type: AutomationTriggerType;

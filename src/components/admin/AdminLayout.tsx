@@ -7,6 +7,7 @@ import {
   BookOpen, Layers, Bot, Brain, Trash2, Upload, Image, GraduationCap, Bell, Megaphone, Users, School,
   Monitor, BarChart3, Mail, Contact, Plus,
   Calendar, Menu, X, ChevronDown, Palette, Loader2,
+  Award,
 } from 'lucide-react';
 import { useApp } from '@/app/contexts/AppContext';
 import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
@@ -108,6 +109,7 @@ const MARKETING_SIDEBAR = [
       { label: 'Registrace', icon: Users, path: '/marketing/registrace' },
       { label: 'Kontakty', icon: Contact, path: '/marketing/kontakty' },
       { label: 'Rejstřík škol', icon: School, path: '/marketing/skoly' },
+      { label: 'DVPP zdarma', icon: Award, path: '/marketing/dvpp', badge: 'Nové', badgeColor: 'purple' },
       { label: 'Studenti', icon: GraduationCap, path: '/marketing/studenti', badge: 'Nové', badgeColor: 'amber' },
     ],
   },
@@ -344,7 +346,7 @@ export default function AdminLayout() {
     notifikace: 'Notifikace', popupy: 'Popup Manager', registrace: 'Registrace',
     tabs: 'Taby', rag: 'RAG Znalosti', 'marketing-agent': 'Marketing Agent',
     'seo-agent': 'SEO Agent', 'image-agent': 'Image Agent', 'referencni-styly': 'Referenční styly',
-    skoly: 'Rejstřík škol', shopify: 'Shopify',
+    skoly: 'Rejstřík škol',
     objednavky: 'Objednávky',
     analytika: 'Analytika',
     sklad: 'Skladové zásoby',

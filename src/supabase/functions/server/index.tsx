@@ -37,6 +37,13 @@ import {
   resolveAudienceSubscriberIds,
 } from './audienceFilter.ts';
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
+import { registerDvppRoutes } from './dvpp/routes.ts';
+import { DVPP_AUTOMATION_FLOWS } from './dvpp/automations.ts';
+import type { RegistryRecord as DvppRegistryRecord } from './dvpp/schools.ts';
+import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
+import { attributionFrom as dvppAttributionFrom } from './dvpp/shared.ts';
+import { requestContext as dvppRequestContext } from './dvpp/events.ts';
+import { buildColleagueEmailHtml as dvppBuildColleagueEmailHtml, buildLoginEmailHtml as dvppBuildLoginEmailHtml } from './dvpp/emails.ts';
 import { registerStudentProgramRoutes } from './studentProgram.ts';
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { runEngagementAudienceRecompute } from './engagementAudienceRecompute.ts';
@@ -1386,6 +1393,7 @@ function isMailingAdminPath(pathname: string): boolean {
     p.startsWith('/admin/mailchimp/') ||
     p.startsWith('/admin/email-drafts') ||
     p.startsWith('/admin/marketing/contacts') ||
+    p.startsWith('/admin/dvpp/') ||
     p === '/admin/migrate-mailchimp-contacts' ||
     p === '/admin/mailchimp-tag-suggest'
   );
@@ -3757,6 +3765,18 @@ app.post('/make-server-93a20b6f/webinar-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] Webinar upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        /* DVPP zdarma: škola (IČO/doména) + událost funnelu — neblokuje. */
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId,
+            email: cleanEmail,
+            ico: icoDigits || null,
+            event: 'webinar_registered',
+            attribution: dvppAttributionFrom(body),
+            meta: { webinarId, slug },
+            request: dvppRequestContext(c.req.raw),
+          }).catch((e) => console.warn('[dvpp] afterRegistration webinar', e instanceof Error ? e.message : e));
+        }
       }
     } catch (subErr) {
       console.warn('[Subscribers] Webinar upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -4205,6 +4225,33 @@ app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
       savedAt: new Date().toISOString(),
     });
     console.log(`[Webinar] survey light lead: ${cleanEmail} webinar=${webinarId}`);
+    /** Dual-write do subscribers + škola/událost (DVPP zdarma) — neblokuje. */
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sbMailing = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const nameParts = name.split(' ');
+        const up = await upsertSubscriber(sbMailing, {
+          email: cleanEmail,
+          firstName: nameParts[0] || null,
+          lastName: nameParts.slice(1).join(' ') || null,
+          phone: phone || null,
+          positionLabel: 'Kontakt (záznam bez plné registrace)',
+          source: 'dvpp',
+          contactType: 'teacher',
+          status: 'subscribed',
+          tags: ['dvpp-video', `webinar-light-${webinarId}`],
+        });
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId, email: cleanEmail, event: 'lead',
+            attribution: dvppAttributionFrom(body), meta: { webinarId, via: 'survey-light' }, request: dvppRequestContext(c.req.raw),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[Subscribers] light lead upsert (neblokuje):', e instanceof Error ? e.message : e);
+    }
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[Webinar] survey light lead: ${err.message}`);
@@ -4481,6 +4528,17 @@ app.post('/make-server-93a20b6f/dvpp-video-registrace', async (c) => {
         });
         if (!up.ok) console.warn(`[Subscribers] DVPP upsert selhal (neblokuje): ${up.error}`);
         if (up.ok) await enrollInFlows(sbMailing, { type: 'webinar_registered' }, up.subscriberId);
+        /* DVPP zdarma: škola z domény + událost funnelu — neblokuje. */
+        if (up.ok) {
+          await dvppAfterRegistration(sbMailing, {
+            subscriberId: up.subscriberId,
+            email: cleanEmail,
+            event: 'lead',
+            attribution: dvppAttributionFrom(body),
+            meta: { videoId, via: lightLead ? 'recording-light' : 'recording' },
+            request: dvppRequestContext(c.req.raw),
+          }).catch((e) => console.warn('[dvpp] afterRegistration recording', e instanceof Error ? e.message : e));
+        }
       }
     } catch (subErr) {
       console.warn('[Subscribers] DVPP upsert chyba (neblokuje):', subErr instanceof Error ? subErr.message : subErr);
@@ -5683,6 +5741,11 @@ function enrichDvppVideosWithWebinarCertificateFields(videos: any[], webinars: a
       greyButtonText: String(w.greyButtonText || v.greyButtonText || 'Certifikát DVPP'),
       webinarSlugForSurvey: String(w.slug || w.id),
       surveyRequireFullRegistration: w.surveyRequireFullRegistration === true,
+      /* Karta jako na homepage: obrázek webináře na podkladu v jeho barvě + datum vysílání. */
+      thumbnail: String(v.thumbnail || w.coverImage || ''),
+      coverBg: String(v.coverBg || w.coverImageBgColor || ''),
+      lecturer: String(v.lecturer || w.lecturer || ''),
+      airedAt: v.airedAt || (w.year && w.monthNum && w.day ? `${w.year}-${String(w.monthNum).padStart(2, '0')}-${String(w.day).padStart(2, '0')}` : undefined),
     };
   });
 }
@@ -5698,6 +5761,9 @@ function buildDvppVideoFromPastWebinar(w: any): any | null {
     name: String(w.title || w.name || 'Webinář').trim() || 'Webinář',
     slug: String(w.slug || id).trim() || id,
     thumbnail: String(w.coverImage || w.thumbnail || ''),
+    coverBg: String(w.coverImageBgColor || ''),
+    lecturer: String(w.lecturer || ''),
+    airedAt: w.year && w.monthNum && w.day ? `${w.year}-${String(w.monthNum).padStart(2, '0')}-${String(w.day).padStart(2, '0')}` : undefined,
     youtubeUrl,
     certificateUrl: String(w.certificateUrl || ''),
     certificateLinkMode: w.certificateLinkMode === 'survey' ? 'survey' : 'external',
@@ -9312,7 +9378,7 @@ app.get('/make-server-93a20b6f/llms.txt', (c) => {
 - Vividboard (nástroj pro interaktivní tabule)
 
 ## Webináře
-- [DVPP webináře](${marketingSitePath('/webinare')}): Pravidelné webináře pro učitele, akreditované DVPP, zdarma s certifikátem
+- [DVPP webináře](${marketingSitePath('/webinare')}): Pravidelné webináře pro učitele zdarma, s osvědčením DVPP; záznamy v knihovně dvppzdarma.cz
 
 ## Blog a novinky
 - [Blog](${marketingSitePath('/blog')}): Články o moderním vzdělávání, rozhovory s učiteli
@@ -10750,7 +10816,7 @@ app.post('/make-server-93a20b6f/admin/mailing/flows/seed-defaults', async (c) =>
     if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
     const { data: existing } = await supabase.from('automation_flows').select('slug');
     const have = new Set((existing || []).map((f) => f.slug as string));
-    const toInsert = DEFAULT_AUTOMATION_FLOWS.filter((f) => !have.has(f.slug)).map((f) => ({
+    const toInsert = [...DEFAULT_AUTOMATION_FLOWS, ...DVPP_AUTOMATION_FLOWS].filter((f) => !have.has(f.slug)).map((f) => ({
       name: f.name,
       slug: f.slug,
       definition: f.definition,
@@ -14689,7 +14755,7 @@ function getPipedriveProductCodeFromCatalog(catalogItem: Record<string, unknown>
     md.code,
     catalogItem.shoptetId,
     catalogItem.isbn,
-    catalogItem.shopifyVariantId,
+    catalogItem.basecomSku,
   );
 }
 
@@ -25374,7 +25440,7 @@ app.post('/make-server-93a20b6f/generate-collage-ai', async (c) => {
 ═══════════════════════════════════════════════════════════════════ */
 
 function slimProductForAgent(p: any): any {
-  const keys = ['id', 'item_id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'previewVideoLink', 'appLink', 'shopifyVariantId', 'shopifyProductId', 'shoptetId'];
+  const keys = ['id', 'item_id', 'name', 'type', 'category', 'price', 'priceAmount', 'autori', 'rocnik', 'dolozka', 'image', 'previewLink', 'flipbookLink', 'previewVideoLink', 'appLink', 'shoptetId', 'basecomSku'];
   const o: any = {};
   for (const k of keys) {
     const v = p[k];
@@ -25389,8 +25455,8 @@ function slimProductForAgent(p: any): any {
 const ADMIN_AGENT_TOOLS = [
   // ── Produkty ──────────────────────────────────────────────────────
   { name: 'get_products', description: 'Načte seznam produktů z katalogu. Výchozí (full_fields false): krátký přehled polí (id, name, type, category, ceny, ročník, doložka, odkazy, obrázek…) — šetří paměť edge workeru. full_fields true: všechna pole, ale max ~60 položek — použij jen když opravdu potřebuješ dlouhé description/obsah/metadata.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', description: 'workbook | online | vividboard | all', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', description: 'Substring v názvu, diakritika OK', nullable: true }, full_fields: { type: 'BOOLEAN', description: 'true = celé záznamy (max ~60), false = lehké záznamy (max ~250)', nullable: true } } } },
-   { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, item_id: { type: 'STRING', description: 'Externí ID položky pro marketingové XML/CSV feedy; pokud chybí, použije se interní id.', nullable: true }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shopifyVariantId: { type: 'STRING', nullable: true }, shopifyProductId: { type: 'STRING', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, previewVideoLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
-  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, item_id, category, price, priceAmount, description, autori, rocnik, dolozka, image, shopifyVariantId, shopifyProductId, shoptetId, flipbookLink, previewLink, previewVideoLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "item_id": "6978...", "price": "299 Kč", "shopifyVariantId": "123", "description": "..." }' } }, required: ['id', 'fields'] } },
+   { name: 'create_product', description: 'Vytvoří nový produkt v katalogu. Vyplň všechna relevantní pole. type: workbook | online | vividboard. Vrátí ID nového produktu.', parameters: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', description: 'workbook | online | vividboard' }, item_id: { type: 'STRING', description: 'Externí ID položky pro marketingové XML/CSV feedy; pokud chybí, použije se interní id.', nullable: true }, category: { type: 'STRING', nullable: true }, price: { type: 'STRING', nullable: true }, priceAmount: { type: 'NUMBER', nullable: true }, description: { type: 'STRING', nullable: true }, autori: { type: 'STRING', nullable: true }, rocnik: { type: 'STRING', nullable: true }, dolozka: { type: 'STRING', nullable: true }, image: { type: 'STRING', description: 'URL obrázku produktu', nullable: true }, shoptetId: { type: 'STRING', nullable: true }, basecomSku: { type: 'STRING', nullable: true }, flipbookLink: { type: 'STRING', nullable: true }, previewLink: { type: 'STRING', nullable: true }, previewVideoLink: { type: 'STRING', nullable: true }, appLink: { type: 'STRING', nullable: true }, note: { type: 'STRING', nullable: true } }, required: ['name', 'type'] } },
+  { name: 'update_product', description: 'Aktualizuje libovolná pole u jednoho produktu. Do fields můžeš zapsat JAKÉKOLIV pole: name, type, item_id, category, price, priceAmount, description, autori, rocnik, dolozka, image, shoptetId, basecomSku, flipbookLink, previewLink, previewVideoLink, appLink, note, obsah, metadata nebo jakékoli vlastní pole. Stávající pole, která neuvedeš, zůstanou nezměněna.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' }, fields: { type: 'OBJECT', description: 'Libovolný objekt s poli k přepsání. Např. { "item_id": "6978...", "price": "299 Kč", "description": "..." }' } }, required: ['id', 'fields'] } },
   { name: 'bulk_update_products', description: 'Hromadně přepíše pole u skupiny produktů. Okamžitě uloží.', parameters: { type: 'OBJECT', properties: { filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true }, fields: { type: 'OBJECT' } }, required: ['fields'] } },
   { name: 'bulk_update_prices_percentage', description: 'Změní ceny skupiny produktů o procento. Kladné = zdražení, záporné = zlevnění. Zaokrouhlení na desítky.', parameters: { type: 'OBJECT', properties: { percentage: { type: 'NUMBER', description: 'např. 10 = +10%, -5 = -5%' }, filter_type: { type: 'STRING', nullable: true }, filter_category: { type: 'STRING', nullable: true }, filter_name_contains: { type: 'STRING', nullable: true } }, required: ['percentage'] } },
   { name: 'delete_product', description: 'Smaže produkt z katalogu.', parameters: { type: 'OBJECT', properties: { id: { type: 'STRING' } }, required: ['id'] } },
@@ -26929,7 +26995,7 @@ function inferAdminSpecialistRoute(message: any): { specialist: 'marketing' | 's
   const seoIntent = /(seo|meta title|meta description|search intent|keyword|klicov[a-z]* slova|klicovky|prolinkovan[iy]|internal linking|obsahov[a-z]* brief|content brief|osnova|outline|h1|h2|serp)/.test(text);
   const imageIntent = /(obrazek|vizual|kolaz|cover|hero image|banner|thumbnail|miniatura|kompozic|image prompt|grafik|vygeneruj.*obraz|navrhni.*vizual)/.test(text);
 
-  const directCmsOps = /(uprav|zmen|smaz|publish|publikuj|odpublikuj|nahraj|prirad|pridej do clanku|vloz do clanku|pridej obrazek|pridej fotku|cenu|variant|shopify|produkt id|najdi id|seznam|prehled|stav|zaindexuj|preindexuj|sync|synchroniz|bulk|hromadn)/.test(text);
+  const directCmsOps = /(uprav|zmen|smaz|publish|publikuj|odpublikuj|nahraj|prirad|pridej do clanku|vloz do clanku|pridej obrazek|pridej fotku|cenu|variant|produkt id|najdi id|seznam|prehled|stav|zaindexuj|preindexuj|sync|synchroniz|bulk|hromadn)/.test(text);
   const imageAssetOps = /(prirad k produktu|pridej do clanku|vloz do clanku|nahraj obrazek|pridej obrazek|cover existujiciho clanku)/.test(text);
 
   if (seoIntent && !directCmsOps) return { specialist: 'seo', reason: 'seo_intent' };
@@ -27827,6 +27893,38 @@ app.post('/make-server-93a20b6f/kv', async (c) => {
  * 2) Pokud zbývá cesta bez segmentu s názvem funkce (`/admin/…`, `/webhooks/…`,
  *    tracking, newsletter…), doplníme `/make-server-93a20b6f` — jinak Hono 404.
  */
+/* ── DVPP zdarma (knihovna, sborovna, certifikáty, měření) — docs/dvpp/ ─────── */
+registerDvppRoutes(app, {
+  sendEmail: (opts) => sendMandrillHtml(opts),
+  buildLoginEmailHtml: dvppBuildLoginEmailHtml,
+  buildColleagueEmailHtml: dvppBuildColleagueEmailHtml,
+  publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, ''),
+  functionBase: () => `${Deno.env.get('SUPABASE_URL') || ''}/functions/v1/make-server-93a20b6f`,
+  loadRegistryRecords: async () => (await loadSchoolsCache()) as unknown as DvppRegistryRecord[],
+  loadVideos: async () => {
+    let data: any = await kv.get(DVPP_VIDEOS_KEY);
+    if (!data?.topics?.length && !data?.videos?.length) {
+      try { data = await syncDvppVideos(); } catch { data = { topics: [], videos: [] }; }
+    }
+    const webinars = (await getCollection(WEBINARS_KEY)) as any[];
+    const rawVideos = mergePastWebinarsIntoDvppVideos(data.videos ?? [], webinars);
+    const videos = enrichDvppVideosWithWebinarCertificateFields(rawVideos, webinars);
+    return { topics: data.topics ?? [], videos };
+  },
+  cronSecretOk: (c) => {
+    // Stejně jako /cron/student-program: přijme MAILING_CRON_SECRET i WEBINAR_REMINDER_CRON_SECRET,
+    // v hlavičce X-Cron-Secret nebo jako Bearer token (pg_cron úlohy posílají obojí).
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+  loadWebinars: async () => ((await getCollection(WEBINARS_KEY)) as Array<Record<string, unknown>>) || [],
+  buildEmailTemplate: (d) => vividbooksEmailTemplate({ headline: d.headline, body: d.body, ctaText: d.ctaText, ctaUrl: d.ctaUrl, preheader: d.preheader }),
+});
+
 Deno.serve((incoming) => {
   const url = new URL(incoming.url);
   let p = url.pathname;

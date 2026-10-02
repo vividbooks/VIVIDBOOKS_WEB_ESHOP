@@ -159,8 +159,6 @@ const PRODUCT_FIELDS: FieldDef[] = [
   { key: 'basecomProductId', label: 'Base.com Product ID', type: 'text' },
   { key: 'basecomSku', label: 'Base.com SKU', type: 'text', hint: 'Standardně bereme Shoptet ID. Toto pole slouží jen jako výjimka / override.' },
   { key: 'description', label: 'Popis', type: 'textarea', fullWidth: true },
-  { key: 'shopifyVariantId', label: 'Shopify Variant ID', type: 'text' },
-  { key: 'shopifyProductId', label: 'Shopify Product ID', type: 'text' },
   { key: 'shoptetId', label: 'Shoptet ID', type: 'text' },
   { key: 'priceMonthly', label: 'Cena měsíc', type: 'text', placeholder: '290,-/měsíc', showIf: (d) => d.type === 'online' },
   { key: 'priceYearly', label: 'Cena rok', type: 'text', placeholder: '2\u00a0900,-/rok', showIf: (d) => d.type === 'online' },
@@ -1066,8 +1064,6 @@ function ProductCommercePanel({
           <div><span className="text-gray-400">Base.com SKU: </span><span className="font-semibold text-[#001161]">{editData.shoptetId || editData.basecomSku || stock?.matchedProductSku || editData.metadata?.ean || editData.isbn || '—'}</span></div>
           <div><span className="text-gray-400">Base.com Product ID: </span><span className="font-semibold text-[#001161]">{editData.basecomProductId || stock?.matchedProductId || '—'}</span></div>
           <div><span className="text-gray-400">EAN: </span><span className="font-semibold text-[#001161]">{stock?.matchedProductEan || editData.metadata?.ean || '—'}</span></div>
-          <div><span className="text-gray-400">Shopify Variant ID: </span><span className="font-semibold text-[#001161] break-all">{editData.shopifyVariantId || '—'}</span></div>
-          <div><span className="text-gray-400">Shopify Product ID: </span><span className="font-semibold text-[#001161] break-all">{editData.shopifyProductId || '—'}</span></div>
         </div>
         <div className="mt-3 rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-[12px] text-blue-800">
           {'Tlačítko synchronizuje aktuální produkt do Base.com katalogu a jako SKU používá primárně Shoptet ID. Vrácené Base.com Product ID a SKU se uloží zpět do produktu.'}

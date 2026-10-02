@@ -28,6 +28,11 @@ export interface DvppVideo {
   surveyRequireFullRegistration?: boolean;
   topicIds: string[];
   description: string;
+  /** Karta jako na homepage: podklad v barvě webináře (`coverImageBgColor`) a datum vysílání (YYYY-MM-DD). */
+  coverBg?: string;
+  airedAt?: string;
+  lecturer?: string;
+  durationMinutes?: number;
 }
 
 interface DvppVideosContextType {

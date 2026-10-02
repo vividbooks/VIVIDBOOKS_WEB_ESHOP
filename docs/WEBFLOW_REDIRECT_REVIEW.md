@@ -123,12 +123,12 @@ Z [`shoptetProductsXmlImport.ts`](../src/utils/shoptetProductsXmlImport.ts) — 
 - **„Žákovské knížky“**
 
 → typ **`merch`** v katalogu, varianty (velikosti) uvnitř záznamu, pole **`shoptetId`** pro sklad / párování.  
-**Ostatní kategorie z XML se ignorují** — hlavní učebnice/objednávková logika u vás typicky běží přes **Shopify varianty + vlastní produkty**, ne přes celý Shoptet dump.
+**Ostatní kategorie z XML se ignorují** — hlavní učebnice/objednávková logika u vás typicky běží přes **vlastní produkty v KV** (SKU = `shoptetId`, objednávky jdou do Base.com), ne přes celý Shoptet dump.
 
 ### Co z toho plyne pro „starý Shoptet“
 
 - Pokud potřebuješ **všechny** produktové řádky ze starého Shoptetu v novém katalogu, je potřeba buď **rozšířit `SHOPTET_IMPORT_ALLOWED_ROOTS` / filtrování** v `shoptetProductsXmlImport.ts` (a sladit s CLI skriptem), nebo produkty založit/jinak migrovat (ručně, CSV, jiný export).
-- Po importu merchu často musíš doplnit **`shopifyVariantId`** u variant (platby Stripe) — viz text v Migraci obsahu.
+- Po importu merchu zkontroluj, že každá varianta má **`shoptetId`** (SKU) — podle něj se páruje košík, sklad i export do Base.com.
 
 ---
 

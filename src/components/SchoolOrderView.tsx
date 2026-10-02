@@ -18,8 +18,6 @@ interface Product {
   image: string | null;
   note?: string;
   // Integrační identifikátory
-  shopifyVariantId?: string | null;
-  shopifyProductId?: string | null;
   shoptetId?: string | null;
   shoptetProductId?: string | null;
 }
@@ -236,8 +234,6 @@ export function SchoolOrderView({
               name: p?.name,
               price: p?.price,
               quantity: qty,
-              shopifyVariantId: p?.shopifyVariantId ?? null,
-              shopifyProductId: p?.shopifyProductId ?? null,
               shoptetId: p?.shoptetId ?? p?.shoptetProductId ?? null,
             };
           }),

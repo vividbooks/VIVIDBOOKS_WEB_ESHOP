@@ -11,7 +11,6 @@ export type MerchVariantOption = {
   priceAmount: number;
   /** SKU / kód varianty ve Shoptetu — sklad */
   shoptetId: string;
-  shopifyVariantId?: string;
   metadata: {
     shoptetVariantId: string;
     shoptetVariantCode: string;
