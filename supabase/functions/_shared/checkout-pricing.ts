@@ -80,16 +80,9 @@ export async function loadCheckoutCatalog(
   return { products, bundles: bundlesRaw };
 }
 
+/** Stejná logika jako `getProductVariantId` v `src/components/cartUpsellUtils.ts`. */
 function getProductVariantId(product: any): string | undefined {
-  const variantId = product.shopifyVariantId || product.variantId;
-  if (typeof variantId === 'string' && variantId.trim().length > 0) return variantId.trim();
   const merch = product.merchVariants;
-  if (Array.isArray(merch)) {
-    for (const v of merch) {
-      const vid = v?.shopifyVariantId;
-      if (typeof vid === 'string' && vid.trim().length > 0) return vid.trim();
-    }
-  }
   if (String(product.type || '').toLowerCase() === 'merch' && Array.isArray(merch) && merch.length > 0) {
     for (const v of merch) {
       const sku = typeof v?.shoptetId === 'string' ? v.shoptetId.trim() : '';
@@ -104,9 +97,8 @@ function getProductVariantId(product: any): string | undefined {
       if (rowId) return rowId;
     }
   }
-  const shoptetProduct = product.shoptetId || product.shoptetProductId;
-  if (typeof shoptetProduct === 'string' && shoptetProduct.trim().length > 0) {
-    return shoptetProduct.trim();
+  for (const sku of [product.shoptetId, product.shoptetProductId, product.basecomSku]) {
+    if (typeof sku === 'string' && sku.trim().length > 0 && !isPlaceholderStockSku(sku)) return sku.trim();
   }
   return undefined;
 }

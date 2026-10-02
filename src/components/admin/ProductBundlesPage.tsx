@@ -976,7 +976,7 @@ export default function ProductBundlesPage() {
                 && formProductIds.length > 0
                 && previewSum.alloc.length !== nxSlices.paidIds.length && (
                 <p className="text-[12px] text-red-600">
-                  Některé řádky nemají identifikátor pro košík (Shopify variantId, Shoptet SKU u merchu ani shoptetId u produktu) — ty v balíčku nejdou rozúčtovat.
+                  Některé řádky nemají identifikátor pro košík (Shoptet ID / Base.com SKU produktu ani SKU varianty u merchu) — ty v balíčku nejdou rozúčtovat.
                 </p>
               )}
 

@@ -88,19 +88,11 @@ export function isAddable(product: any): boolean {
 }
 
 /**
- * ID řádku košíku / balíčku: Shopify variantId, jinak u merchu Shoptet SKU / id varianty (viz ProductDetailPage `effectiveCartVariantId`),
- * jinak shoptetId u záznamu produktu.
+ * ID řádku košíku / balíčku: u merchu SKU / id varianty, jinak SKU produktu (`shoptetId`, `basecomSku`).
+ * Do Base.com se SKU dohledává na serveru podle `productId` — tohle je jen identita řádku v košíku.
  */
 export function getProductVariantId(product: any): string | undefined {
-  const variantId = product.shopifyVariantId || product.variantId;
-  if (typeof variantId === 'string' && variantId.trim().length > 0) return variantId.trim();
   const merch = product.merchVariants;
-  if (Array.isArray(merch)) {
-    for (const v of merch) {
-      const vid = v?.shopifyVariantId;
-      if (typeof vid === 'string' && vid.trim().length > 0) return vid.trim();
-    }
-  }
   if (String(product.type || '').toLowerCase() === 'merch' && Array.isArray(merch) && merch.length > 0) {
     for (const v of merch) {
       const sku = typeof v?.shoptetId === 'string' ? v.shoptetId.trim() : '';
@@ -115,9 +107,8 @@ export function getProductVariantId(product: any): string | undefined {
       if (rowId) return rowId;
     }
   }
-  const shoptetProduct = product.shoptetId || product.shoptetProductId;
-  if (typeof shoptetProduct === 'string' && shoptetProduct.trim().length > 0) {
-    return shoptetProduct.trim();
+  for (const sku of [product.shoptetId, product.shoptetProductId, product.basecomSku]) {
+    if (typeof sku === 'string' && sku.trim().length > 0 && !isPlaceholderStockSku(sku)) return sku.trim();
   }
   return undefined;
 }

@@ -342,7 +342,7 @@ registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (set 
       name: 'PM6100',
       category: 'Matematika 2. stupeň',
       type: 'workbook',
-      variantId: 'v-PM6100',
+      shoptetId: 'PM6100',
       priceAmount: 199,
     },
     {
@@ -350,7 +350,7 @@ registerTest('allocateSubjectBundleQuantities applies 10+1 bonus per title (set 
       name: 'PM6200',
       category: 'Matematika 2. stupeň',
       type: 'workbook',
-      variantId: 'v-PM6200',
+      shoptetId: 'PM6200',
       priceAmount: 249,
     },
   ];

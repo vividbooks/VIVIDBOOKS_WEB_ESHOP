@@ -20,7 +20,7 @@ import { SubjectTabsSection } from './SubjectTabsSection';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { getMerchVariantUnitPriceInHaler, parsePriceTextToKc } from '../utils/productPrice';
-import { getProductImage, getProductUnitPriceInHaler, isPrintProduct } from './cartUpsellUtils';
+import { getProductImage, getProductUnitPriceInHaler, getProductVariantId, isPrintProduct, isUnavailableForCart } from './cartUpsellUtils';
 import {
   bundleIsNxPlusOneSubject,
   productMatchesBundleSubjectLabels,
@@ -496,17 +496,6 @@ const getDescription = (p: any): string => {
   return descMap[cat] || '';
 };
 
-const getCategoryLink = (cat: string): string => {
-  const links: Record<string, string> = {
-    'Matematika': 'https://www.vividbooks.cz/matematika',
-    'Anglick\u00fd jazyk': 'https://www.vividbooks.cz/anglicky-jazyk',
-    'Fyzika': 'https://www.vividbooks.cz/fyzika',
-    'Chemie': 'https://www.vividbooks.cz/chemie',
-    'P\u0159\u00edrodopis': 'https://www.vividbooks.cz/prirodopis',
-  };
-  return links[cat] || 'https://www.vividbooks.cz';
-};
-
 /** Rozd\u011bl\u00ed popis na prvn\u00ed odstavec a zbytek; u jednoho dlouh\u00e9ho bloku zkr\u00e1t\u00ed na rozumnou d\u00e9lku. */
 function splitDescriptionForMoreFold(text: string): { first: string; rest: string | null } {
   const trimmed = text.trim();
@@ -624,8 +613,7 @@ function parseObsah(text: string): { number: string; title: string; note?: strin
 
 /* ── main component ──────────────────────────────────── */
 export type SchoolOrderMerchContext = {
-  shopifyVariantId?: string;
-  /** Shoptet SKU — když není Shopify variantId, stejná identita řádku jako v běžném košíku. */
+  /** SKU varianty — stejná identita řádku jako v běžném košíku. */
   shoptetSku?: string;
   unitPriceHaler: number;
   productDisplayName: string;
@@ -874,17 +862,15 @@ export function ProductDetailPage({
     else setDigitalSubscriptionBuyer('parent');
   }, [isSecondStageDigitalCta, product.id, canDigitalParentSubscribe, canDigitalSchoolOrder]);
 
-  /** Identifikátor řádku košíku: Shopify variantId nebo u merchu Shoptet SKU. */
+  /** Identifikátor řádku košíku: SKU produktu, u merchu SKU vybrané varianty. */
   const effectiveCartVariantId = useMemo(() => {
     if (product.type === 'merch' && selectedMerchVariant) {
-      const s = selectedMerchVariant.shopifyVariantId?.trim();
-      if (s) return s;
       const sku = resolveProductStockSku(product, selectedMerchVariant);
       if (sku) return sku;
       return selectedMerchVariant.id?.trim() || '';
     }
-    return String(product.shopifyVariantId ?? '').trim();
-  }, [product.type, product.shopifyVariantId, selectedMerchVariant, product.shoptetId, product.basecomSku]);
+    return getProductVariantId(product) || '';
+  }, [product, selectedMerchVariant]);
 
   useEffect(() => {
     const itemId = String(product.item_id || product.itemId || product.id || '');
@@ -1047,7 +1033,9 @@ export function ProductDetailPage({
     ? products
         .filter(p =>
           p.id !== product.id &&
-          p.shopifyVariantId &&
+          !p.hideFromCatalog &&
+          getProductVariantId(p) &&
+          !isUnavailableForCart(p) &&
           (p.name || '').replace(/\s*[–\-\/]\s*\d+\.\s*d[ií]l\s*$/i, '').trim() === seriesBase
         )
         .sort((a: any, b: any) => {
@@ -1115,7 +1103,7 @@ export function ProductDetailPage({
         addItem({
           productId: String(sibling.id),
           productName: sibling.name || 'Produkt',
-          variantId: sibling.shopifyVariantId || sibling.variantId || undefined,
+          variantId: getProductVariantId(sibling),
           quantity: 1,
           unitPrice: getProductUnitPriceInHaler(sibling),
           imageUrl: sibling.image || sibling.imageUrl || sibling.coverImage || undefined,
@@ -1744,16 +1732,6 @@ export function ProductDetailPage({
                     <Download className="w-4 h-4 shrink-0" />
                     {'St\u00e1hnout podklady'}
                   </button>
-                ) : !effectiveCartVariantId ? (
-                  <a
-                    href={product.link || getCategoryLink(product.category)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2 flex-[1.3] py-3 px-4 bg-[#001161] hover:bg-[#000a3d] text-white rounded-[14px] font-['Fenomen_Sans',sans-serif] text-[14px] font-bold transition-all hover:scale-[1.02] active:scale-[0.98] no-underline"
-                  >
-                    <ShoppingCart className="w-4 h-4 shrink-0" />
-                    {'Objednat pro školu'}
-                  </a>
                 ) : null}
 
                 {/* Secondary — same row */}
@@ -1763,7 +1741,6 @@ export function ProductDetailPage({
                       onOrder(
                         product.type === 'merch' && selectedMerchVariant
                           ? {
-                              shopifyVariantId: selectedMerchVariant.shopifyVariantId,
                               shoptetSku: resolveProductStockSku(product, selectedMerchVariant) || selectedMerchVariant.shoptetId,
                               unitPriceHaler: getMerchVariantUnitPriceInHaler(selectedMerchVariant),
                               productDisplayName: `${product.name} – ${selectedMerchVariant.label}`,
