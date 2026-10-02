@@ -35,7 +35,7 @@ import { useStripePublishableKey } from '../utils/stripe/useStripePublishableKey
 import { PaymentMethodSection } from './checkout/PaymentMethodCards';
 import { StripePaymentSubmitForm } from './checkout/StripePaymentSubmitForm';
 import { CheckoutWalletQrPanel } from './checkout/CheckoutWalletQrPanel';
-import { getProductUnitPriceInHaler } from './cartUpsellUtils';
+import { getProductUnitPriceInHaler, getProductVariantId } from './cartUpsellUtils';
 import {
   allocateSubjectBundleQuantities,
   bundleIsNxPlusOneSubject,
@@ -208,7 +208,7 @@ const INPUT_CLS = "w-full bg-white border border-[#001161]/10 rounded-[12px] px-
 interface Product {
   id: string; name: string; price: string; priceType: string;
   category: string; type: string; image: string | null; note?: string;
-  shopifyVariantId?: string | null; shopifyProductId?: string | null;
+  shoptetId?: string | null; basecomSku?: string | null;
 }
 
 interface DeliveryAddressState {
@@ -934,7 +934,7 @@ export function OrderPage() {
 
   const syncWorkbookQuantity = useCallback((product: Product, quantity: number) => {
     const nextQuantity = Math.max(0, Math.floor(quantity));
-    const variantId = product.shopifyVariantId || undefined;
+    const variantId = getProductVariantId(product);
     const existing = items.find((item) => item.productId === String(product.id) && item.variantId === variantId);
 
     if (existing) {
@@ -1397,7 +1397,7 @@ export function OrderPage() {
         .map(([id, qty]) => {
           const p = products.find((x) => String(x.id) === String(id));
           if (!p) return null;
-          const variantId = p.shopifyVariantId || undefined;
+          const variantId = getProductVariantId(p);
           const line = items.find((it) => it.productId === String(id) && it.variantId === variantId);
           const unitPrice = line?.unitPrice ?? getProductUnitPriceInHaler(p);
           const variant = line?.variantName?.trim();

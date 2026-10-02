@@ -23,7 +23,6 @@ type ProductLike = {
   category?: string;
   type?: string;
   priceAmount?: number;
-  shopifyVariantId?: string;
   variantId?: string;
   shoptetId?: string;
   shoptetProductId?: string;

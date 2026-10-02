@@ -1133,7 +1133,7 @@ export default function MigrationPage() {
                   {SHOPTET_IMPORT_ALLOWED_ROOTS.join(', ')}
                 </span>
                 {
-                  '. Ostatní zboží v XML se ignoruje. Jeden „Shoptet produkt“ = jeden záznam u nás; velikosti jsou v poli variant uvnitř. Po importu typicky doplníš Shopify variant ID u každé velikosti (Shopify linker).'
+                  '. Ostatní zboží v XML se ignoruje. Jeden „Shoptet produkt“ = jeden záznam u nás; velikosti jsou v poli variant uvnitř.'
                 }
               </p>
             </div>
@@ -1144,7 +1144,7 @@ export default function MigrationPage() {
               <AlertCircle className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
               <p className="text-[12px] text-emerald-900">
                 {
-                  'Pro platby kartou přes Stripe je potřeba u nových položek doplnit Shopify variant ID (např. nástrojem Shopify linker v adminu). Pole Shoptet ID slouží ke skladu / párování.'
+                  'Pole Shoptet ID je SKU produktu — podle něj se položka páruje v košíku, na skladu i při odeslání objednávky do Base.com.'
                 }
               </p>
             </div>

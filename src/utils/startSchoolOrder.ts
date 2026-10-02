@@ -1,6 +1,6 @@
 import type { NavigateFunction } from 'react-router';
 import type { SchoolOrderMerchContext } from '../components/ProductDetailPage';
-import { getProductUnitPriceInHaler } from '../components/cartUpsellUtils';
+import { getProductUnitPriceInHaler, getProductVariantId } from '../components/cartUpsellUtils';
 import { isMerchWallArtBoardsProduct } from './merchProducts';
 import { matchSchoolSubjectKeysFromCategory, mergeSchoolOrderDraft } from './schoolOrderDraft';
 
@@ -51,10 +51,8 @@ export function startSchoolOrder(
     ...(subjKeys.length > 0 ? { selSubjects: subjKeys } : {}),
   });
 
-  const merchVid = ctx?.shopifyVariantId?.trim();
   const merchSku = ctx?.shoptetSku?.trim();
-  const fallbackVid = product.shopifyVariantId?.trim();
-  const lineVariantId = merchVid || merchSku || fallbackVid || '';
+  const lineVariantId = merchSku || getProductVariantId(product) || '';
 
   if ((product.type === 'workbook' || product.type === 'merch') && lineVariantId) {
     const pid = String(product.id);

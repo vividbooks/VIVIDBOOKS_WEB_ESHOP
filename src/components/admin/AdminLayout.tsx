@@ -346,7 +346,7 @@ export default function AdminLayout() {
     notifikace: 'Notifikace', popupy: 'Popup Manager', registrace: 'Registrace',
     tabs: 'Taby', rag: 'RAG Znalosti', 'marketing-agent': 'Marketing Agent',
     'seo-agent': 'SEO Agent', 'image-agent': 'Image Agent', 'referencni-styly': 'Referenční styly',
-    skoly: 'Rejstřík škol', shopify: 'Shopify',
+    skoly: 'Rejstřík škol',
     objednavky: 'Objednávky',
     analytika: 'Analytika',
     sklad: 'Skladové zásoby',
