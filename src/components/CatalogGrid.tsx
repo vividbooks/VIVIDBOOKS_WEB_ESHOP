@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { HeroLottieOverlay } from './HeroLottieOverlay';
 import { useNavigate, useLocation } from 'react-router';
 import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
@@ -1044,6 +1045,7 @@ export default function CatalogGrid() {
         ...base,
         layout: simpleLayout,
         image: s.image || '',
+        heroLottie: typeof s.heroLottie === 'string' ? s.heroLottie.trim() : '',
         imageEdgeToEdge: Boolean(s.imageEdgeToEdge),
         imageColumnPercent: clampHeroImageColumnPercent(s.imageColumnPercent),
         heroImageColumnAlign: s.heroImageColumnAlign === 'center' ? ('center' as const) : ('start' as const),
@@ -1994,6 +1996,13 @@ export default function CatalogGrid() {
                             50,
                           )}
                         />
+                        {typeof (slideView as any).heroLottie === 'string' && (slideView as any).heroLottie.trim() ? (
+                          <HeroLottieOverlay
+                            src={(slideView as any).heroLottie.trim()}
+                            posXPct={(slideView as any).heroImagePosXPct}
+                            posYPct={50}
+                          />
+                        ) : null}
                         {(slideView as any).heroBubblesLayout !== 'text' && (
                           <HeroBubblesOverlay bubbles={(slideView as any).heroBubbles} narrow />
                         )}
@@ -2039,6 +2048,13 @@ export default function CatalogGrid() {
                             (slideView as any).heroImagePosYPct,
                           )}
                         />
+                        {typeof (slideView as any).heroLottie === 'string' && (slideView as any).heroLottie.trim() ? (
+                          <HeroLottieOverlay
+                            src={(slideView as any).heroLottie.trim()}
+                            posXPct={(slideView as any).heroImagePosXPct}
+                            posYPct={(slideView as any).heroImagePosYPct}
+                          />
+                        ) : null}
                         {(slideView as any).heroBubblesLayout !== 'text' && (
                           <HeroBubblesOverlay
                             bubbles={(slideView as any).heroBubbles}

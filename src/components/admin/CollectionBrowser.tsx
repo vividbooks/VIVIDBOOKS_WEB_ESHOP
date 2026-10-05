@@ -348,6 +348,15 @@ const HERO_SLIDE_FIELDS: FieldDef[] = [
     showIf: (d) => d.layout === 'left-image' || d.layout === 'hero-full-image',
   },
   {
+    key: 'heroLottie',
+    label: 'Animace Lottie (URL .json)',
+    type: 'text',
+    fullWidth: true,
+    placeholder: '/hero/prijimacky-hero.json',
+    hint: 'Volitelné. Přehraje se přes obrázek slidu, obrázek zůstává jako první snímek a pro uživatele s vypnutými animacemi. Ořez a zarovnání jako u obrázku.',
+    showIf: (d) => d.layout === 'left-image',
+  },
+  {
     key: 'imageEdgeToEdge',
     label: 'Fotka až ke kraji slidu',
     type: 'boolean',

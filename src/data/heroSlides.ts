@@ -904,6 +904,8 @@ export interface HeroSlide {
   heroImagePosXPct?: number;
   /** Pozice ořezu fotky 0–100 % (osa Y). */
   heroImagePosYPct?: number;
+  /** U `left-image`: URL Lottie animace (.json), která se přehraje přes obrázek; obrázek slouží jako poster. */
+  heroLottie?: string;
   /** Text tlačítka CTA pod spodním textem (volitelné). */
   ctaLabel?: string;
   /** URL tlačítka CTA; pokud prázdné, použije se `link` slidu. */
