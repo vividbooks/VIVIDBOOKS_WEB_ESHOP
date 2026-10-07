@@ -1,7 +1,7 @@
 import { Phone } from 'lucide-react';
 import { Link } from 'react-router';
 import { useCart } from '../contexts/CartContext';
-import { APP_ENTRY_PATH, APP_PREVIEW_URL } from '../config/publicUrls';
+import { APP_SITE_ORIGIN, APP_PREVIEW_URL } from '../config/publicUrls';
 import { presenceFirstName, useVividbooksPresence } from '@/lib/vividbooksPresence';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
@@ -61,8 +61,8 @@ export function TopNav() {
           </button>
         )}
 
-        <Link
-          to={APP_ENTRY_PATH}
+        <a
+          href={APP_SITE_ORIGIN}
           target="_blank"
           rel="noopener noreferrer"
           title={presence?.school || undefined}
@@ -77,7 +77,7 @@ export function TopNav() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
           </svg>
-        </Link>
+        </a>
       </div>
     </nav>
   );

@@ -12,7 +12,7 @@ import { SubjectCheckbox } from './TrialSubjectCheckbox';
 import { TEACHER_SUBJECTS_1ST, TEACHER_SUBJECTS_2ND } from '../utils/trialSubjectOptions';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 import { flashInvalidField } from '../utils/formFieldHighlight';
-import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { APP_SITE_ORIGIN } from '../config/publicUrls';
 import {
   checkStudentEmail,
   fetchStudentProgramFaculties,
@@ -120,8 +120,8 @@ function AccessCard({ student, codesPending, showStudentCode }: { student: Stude
           </div>
         )}
       </div>
-      <Link
-        to={APP_ENTRY_PATH}
+      <a
+        href={APP_SITE_ORIGIN}
         target="_blank"
         rel="noopener noreferrer"
         className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 font-bold text-[16px] text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9] no-underline"
@@ -129,7 +129,7 @@ function AccessCard({ student, codesPending, showStudentCode }: { student: Stude
       >
         <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
         Otevřít aplikaci
-      </Link>
+      </a>
       <TrialTrainingVideosList />
     </div>
   );
@@ -915,9 +915,9 @@ export function StudentProgramUpdatePage() {
                 </div>
               )}
             </div>
-            <Link to={APP_ENTRY_PATH} target="_blank" rel="noopener noreferrer" style={FF} className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[#7C3AED] no-underline hover:underline">
+            <a href={APP_SITE_ORIGIN} target="_blank" rel="noopener noreferrer" style={FF} className="inline-flex items-center gap-1.5 text-[13px] font-bold text-[#7C3AED] no-underline hover:underline">
               Otevřít aplikaci <ExternalLink className="w-3.5 h-3.5" />
-            </Link>
+            </a>
           </div>
         )}
       </div>

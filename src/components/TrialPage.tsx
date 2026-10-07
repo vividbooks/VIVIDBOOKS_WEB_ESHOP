@@ -14,7 +14,7 @@ import {
 } from '../utils/trialSubmit';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
-import { APP_ENTRY_PATH } from '../config/publicUrls';
+import { APP_SITE_ORIGIN } from '../config/publicUrls';
 import {
   DEPUTY_SCHOOL_STAGES,
   TEACHER_SUBJECTS_1ST,
@@ -961,15 +961,15 @@ export function TrialRegistrationForm({
                 {'Ozveme se v\u00e1m co nejd\u0159\u00edve s p\u0159\u00edstupov\u00fdmi \u00fadaji.'}
               </p>
             )}
-            <Link
-              to={APP_ENTRY_PATH}
+            <a
+              href={APP_SITE_ORIGIN}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 font-bold text-[16px] text-white shadow-lg shadow-[#7C3AED]/25 transition-all hover:scale-[1.02] hover:bg-[#6D28D9]"
               style={FF}>
               <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
               {'Otev\u0159\u00edt aplikaci'}
-            </Link>
+            </a>
             <TrialTrainingVideosList />
           </motion.div>
         ) : (
@@ -1283,15 +1283,15 @@ export function TrialPage() {
               </div>
             </div>
             <p style={FF} className="text-[#001161]/60 text-[14px] mb-6">{'T\u00fdm Vividbooks v\u00e1m brzy po\u0161le p\u0159\u00edstupov\u00e9 \u00fadaje.'}</p>
-            <Link
-              to={APP_ENTRY_PATH}
+            <a
+              href={APP_SITE_ORIGIN}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 bg-[#7C3AED] hover:bg-[#6D28D9] text-white font-bold text-[15px] px-8 py-3.5 rounded-full transition-all hover:scale-105 no-underline"
               style={FF}>
               <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />
               {'Otev\u0159\u00edt aplikaci'}
-            </Link>
+            </a>
             <a href="/" className="block mx-auto mt-3 text-[13px] text-[#001161]/45 hover:text-[#001161]/70 transition-colors no-underline" style={FF}>
               {'Prohl\u00e9dnout u\u010debnice'}
             </a>

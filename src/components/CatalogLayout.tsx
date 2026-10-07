@@ -5,7 +5,7 @@ import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ShoppingCart } fro
 import svgPaths from '../imports/svg-3hoiegevxq';
 import logoPaths from '../imports/svg-fupfguvmdt';
 import { TopNav } from './TopNav';
-import { APP_ENTRY_PATH, APP_PREVIEW_URL } from '../config/publicUrls';
+import { APP_SITE_ORIGIN, APP_PREVIEW_URL } from '../config/publicUrls';
 import { CartIcon } from './checkout/CartIcon';
 import { CatalogContext } from '../contexts/CatalogContext';
 import { useCart } from '../contexts/CartContext';
@@ -640,14 +640,14 @@ export default function CatalogLayout() {
                       ZIP
                     </button>
                   ) : (
-                    <Link
-                      to={APP_ENTRY_PATH}
+                    <a
+                      href={APP_SITE_ORIGIN}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="bg-[#ff6a35] text-white px-3 py-2 rounded-[999px] font-['Fenomen_Sans',sans-serif] text-[12px] sm:text-[13px] font-bold flex items-center gap-2 max-[380px]:px-2.5"
                     >
                       <span className="whitespace-nowrap">{'Otev\u0159\u00edt u\u010debnice'}</span>
-                    </Link>
+                    </a>
                   )}
                   <button
                     type="button"
