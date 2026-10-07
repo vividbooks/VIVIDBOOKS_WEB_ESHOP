@@ -8,7 +8,6 @@ import {
   APP_ENTRY_RESET_PARAM,
   appEntryTargetUrl,
   forgetAppEntryChoice,
-  readAppEntryChoice,
   rememberAppEntryChoice,
   type AppEntryChoice,
 } from '@/lib/appEntryChoice';
@@ -160,10 +159,8 @@ export function OtevritAplikaciPage() {
   const [searchParams] = useSearchParams();
   const forceChoice = searchParams.get(APP_ENTRY_RESET_PARAM) !== null;
 
-  /** Zapamatovanou volbu čteme hned při prvním renderu, ať rozcestník zbytečně neproblikne. */
-  const [forwardingTo] = useState<AppEntryChoice | null>(() =>
-    forceChoice ? null : readAppEntryChoice(),
-  );
+  /** Rozcestník se ukáže jen na `?zmenit=1`, jinak rovnou otevřeme novou aplikaci. */
+  const [forwardingTo] = useState<AppEntryChoice | null>(() => (forceChoice ? null : 'nova'));
   const [remember, setRemember] = useState(true);
   const presence = useVividbooksPresence();
 
