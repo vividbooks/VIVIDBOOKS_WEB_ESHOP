@@ -8,6 +8,7 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { isWebinarDay } from '../utils/webinarLiveDelivery';
+import { resolveShareImageUrl } from '../utils/ogImage';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
@@ -1067,6 +1068,8 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
         title={webinar.title}
         path={webinarPath}
         description={`DVPP webin\u00e1\u0159: ${webinar.title} \u2014 ${webinar.day}. ${webinar.monthName} ${webinar.year} v ${webinar.time}. Online semin\u00e1\u0159 pro u\u010ditele zdarma s certifik\u00e1tem.`}
+        image={resolveShareImageUrl({ explicitImage: webinar.coverImage })}
+        imageAlt={`${webinar.title} \u2014 Vividbooks`}
         jsonLd={webinarJsonLd({
           name: webinar.title,
           description: webinar.title,
