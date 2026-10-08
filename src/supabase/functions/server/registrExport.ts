@@ -12,6 +12,7 @@ import type { Context } from 'npm:hono';
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
 import { identityUpsertAuthorized } from './identityUpsert.ts';
+import { followupTrackKeys, recordingTrackFor } from './webinarRecordingTrack.ts';
 import { identifiedWebPathTopic } from '../../../lib/identityWebPath.ts';
 
 type WebinarIdxEntry = {
@@ -438,6 +439,14 @@ export async function handleRegistrWebinarsGet(c: Context) {
           answers: answersToList(m, (reg.answers as Record<string, unknown>) || {}),
         });
       }
+    }
+    // komu odešel záznam po webináři (rozesílka z adminu webu) – CRM pak záznam nenabízí poslat znovu
+    const trackKeys = followupTrackKeys(registrations.map((r) => String(r.webinarId)));
+    if (trackKeys.length) {
+      const { data: tracks, error: trackErr } = await sb.from('kv_store_33b2092f').select('key, value').in('key', trackKeys);
+      if (trackErr) return c.json({ error: trackErr.message }, 500);
+      const byKey = new Map(((tracks || []) as Array<{ key: string; value: unknown }>).map((t) => [t.key, t.value]));
+      for (const r of registrations) Object.assign(r, recordingTrackFor(byKey.get(followupTrackKeys([String(r.webinarId)])[0]), String(r.email)));
     }
     return c.json({ registrations, surveys, nextOffset: (data || []).length === limit ? offset + limit : null });
   } catch (err: any) {

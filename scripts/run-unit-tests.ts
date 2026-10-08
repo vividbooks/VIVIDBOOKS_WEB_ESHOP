@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
+import { followupTrackKeys, recordingTrackFor } from '../src/supabase/functions/server/webinarRecordingTrack.ts';
 import { attendeesCountLabel, isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
 import {
   appEntryTargetUrl,
@@ -2529,6 +2530,15 @@ registerTest('hasSeparateDeliveryAddress / deliveryInfoFromOrderRow: zpět z ř�
     deliveryAddress: { recipientName: '', street: 'Šeříková 682/33', city: 'Ostrava', zip: '70030' },
   });
   assert.deepEqual(deliveryInfoFromOrderRow({ delivery_street: null }), { differentAddress: false });
+});
+
+registerTest('recordingTrackFor / followupTrackKeys: záznam po webináři pro export do Kabinetu', () => {
+  const state = { lastBulkAt: '2026-10-01T08:00:00Z', recipients: { 'jana@zs.cz': { sentAt: '2026-10-01T08:00:01Z', openedAt: '2026-10-01T09:10:00Z', openCount: 2 }, 'petr@zs.cz': { sentAt: '2026-10-01T08:00:02Z' } } };
+  assert.deepEqual(recordingTrackFor(state, ' Jana@ZS.cz '), { recordingSentAt: '2026-10-01T08:00:01Z', recordingOpenedAt: '2026-10-01T09:10:00Z' });
+  assert.deepEqual(recordingTrackFor(state, 'petr@zs.cz'), { recordingSentAt: '2026-10-01T08:00:02Z', recordingOpenedAt: null });
+  assert.deepEqual(recordingTrackFor(state, 'nikdo@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
+  assert.deepEqual(recordingTrackFor(null, 'jana@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
+  assert.deepEqual(followupTrackKeys(['w1', 'w1', '', 'w2']), ['webinar_post_followup_track_v1_w1', 'webinar_post_followup_track_v1_w2']);
 });
 
 await run();
