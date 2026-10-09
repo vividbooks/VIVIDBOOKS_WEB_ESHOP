@@ -26,6 +26,7 @@ import {
   upsertIdentity,
 } from './identityUpsert.ts';
 import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
+import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
@@ -6066,7 +6067,6 @@ ${webinarEmailBrandedHeaderRow(isDvpp ? 'Certifikát DVPP' : 'Potvrzení o úča
 </table></td></tr></table></body></html>`;
 }
 
-const FOLLOWUP_TRACK_KV_PREFIX = 'webinar_post_followup_track_v1_';
 
 type FollowupRecipientTrack = {
   sentAt?: string;
