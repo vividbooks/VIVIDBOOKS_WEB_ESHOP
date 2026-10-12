@@ -18,7 +18,42 @@ export function isDigitalStripeSubscriptionProduct(product: any): boolean {
   return String(product.id) === ALL_DIGITAL_BUNDLE_PRODUCT_ID;
 }
 
+/**
+ * Předplatné jednoho předmětu 2. stupně (290 Kč/měsíc, 2 900 Kč/rok). Starý systém má checkout
+ * na `/predplatne/{mesicni|rocni}/predmet/{id}`, id = předmět ve starém API.
+ * Odkazy jsou vynucené v kódu: commit 9c2a24f je v katalogu přepsal na balíček a uložil,
+ * takže rodič za 290 Kč skončil na Stripe u 490 Kč — samotné vypnutí přepisu je nevrátilo.
+ */
+const SUBJECT_LEGACY_ID_BY_PRODUCT_ID: Record<string, number> = {
+  '68fcbcd2fe0a9f1c3484043f': 14, // Fyzika
+  '6912f0e15acce25c82c7236c': 19, // Chemie
+  '68fcbcc86bf08a83a4273e5e': 24, // Matematika 2. stupeň
+  '6912f0f415e72b79d11b2103': 25, // Přírodopis
+};
+
+const SUBJECT_LEGACY_ID_BY_CATEGORY: Record<string, number> = {
+  fyzika: 14,
+  chemie: 19,
+  'matematika 2. stupeň': 24,
+  přírodopis: 25,
+};
+
+export function subjectStripeUrls(product: any): { monthly: string; yearly: string } | null {
+  if (!product || String(product.type || '').toLowerCase() !== 'online') return null;
+  const legacyId = SUBJECT_LEGACY_ID_BY_PRODUCT_ID[String(product.id)]
+    ?? SUBJECT_LEGACY_ID_BY_CATEGORY[String(product.category || '').trim().toLowerCase()];
+  if (!legacyId) return null;
+  return {
+    monthly: `https://api.vividbooks.com/predplatne/mesicni/predmet/${legacyId}`,
+    yearly: `https://api.vividbooks.com/predplatne/rocni/predmet/${legacyId}`,
+  };
+}
+
 export function applyAllDigitalBundleStripe<T extends Record<string, unknown>>(product: T): T {
+  const subject = subjectStripeUrls(product);
+  if (subject) {
+    return { ...product, stripeMonthlyUrl: subject.monthly, stripeYearlyUrl: subject.yearly };
+  }
   if (!isDigitalStripeSubscriptionProduct(product)) return product;
 
   const next: T = {
