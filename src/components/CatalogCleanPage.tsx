@@ -55,6 +55,7 @@ const SUBJECT_ITEMS: CatalogNavItem[] = [
 const GRADE_ITEMS = [
   { id: 'grade-1', label: '1. ročník', grade: 1 },
   { id: 'grade-2', label: '2. ročník', grade: 2 },
+  { id: 'grade-3', label: '3. ročník', grade: 3 },
   { id: 'grade-6', label: '6. ročník', grade: 6 },
   { id: 'grade-7', label: '7. ročník', grade: 7 },
   { id: 'grade-8', label: '8. ročník', grade: 8 },
