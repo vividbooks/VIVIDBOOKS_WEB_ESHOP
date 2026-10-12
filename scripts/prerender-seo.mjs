@@ -687,9 +687,13 @@ async function main() {
     imageAlt: `${SITE_NAME} — učení, které inspiruje a baví`,
   });
   writeFileSync(path.join(outDir, '404.html'), fallbackHtml, 'utf8');
+  // Vercel: SPA rewrite míří sem, ne na index.html — homepage nese OG aktuální kampaně
+  // (hero slide), a ten by jinak dostal každý odkaz bez vlastního prerenderu
+  // (např. produkt založený po posledním buildu).
+  writeFileSync(path.join(outDir, 'spa.html'), fallbackHtml, 'utf8');
 
   console.log(
-    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} sitemap + ${fromCatalog} new from catalog; ${productsWithPrice} products with price) + 404.html → ${outDir}`,
+    `[prerender-seo] Wrote ${written} pages (${SEO_PAGES.length} curated + ${fromSitemap} sitemap + ${fromCatalog} new from catalog; ${productsWithPrice} products with price) + 404.html + spa.html → ${outDir}`,
   );
 }
 
