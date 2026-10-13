@@ -28,6 +28,7 @@ import {
 import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
 import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
+import { registerKabinetEcomailRoutes } from './kabinetEcomail.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
@@ -4185,6 +4186,8 @@ app.get('/make-server-93a20b6f/identity/registr-export', (c) => handleRegistrExp
 app.get('/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebinarEmailIndexRows }));
 app.get('/make-server-93a20b6f/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
 app.get('/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
+/* Osobní maily Kabinetu (Ultra) přes transakční API Ecomailu — klíč je jen tady. */
+registerKabinetEcomailRoutes(app);
 app.post('/make-server-93a20b6f/cron/ultra-watchdog', handleUltraWatchdogCron);
 app.post('/cron/ultra-watchdog', handleUltraWatchdogCron);
 app.get('/make-server-93a20b6f/ultra-watchdog/status', handleUltraWatchdogStatus);
