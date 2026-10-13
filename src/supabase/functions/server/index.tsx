@@ -28,7 +28,7 @@ import {
 import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
 import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
-import { registerKabinetEcomailRoutes } from './kabinetEcomail.ts';
+import { forwardPostaEvent, postaEventFromWebhook, registerKabinetPostaRoutes } from './kabinetPosta.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
@@ -4187,7 +4187,7 @@ app.get('/identity/registr-export', (c) => handleRegistrExportGet(c, { getWebina
 app.get('/make-server-93a20b6f/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
 app.get('/identity/registr-webinars', (c) => handleRegistrWebinarsGet(c));
 /* Osobní maily Kabinetu (Ultra) přes transakční API Ecomailu — klíč je jen tady. */
-registerKabinetEcomailRoutes(app);
+registerKabinetPostaRoutes(app);
 app.post('/make-server-93a20b6f/cron/ultra-watchdog', handleUltraWatchdogCron);
 app.post('/cron/ultra-watchdog', handleUltraWatchdogCron);
 app.get('/make-server-93a20b6f/ultra-watchdog/status', handleUltraWatchdogStatus);
@@ -11112,6 +11112,9 @@ app.post('/make-server-93a20b6f/webhooks/resend', async (c) => {
       created_at?: string;
       data?: {
         email_id?: string;
+        to?: unknown;
+        tags?: unknown;
+        click?: { link?: unknown };
         bounce?: { type?: string; subType?: string; message?: string };
         failed?: { reason?: string };
       };
@@ -11122,6 +11125,21 @@ app.post('/make-server-93a20b6f/webhooks/resend', async (c) => {
 
     const eventType = RESEND_EVENT_MAP[type];
     if (!eventType) return c.json({ ok: true, skipped: type });
+
+    /* Osobní maily Kabinetu (tag posta_id) → přeposlat do Ultra. Chyba nemění odpověď webhooku. */
+    try {
+      const postaEvent = postaEventFromWebhook(
+        event,
+        eventType,
+        eventType === 'bounce' ? classifyBounce(event.data?.bounce?.type) : null,
+      );
+      if (postaEvent) {
+        const fwd = await forwardPostaEvent(postaEvent);
+        if (!fwd.ok) console.warn(`[kabinet-posta] přeposlání události ${eventType} selhalo: ${fwd.error}`);
+      }
+    } catch (fwdErr) {
+      console.warn(`[kabinet-posta] přeposlání události selhalo: ${fwdErr instanceof Error ? fwdErr.message : String(fwdErr)}`);
+    }
 
     const supabase = mailingServiceClient();
     if (!supabase) return c.json({ ok: false, error: 'Chybí service role env.' }, 500);
