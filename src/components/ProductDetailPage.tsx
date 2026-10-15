@@ -16,6 +16,7 @@ import { resolveProductStockSku } from '../utils/stockSku';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
+import { MathInteractiveIncluded } from './MathInteractiveIncluded';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
@@ -1705,6 +1706,14 @@ export function ProductDetailPage({
             </div>
             )}
 
+            {/* Interaktivní matematika v ceně sešitů — hned pod cenou, ať nepůsobí jako placený doplněk */}
+            {isMath && product.type === 'workbook' && !isDistributorMode && (
+              <MathInteractiveIncluded
+                secondStage={isMatematika2StupenCategory(product.category)}
+                subjectSlug={subjectToSlug(product.category)}
+              />
+            )}
+
             {/* CTA buttons — only for non-digital products */}
             {product.type !== 'online' && (
             <div className="flex flex-col gap-2 mb-10">
@@ -2501,7 +2510,8 @@ export function ProductDetailPage({
             {(() => {
               const cat = (product.category || '').toLowerCase();
               const isMat2 = baseSubject === 'Matematika' && (cat.includes('2') || cat.includes('druh'));
-              const isMat1OrPrvouka = baseSubject === 'Prvouka' || (baseSubject === 'Matematika' && !isMat2);
+              // Matematika 1. st. má „zdarma od 15 ks“ už v rámečku pod cenou (MathInteractiveIncluded).
+              const isMat1OrPrvouka = baseSubject === 'Prvouka' || (baseSubject === 'Matematika' && !isMat2 && product.type !== 'workbook');
 
               if (isMat2) {
                 const mat2OnlineProduct = products.find(

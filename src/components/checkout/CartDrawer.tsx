@@ -6,6 +6,7 @@ import { getCartLineKey, useCart } from '../../contexts/CartContext';
 import { useProducts } from '../../contexts/ProductsContext';
 import { getProductUnitPriceInHaler } from '../cartUpsellUtils';
 import { BookCoverThumb } from './BookCoverThumb';
+import { MathInteractiveMeter, isMathWorkbookCartLine } from '../MathInteractiveIncluded';
 
 function formatPrice(amountInHaler: number): string {
   return `${(amountInHaler / 100).toLocaleString('cs-CZ', {
@@ -202,6 +203,9 @@ export function CartDrawer() {
                 </div>
 
                 <div className="border-t border-[#001161]/6 px-5 py-4 space-y-3">
+                  <MathInteractiveMeter
+                    count={items.filter(isMathWorkbookCartLine).reduce((sum, item) => sum + item.quantity, 0)}
+                  />
                   <div className="flex items-center justify-between">
                     <span className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/55">
                       {'Mezisoučet'}

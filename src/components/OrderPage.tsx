@@ -74,6 +74,7 @@ import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
 import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
 import { isValidCzechPhone, PHONE_CZ_HINT } from '../utils/phoneCZ';
 import { useVividbooksPresence } from '@/lib/vividbooksPresence';
+import { MathInteractiveMeter } from './MathInteractiveIncluded';
 
 const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
@@ -2611,6 +2612,9 @@ export function OrderPage() {
                                             <p style={FF} className="text-[#001161] text-[13px]">{catItems} ks</p>
                                           </div>
                                         </div>
+                                      )}
+                                      {cat.toLowerCase().includes('matematik') && (
+                                        <MathInteractiveMeter count={catItems} className="mt-2" />
                                       )}
                                       <div className="h-px bg-[#001161]/8 mt-4" />
                                     </div>
