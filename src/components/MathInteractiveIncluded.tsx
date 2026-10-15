@@ -54,7 +54,7 @@ function ClipModal({ clip, onClose }: { clip: Clip; onClose: () => void }) {
       aria-modal="true"
       aria-label={clip.title}
     >
-      <div className="relative w-full max-w-[1100px]" onClick={e => e.stopPropagation()}>
+      <div className="relative w-full max-w-[min(92vw,78vh)]" onClick={e => e.stopPropagation()}>
         <video
           src={clipUrl(clip.file, 'mp4')}
           poster={clipUrl(clip.file, 'jpg')}
@@ -100,7 +100,7 @@ function MathAppClips({ clips }: { clips: Clip[] }) {
             <video
               src={clipUrl(c.file, 'mp4')}
               poster={clipUrl(c.file, 'jpg')}
-              className="block aspect-video w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+              className="block aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
               autoPlay
               muted
               loop
