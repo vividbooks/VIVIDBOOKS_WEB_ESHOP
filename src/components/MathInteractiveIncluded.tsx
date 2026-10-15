@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router';
-import { CheckCircle2, Maximize2, X } from 'lucide-react';
+import { CheckCircle2, Play, X } from 'lucide-react';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 
 /** Minimální počet sešitů, od kterého škola dostane interaktivní matematiku zdarma. */
@@ -27,16 +27,33 @@ const FEATURES_2ND = [
 
 type Clip = { file: string; title: string; note: string };
 
-/** Skutečné záznamy z aplikace (nahrané z knihovny, minihry a Rýsování). */
-const CLIPS_1ST: Clip[] = [
-  { file: 'm1-tabule', title: 'Stránka sešitu na tabuli', note: 'Úloha po úloze, s metodikou a řešením po krocích' },
-  { file: 'm1-minihra', title: 'Minihra u úlohy', note: 'Nastavená jen na čísla, která žáci už znají' },
-];
-
-const CLIPS_2ND: Clip[] = [
-  { file: 'm2-reseni', title: 'Řešení krok po kroku', note: 'Odkrýváte ho postupně přímo na stránce sešitu' },
-  { file: 'm2-rysovani', title: 'Jak se to rýsuje', note: 'Záznam konstrukce v aplikaci Rýsování' },
-];
+/** Skutečné záznamy z aplikace po ročnících (čtverec 1080×1080, s kurzorem). Soubory: public/matematika-ukazka/r<ročník>-*.mp4 */
+const CLIPS_BY_GRADE: Record<string, Clip[]> = {
+  '1': [
+    { file: 'r1-tabule', title: 'Stránka sešitu na tabuli', note: 'Kapitola Tři: úloha po úloze, řešení po krocích' },
+    { file: 'r1-minihra', title: 'Minihra u úlohy', note: 'Nastavená jen na čísla, která žáci už znají' },
+  ],
+  '2': [
+    { file: 'r2-tabule', title: 'Stránka sešitu na tabuli', note: 'Sčítání a odčítání do 20, řešení po krocích' },
+    { file: 'r2-pocetnik', title: 'Početník u úlohy', note: 'Procvičování přesně k úloze ze sešitu' },
+  ],
+  '6': [
+    { file: 'r6-reseni', title: 'Řešení krok po kroku', note: 'Odčítání desetinných čísel' },
+    { file: 'r6-rys', title: 'Jak se to rýsuje', note: 'Obraz bodu v osové souměrnosti, aplikace Rýsování' },
+  ],
+  '7': [
+    { file: 'r7-reseni', title: 'Řešení krok po kroku', note: 'Početní operace se zlomky' },
+    { file: 'r7-rys', title: 'Jak se to rýsuje', note: 'Konstrukce trojúhelníků, aplikace Rýsování' },
+  ],
+  '8': [
+    { file: 'r8-reseni', title: 'Řešení krok po kroku', note: 'Sčítání a odčítání algebraických výrazů' },
+    { file: 'r8-rys', title: 'Jak se to rýsuje', note: 'Osa úhlu v aplikaci Rýsování' },
+  ],
+  '9': [
+    { file: 'r9-reseni', title: 'Řešení krok po kroku', note: 'Lineární rovnice' },
+    { file: 'r9-reseni2', title: 'Řešení geometrie', note: 'Rotační válec' },
+  ],
+};
 
 const clipUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-ukazka/${file}.${ext}`);
 
@@ -82,43 +99,49 @@ function ClipModal({ clip, onClose }: { clip: Clip; onClose: () => void }) {
   );
 }
 
-/** Dvě krátké smyčky z aplikace; klik otevře větší přehrávač. */
-function MathAppClips({ clips }: { clips: Clip[] }) {
+const clipsFor = (secondStage: boolean, grade?: string | null) =>
+  CLIPS_BY_GRADE[grade ?? ''] ?? CLIPS_BY_GRADE[secondStage ? '7' : '1'];
+
+/** Čtverečky s ukázkami z aplikace pod náhledem sešitu (jako galerie u digitálního přístupu); klik otevře přehrávač. */
+export function MathAppClipStrip({ secondStage, grade }: { secondStage: boolean; grade?: string | null }) {
   const [open, setOpen] = useState<Clip | null>(null);
+  const clips = clipsFor(secondStage, grade);
   return (
-    <>
-      <p className="text-[12px] font-bold text-[#001161]/60 mb-2">{'Podívejte se, jak to vypadá v aplikaci'}</p>
-      <div className="grid grid-cols-2 gap-2.5 mb-3">
+    <div className="relative z-20 w-full shrink-0 pt-3" aria-label="Ukázky z aplikace">
+      <div className="flex w-full flex-wrap justify-center gap-3 sm:gap-4">
         {clips.map(c => (
           <button
             key={c.file}
             type="button"
             onClick={() => setOpen(c)}
-            className="group relative overflow-hidden rounded-[12px] border border-[#001161]/10 bg-[#1f2233] text-left cursor-pointer"
+            title={`${c.title} · ${c.note}`}
             aria-label={`Přehrát ukázku: ${c.title}`}
+            className="group flex w-[6.5rem] shrink-0 flex-col items-center gap-1.5 cursor-pointer sm:w-[7.5rem] focus-visible:outline-none"
           >
-            <video
-              src={clipUrl(c.file, 'mp4')}
-              poster={clipUrl(c.file, 'jpg')}
-              className="block aspect-square w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              aria-hidden="true"
-            />
-            <span className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-full bg-white/90 text-[#001161] opacity-80 group-hover:opacity-100">
-              <Maximize2 className="w-3.5 h-3.5" />
+            <span className="relative block aspect-square w-full overflow-hidden rounded-xl border-2 border-[#001161]/30 bg-[#1f2233] transition-all group-hover:border-[#001161]/60 group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-[#001161]">
+              <video
+                src={clipUrl(c.file, 'mp4')}
+                poster={clipUrl(c.file, 'jpg')}
+                className="block h-full w-full object-cover"
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="metadata"
+                aria-hidden="true"
+              />
+              <span className="absolute bottom-1.5 right-1.5 grid size-6 place-items-center rounded-full bg-white/90 text-[#001161] shadow">
+                <Play className="ml-px w-3 h-3 fill-current" />
+              </span>
             </span>
-            <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#001161]/85 to-transparent px-2.5 pb-2 pt-6">
-              <span className="block text-[12px] font-bold leading-tight text-white">{c.title}</span>
+            <span className="text-center text-[11px] font-semibold leading-tight text-[#001161]/70" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
+              {c.title}
             </span>
           </button>
         ))}
       </div>
       {open && <ClipModal clip={open} onClose={() => setOpen(null)} />}
-    </>
+    </div>
   );
 }
 
@@ -147,7 +170,6 @@ export function MathInteractiveIncluded({ secondStage, subjectSlug }: { secondSt
           </li>
         ))}
       </ul>
-      <MathAppClips clips={secondStage ? CLIPS_2ND : CLIPS_1ST} />
       <p className="text-[12px] leading-snug text-[#001161]/70">
         {`Objednáte-li pro třídu aspoň ${MATH_INTERACTIVE_FREE_FROM_QTY} sešitů, škola dostane přístup do aplikace. Nic dalšího se nekupuje. `}
         <Link to={`/predmet/${subjectSlug}`} className="font-bold text-[#5b4fd8] hover:underline">
