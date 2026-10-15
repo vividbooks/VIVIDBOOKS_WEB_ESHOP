@@ -682,6 +682,11 @@ export function ProductDetailPage({
   const imagePanelActionBtnClass = `flex cursor-pointer items-center justify-center gap-2 rounded-[12px] border border-[#001161]/12 bg-white px-3 py-2.5 font-['Fenomen_Sans',sans-serif] text-[12px] font-semibold text-[#001161]/75 shadow-sm transition-all hover:bg-white hover:text-[#001161] active:scale-[0.98] ${imagePanelActionLayout}`;
   const flipbookUrl = product.flipbookLink || product.previewLink;
   const isHeyzine = flipbookUrl?.includes('heyzine');
+  /** Listovačka z aplikace (nove.vividbooks.com/ukazka/…) jde rovnou do dlaždice místo obálky. */
+  const inlineFlipbookUrl =
+    flipbookUrl && /\/ukazka\//.test(flipbookUrl)
+      ? `${flipbookUrl}${flipbookUrl.includes('?') ? '&' : '?'}embed=1`
+      : null;
   const catColors = CATEGORY_COLORS[product.category] || CATEGORY_COLORS['default'];
   const categoryBaseForMsmt = (product.category || '').replace(/\s+\d+\.\s*stupe.*$/i, '').trim();
   const showMsmtComplianceBadge =
@@ -1348,6 +1353,16 @@ export function ProductDetailPage({
                         </div>
                       )}
                     </motion.div>
+                  </div>
+                ) : inlineFlipbookUrl ? (
+                  <div className="relative z-10 w-full flex-1 px-2 pt-14 sm:px-4 sm:pt-16">
+                    <iframe
+                      src={inlineFlipbookUrl}
+                      title={`Uk\u00e1zka \u2013 ${product.name}`}
+                      className="block h-[min(118vw,460px)] w-full border-none bg-transparent sm:h-[520px] lg:h-[560px]"
+                      allow="fullscreen"
+                      allowFullScreen
+                    />
                   </div>
                 ) : (
                   <div
@@ -2355,7 +2370,7 @@ export function ProductDetailPage({
       </div>
 
       {/* ── Flipbook section (always visible if no modal) ── */}
-      {hasFlipbook && !isHeyzine && (
+      {hasFlipbook && !isHeyzine && !inlineFlipbookUrl && (
         <div className="max-w-[1200px] mx-auto px-6 mt-16">
           <div className="rounded-[32px] overflow-hidden border border-[#001161]/8" style={{ height: '600px' }}>
             <iframe
