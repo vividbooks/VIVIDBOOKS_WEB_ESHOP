@@ -153,19 +153,19 @@ export function MathInteractiveIncluded({ secondStage, subjectSlug }: { secondSt
   const features = secondStage ? FEATURES_2ND : FEATURES_1ST;
   return (
     <div
-      className="mb-6 rounded-[16px] border-2 border-[#1f9d55] bg-[#e9f7ef] px-4 py-4 md:px-5"
+      className="rounded-[16px] border-2 border-[#f5b97a] bg-[#fff4e8] px-4 py-4 md:px-5"
       style={{ fontFamily: "'Fenomen Sans', sans-serif", color: '#001161' }}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
         <p className="text-[15px] font-bold leading-snug">{'V ceně: interaktivní matematika pro celou školu'}</p>
-        <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#1f9d55]">
+        <span className="inline-flex items-center rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-[#c2620f]">
           {`zdarma od ${MATH_INTERACTIVE_FREE_FROM_QTY} ks`}
         </span>
       </div>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5 mb-3">
         {features.map(f => (
           <li key={f} className="flex items-start gap-2 text-[13px] leading-snug">
-            <CheckCircle2 className="w-4 h-4 mt-px shrink-0 text-[#1f9d55]" />
+            <CheckCircle2 className="w-4 h-4 mt-px shrink-0 text-[#e8832a]" />
             {f}
           </li>
         ))}

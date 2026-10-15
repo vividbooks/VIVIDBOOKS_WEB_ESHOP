@@ -1729,14 +1729,6 @@ export function ProductDetailPage({
             </div>
             )}
 
-            {/* Interaktivní matematika v ceně sešitů — hned pod cenou, ať nepůsobí jako placený doplněk */}
-            {isMath && product.type === 'workbook' && !isDistributorMode && (
-              <MathInteractiveIncluded
-                secondStage={isMatematika2StupenCategory(product.category)}
-                subjectSlug={subjectToSlug(product.category)}
-              />
-            )}
-
             {/* CTA buttons — only for non-digital products */}
             {product.type !== 'online' && (
             <div className="flex flex-col gap-2 mb-10">
@@ -1839,6 +1831,16 @@ export function ProductDetailPage({
                 );
               })()}
             </div>
+            )}
+
+            {/* Interaktivní matematika v ceně sešitů — pod tlačítky nákupu */}
+            {isMath && product.type === 'workbook' && !isDistributorMode && (
+              <div className="-mt-4 mb-10">
+                <MathInteractiveIncluded
+                  secondStage={isMatematika2StupenCategory(product.category)}
+                  subjectSlug={subjectToSlug(product.category)}
+                />
+              </div>
             )}
 
             {/* ── Subscription block — only for digital licences ── */}
