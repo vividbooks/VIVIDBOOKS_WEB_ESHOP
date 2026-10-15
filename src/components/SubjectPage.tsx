@@ -21,6 +21,7 @@ import {
   COOPER_ACCESS_INTRO_MUTED_STYLE,
 } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
+import { MathOnePageTwoForms } from './MathOnePageTwoForms';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { SubjectWebinarsSlider } from './SubjectWebinarsSlider';
@@ -1062,6 +1063,11 @@ export function SubjectPage({
           </div>
         )}
       </div>
+
+      {/* ── Jeden sešit, dvě podoby — skutečná stránka sešitu matematiky a vrstvy z aplikace ── */}
+      {subject.toLowerCase().includes('matematik') && (
+        <MathOnePageTwoForms stage={/2|druh/.test(subject) ? '2' : '1'} />
+      )}
 
       {/* ── TABS (Co vše obsahuje) — only for non-comparison subjects ── */}
       {!showComparison && (
