@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { motion } from 'motion/react';
 import { AlertCircle, CheckCircle, ExternalLink, Loader2 } from 'lucide-react';
-import { SchoolSearch, type PdOwner, type PipedriveStatus } from './TrialPage';
+import { SchoolSearch, publicTrialOwner, type PdOwner, type PipedriveStatus } from './TrialPage';
 import { submitTrial, type FreeTrialFields, type FreeTrialSubmitResult } from '../utils/trialSubmit';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { TrialTrainingVideosList } from './TrialTrainingVideosList';
@@ -105,7 +105,7 @@ export function WebinarPostRegistrationTrial({ form, notTeacher }: WebinarPostRe
         setPdStatus((data.status as PipedriveStatus) || 'unknown');
         setPdMessage(typeof data.message === 'string' ? data.message : '');
         setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
-        setOwner((data.owner as PdOwner | null) ?? null);
+        setOwner(publicTrialOwner((data.owner as PdOwner | null) ?? null));
         setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
       } catch {
         setPdStatus('unknown');

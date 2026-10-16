@@ -568,16 +568,16 @@ export function ContactPage() {
           Naši obchodní zástupci
         </p>
 
-        {/* Grid — 4 nahoře */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-12 mb-12">
-          {REPRESENTATIVES.slice(0, 4).map(rep => (
+        {/* Grid — 3 krajští zástupci nahoře */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-12 mb-12">
+          {REPRESENTATIVES.slice(0, 3).map(rep => (
             <RepCard key={rep.id} rep={rep} />
           ))}
         </div>
 
         {/* 2 dole — centrovaně */}
         <div className="flex justify-center gap-12 flex-wrap">
-          {REPRESENTATIVES.slice(4).map(rep => (
+          {REPRESENTATIVES.slice(3).map(rep => (
             <div key={rep.id} className="w-[220px]">
               <RepCard rep={rep} />
             </div>
