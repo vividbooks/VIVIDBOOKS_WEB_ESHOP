@@ -16,6 +16,8 @@ import { SEOHead, faqJsonLd } from './SEOHead';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { MathVoicedVideos } from './MathInteractiveIncluded';
+/** Skutečné záběry listů na tabuli (z nahrávek aplikace v public/matematika-ukazka). */
+import imgPracovniListy from '../assets/campaign/pracovni-listy-ukazka.webp';
 import { YouTubePlaylistSlider } from './YouTubePlaylistSlider';
 import { MATH_CAMPAIGN_WEBINAR_VIDEOS } from '../data/mathCampaignWebinarVideos';
 import { MATH_METHODOLOGY_PLAYLIST_URL, MATH_METHODOLOGY_PLAYLIST_VIDEOS } from '../data/mathMethodologyYoutubePlaylist';
@@ -331,7 +333,7 @@ const PILOT_TAB_OVERRIDES = {
   'Bousové kapitoly a úlohy': { tabText: 'Bonusové kapitoly a úlohy' },
   'Bousové kapitoly a\u00a0úlohy': { tabText: 'Bonusové kapitoly a\u00a0úlohy' },
   // Nejdůležitější: interaktivní pracovní listy jako první záložka.
-  'Interaktivní pracovní listy s řešením': { order: 0 },
+  'Interaktivní pracovní listy s řešením': { order: 0, contentImage: imgPracovniListy, contentImageFit: 'contain' },
 };
 
 const PILOT_EXCLUDED_TABS = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Aplikace Rýsování'];
@@ -693,8 +695,8 @@ function MethodologySection() {
           videos={MATH_CAMPAIGN_WEBINAR_VIDEOS}
           openAsRecordingPage
           eyebrow="Záznamy webinářů"
-          heading="Jak na… v matematice"
-          subheading="Procenta, jednotky, úměrnost, geometrie a rýsování, zlomky, algebraické výrazy i nová témata RVP."
+          heading="Jak učit klíčová témata matematiky"
+          subheading="Hodinové webináře k procentům, jednotkám, úměrnosti, geometrii, zlomkům, algebraickým výrazům i novým tématům RVP. Pusťte si je, kdy se vám to hodí."
         />
         <YouTubePlaylistSlider
           className="mt-8"

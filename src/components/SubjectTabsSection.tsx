@@ -25,6 +25,9 @@ export type SubjectTabContentOverride = {
   tabText?: string;
   /** Přepíše pořadí záložky (menší = dřív). */
   order?: number;
+  /** Přepíše obrázek záložky (import z assets). */
+  contentImage?: string;
+  contentImageFit?: 'cover' | 'contain';
   contentHeadline?: string;
   contentRichText?: string;
   contentLinkUrl?: string;
