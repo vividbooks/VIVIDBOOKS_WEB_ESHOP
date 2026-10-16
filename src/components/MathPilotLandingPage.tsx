@@ -1070,6 +1070,70 @@ function PilotForm() {
   );
 }
 
+/* ─────────────────────────── citace učitelů ─────────────────────────── */
+
+/**
+ * Citace z dotazníků po matematických webinářích (výběr Vítek 16. 10. 2026),
+ * jen křestní jméno a stupeň, text krácený na hranici věty.
+ */
+const TESTIMONIALS = [
+  {
+    quote:
+      'Místo toho, aby se děti učily mechanicky počítat, jsou vedeny k tomu, aby na principy přišly samy. Je skvělé, že tímto způsobem mohou dojít k tomu, že budou vědět, co to zlomek nebo desetinné číslo znamená v praxi.',
+    name: 'Veronika',
+    role: 'učitelka matematiky, 2. stupeň',
+  },
+  {
+    quote:
+      'Opět mě nadchlo zpracování daného tématu. Líbí se mi barevné provedení, které děti upoutá, a téma zpracované logicky s citem pro důkladné pochopení.',
+    name: 'Michaela',
+    role: 'učitelka matematiky, 2. stupeň',
+  },
+  {
+    quote: 'Co je super, je ten Početník, co žáka po dvou příkladech posune na větší obtížnost, a když neumí, zase spadne.',
+    name: 'Valerie',
+    role: 'učitelka matematiky, 2. stupeň',
+  },
+  {
+    quote:
+      'Webinář byl pro mě utvrzením v tom, že jsem se s Vividbooks vydala správnou cestou. Moc se těším na nové objevování, první úspěchy a AHA momenty.',
+    name: 'Vendula',
+    role: 'učitelka, 1. stupeň',
+  },
+  {
+    quote:
+      'Vidím to jako mix klasické matematiky a matematiky prof. Hejného a tato kombinace se mi zdá optimální. Děti potřebují velké množství názornosti, aby pochopily smysl, a teprve potom navazuje procvičování.',
+    name: 'Martina',
+    role: 'začínající učitelka, 1. stupeň',
+  },
+];
+
+function TestimonialsSection() {
+  return (
+    <section id="ucitele" className="scroll-mt-24 bg-white px-4 py-14 sm:px-6 md:px-12 md:py-16">
+      <div className="mx-auto max-w-[1200px]">
+        <SectionTitle eyebrow="Z dotazníků po webinářích" title="Co říkají učitelé" />
+        <div className="columns-1 gap-4 md:columns-2 lg:columns-3 [&>figure]:mb-4">
+          {TESTIMONIALS.map((t) => (
+            <figure key={t.name} className="break-inside-avoid rounded-[22px] bg-[#f3eeff] p-6">
+              <span className="block text-[44px] leading-[0.6] text-[#7C3AED]" style={{ fontFamily: COOPER }} aria-hidden>
+                „
+              </span>
+              <blockquote className="mt-3 text-[16px] leading-relaxed text-[#001161]" style={{ fontFamily: FF }}>
+                {formatTypography(t.quote)}
+              </blockquote>
+              <figcaption className="mt-4 text-[14px]" style={{ fontFamily: FF }}>
+                <span className="font-bold text-[#001161]">{t.name}</span>
+                <span className="text-[#001161]/55"> · {t.role}</span>
+              </figcaption>
+            </figure>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function FormSection() {
   return (
     <section id="prihlaska" className="scroll-mt-24 bg-[#EDE4F7] px-4 py-14 sm:px-6 md:px-12 md:py-16">
@@ -1249,6 +1313,7 @@ export function MathPilotLandingPage() {
 
         <WorkbooksSection products={products as Product[]} />
         <MethodologySection />
+        <TestimonialsSection />
         <FormSection />
         <FaqSection />
       </main>
