@@ -25,7 +25,6 @@ import { SubjectCheckbox } from './TrialSubjectCheckbox';
 
 // Telefony obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHONES: Record<string, string> = {
-  'jiri@vividbooks.com':    '+420 606 630 542',
   'iveta@vividbooks.com':   '+420 774 935 055',
   'eva.b@vividbooks.com':   '+420 775 195 709',
   'eduard@vividbooks.com':  '+420 602 227 674',
@@ -35,7 +34,6 @@ const TEAM_PHONES: Record<string, string> = {
 
 // Fotky obchodního týmu — stejný zdroj jako ContactPage
 const TEAM_PHOTOS: Record<string, string> = {
-  'jiri@vividbooks.com':    'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/6811b8e537e9180f0677007a_Sni%CC%81mek%20obrazovky%202025-04-30%20v%C2%A07.45.00.png',
   'iveta@vividbooks.com':   'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0f591597464fe410a0_obchodni-zastupce-vividbooks-iveta-fiserova.webp',
   'eva.b@vividbooks.com':   'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0fed611ead6c658025_obchodni-zastupce-vividbooks-eva-bukolska.webp',
   'eduard@vividbooks.com':  'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0f6373773f769b3a3b_obchodni-zastupce-vividbooks-eduard-malachovsky.webp',
@@ -181,6 +179,16 @@ interface VvbIdentity {
 }
 interface SchoolResult { ico: string; name: string; address?: string; }
 export interface PdOwner { name: string; firstName: string; email: string; phone: string; photoUrl: string; }
+
+/** Obchodníci, kteří nesouhlasí se zveřejněním kontaktu — kartu „O vaši školu se stará“ za ně neukazujeme
+ *  (místo nich obecný kontakt hello@vividbooks.com). Stejný seznam filtruje i server (`school-pipedrive-check`). */
+const HIDDEN_OWNER_EMAILS = new Set(['jiri@vividbooks.com']);
+
+export function publicTrialOwner(owner: PdOwner | null): PdOwner | null {
+  if (!owner) return null;
+  if (HIDDEN_OWNER_EMAILS.has(String(owner.email || '').trim().toLowerCase())) return null;
+  return owner;
+}
 export type PipedriveStatus =
   | 'new'
   | 'known'
@@ -762,7 +770,7 @@ export function TrialRegistrationForm({
         setPdStatus((data.status as PipedriveStatus) || 'unknown');
         setPdMessage(typeof data.message === 'string' ? data.message : '');
         setColleagues(Array.isArray(data.colleagues) ? (data.colleagues as string[]) : []);
-        setOwner((data.owner as PdOwner | null) ?? null);
+        setOwner(publicTrialOwner((data.owner as PdOwner | null) ?? null));
         setProducts(Array.isArray(data.products) ? (data.products as string[]) : []);
         if (typeof data.orgName === 'string' && data.orgName) {
           setSchoolName((prev) => (prev.trim() ? prev : data.orgName as string));

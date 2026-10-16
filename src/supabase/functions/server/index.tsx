@@ -15671,6 +15671,21 @@ async function searchPipedriveOrganizations(
   return Array.isArray(data?.data?.items) ? data.data.items : [];
 }
 
+/** Obchodníci, kteří nesouhlasí se zveřejněním kontaktu — veřejné odpovědi je jako vlastníka školy nevrací.
+ *  Stejný seznam filtruje i frontend (`publicTrialOwner` v TrialPage.tsx). */
+const PUBLIC_HIDDEN_OWNER_EMAILS = new Set(['jiri@vividbooks.com']);
+const PUBLIC_HIDDEN_OWNER_NAMES = new Set(['jiri pabian']);
+
+/** Vlastník školy pro veřejné endpointy: bez skrytých obchodníků a bez telefonu z profilu Pipedrive
+ *  (web ukazuje jen telefony ze stránky Kontakt). */
+function toPublicPipedriveOwner(owner: PipedriveOwnerSummary | null): PipedriveOwnerSummary | null {
+  if (!owner) return null;
+  const email = String(owner.email || '').trim().toLowerCase();
+  const name = String(owner.name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  if (PUBLIC_HIDDEN_OWNER_EMAILS.has(email) || PUBLIC_HIDDEN_OWNER_NAMES.has(name)) return null;
+  return { ...owner, phone: '' };
+}
+
 async function getPipedriveUserSummary(apiToken: string, userRef: any): Promise<PipedriveOwnerSummary | null> {
   if (!userRef) return null;
   const fallbackName = String(userRef?.name || '');
@@ -17003,7 +17018,7 @@ async function buildAdminSchoolDetail(apiToken: string, params: { orgId?: number
 }
 
 /** Zvyšte při změně tvaru odpovědi school-pipedrive-check (ověření deploye přes ?includePipedriveRaw=1). */
-const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 4;
+const SCHOOL_PIPEDRIVE_CHECK_API_REVISION = 5;
 
 /* ── Pipedrive: Check school by IČO / name ─────────────────────── */
 app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
@@ -17023,8 +17038,10 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
   }
 
   try {
-    const includePipedriveRaw =
+    const wantsPipedriveRaw =
       c.req.query('includePipedriveRaw') === '1' || c.req.query('pipedriveRaw') === '1';
+    /* Surové dealy z Pipedrive nesou kontakty lidí (vlastník dealu, kontaktní osoba školy) — jen pro admina. */
+    const includePipedriveRaw = wantsPipedriveRaw && !((await requireAdminJwt(c.req.raw)) instanceof Response);
     const result = await lookupSchoolInPipedrive(apiToken, { ico, name, includePipedriveRaw });
     console.log(`[Pipedrive] School lookup ico=${ico || '-'} name="${name || '-'}" orgId=${result.orgId ?? 'null'} status=${result.status}`);
     return c.json({
@@ -17032,7 +17049,7 @@ app.get('/make-server-93a20b6f/school-pipedrive-check', async (c) => {
       message: result.message,
       orgId: result.orgId,
       orgName: result.orgName,
-      owner: result.owner,
+      owner: toPublicPipedriveOwner(result.owner),
       colleagues: result.colleagues,
       products: result.products,
       openDeals: result.openDeals,

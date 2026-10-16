@@ -9,14 +9,6 @@ export type ContactRepresentative = {
 
 export const CONTACT_REPRESENTATIVES: ContactRepresentative[] = [
   {
-    id: 1,
-    name: 'Jiří Pabián',
-    email: 'jiri@vividbooks.com',
-    phone: '+420 606 630 542',
-    regions: 'Jihočeský kraj, Plzeňský kraj, Karlovarský kraj, Liberecký kraj, Kraj Vysočina',
-    photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/6811b8e537e9180f0677007a_Sni%CC%81mek%20obrazovky%202025-04-30%20v%C2%A07.45.00.png',
-  },
-  {
     id: 2,
     name: 'Iveta Fišerová',
     email: 'iveta@vividbooks.com',
