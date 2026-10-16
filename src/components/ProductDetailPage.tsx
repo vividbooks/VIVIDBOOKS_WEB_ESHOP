@@ -16,7 +16,7 @@ import { resolveProductStockSku } from '../utils/stockSku';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import { FyzikaAccessJourney } from './FyzikaAccessJourney';
-import { MathAppClipStrip, MathInteractiveIncluded } from './MathInteractiveIncluded';
+import { MathAppClipStrip, MathInteractiveIncluded, MathVoicedVideos } from './MathInteractiveIncluded';
 import { SubjectTabsSection } from './SubjectTabsSection';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
@@ -2368,6 +2368,11 @@ export function ProductDetailPage({
             />
           </div>
         </div>
+      )}
+
+      {/* ── Namluvená videa z aplikace k sešitu matematiky (pod listováním) ── */}
+      {isMath && product.type === 'workbook' && !isDistributorMode && (
+        <MathVoicedVideos secondStage={isMatematika2StupenCategory(product.category)} />
       )}
 
       {/* ── Related products ── */}

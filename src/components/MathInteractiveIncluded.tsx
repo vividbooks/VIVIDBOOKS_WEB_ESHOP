@@ -246,3 +246,69 @@ export function MathInteractiveMeter({ count, className = '' }: { count: number;
     </div>
   );
 }
+
+type VoicedVideo = { file: string; title: string; note: string };
+
+/** Namluvená videa z Remotionu (16:9, se zvukem). Soubory: public/matematika-videa/<file>.mp4 + .jpg */
+const VOICED_1ST: VoicedVideo[] = [
+  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.' },
+];
+const VOICED_2ND: VoicedVideo[] = [
+  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.' },
+  { file: 'pocetnik', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.' },
+  { file: 'slovni-ulohy', title: 'Slovní úlohy', note: 'Pokaždé nová čísla, nápověda i výsledek.' },
+  { file: 'prijimaci-zkousky', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami.' },
+  { file: 'rysovani', title: 'Rýsování', note: 'Konstrukce krok po kroku v aplikaci Rýsování.' },
+];
+
+const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-videa/${file}.${ext}`);
+
+function VoicedCard({ v, big = false }: { v: VoicedVideo; big?: boolean }) {
+  return (
+    <figure className="flex min-w-0 flex-col gap-2.5">
+      <div className="overflow-hidden rounded-[20px] border border-[#001161]/8 bg-[#1f2233] shadow-[0_12px_30px_-18px_rgba(0,17,97,0.45)]">
+        <video
+          src={voicedUrl(v.file, 'mp4')}
+          poster={voicedUrl(v.file, 'jpg')}
+          className="block aspect-video w-full bg-[#1f2233]"
+          controls
+          playsInline
+          preload="none"
+        />
+      </div>
+      <figcaption style={{ fontFamily: "'Fenomen Sans', sans-serif", color: '#001161' }}>
+        <b className={big ? 'text-[17px]' : 'text-[14px]'}>{v.title}</b>
+        <span className={`block leading-snug text-[#001161]/60 ${big ? 'text-[14px]' : 'text-[12.5px]'}`}>{v.note}</span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/** Sekce pod listováním: namluvená videa o tom, co k sešitu matematiky učitel dostane v aplikaci. */
+export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
+  const [first, ...rest] = secondStage ? VOICED_2ND : VOICED_1ST;
+  return (
+    <section className="max-w-[1200px] mx-auto px-4 sm:px-6 mt-16" aria-label="Videa z aplikace">
+      <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] md:text-[38px] leading-tight">
+        {'Jak to vypadá v aplikaci'}
+      </h2>
+      <p className="mt-2 mb-7 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
+        {'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.'}
+      </p>
+      {rest.length === 0 ? (
+        <div className="max-w-[820px]">
+          <VoicedCard v={first} big />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="md:col-span-2 lg:row-span-2">
+            <VoicedCard v={first} big />
+          </div>
+          {rest.map(v => (
+            <VoicedCard key={v.file} v={v} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
