@@ -320,6 +320,18 @@ const MATH_APPS: PilotApp[] = [
   },
 ];
 
+/** Aplikace, které už mají své video v přehrávači výše — v seznamu se neopakují. */
+const APPS_IN_VIDEOS = new Set([
+  'Početník',
+  'Slovní úlohy',
+  'Přijímací zkoušky',
+  'Rýsování',
+  // mají vlastní záložku v „Co všechno v aplikaci najdete“
+  'Rovinné útvary a tělesa',
+  'Zlomky',
+  'Algebraické dlaždice',
+]);
+
 function InteractiveSection() {
   return (
     <section id="interaktivni" className="scroll-mt-24 bg-white px-4 py-14 sm:px-6 md:px-12 md:py-16">
@@ -346,14 +358,36 @@ function InteractiveSection() {
           ))}
         </div>
 
-        <h3 className="mt-14 text-center text-[24px] leading-tight text-[#001161] md:text-[28px]" style={HEADING}>
-          {formatTypography('Aplikace, které v pilotáži máte')}
+        <MathVoicedVideos
+          secondStage
+          sansTitle
+          className="mt-14 !px-0"
+          body="Krátká videa se zvukem: co v pilotáži dostanete a jak s tím pracujete v hodině."
+        />
+
+        <h3 className="mt-14 text-[30px] leading-tight text-[#001161] md:text-[38px]" style={HEADING}>
+          {formatTypography('Co všechno v aplikaci najdete')}
         </h3>
-        <p className="mx-auto mt-2 max-w-[600px] text-center text-[14px] text-[#001161]/60 md:text-[15px]" style={{ fontFamily: FF }}>
-          {formatTypography('Všechny najdete v aplikaci Vividbooks u matematiky, hned vedle učebnice a pracovních listů.')}
+        <p className="mt-2 mb-6 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={{ fontFamily: FF }}>
+          {formatTypography('Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí.')}
         </p>
-        <ul className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {MATH_APPS.map((app) => (
+        <div id="digital" className="scroll-mt-24 overflow-hidden rounded-[28px]">
+          <SubjectTabsSection
+            subject="Matematika 2. stupeň"
+            displayName="Matematika"
+            light
+            hideSectionHeading
+            excludeTabTexts={MATH2_ECOSYSTEM_EXCLUDED_TABS}
+            extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
+            tabOverrides={MATEMATIKA_2_TAB_OVERRIDES}
+          />
+        </div>
+
+        <p className="mt-8 text-[14px] font-bold text-[#001161]/45" style={{ fontFamily: FF }}>
+          {formatTypography('A k tomu další aplikace')}
+        </p>
+        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+          {MATH_APPS.filter((app) => !APPS_IN_VIDEOS.has(app.name)).map((app) => (
             <li key={app.name} className="flex gap-4 rounded-[20px] bg-[#f8f9fc] p-4 ring-1 ring-[#001161]/6">
               <img
                 src={app.icon}
@@ -371,6 +405,12 @@ function InteractiveSection() {
             </li>
           ))}
         </ul>
+        <p className="mt-8 text-[14px] text-[#001161]/60" style={{ fontFamily: FF }}>
+          Chcete vědět víc o naší matematice pro 2. stupeň?{' '}
+          <Link to="/kampane/matematika-2-stupen" className="font-bold text-[#4B48CC] underline underline-offset-2">
+            Podívejte se sem
+          </Link>
+        </p>
       </div>
     </section>
   );
@@ -1211,36 +1251,7 @@ export function MathPilotLandingPage() {
         </section>
 
         <InteractiveSection />
-        <section className="bg-white pb-14 md:pb-16">
-          <MathVoicedVideos
-            secondStage
-            sansTitle
-            className="mt-0"
-            body="Krátká videa se zvukem: co v pilotáži dostanete a jak s tím pracujete v hodině."
-          />
-        </section>
 
-        <section id="digital" className="scroll-mt-24">
-          <SubjectTabsSection
-            subject="Matematika 2. stupeň"
-            displayName="Matematika"
-            ecosystemHeading
-            ecosystemHeadingCenter
-            ecosystemHeadingStacked
-            ecosystemHeadingTitle="Podívejte se dovnitř."
-            ecosystemHeadingBody="Učebnice, listy a aplikace v jednom prostředí."
-            hideSectionHeading
-            excludeTabTexts={MATH2_ECOSYSTEM_EXCLUDED_TABS}
-            extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
-            tabOverrides={MATEMATIKA_2_TAB_OVERRIDES}
-          />
-          <p className="bg-white pb-10 text-center text-[14px] text-[#001161]/60" style={{ fontFamily: FF }}>
-            Chcete vědět víc o naší matematice pro 2. stupeň?{' '}
-            <Link to="/kampane/matematika-2-stupen" className="font-bold text-[#4B48CC] underline underline-offset-2">
-              Podívejte se sem
-            </Link>
-          </p>
-        </section>
 
         <WorkbooksSection products={products as Product[]} />
         <MethodologySection />
