@@ -1182,7 +1182,7 @@ export function MathPilotLandingPage() {
   return (
     <div className="min-h-screen bg-white text-[#001161]" style={{ fontFamily: FF }}>
       <SEOHead
-        title="Pilotáž matematiky: rok zdarma"
+        title="Máme nejlepší matematiku, a chceme vám to názorně ukázat"
         path={PAGE_PATH}
         description="Vyzkoušejte matematiku Vividbooks pro 1. i 2. stupeň celý školní rok zdarma. K tomu pracovní sešity matematiky se slevou 20 %. Přihlášky do 31. 12. 2026."
         jsonLd={faqJsonLd(FAQ)}
@@ -1220,8 +1220,8 @@ export function MathPilotLandingPage() {
               <span className="whitespace-nowrap">přihlášky do {DEADLINE_LABEL}</span>
             </p>
             <h1 className="text-[34px] leading-[1.06] tracking-tight text-[#001161] sm:text-[44px] md:text-[48px] lg:text-[54px]" style={{ fontFamily: COOPER }}>
-              <span className="block">{formatTypography('Máme nejlepší matematiku.')}</span>
-              <span className="block md:whitespace-nowrap">{formatTypography('Chceme, aby ji měly rády všechny\u00a0děti.')}</span>
+              <span className="block">{formatTypography('Máme nejlepší matematiku,')}</span>
+              <span className="block md:whitespace-nowrap">{formatTypography('a chceme vám to názorně\u00a0ukázat.')}</span>
             </h1>
             <p className="mx-auto mt-5 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/70 md:text-[18px]" style={{ fontFamily: FF }}>
               {formatTypography(
