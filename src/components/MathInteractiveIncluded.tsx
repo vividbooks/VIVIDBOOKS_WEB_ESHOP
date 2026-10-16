@@ -255,7 +255,7 @@ const VOICED_1ST: VoicedVideo[] = [
 ];
 const VOICED_2ND: VoicedVideo[] = [
   { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.', len: '1:02' },
-  { file: 'pocetnik', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.', len: '0:39' },
+  { file: 'pocetnik-3d', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.', len: '0:39' },
   { file: 'slovni-ulohy', title: 'Slovní úlohy', note: 'Pokaždé nová čísla, nápověda i výsledek.', len: '0:33' },
   { file: 'prijimaci-zkousky', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami.', len: '0:44' },
   { file: 'rysovani', title: 'Rýsování', note: 'Konstrukce krok po kroku v aplikaci Rýsování.', len: '0:35' },
