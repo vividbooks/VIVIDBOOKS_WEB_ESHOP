@@ -1,0 +1,206 @@
+[
+ {
+  "id": "pilotaz-mat-prvni-stupen",
+  "title": "Pilotáž matematiky – 1. stupeň, celá řada",
+  "slug": "pilotaz-mat-prvni-stupen",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "6772863ca77c64039e9a74db",
+   "677286689739a3a8d35d91a0",
+   "67728683a77c64039e9ac98b",
+   "6978f66398562191b68d249f",
+   "6978e58828809b8e30624014",
+   "6978e5a557163408b69449c8",
+   "6978e5c8239d8dcce8e72408",
+   "6978f6958b6c47d92e40cf72"
+  ],
+  "bundlePriceHaler": 46400,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-prvni-stupen-1",
+  "title": "Pilotáž matematiky – 1. stupeň, 1. ročník",
+  "slug": "pilotaz-mat-prvni-stupen-1",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "6772863ca77c64039e9a74db",
+   "677286689739a3a8d35d91a0",
+   "67728683a77c64039e9ac98b",
+   "6978f66398562191b68d249f"
+  ],
+  "bundlePriceHaler": 23200,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-prvni-stupen-2",
+  "title": "Pilotáž matematiky – 1. stupeň, 2. ročník",
+  "slug": "pilotaz-mat-prvni-stupen-2",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "6978e58828809b8e30624014",
+   "6978e5a557163408b69449c8",
+   "6978e5c8239d8dcce8e72408",
+   "6978f6958b6c47d92e40cf72"
+  ],
+  "bundlePriceHaler": 23200,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-pro-vsechny",
+  "title": "Pilotáž matematiky – Pro všechny, celá řada",
+  "slug": "pilotaz-mat-pro-vsechny",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "69789c4c70cc86a6b39b3302",
+   "644ba876be660b76a2568b2e",
+   "69789cd5e8999f56fe678ba4",
+   "69789d25fca9c5277081c8e6",
+   "69789dea8189125fe32dd217",
+   "65b8f1064f6fad792322d3b0",
+   "69789e5a40ef0a3b3f205fc7",
+   "67d33709a2cda4edc94f9dac"
+  ],
+  "bundlePriceHaler": 80000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-pro-vsechny-6",
+  "title": "Pilotáž matematiky – Pro všechny, 6. ročník",
+  "slug": "pilotaz-mat-pro-vsechny-6",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "69789c4c70cc86a6b39b3302",
+   "644ba876be660b76a2568b2e"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-pro-vsechny-7",
+  "title": "Pilotáž matematiky – Pro všechny, 7. ročník",
+  "slug": "pilotaz-mat-pro-vsechny-7",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "69789cd5e8999f56fe678ba4",
+   "69789d25fca9c5277081c8e6"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-pro-vsechny-8",
+  "title": "Pilotáž matematiky – Pro všechny, 8. ročník",
+  "slug": "pilotaz-mat-pro-vsechny-8",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "69789dea8189125fe32dd217",
+   "65b8f1064f6fad792322d3b0"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-pro-vsechny-9",
+  "title": "Pilotáž matematiky – Pro všechny, 9. ročník",
+  "slug": "pilotaz-mat-pro-vsechny-9",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "69789e5a40ef0a3b3f205fc7",
+   "67d33709a2cda4edc94f9dac"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-krok",
+  "title": "Pilotáž matematiky – Krok za krokem, celá řada",
+  "slug": "pilotaz-mat-krok",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "64135780db7f1b538a727a8b",
+   "6978b19e5d48cacd871f2491",
+   "65a019cdd2c5bf9d6587d528",
+   "65a01b6739d3fb0993878f66",
+   "65b8f002885310716c0dab90",
+   "6978b1d1b1b6e9e495ae7157",
+   "67d336d8dc580626990f68e8",
+   "6978b22921e15c04d6f42bb6"
+  ],
+  "bundlePriceHaler": 80000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-krok-6",
+  "title": "Pilotáž matematiky – Krok za krokem, 6. ročník",
+  "slug": "pilotaz-mat-krok-6",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "64135780db7f1b538a727a8b",
+   "6978b19e5d48cacd871f2491"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-krok-7",
+  "title": "Pilotáž matematiky – Krok za krokem, 7. ročník",
+  "slug": "pilotaz-mat-krok-7",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "65a019cdd2c5bf9d6587d528",
+   "65a01b6739d3fb0993878f66"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-krok-8",
+  "title": "Pilotáž matematiky – Krok za krokem, 8. ročník",
+  "slug": "pilotaz-mat-krok-8",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "65b8f002885310716c0dab90",
+   "6978b1d1b1b6e9e495ae7157"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ },
+ {
+  "id": "pilotaz-mat-krok-9",
+  "title": "Pilotáž matematiky – Krok za krokem, 9. ročník",
+  "slug": "pilotaz-mat-krok-9",
+  "description": "Pilotáž matematiky 2026/27: sešity se slevou 20 %.",
+  "productIds": [
+   "67d336d8dc580626990f68e8",
+   "6978b22921e15c04d6f42bb6"
+  ],
+  "bundlePriceHaler": 20000,
+  "isActive": true,
+  "validTo": "2026-12-31T23:59:59+01:00",
+  "bundleKind": "standard"
+ }
+]

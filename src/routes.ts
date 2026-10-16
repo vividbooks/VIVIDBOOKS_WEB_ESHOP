@@ -124,6 +124,14 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/MathCampaignLandingPage'), 'MathCampaignLandingPage'),
         },
         {
+          path: 'kampane/pilotaz-matematiky',
+          lazy: lazyNamed(() => import('./components/MathPilotLandingPage'), 'MathPilotLandingPage'),
+        },
+        {
+          path: 'pilotaz',
+          lazy: lazyNamed(() => import('./components/MathPilotLandingPage'), 'MathPilotLandingPage'),
+        },
+        {
           path: 'kampane/editor-sesitu',
           lazy: lazyNamed(() => import('./components/WorkbookEditorLandingPage'), 'WorkbookEditorLandingPage'),
         },
