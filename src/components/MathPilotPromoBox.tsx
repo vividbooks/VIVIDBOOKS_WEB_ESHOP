@@ -1,6 +1,6 @@
 import { Link } from 'react-router';
 import { ArrowRight } from 'lucide-react';
-import { publicAssetUrl } from '../utils/publicAssetUrl';
+import { getProductImage } from './cartUpsellUtils';
 
 /** Balíčky pilotáže matematiky v eshopu mají id `pilotaz-…` (viz MathPilotLandingPage). */
 export function isPilotBundleId(id: unknown): boolean {
@@ -13,17 +13,42 @@ const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
  * Jeden obecný box pilotáže na detailu sešitu matematiky místo boxu za každý balíček
  * (sešit je v balíčku celé řady i ročníku). Vede na /pilotaz, kde se balíček vybírá.
  */
-export function MathPilotPromoBox() {
+function normalize(value: unknown) {
+  return String(value ?? '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+}
+
+/** Obrázek tabletu z produktu digitálního přístupu ke stejnému stupni (např. „Digitální učebnice rozšířený přístup“). */
+function digitalAccessImage(product: any, products: any[]): string | undefined {
+  const stage = normalize(product?.category).includes('1. stupen') ? '1. stupen' : '2. stupen';
+  const digital = products.find(
+    (p) => (p.type === 'online' || p.type === 'license') && normalize(p.category).includes('matematika') && normalize(p.category).includes(stage) && getProductImage(p),
+  );
+  return digital ? getProductImage(digital) : undefined;
+}
+
+export function MathPilotPromoBox({ product, products }: { product: any; products: any[] }) {
+  const cover = getProductImage(product);
+  const tablet = digitalAccessImage(product, products);
   return (
     <div className="overflow-hidden rounded-[20px] border border-[#7C3AED]/25 bg-[#f3eeff]" style={FF}>
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
-        <Link to="/pilotaz" className="block shrink-0 sm:w-[150px]" aria-label="Pilotáž matematiky">
-          <img
-            src={publicAssetUrl('matematika-videa/reseni-nastenka.jpg')}
-            alt="Interaktivní matematika na tabuli"
-            loading="lazy"
-            className="block aspect-video w-full rounded-[12px] object-cover shadow-[0_4px_14px_rgba(0,17,97,0.14)]"
-          />
+        <Link to="/pilotaz" className="relative mx-auto block h-[132px] w-[190px] shrink-0" aria-label="Pilotáž matematiky">
+          {tablet ? (
+            <img
+              src={tablet}
+              alt="Interaktivní matematika na tabletu"
+              loading="lazy"
+              className="absolute right-0 top-0 h-[120px] w-[140px] rounded-[14px] object-contain"
+            />
+          ) : null}
+          {cover ? (
+            <img
+              src={cover}
+              alt={product?.name ?? 'Pracovní sešit'}
+              loading="lazy"
+              className="absolute bottom-0 left-1 h-[118px] w-auto -rotate-6 object-contain drop-shadow-[0_4px_10px_rgba(0,17,97,0.22)]"
+            />
+          ) : null}
         </Link>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#7C3AED]">
