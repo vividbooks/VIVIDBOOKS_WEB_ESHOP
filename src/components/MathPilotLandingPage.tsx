@@ -438,7 +438,7 @@ function WorkbooksSection({ products }: { products: Product[] }) {
         <SectionTitle
           eyebrow="Pracovní sešity se slevou 20 %"
           title="Balíčky sešitů matematiky"
-          body="Celou řadu sešitů, nebo jen ročníky, které právě potřebujete. Zvolte počet žáků a vložte balíček do košíku, sleva už je v ceně."
+          body="Interaktivní matematiku můžete používat i k titulům, které už máte. Pokud chcete naše sešity, vyberte celou řadu nebo jen ročníky, které potřebujete. Zvolte počet žáků a vložte balíček do košíku, sleva už je v ceně."
         />
 
         {groups.length === 0 ? (
@@ -1134,7 +1134,7 @@ const FAQ = [
   {
     question: 'Musíme si objednat pracovní sešity?',
     answer:
-      'Ne. Digitální matematiku máte na rok zdarma i bez sešitů. Sleva 20 % na sešity je možnost pro školy, které chtějí učit i s tištěnými sešity.',
+      'Ne. Interaktivní matematiku můžete používat k učebnicím a sešitům, které už ve škole máte, a celý rok je zdarma. Když budete chtít učit i s našimi pracovními sešity, objednáte si je se slevou 20 %.',
   },
   {
     question: 'Naše škola už u vás má jiný předmět nebo zkušební přístup.',
@@ -1233,7 +1233,7 @@ export function MathPilotLandingPage() {
             </h1>
             <p className="mx-auto mt-5 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/70 md:text-[18px]" style={{ fontFamily: FF }}>
               {formatTypography(
-                'Proto vám ji na celý školní rok dáváme zdarma. Víme, že pro učitele je těžké udělat krok do neznáma, tak ať to nic nestojí. Interaktivní verzi naší matematiky můžete tisknout, promítat na tabuli a používat všechny naše aplikace.',
+                'Proto vám ji na celý školní rok dáváme zdarma. Víme, že pro učitele je těžké udělat krok do neznáma, tak ať to nic nestojí. Interaktivní verzi naší matematiky můžete tisknout, promítat na tabuli a používat všechny naše aplikace. Klidně k učebnicím, se kterými už učíte, nebo si k ní objednejte naše pracovní sešity se slevou 20 %.',
               )}
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
