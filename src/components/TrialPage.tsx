@@ -29,7 +29,6 @@ const TEAM_PHONES: Record<string, string> = {
   'eva.b@vividbooks.com':   '+420 775 195 709',
   'eduard@vividbooks.com':  '+420 602 227 674',
   'gabriela@vividbooks.com':'+420 605 870 896',
-  'albert@vividbooks.cz':   '+420 736 353 702',
 };
 
 // Fotky obchodního týmu — stejný zdroj jako ContactPage
@@ -38,7 +37,6 @@ const TEAM_PHOTOS: Record<string, string> = {
   'eva.b@vividbooks.com':   'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0fed611ead6c658025_obchodni-zastupce-vividbooks-eva-bukolska.webp',
   'eduard@vividbooks.com':  'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/66b10b0f6373773f769b3a3b_obchodni-zastupce-vividbooks-eduard-malachovsky.webp',
   'gabriela@vividbooks.com':'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/68499506e61fe43631528e42_gabriela-vividbooks.avif',
-  'albert@vividbooks.cz':   'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/690b392f4f46c83e726f7095_albert.jpg',
 };
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;

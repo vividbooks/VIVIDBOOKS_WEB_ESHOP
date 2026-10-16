@@ -575,7 +575,7 @@ export function ContactPage() {
           ))}
         </div>
 
-        {/* 2 dole — centrovaně */}
+        {/* Podpora dole — centrovaně */}
         <div className="flex justify-center gap-12 flex-wrap">
           {REPRESENTATIVES.slice(3).map(rep => (
             <div key={rep.id} className="w-[220px]">

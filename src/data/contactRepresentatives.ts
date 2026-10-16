@@ -40,14 +40,6 @@ export const CONTACT_REPRESENTATIVES: ContactRepresentative[] = [
     regions: 'Podpora zákazníků',
     photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/68499506e61fe43631528e42_gabriela-vividbooks.avif',
   },
-  {
-    id: 6,
-    name: 'Albert Dlouhý',
-    email: 'albert@vividbooks.cz',
-    phone: '+420 736 353 702 (pouze sms)',
-    regions: 'Asistent obchodního týmu',
-    photo: 'https://cdn.prod.website-files.com/5dfa34b974e1f6e9cbef33b5/690b392f4f46c83e726f7095_albert.jpg',
-  },
 ];
 
 function normalizeRepresentativeText(value: string) {
