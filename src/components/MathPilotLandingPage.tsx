@@ -11,7 +11,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { CheckCircle2, Loader2, Minus, Plus, ShoppingCart } from 'lucide-react';
+import { CheckCircle2, Loader2, ShoppingCart } from 'lucide-react';
 import { SEOHead, faqJsonLd } from './SEOHead';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { SubjectTabsSection } from './SubjectTabsSection';
@@ -134,7 +134,7 @@ function sortWorkbooks(a: Product, b: Product) {
   return gradeOf(a) - gradeOf(b) || partOf(a) - partOf(b);
 }
 
-/** Sady pro jednoho žáka na ročník: všechny díly řady pro daný ročník. */
+/** Sady na ročník: všechny díly řady pro daný ročník. */
 function setsByGrade(books: Product[]) {
   const map = new Map<number, Product[]>();
   for (const b of books) {
@@ -322,17 +322,19 @@ const MATH_APPS: PilotApp[] = [
 ];
 
 /**
- * Záložky, které by opakovaly videa níž: „Řešení na nástěnce“ = interaktivní listy s řešením,
- * „Rýsování“ = Aplikace Rýsování. Pracovní sešity jsou v sekci balíčků.
+ * Záložky, které by opakovaly videa níž: „Rýsování“ = Aplikace Rýsování.
+ * Pracovní sešity jsou v sekci balíčků.
  */
 /** V datech záložek je překlep „Bousové“; opravujeme ho jen tady, data se mají opravit v adminu. */
 const PILOT_TAB_OVERRIDES = {
   ...MATEMATIKA_2_TAB_OVERRIDES,
   'Bousové kapitoly a úlohy': { tabText: 'Bonusové kapitoly a úlohy' },
   'Bousové kapitoly a\u00a0úlohy': { tabText: 'Bonusové kapitoly a\u00a0úlohy' },
+  // Nejdůležitější: interaktivní pracovní listy jako první záložka.
+  'Interaktivní pracovní listy s řešením': { order: 0 },
 };
 
-const PILOT_EXCLUDED_TABS = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Interaktivní pracovní listy s řešením', 'Aplikace Rýsování'];
+const PILOT_EXCLUDED_TABS = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Aplikace Rýsování'];
 
 /** Aplikace, které už mají své video v přehrávači výše — v seznamu se neopakují. */
 const APPS_IN_VIDEOS = new Set([
@@ -447,7 +449,7 @@ function WorkbooksSection({ products }: { products: Product[] }) {
         <SectionTitle
           eyebrow="Pracovní sešity se slevou 20 %"
           title="Balíčky sešitů matematiky"
-          body="Interaktivní matematiku můžete používat i k titulům, které už máte. Pokud chcete naše sešity, vyberte celou řadu nebo jen ročníky, které potřebujete. Zvolte počet žáků a vložte balíček do košíku, sleva už je v ceně."
+          body="Interaktivní matematiku můžete používat i k titulům, které už máte. Pokud chcete naše sešity, vyberte celou řadu nebo jen ročníky, které potřebujete. Vložte sadu do košíku, sleva už je v ceně."
         />
 
         {groups.length === 0 ? (
@@ -464,7 +466,7 @@ function WorkbooksSection({ products }: { products: Product[] }) {
 
         <p className="mx-auto mt-6 max-w-[720px] text-center text-[13px] leading-relaxed text-[#001161]/55" style={{ fontFamily: FF }}>
           {formatTypography(
-            'Ceny jsou za sešity pro jednoho žáka, včetně DPH. Ke sešitům pro žáky máte digitální přístup zdarma i po skončení pilotáže (od 15 kusů sešitů).',
+            'Ceny jsou za jednu sadu, včetně DPH. Ke sešitům pro žáky máte digitální přístup zdarma i po skončení pilotáže (od 15 kusů sešitů).',
           )}
         </p>
       </div>
@@ -539,12 +541,10 @@ function usePilotBundle(id: string): ProductBundleRecord | null {
 
 function AddBundleButton({
   bundleId,
-  pupils,
   products,
   compact = false,
 }: {
   bundleId: string;
-  pupils: number;
   products: Product[];
   compact?: boolean;
 }) {
@@ -556,7 +556,7 @@ function AddBundleButton({
   const add = () => {
     const lines = buildBundleCartLines(products, bundle, `pilotaz-${bundle.id}`);
     if (lines.length === 0) return;
-    for (const line of lines) addItem({ ...line, quantity: pupils });
+    for (const line of lines) addItem({ ...line, quantity: 1 });
     setAdded(true);
     window.setTimeout(() => setAdded(false), 1800);
     openCart();
@@ -566,7 +566,7 @@ function AddBundleButton({
     <button
       type="button"
       onClick={add}
-      aria-label={`Do košíku: ${bundle.title}, ${pupils} ks`}
+      aria-label={`Do košíku: ${bundle.title}`}
       className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl font-bold text-white transition hover:scale-[1.03] ${
         added ? 'bg-green-600' : 'bg-[#001161] hover:bg-[#001161]/85'
       } ${compact ? 'h-10 w-10' : 'px-5 py-3 text-[15px]'}`}
@@ -575,27 +575,6 @@ function AddBundleButton({
       {added ? <CheckCircle2 className="h-5 w-5" /> : <ShoppingCart className="h-5 w-5" />}
       {compact ? null : added ? 'Přidáno' : 'Do košíku'}
     </button>
-  );
-}
-
-function PupilsStepper({ value, onChange }: { value: number; onChange: (n: number) => void }) {
-  const set = (n: number) => onChange(Math.max(1, Math.min(999, Math.round(n) || 1)));
-  return (
-    <div className="inline-flex items-center rounded-xl bg-white ring-1 ring-[#001161]/12" style={{ fontFamily: FF }}>
-      <button type="button" aria-label="Méně žáků" onClick={() => set(value - 1)} className="flex h-10 w-9 items-center justify-center text-[#001161]/60 hover:text-[#001161]">
-        <Minus className="h-4 w-4" />
-      </button>
-      <input
-        aria-label="Počet žáků"
-        inputMode="numeric"
-        value={value}
-        onChange={(e) => set(Number(e.target.value.replace(/\D/g, '')))}
-        className="h-10 w-12 bg-transparent text-center text-[15px] font-bold text-[#001161] outline-none"
-      />
-      <button type="button" aria-label="Více žáků" onClick={() => set(value + 1)} className="flex h-10 w-9 items-center justify-center text-[#001161]/60 hover:text-[#001161]">
-        <Plus className="h-4 w-4" />
-      </button>
-    </div>
   );
 }
 
@@ -616,7 +595,6 @@ function SeriesBundle({
 }) {
   const grades = sets.map((s) => s.grade);
   const gradeRange = grades.length > 1 ? `${grades[0]}.–${grades[grades.length - 1]}. ročník` : `${grades[0]}. ročník`;
-  const [pupils, setPupils] = useState(25);
   const seriesBundle = usePilotBundle(pilotBundleId(series.id));
   return (
     <article className={`overflow-hidden rounded-[26px] border ${series.tone.card} ${series.tone.border}`}>
@@ -646,15 +624,11 @@ function SeriesBundle({
             <span className="rounded-md bg-white px-2 py-0.5 text-[13px] font-bold text-[#7C3AED]">ušetříte {formatKc(full - pilot)}</span>
           </div>
           <p className="mt-1 text-[13px] text-[#001161]/50" style={{ fontFamily: FF }}>
-            všech {books.length} sešitů řady pro jednoho žáka
+            sada všech {books.length} sešitů řady
           </p>
           {seriesBundle ? (
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <PupilsStepper value={pupils} onChange={setPupils} />
-              <span className="text-[13px] text-[#001161]/55" style={{ fontFamily: FF }}>
-                žáků · celkem <strong className="text-[#001161]">{formatKc(pilot * pupils)}</strong>
-              </span>
-              <AddBundleButton bundleId={pilotBundleId(series.id)} pupils={pupils} products={products} />
+            <div className="mt-5">
+              <AddBundleButton bundleId={pilotBundleId(series.id)} products={products} />
             </div>
           ) : null}
         </div>
@@ -665,11 +639,6 @@ function SeriesBundle({
             <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40" style={{ fontFamily: FF }}>
               Nebo jen jeden ročník
             </p>
-            {seriesBundle ? (
-              <p className="text-[12px] text-[#001161]/45" style={{ fontFamily: FF }}>
-                do košíku po {pupils} ks
-              </p>
-            ) : null}
           </div>
           <ul className="flex flex-col divide-y divide-[#001161]/8">
             {sets.map((set) => (
@@ -699,7 +668,7 @@ function SeriesBundle({
                   <p className="text-[17px] font-bold leading-none text-[#001161]">{formatKc(set.pilot)}</p>
                   <p className="mt-1 text-[12px] text-[#001161]/40 line-through">{formatKc(set.full)}</p>
                 </div>
-                <AddBundleButton bundleId={pilotBundleId(series.id, set.grade)} pupils={pupils} products={products} compact />
+                <AddBundleButton bundleId={pilotBundleId(series.id, set.grade)} products={products} compact />
               </li>
             ))}
           </ul>

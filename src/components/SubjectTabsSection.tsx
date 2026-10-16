@@ -23,6 +23,8 @@ function useWindowWidth() {
 export type SubjectTabContentOverride = {
   /** Přepíše text záložky (např. oprava překlepu z dat). */
   tabText?: string;
+  /** Přepíše pořadí záložky (menší = dřív). */
+  order?: number;
   contentHeadline?: string;
   contentRichText?: string;
   contentLinkUrl?: string;
@@ -45,11 +47,14 @@ export type SubjectExtraTab = {
 
 function applyTabOverrides(items: any[], overrides?: Record<string, SubjectTabContentOverride>) {
   if (!overrides || Object.keys(overrides).length === 0) return items;
-  return items.map((tab) => {
+  const patched = items.map((tab) => {
     const key = String(tab.tabText ?? '').trim();
     const patch = overrides[key];
     return patch ? { ...tab, ...patch } : tab;
   });
+  // Přepsané pořadí se projeví jen tam, kde ho override nastaví; jinak zůstává pořadí z dat.
+  if (!Object.values(overrides).some((o) => o.order !== undefined)) return patched;
+  return [...patched].sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
 }
 
 function mergeExtraTabs(items: any[], extraTabs?: SubjectExtraTab[]) {
