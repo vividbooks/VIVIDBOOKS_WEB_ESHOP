@@ -36,6 +36,8 @@ import {
 
 const FF = "'Fenomen Sans', sans-serif";
 /** Nadpisy pilotáže v Fenomen Sans (Vítek 16. 10. 2026), ne v Cooper jako kampaň matematiky. */
+/** Jen hlavní nadpis v hero (Vítek 16. 10. 2026). */
+const COOPER = "'Cooper Light', serif";
 const HEADING: React.CSSProperties = { fontFamily: FF, fontWeight: 700, letterSpacing: '-0.01em' };
 
 const PILOT_NOTE = 'Pilotáž matematiky 2026/27 (1 rok zdarma, 20 % na sešity)';
@@ -1225,13 +1227,14 @@ export function MathPilotLandingPage() {
               <span>Pilotáž matematiky ·</span>
               <span className="whitespace-nowrap">přihlášky do {DEADLINE_LABEL}</span>
             </p>
-            <h1 className="text-[36px] leading-[1.03] tracking-tight text-[#001161] sm:text-[48px] md:text-[58px]" style={HEADING}>
-              Interaktivní matematika <br className="hidden sm:block" />
-              na rok zdarma
+            <h1 className="text-[38px] leading-[1.05] tracking-tight text-[#001161] sm:text-[50px] md:text-[62px]" style={{ fontFamily: COOPER }}>
+              {formatTypography('Máme nejlepší matematiku.')}
+              <br />
+              {formatTypography('Vyzkoušejte ji rok zdarma.')}
             </h1>
             <p className="mx-auto mt-5 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/70 md:text-[18px]" style={{ fontFamily: FF }}>
               {formatTypography(
-                'Máme nejlepší matematiku v České republice a chceme vám to ukázat. Víme, že pro učitele je těžké udělat krok do neznáma. Proto vám nabízíme interaktivní verzi naší matematiky na jeden rok zdarma. Tiskněte z ní, promítejte ji na tabuli a používejte všechny naše aplikace.',
+                'Víme, že pro učitele je těžké udělat krok do neznáma. Proto vám nabízíme interaktivní verzi naší matematiky na celý školní rok zdarma. Tiskněte z ní, promítejte ji na tabuli a používejte všechny naše aplikace.',
               )}
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
