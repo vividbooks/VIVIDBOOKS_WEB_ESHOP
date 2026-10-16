@@ -247,91 +247,108 @@ export function MathInteractiveMeter({ count, className = '' }: { count: number;
   );
 }
 
-type VoicedVideo = { file: string; title: string; note: string };
+type VoicedVideo = { file: string; title: string; note: string; len: string };
 
 /** Namluvená videa z Remotionu (16:9, se zvukem). Soubory: public/matematika-videa/<file>.mp4 + .jpg */
 const VOICED_1ST: VoicedVideo[] = [
-  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.' },
+  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.', len: '1:02' },
 ];
 const VOICED_2ND: VoicedVideo[] = [
-  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.' },
-  { file: 'pocetnik', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.' },
-  { file: 'slovni-ulohy', title: 'Slovní úlohy', note: 'Pokaždé nová čísla, nápověda i výsledek.' },
-  { file: 'prijimaci-zkousky', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami.' },
-  { file: 'rysovani', title: 'Rýsování', note: 'Konstrukce krok po kroku v aplikaci Rýsování.' },
+  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.', len: '1:02' },
+  { file: 'pocetnik', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.', len: '0:39' },
+  { file: 'slovni-ulohy', title: 'Slovní úlohy', note: 'Pokaždé nová čísla, nápověda i výsledek.', len: '0:33' },
+  { file: 'prijimaci-zkousky', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami.', len: '0:44' },
+  { file: 'rysovani', title: 'Rýsování', note: 'Konstrukce krok po kroku v aplikaci Rýsování.', len: '0:35' },
 ];
 
 const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-videa/${file}.${ext}`);
+const FF_SANS = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
-function VoicedCard({ v, big = false }: { v: VoicedVideo; big?: boolean }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const toggle = () => {
-    const el = ref.current;
-    if (!el) return;
-    if (el.paused) void el.play(); else el.pause();
-  };
-  return (
-    <figure className="flex min-w-0 flex-col gap-2.5">
-      <div className="relative overflow-hidden rounded-[16px]">
-        <video
-          ref={ref}
-          src={voicedUrl(v.file, 'mp4')}
-          poster={voicedUrl(v.file, 'jpg')}
-          className="block aspect-video w-full cursor-pointer"
-          playsInline
-          preload="none"
-          onClick={toggle}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-        />
-        {!playing && (
-          <button
-            type="button"
-            onClick={toggle}
-            aria-label={`Přehrát video: ${v.title}`}
-            className="absolute inset-0 grid place-items-center cursor-pointer"
-          >
-            <span className={`grid place-items-center rounded-full bg-[#5b4fd8] text-white shadow-[0_6px_20px_rgba(91,79,216,0.45)] transition-transform hover:scale-105 ${big ? 'size-16' : 'size-11'}`}>
-              <Play className={`ml-0.5 fill-current ${big ? 'w-6 h-6' : 'w-4 h-4'}`} />
-            </span>
-          </button>
-        )}
-      </div>
-      <figcaption style={{ fontFamily: "'Fenomen Sans', sans-serif", color: '#001161' }}>
-        <b className={big ? 'text-[17px]' : 'text-[14px]'}>{v.title}</b>
-        <span className={`block leading-snug text-[#001161]/60 ${big ? 'text-[14px]' : 'text-[12.5px]'}`}>{v.note}</span>
-      </figcaption>
-    </figure>
-  );
-}
-
-/** Sekce pod listováním: namluvená videa o tom, co k sešitu matematiky učitel dostane v aplikaci. */
+/** Sekce pod listováním: jeden přehrávač a vedle seznam namluvených videí; klik v seznamu přepne a pustí video. */
 export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
-  const [first, ...rest] = secondStage ? VOICED_2ND : VOICED_1ST;
+  const videos = secondStage ? VOICED_2ND : VOICED_1ST;
+  const [idx, setIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const ref = useRef<HTMLVideoElement>(null);
+  const current = videos[idx] ?? videos[0];
+
+  const play = () => { const el = ref.current; if (el) void el.play().catch(() => {}); };
+  const toggle = () => { const el = ref.current; if (!el) return; if (el.paused) play(); else el.pause(); };
+  const pick = (i: number) => {
+    if (i === idx) { toggle(); return; }
+    setIdx(i);
+    // nový zdroj se načte po renderu; pustit hned, jak je video připravené
+    requestAnimationFrame(() => play());
+  };
+
   return (
     <section className="max-w-[1200px] mx-auto px-4 sm:px-6 mt-16" aria-label="Videa z aplikace">
       <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] md:text-[38px] leading-tight">
         {'Jak to vypadá v aplikaci'}
       </h2>
-      <p className="mt-2 mb-7 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
+      <p className="mt-2 mb-7 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={FF_SANS}>
         {'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.'}
       </p>
-      {rest.length === 0 ? (
-        <div className="max-w-[820px]">
-          <VoicedCard v={first} big />
+
+      <div className={videos.length > 1 ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)] lg:items-start' : 'max-w-[860px]'}>
+        <div className="relative overflow-hidden rounded-[20px] bg-[#eef0f6]">
+          <video
+            key={current.file}
+            ref={ref}
+            src={voicedUrl(current.file, 'mp4')}
+            poster={voicedUrl(current.file, 'jpg')}
+            className="block aspect-video w-full cursor-pointer"
+            playsInline
+            preload="metadata"
+            onClick={toggle}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => { setPlaying(false); if (idx < videos.length - 1) pick(idx + 1); }}
+          />
+          {!playing && (
+            <button
+              type="button"
+              onClick={play}
+              aria-label={`Přehrát video: ${current.title}`}
+              className="absolute inset-0 grid place-items-center cursor-pointer"
+            >
+              <span className="grid size-16 place-items-center rounded-full bg-[#5b4fd8] text-white shadow-[0_8px_24px_rgba(91,79,216,0.45)] transition-transform hover:scale-105 sm:size-20">
+                <Play className="ml-1 h-7 w-7 fill-current sm:h-8 sm:w-8" />
+              </span>
+            </button>
+          )}
         </div>
-      ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
-          <div className="md:col-span-2 lg:row-span-2">
-            <VoicedCard v={first} big />
-          </div>
-          {rest.map(v => (
-            <VoicedCard key={v.file} v={v} />
-          ))}
-        </div>
-      )}
+
+        {videos.length > 1 && (
+          <ol className="flex flex-col gap-1" style={FF_SANS}>
+            {videos.map((v, i) => {
+              const active = i === idx;
+              return (
+                <li key={v.file}>
+                  <button
+                    type="button"
+                    onClick={() => pick(i)}
+                    aria-current={active ? 'true' : undefined}
+                    className={`flex w-full items-center gap-3.5 rounded-[14px] p-2 text-left transition-colors cursor-pointer ${active ? 'bg-[#f0eeff]' : 'hover:bg-[#f6f6fb]'}`}
+                  >
+                    <span className="relative block w-[112px] shrink-0 overflow-hidden rounded-[10px] bg-[#eef0f6]">
+                      <img src={voicedUrl(v.file, 'jpg')} alt="" className="block aspect-video w-full object-cover" loading="lazy" />
+                      <span className="absolute bottom-1 right-1 rounded-md bg-[#001161]/75 px-1.5 py-px text-[10.5px] font-semibold text-white tabular-nums">{v.len}</span>
+                    </span>
+                    <span className="min-w-0">
+                      <span className={`flex items-center gap-1.5 text-[14.5px] font-bold ${active ? 'text-[#5b4fd8]' : 'text-[#001161]'}`}>
+                        {active && playing && <span className="inline-block size-1.5 rounded-full bg-[#5b4fd8] animate-pulse" aria-hidden="true" />}
+                        {v.title}
+                      </span>
+                      <span className="block text-[12.5px] leading-snug text-[#001161]/55">{v.note}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
     </section>
   );
 }
