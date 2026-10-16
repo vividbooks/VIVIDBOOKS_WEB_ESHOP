@@ -40,9 +40,12 @@ export function AkcePage() {
     void loadBundles();
   }, [loadBundles]);
 
-  /** Akce typu N+M (10+1) se přes web neobjednává — ve výpisu Akcí ji nezobrazujeme. */
+  /**
+   * Akce typu N+M (10+1) se přes web neobjednává — ve výpisu Akcí ji nezobrazujeme.
+   * Balíčky pilotáže matematiky (`pilotaz-…`) patří jen na stránku /pilotaz.
+   */
   const visibleBundles = useMemo(
-    () => bundles.filter((b) => !bundleIsNxPlusOneSubject(b)),
+    () => bundles.filter((b) => !bundleIsNxPlusOneSubject(b) && !String(b.id).startsWith('pilotaz-')),
     [bundles],
   );
 
