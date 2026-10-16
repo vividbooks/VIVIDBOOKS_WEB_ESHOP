@@ -30,7 +30,6 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { MATEMATIKA_2_TAB_OVERRIDES } from '../data/matematika2SubjectTabOverrides';
 import {
   MATH2_ECOSYSTEM_EXCLUDED_TABS,
-  MATH2_ECOSYSTEM_EXTRA_TABS,
   VividLogo,
 } from './MathCampaignLandingPage';
 
@@ -341,10 +340,6 @@ const APPS_IN_VIDEOS = new Set([
   'Slovní úlohy',
   'Přijímací zkoušky',
   'Rýsování',
-  // mají vlastní záložku v „Co všechno v aplikaci najdete“
-  'Rovinné útvary a tělesa',
-  'Zlomky',
-  'Algebraické dlaždice',
 ]);
 
 function InteractiveSection() {
@@ -386,7 +381,6 @@ function InteractiveSection() {
             light
             hideSectionHeading
             excludeTabTexts={PILOT_EXCLUDED_TABS}
-            extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
             tabOverrides={PILOT_TAB_OVERRIDES}
           />
         </div>
@@ -401,9 +395,9 @@ function InteractiveSection() {
         />
 
         <p className="mt-8 text-[14px] font-bold text-[#001161]/45" style={{ fontFamily: FF }}>
-          {formatTypography('A k tomu další aplikace')}
+          {formatTypography('A k tomu další aplikace k matematice')}
         </p>
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {MATH_APPS.filter((app) => !APPS_IN_VIDEOS.has(app.name)).map((app) => (
             <li key={app.name} className="flex gap-4 rounded-[20px] bg-[#f8f9fc] p-4 ring-1 ring-[#001161]/6">
               <img
