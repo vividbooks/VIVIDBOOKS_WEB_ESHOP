@@ -1229,7 +1229,7 @@ export function MathPilotLandingPage() {
               )}
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-              <PrimaryButton href="#prihlaska">Přihlásit školu do pilotáže</PrimaryButton>
+              <PrimaryButton href="#prihlaska">Získat matematiku zdarma na 1 rok</PrimaryButton>
               <a
                 href="#sesity"
                 className="inline-flex items-center justify-center rounded-xl border border-[#001161]/15 bg-white/70 px-6 py-3.5 text-[16px] font-bold text-[#001161] transition hover:bg-white"
