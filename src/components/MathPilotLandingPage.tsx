@@ -322,6 +322,19 @@ const MATH_APPS: PilotApp[] = [
   },
 ];
 
+/**
+ * Záložky, které by opakovaly videa níž: „Řešení na nástěnce“ = interaktivní listy s řešením,
+ * „Rýsování“ = Aplikace Rýsování. Pracovní sešity jsou v sekci balíčků.
+ */
+/** V datech záložek je překlep „Bousové“; opravujeme ho jen tady, data se mají opravit v adminu. */
+const PILOT_TAB_OVERRIDES = {
+  ...MATEMATIKA_2_TAB_OVERRIDES,
+  'Bousové kapitoly a úlohy': { tabText: 'Bonusové kapitoly a úlohy' },
+  'Bousové kapitoly a\u00a0úlohy': { tabText: 'Bonusové kapitoly a\u00a0úlohy' },
+};
+
+const PILOT_EXCLUDED_TABS = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Interaktivní pracovní listy s řešením', 'Aplikace Rýsování'];
+
 /** Aplikace, které už mají své video v přehrávači výše — v seznamu se neopakují. */
 const APPS_IN_VIDEOS = new Set([
   'Početník',
@@ -360,14 +373,6 @@ function InteractiveSection() {
           ))}
         </div>
 
-        <MathVoicedVideos
-          secondStage
-          sansTitle
-          controls
-          className="mt-14 !px-0"
-          body="Krátká videa se zvukem: co v pilotáži dostanete a jak s tím pracujete v hodině."
-        />
-
         <h3 className="mt-14 text-[30px] leading-tight text-[#001161] md:text-[38px]" style={HEADING}>
           {formatTypography('Co všechno v aplikaci najdete')}
         </h3>
@@ -380,11 +385,20 @@ function InteractiveSection() {
             displayName="Matematika"
             light
             hideSectionHeading
-            excludeTabTexts={MATH2_ECOSYSTEM_EXCLUDED_TABS}
+            excludeTabTexts={PILOT_EXCLUDED_TABS}
             extraTabs={MATH2_ECOSYSTEM_EXTRA_TABS}
-            tabOverrides={MATEMATIKA_2_TAB_OVERRIDES}
+            tabOverrides={PILOT_TAB_OVERRIDES}
           />
         </div>
+
+        <MathVoicedVideos
+          secondStage
+          sansTitle
+          controls
+          className="mt-14 !px-0"
+          title="Jak to vypadá v hodině"
+          body="Krátká videa se zvukem: co v pilotáži dostanete a jak s tím pracujete v hodině."
+        />
 
         <p className="mt-8 text-[14px] font-bold text-[#001161]/45" style={{ fontFamily: FF }}>
           {formatTypography('A k tomu další aplikace')}

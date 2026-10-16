@@ -21,6 +21,8 @@ function useWindowWidth() {
 }
 
 export type SubjectTabContentOverride = {
+  /** Přepíše text záložky (např. oprava překlepu z dat). */
+  tabText?: string;
   contentHeadline?: string;
   contentRichText?: string;
   contentLinkUrl?: string;
