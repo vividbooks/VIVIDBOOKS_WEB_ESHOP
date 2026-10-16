@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { CheckCircle2, Play } from 'lucide-react';
+import { CheckCircle2, Maximize, Pause, Play } from 'lucide-react';
 import { publicAssetUrl } from '../utils/publicAssetUrl';
 
 /** Minimální počet sešitů, od kterého škola dostane interaktivní matematiku zdarma. */
@@ -51,14 +51,14 @@ export function MathInteractiveIncluded({ secondStage }: { secondStage: boolean;
       <p className="text-[12px] leading-snug text-[#001161]/70">
         {`Stačí objednat pro třídu aspoň ${MATH_INTERACTIVE_FREE_FROM_QTY} sešitů a celá škola dostane přístup do aplikace Vividbooks, bez dalších poplatků. `}
         <a
-          href="#videa-z-aplikace"
+          href="#co-v-aplikaci"
           onClick={e => {
-            const el = document.getElementById('videa-z-aplikace');
+            const el = document.getElementById('co-v-aplikaci');
             if (el) { e.preventDefault(); el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
           }}
           className="font-bold text-[#5b4fd8] hover:underline"
         >
-          {'Podívejte se na videa z aplikace'}
+          {'Podívejte se, co v aplikaci najdete'}
         </a>
       </p>
     </div>
@@ -137,12 +137,85 @@ const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matemati
 const FF_SANS = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 /** Sekce pod listováním: jeden přehrávač a vedle seznam namluvených videí; klik v seznamu přepne a pustí video. */
-export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
+function formatVideoTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function openVideoFullscreen(el: HTMLVideoElement | null) {
+  if (!el) return;
+  const v = el as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+  if (el.requestFullscreen) void el.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
+  else v.webkitEnterFullscreen?.(); // iPhone Safari
+}
+
+function VideoControlBar({
+  playing,
+  time,
+  duration,
+  onToggle,
+  onSeek,
+  onFullscreen,
+}: {
+  playing: boolean;
+  time: number;
+  duration: number;
+  onToggle: () => void;
+  onSeek: (t: number) => void;
+  onFullscreen: () => void;
+}) {
+  const pct = duration > 0 ? Math.min(100, (time / duration) * 100) : 0;
+  const btn = 'grid size-9 shrink-0 place-items-center rounded-full text-[#001161] transition-colors hover:bg-[#001161]/8 cursor-pointer';
+  return (
+    <div className="flex items-center gap-2 border-t border-[#001161]/8 bg-white px-3 py-2" style={FF_SANS}>
+      <button type="button" onClick={onToggle} aria-label={playing ? 'Pozastavit' : 'Přehrát'} className={btn}>
+        {playing ? <Pause className="h-[18px] w-[18px] fill-current" /> : <Play className="ml-0.5 h-[18px] w-[18px] fill-current" />}
+      </button>
+      <span className="w-[86px] shrink-0 text-[12.5px] font-semibold tabular-nums text-[#001161]/65">
+        {formatVideoTime(time)} / {formatVideoTime(duration)}
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={duration || 0}
+        step={0.1}
+        value={Math.min(time, duration || 0)}
+        onChange={(e) => onSeek(Number(e.target.value))}
+        aria-label="Časová osa videa"
+        className="h-1.5 min-w-0 flex-1 cursor-pointer appearance-none rounded-full accent-[#5b4fd8]"
+        style={{ background: `linear-gradient(to right, #5b4fd8 ${pct}%, rgba(0,17,97,0.12) ${pct}%)` }}
+      />
+      <button type="button" onClick={onFullscreen} aria-label="Celá obrazovka" className={btn}>
+        <Maximize className="h-[18px] w-[18px]" />
+      </button>
+    </div>
+  );
+}
+
+export function MathVoicedVideos({
+  secondStage,
+  title = 'Jak to vypadá v aplikaci',
+  body = 'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.',
+  className = 'mt-16',
+  sansTitle = false,
+  controls = false,
+}: {
+  secondStage: boolean;
+  title?: string;
+  body?: string;
+  className?: string;
+  /** Nadpis ve Fenomen Sans místo Cooper (pilotáž matematiky). */
+  sansTitle?: boolean;
+  /** Ovládací lišta pod videem: přehrát/pauza, časová osa, celá obrazovka. */
+  controls?: boolean;
+}) {
   const videos = secondStage ? VOICED_2ND : VOICED_1ST;
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const ref = useRef<HTMLVideoElement>(null);
   const current = videos[idx] ?? videos[0];
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   const play = () => { const el = ref.current; if (el) void el.play().catch(() => {}); };
   const toggle = () => { const el = ref.current; if (!el) return; if (el.paused) play(); else el.pause(); };
@@ -154,16 +227,20 @@ export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
   };
 
   return (
-    <section id="videa-z-aplikace" className="max-w-[1200px] mx-auto px-4 sm:px-6 mt-16 scroll-mt-24" aria-label="Videa z aplikace">
-      <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] md:text-[38px] leading-tight">
-        {'Jak to vypadá v aplikaci'}
+    <section className={`max-w-[1200px] mx-auto px-4 sm:px-6 ${className}`} aria-label="Videa z aplikace">
+      <h2
+        className={`${sansTitle ? 'font-bold tracking-[-0.01em]' : "font-['Cooper_Light',serif]"} text-[#001161] text-[30px] md:text-[38px] leading-tight`}
+        style={sansTitle ? FF_SANS : undefined}
+      >
+        {title}
       </h2>
       <p className="mt-2 mb-7 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={FF_SANS}>
-        {'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.'}
+        {body}
       </p>
 
       <div className={videos.length > 1 ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)] lg:items-start' : 'max-w-[860px]'}>
         <div className="relative overflow-hidden rounded-[20px] bg-[#eef0f6]">
+          <div className="relative">
           <video
             key={current.file}
             ref={ref}
@@ -176,6 +253,8 @@ export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => { setPlaying(false); if (idx < videos.length - 1) pick(idx + 1); }}
+            onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration || 0); setTime(0); }}
+            onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
           />
           {!playing && (
             <button
@@ -188,6 +267,17 @@ export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
                 <Play className="ml-1 h-7 w-7 fill-current sm:h-8 sm:w-8" />
               </span>
             </button>
+          )}
+          </div>
+          {controls && (
+            <VideoControlBar
+              playing={playing}
+              time={time}
+              duration={duration}
+              onToggle={toggle}
+              onSeek={(t) => { const el = ref.current; if (el) { el.currentTime = t; setTime(t); } }}
+              onFullscreen={() => openVideoFullscreen(ref.current)}
+            />
           )}
         </div>
 
