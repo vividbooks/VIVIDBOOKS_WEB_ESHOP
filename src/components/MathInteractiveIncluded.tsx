@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router';
 import { CheckCircle2, Play, X } from 'lucide-react';
@@ -264,17 +264,40 @@ const VOICED_2ND: VoicedVideo[] = [
 const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-videa/${file}.${ext}`);
 
 function VoicedCard({ v, big = false }: { v: VoicedVideo; big?: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.paused) void el.play(); else el.pause();
+  };
   return (
     <figure className="flex min-w-0 flex-col gap-2.5">
-      <div className="overflow-hidden rounded-[20px] border border-[#001161]/8 bg-[#1f2233] shadow-[0_12px_30px_-18px_rgba(0,17,97,0.45)]">
+      <div className="relative overflow-hidden rounded-[16px]">
         <video
+          ref={ref}
           src={voicedUrl(v.file, 'mp4')}
           poster={voicedUrl(v.file, 'jpg')}
-          className="block aspect-video w-full bg-[#1f2233]"
-          controls
+          className="block aspect-video w-full cursor-pointer"
           playsInline
           preload="none"
+          onClick={toggle}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
         />
+        {!playing && (
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={`Přehrát video: ${v.title}`}
+            className="absolute inset-0 grid place-items-center cursor-pointer"
+          >
+            <span className={`grid place-items-center rounded-full bg-[#5b4fd8] text-white shadow-[0_6px_20px_rgba(91,79,216,0.45)] transition-transform hover:scale-105 ${big ? 'size-16' : 'size-11'}`}>
+              <Play className={`ml-0.5 fill-current ${big ? 'w-6 h-6' : 'w-4 h-4'}`} />
+            </span>
+          </button>
+        )}
       </div>
       <figcaption style={{ fontFamily: "'Fenomen Sans', sans-serif", color: '#001161' }}>
         <b className={big ? 'text-[17px]' : 'text-[14px]'}>{v.title}</b>
