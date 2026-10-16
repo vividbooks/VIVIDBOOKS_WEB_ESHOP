@@ -162,19 +162,30 @@ function shortTitle(product: Product) {
 
 /* ─────────────────────────── drobné stavební prvky ─────────────────────────── */
 
-function SectionTitle({ eyebrow, title, body }: { eyebrow?: string; title: React.ReactNode; body?: React.ReactNode }) {
+function SectionTitle({
+  eyebrow,
+  title,
+  body,
+  dark = false,
+}: {
+  eyebrow?: string;
+  title: React.ReactNode;
+  body?: React.ReactNode;
+  /** Světlé písmo na tmavém pozadí sekce. */
+  dark?: boolean;
+}) {
   return (
     <div className="mx-auto mb-9 max-w-[760px] text-center">
       {eyebrow ? (
-        <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40" style={{ fontFamily: FF }}>
+        <p className={`mb-2 text-[12px] font-bold uppercase tracking-[0.14em] ${dark ? 'text-[#C4B5FD]' : 'text-[#001161]/40'}`} style={{ fontFamily: FF }}>
           {eyebrow}
         </p>
       ) : null}
-      <h2 className="text-[28px] leading-[1.08] text-[#001161] md:text-[38px]" style={HEADING}>
+      <h2 className={`text-[28px] leading-[1.08] md:text-[38px] ${dark ? 'text-white' : 'text-[#001161]'}`} style={HEADING}>
         {typeof title === 'string' ? formatTypography(title) : title}
       </h2>
       {body ? (
-        <p className="mx-auto mt-3 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/65 md:text-[16px]" style={{ fontFamily: FF }}>
+        <p className={`mx-auto mt-3 max-w-[640px] text-[15px] leading-relaxed md:text-[16px] ${dark ? 'text-white/70' : 'text-[#001161]/65'}`} style={{ fontFamily: FF }}>
           {typeof body === 'string' ? formatTypography(body) : body}
         </p>
       ) : null}
@@ -446,16 +457,17 @@ function WorkbooksSection({ products }: { products: Product[] }) {
   );
 
   return (
-    <section id="sesity" className="scroll-mt-24 bg-white px-4 py-14 sm:px-6 md:px-12 md:py-16">
+    <section id="sesity" className="scroll-mt-24 bg-[#001161] px-4 py-14 sm:px-6 md:px-12 md:py-20">
       <div className="mx-auto max-w-[1200px]">
         <SectionTitle
+          dark
           eyebrow="Pracovní sešity se slevou 20 %"
           title="Balíčky sešitů matematiky"
           body="Interaktivní matematiku můžete používat i k titulům, které už máte. Pokud chcete naše sešity, vyberte celou řadu nebo jen ročníky, které potřebujete. Vložte sadu do košíku, sleva už je v ceně."
         />
 
         {groups.length === 0 ? (
-          <p className="text-center text-[14px] text-[#001161]/45" style={{ fontFamily: FF }}>
+          <p className="text-center text-[14px] text-white/50" style={{ fontFamily: FF }}>
             Načítám sešity…
           </p>
         ) : (
@@ -466,7 +478,7 @@ function WorkbooksSection({ products }: { products: Product[] }) {
           </div>
         )}
 
-        <p className="mx-auto mt-6 max-w-[720px] text-center text-[13px] leading-relaxed text-[#001161]/55" style={{ fontFamily: FF }}>
+        <p className="mx-auto mt-6 max-w-[720px] text-center text-[13px] leading-relaxed text-white/55" style={{ fontFamily: FF }}>
           {formatTypography(
             'Ceny jsou za jednu sadu, včetně DPH. Ke sešitům pro žáky máte digitální přístup zdarma i po skončení pilotáže (od 15 kusů sešitů).',
           )}
