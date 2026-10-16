@@ -1219,7 +1219,7 @@ export function MathPilotLandingPage() {
 
       <main>
         <section className="overflow-hidden bg-[#EDE4F7] px-4 pb-0 pt-8 sm:px-6 md:px-10 md:pt-12">
-          <div className="mx-auto max-w-[920px] text-center">
+          <div className="mx-auto max-w-[1040px] text-center">
             <p
               className="mx-auto mb-5 inline-flex flex-wrap justify-center gap-x-1 rounded-full bg-white/70 px-4 py-1.5 text-[13px] font-bold text-[#5B21B6]"
               style={{ fontFamily: FF }}
@@ -1227,14 +1227,13 @@ export function MathPilotLandingPage() {
               <span>Pilotáž matematiky ·</span>
               <span className="whitespace-nowrap">přihlášky do {DEADLINE_LABEL}</span>
             </p>
-            <h1 className="text-[38px] leading-[1.05] tracking-tight text-[#001161] sm:text-[50px] md:text-[62px]" style={{ fontFamily: COOPER }}>
-              {formatTypography('Máme nejlepší matematiku.')}
-              <br />
-              {formatTypography('Vyzkoušejte ji rok zdarma.')}
+            <h1 className="text-[34px] leading-[1.06] tracking-tight text-[#001161] sm:text-[44px] md:text-[48px] lg:text-[54px]" style={{ fontFamily: COOPER }}>
+              <span className="block">{formatTypography('Máme nejlepší matematiku.')}</span>
+              <span className="block md:whitespace-nowrap">{formatTypography('Chceme, aby ji měly rády všechny\u00a0děti.')}</span>
             </h1>
             <p className="mx-auto mt-5 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/70 md:text-[18px]" style={{ fontFamily: FF }}>
               {formatTypography(
-                'Víme, že pro učitele je těžké udělat krok do neznáma. Proto vám nabízíme interaktivní verzi naší matematiky na celý školní rok zdarma. Tiskněte z ní, promítejte ji na tabuli a používejte všechny naše aplikace.',
+                'Proto vám ji na celý školní rok dáváme zdarma. Víme, že pro učitele je těžké udělat krok do neznáma, tak ať to nic nestojí. Interaktivní verzi naší matematiky můžete tisknout, promítat na tabuli a používat všechny naše aplikace.',
               )}
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
