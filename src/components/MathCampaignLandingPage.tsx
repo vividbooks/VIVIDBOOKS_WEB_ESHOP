@@ -50,9 +50,9 @@ const MATH_SERIES_DIFF_YOUTUBE_ID = '3QfBy-xJ4Os';
 const YOUTUBE_PLAYLIST = MATH_METHODOLOGY_PLAYLIST_URL;
 
 /** Vynechané záložky ekosystému na kampani (obsah sešitů je níže v #sesity). */
-const MATH2_ECOSYSTEM_EXCLUDED_TABS = ['Pracovní sešity'];
+export const MATH2_ECOSYSTEM_EXCLUDED_TABS = ['Pracovní sešity'];
 
-const MATH2_ECOSYSTEM_HEADING = {
+export const MATH2_ECOSYSTEM_HEADING = {
   title: 'Učebnice jako ekosystém.',
   body: 'K pracovním sešitům máte zdarma komplexní digitální přístup pro celou školu, vše co učitelé a žáci potřebují v jedné aplikaci.',
 };
@@ -60,7 +60,7 @@ const MATH2_ECOSYSTEM_HEADING = {
 const SYPO_ALGEBRA_TILES_LECTURE_URL =
   'https://www.projektsypo.cz/webinare/kabinet-matematika-a-jeji-aplikace.html';
 
-const MATH2_ECOSYSTEM_EXTRA_TABS: SubjectExtraTab[] = [
+export const MATH2_ECOSYSTEM_EXTRA_TABS: SubjectExtraTab[] = [
   {
     id: 'campaign-app-3d-objekty',
     tabText: 'Aplikace 3D objekty',
@@ -343,7 +343,7 @@ function SeriesCoverRow({
 
 const VIVIDBOOKS_LOGO_VIEWBOX = '0 0 1786.62 869.93';
 
-function VividLogo() {
+export function VividLogo() {
   const W = 88;
   const fill = '#001161';
 

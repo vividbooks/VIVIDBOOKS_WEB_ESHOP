@@ -265,7 +265,20 @@ const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matemati
 const FF_SANS = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 /** Sekce pod listováním: jeden přehrávač a vedle seznam namluvených videí; klik v seznamu přepne a pustí video. */
-export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
+export function MathVoicedVideos({
+  secondStage,
+  title = 'Jak to vypadá v aplikaci',
+  body = 'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.',
+  className = 'mt-16',
+  sansTitle = false,
+}: {
+  secondStage: boolean;
+  title?: string;
+  body?: string;
+  className?: string;
+  /** Nadpis ve Fenomen Sans místo Cooper (pilotáž matematiky). */
+  sansTitle?: boolean;
+}) {
   const videos = secondStage ? VOICED_2ND : VOICED_1ST;
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -282,12 +295,15 @@ export function MathVoicedVideos({ secondStage }: { secondStage: boolean }) {
   };
 
   return (
-    <section className="max-w-[1200px] mx-auto px-4 sm:px-6 mt-16" aria-label="Videa z aplikace">
-      <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[30px] md:text-[38px] leading-tight">
-        {'Jak to vypadá v aplikaci'}
+    <section className={`max-w-[1200px] mx-auto px-4 sm:px-6 ${className}`} aria-label="Videa z aplikace">
+      <h2
+        className={`${sansTitle ? 'font-bold tracking-[-0.01em]' : "font-['Cooper_Light',serif]"} text-[#001161] text-[30px] md:text-[38px] leading-tight`}
+        style={sansTitle ? FF_SANS : undefined}
+      >
+        {title}
       </h2>
       <p className="mt-2 mb-7 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={FF_SANS}>
-        {'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.'}
+        {body}
       </p>
 
       <div className={videos.length > 1 ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)] lg:items-start' : 'max-w-[860px]'}>
