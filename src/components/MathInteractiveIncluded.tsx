@@ -99,8 +99,21 @@ function ClipModal({ clip, onClose }: { clip: Clip; onClose: () => void }) {
   );
 }
 
-const clipsFor = (secondStage: boolean, grade?: string | null) =>
-  CLIPS_BY_GRADE[grade ?? ''] ?? CLIPS_BY_GRADE[secondStage ? '7' : '1'];
+/** Aplikace k matematice navíc (stejné pro celý stupeň). */
+const EXTRA_1ST: Clip[] = [
+  { file: 'r2-pocetnik', title: 'Početník', note: 'Procvičování počítání přímo z úlohy v sešitu' },
+];
+const EXTRA_2ND: Clip[] = [
+  { file: 'poc2', title: 'Početník', note: 'Procvičování s adaptivní obtížností, 6.–9. ročník' },
+  { file: 'prij', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami' },
+  { file: 'mini', title: 'Miniaplikace', note: 'Slovní úlohy, funkce a grafy' },
+];
+
+const clipsFor = (secondStage: boolean, grade?: string | null) => {
+  const own = CLIPS_BY_GRADE[grade ?? ''] ?? CLIPS_BY_GRADE[secondStage ? '7' : '1'];
+  const extra = (secondStage ? EXTRA_2ND : EXTRA_1ST).filter(e => !own.some(c => c.file === e.file));
+  return [...own, ...extra];
+};
 
 /** Čtverečky s ukázkami z aplikace pod náhledem sešitu (jako galerie u digitálního přístupu); klik otevře přehrávač. */
 export function MathAppClipStrip({ secondStage, grade }: { secondStage: boolean; grade?: string | null }) {
@@ -108,7 +121,7 @@ export function MathAppClipStrip({ secondStage, grade }: { secondStage: boolean;
   const clips = clipsFor(secondStage, grade);
   return (
     <div className="relative z-20 w-full shrink-0 pt-3" aria-label="Ukázky z aplikace">
-      <div className="flex w-full flex-wrap justify-center gap-3 sm:gap-4">
+      <div className="flex w-full flex-wrap justify-center gap-2 sm:gap-2.5">
         {clips.map(c => (
           <button
             key={c.file}
@@ -116,7 +129,7 @@ export function MathAppClipStrip({ secondStage, grade }: { secondStage: boolean;
             onClick={() => setOpen(c)}
             title={`${c.title} · ${c.note}`}
             aria-label={`Přehrát ukázku: ${c.title}`}
-            className="group flex w-[6.5rem] shrink-0 flex-col items-center gap-1.5 cursor-pointer sm:w-[7.5rem] focus-visible:outline-none"
+            className="group flex w-[4.75rem] shrink-0 flex-col items-center gap-1.5 cursor-pointer sm:w-[5.5rem] focus-visible:outline-none"
           >
             <span className="relative block aspect-square w-full overflow-hidden rounded-xl border-2 border-[#001161]/30 bg-[#1f2233] transition-all group-hover:border-[#001161]/60 group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-offset-2 group-focus-visible:outline-[#001161]">
               <video
