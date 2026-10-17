@@ -130,7 +130,7 @@ const VOICED_2ND: VoicedVideo[] = [
   { file: 'pocetnik', title: 'Početník', note: 'Procvičování, které přitvrdí, když se daří.', len: '0:39' },
   { file: 'slovni-ulohy', title: 'Slovní úlohy', note: 'Pokaždé nová čísla, nápověda i výsledek.', len: '0:33' },
   { file: 'prijimaci-zkousky', title: 'Přijímací zkoušky', note: 'Testy Cermat s nápovědou a podobnými úlohami.', len: '0:44' },
-  { file: 'rysovani', title: 'Rýsování', note: 'Konstrukce krok po kroku v aplikaci Rýsování.', len: '0:35' },
+  { file: 'rysovani', title: 'Rýsování', note: 'Pravítko, kružítko a zápis konstrukce přesně na tabuli.', len: '0:49' },
 ];
 
 const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-videa/${file}.${ext}`);
