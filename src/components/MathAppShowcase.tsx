@@ -7,7 +7,7 @@ import imgPracovniListy from '../assets/campaign/pracovni-listy-ukazka.webp';
 import { formatTypography } from '../utils/formatTypography';
 
 /**
- * Pod listováním sešitu matematiky: stejná sekce jako na pilotáži (/pilotaz) —
+ * Pod listováním sešitu matematiky: stejná sekce jako na pilotáži (/matematika-pilotovani) —
  * co v aplikaci najdete (záložky), jak to vypadá v hodině (namluvená videa) a další aplikace.
  */
 

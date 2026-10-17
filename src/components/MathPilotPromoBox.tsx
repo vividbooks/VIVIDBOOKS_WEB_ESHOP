@@ -11,7 +11,7 @@ const FF = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 /**
  * Jeden obecný box pilotáže na detailu sešitu matematiky místo boxu za každý balíček
- * (sešit je v balíčku celé řady i ročníku). Vede na /pilotaz, kde se balíček vybírá.
+ * (sešit je v balíčku celé řady i ročníku). Vede na /matematika-pilotovani, kde se balíček vybírá.
  */
 function normalize(value: unknown) {
   return String(value ?? '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
@@ -32,7 +32,7 @@ export function MathPilotPromoBox({ product, products }: { product: any; product
   return (
     <div className="overflow-hidden rounded-[20px] border border-[#7C3AED]/25 bg-[#f3eeff]" style={FF}>
       <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:gap-5 sm:p-5">
-        <Link to="/pilotaz" className="relative mx-auto block h-[132px] w-[190px] shrink-0" aria-label="Pilotáž matematiky">
+        <Link to="/matematika-pilotovani" className="relative mx-auto block h-[132px] w-[190px] shrink-0" aria-label="Pilotáž matematiky">
           {tablet ? (
             <img
               src={tablet}
@@ -62,14 +62,14 @@ export function MathPilotPromoBox({ product, products }: { product: any; product
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link
-              to="/pilotaz#sesity"
+              to="/matematika-pilotovani#sesity"
               className="inline-flex items-center gap-2 rounded-xl bg-[#001161] px-4 py-2.5 text-[14px] font-bold text-white transition hover:bg-[#001161]/85"
             >
               {'Vybrat balíček se slevou'}
               <ArrowRight className="h-4 w-4" />
             </Link>
             <Link
-              to="/pilotaz"
+              to="/matematika-pilotovani"
               className="inline-flex items-center rounded-xl border border-[#001161]/15 bg-white px-4 py-2.5 text-[14px] font-bold text-[#001161] transition hover:bg-white/70"
             >
               {'Více o pilotáži'}

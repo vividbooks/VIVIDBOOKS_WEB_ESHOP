@@ -44,7 +44,7 @@ const HEADING: React.CSSProperties = { fontFamily: FF, fontWeight: 700, letterSp
 const PILOT_NOTE = 'Pilotáž matematiky 2026/27 (1 rok zdarma, 20 % na sešity)';
 const DEADLINE_LABEL = '31. 12. 2026';
 const DISCOUNT = 0.2;
-const PAGE_PATH = '/kampane/pilotaz-matematiky';
+const PAGE_PATH = '/matematika-pilotovani';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const KABINET_TRIAL_FN = `https://${projectId}.supabase.co/functions/v1/kabinet-trial`;

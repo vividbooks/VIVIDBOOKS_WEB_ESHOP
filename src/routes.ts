@@ -124,12 +124,17 @@ export const router = createBrowserRouter(
           lazy: lazyNamed(() => import('./components/MathCampaignLandingPage'), 'MathCampaignLandingPage'),
         },
         {
-          path: 'kampane/pilotaz-matematiky',
+          path: 'matematika-pilotovani',
           lazy: lazyNamed(() => import('./components/MathPilotLandingPage'), 'MathPilotLandingPage'),
         },
+        // Starší adresy pilotáže (mailing, hero slide, webinář 14. 10.) — přesměrovat i s kotvou (#sesity).
         {
           path: 'pilotaz',
-          lazy: lazyNamed(() => import('./components/MathPilotLandingPage'), 'MathPilotLandingPage'),
+          Component: () => React.createElement(Navigate, { to: { pathname: '/matematika-pilotovani', hash: window.location.hash }, replace: true }),
+        },
+        {
+          path: 'kampane/pilotaz-matematiky',
+          Component: () => React.createElement(Navigate, { to: { pathname: '/matematika-pilotovani', hash: window.location.hash }, replace: true }),
         },
         {
           path: 'kampane/editor-sesitu',
