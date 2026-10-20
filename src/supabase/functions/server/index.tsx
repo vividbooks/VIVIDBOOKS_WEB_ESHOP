@@ -13963,6 +13963,26 @@ app.get('/make-server-93a20b6f/webinar-reactions/:webinarId', async (c) => {
   }
 });
 
+/* ── Ne-školy ve výběru školy ─────────────────────────────────────
+ * Registr i ARES vrací vedle školy i spolky zapsané na její adrese („Klub rodičů při ZŠ…“,
+ * „Sdružení rodičů…“, „Základní organizace ZŠ…“, sportovní kluby, obce). Učitel je odklikl
+ * a trial vznikl na IČO spolku (~15 trialů za 3 týdny do 20. 10. 2026). Škola zapsaná jako
+ * z.s. („Základní škola Lípa, z. s.“) projde — rozhoduje název, ne právní forma. */
+const NON_SCHOOL_NAME_RE = /(^|[^\p{L}])(klub|spolek|sdru[žz]en[ií]|rada\s+rodi[čc]|p[řr][aá]tel|sportovn[ií]|t[ěe]locvi[čc]n|volley|volejbal|odborov|nada[čc]n[ií])/iu;
+/** Vždy ne-škola, i když v názvu je „ZŠ“: „Základní organizace ZŠ…“, cokoliv „v likvidaci“. */
+const ALWAYS_NON_SCHOOL_RE = /(z[aá]kladn[ií]\s+organizace|v\s+likvidaci)/iu;
+/** Název, který začíná školou („Základní škola Sportovní“, „MŠ Přátelství“), je škola. */
+const SCHOOL_START_RE = /^[\s"„“'(]*(\d+\.\s*)?((masarykova|soukrom[aá]|c[ií]rkevn[ií]|biskupsk[aá]|cyrilometod[ěe]jsk[aá]|fakultn[ií]|waldorfsk[aá]|sportovn[ií]|v[šs]eobecn[ée]\s+a\s+sportovn[ií])\s+)?(z[aá]kladn[ií]\s+(a\s+mate[řr]sk[aá]\s+)?(um[ěe]leck[aá]\s+|sportovn[ií]\s+)?[šs]kol|mate[řr]sk[aá]\s+(a\s+z[aá]kladn[ií]\s+)?[šs]kol|st[řr]edn[ií]|vy[šs][šs][ií]|gymn|konzervato|akademi|lyce|odborn|praktick|speci[aá]ln|(zš|mš|sš|zuš|soš|sou|voš)(?!\p{L})|[šs]kola)/iu;
+/** Spolky nikdy nejsou příspěvková organizace ani školská právnická osoba. */
+const SCHOOL_LEGAL_FORM_RE = /(p[řr][ií]sp[ěe]vkov[aá]\s+organizace|[šs]kolsk[aá]\s+pr[aá]vnick[aá])/iu;
+const MUNICIPALITY_NAME_RE = /^\s*["„]?\s*(obec|m[ěe]sto|m[ěe]stys|statut[aá]rn[ií]\s+m[ěe]sto)\s/iu;
+function isNonSchoolEntityName(name: string): boolean {
+  const n = String(name || '');
+  if (ALWAYS_NON_SCHOOL_RE.test(n)) return true;
+  if (SCHOOL_START_RE.test(n) || SCHOOL_LEGAL_FORM_RE.test(n)) return false;
+  return NON_SCHOOL_NAME_RE.test(n) || MUNICIPALITY_NAME_RE.test(n);
+}
+
 /* ── School Search — CSV cache first, ARES fallback ─────────────── */
 app.get('/make-server-93a20b6f/school-search', async (c) => {
   const q = c.req.query('q') || '';
@@ -14044,7 +14064,7 @@ app.get('/make-server-93a20b6f/school-search', async (c) => {
 
     // Search by name in CSV
     if (q && q.trim().length >= 2 && schools.length > 0) {
-      const hits = searchSchools(schools, q.trim());
+      const hits = searchSchools(schools, q.trim(), 30).filter((s) => !isNonSchoolEntityName(s.name)).slice(0, 15);
       if (hits.length > 0) {
         console.log(`[Schools] CSV search "${q}" → ${hits.length} výsledků`);
         return c.json({
@@ -14125,7 +14145,7 @@ app.get('/make-server-93a20b6f/school-search', async (c) => {
       }
     }
 
-    const results = subjekty.slice(0, 15).map((s: any) => {
+    const results = subjekty.filter((s: any) => !isNonSchoolEntityName(s.obchodniJmeno || '')).slice(0, 15).map((s: any) => {
       const icoOut = String(s.ico || '');
       const addrOut = buildAresAddress(s.sidlo);
       return {
