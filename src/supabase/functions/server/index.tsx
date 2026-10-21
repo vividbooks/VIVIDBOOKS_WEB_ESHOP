@@ -45,7 +45,7 @@ import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
 import { attributionFrom as dvppAttributionFrom } from './dvpp/shared.ts';
 import { requestContext as dvppRequestContext } from './dvpp/events.ts';
 import { buildColleagueEmailHtml as dvppBuildColleagueEmailHtml, buildLoginEmailHtml as dvppBuildLoginEmailHtml } from './dvpp/emails.ts';
-import { registerStudentProgramRoutes } from './studentProgram.ts';
+import { kabinetHook, registerStudentProgramRoutes } from './studentProgram.ts';
 import { runSubjectInterestRecompute } from './subjectInterestRecompute.ts';
 import { runEngagementAudienceRecompute } from './engagementAudienceRecompute.ts';
 import { runWebinarAudienceRecompute } from './webinarAudienceRecompute.ts';
@@ -21437,6 +21437,27 @@ async function lookupCompanyByIco(ico: string): Promise<{ name: string; address:
   return { name, address };
 }
 
+/**
+ * Deal distributora rovnou do Kabinetu a nového CRM (hook Kabinetu `POST …/registr/hooks/web/pipedrive-deal`).
+ * Jinak by čekal na jejich sync z Pipedrive (10–20 minut). Běží na pozadí a objednávku nezdrží;
+ * když selže, deal tam dorazí tím syncem.
+ */
+function importDistributorDealToKabinet(dealId: number, orderNumber: string): void {
+  if (!Number.isInteger(dealId) || dealId <= 0) return;
+  const task = kabinetHook('/pipedrive-deal', { dealId }).then((r) => {
+    const crm = (r.body?.crm ?? null) as Record<string, unknown> | null;
+    console.log(
+      `[distributor] Kabinet/CRM ${orderNumber} deal=${dealId} http=${r.status} org=${r.body?.organizationId ?? '—'} crm=${crm?.imported ?? '—'}` +
+        (r.ok ? (r.body?.crmError ? ` crmError=${String(r.body.crmError).slice(0, 200)}` : '') : ` ${r.text.slice(0, 200)}`),
+    );
+  });
+  try {
+    (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime?.waitUntil?.(task);
+  } catch {
+    /* fire-and-forget */
+  }
+}
+
 /** GET …/distributor/access?k=<token> — ověření odkazu před zobrazením formuláře. */
 app.get('/make-server-93a20b6f/distributor/access', (c) => {
   const denied = guardDistributorAccess(c);
@@ -21451,7 +21472,8 @@ app.get('/make-server-93a20b6f/distributor/access', (c) => {
  * v Pipedrive pipeline 8 / fáze 43 přes `syncEshopOrderToPipedriveFromDb('distributor_open')`:
  * organizace se páruje podle IČO (pole CIN), osoba se dohledá v Pipedrive podle e‑mailu z formuláře
  * (když neexistuje, založí se) a přiřadí k dealu, produkty se přidají z katalogu, e‑mail + telefon +
- * poznámka jdou jako HTML note k dealu. Na zadaný e‑mail jde shrnutí objednávky (Mandrill,
+ * poznámka jdou jako HTML note k dealu. Deal se hned propíše do Kabinetu a nového CRM
+ * (`importDistributorDealToKabinet`). Na zadaný e‑mail jde shrnutí objednávky (Mandrill,
  * typ `distributor_order_received`). Do Base.com ani iDokladu nic nejde.
  */
 app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
@@ -21627,6 +21649,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       /** Selhání CRM nesmí shodit odeslanou objednávku — stav je v `orders.pipedrive_sync_status`. */
       console.log(`[distributor] pipedrive sync: ${syncErr?.message || syncErr}`);
     }
+    importDistributorDealToKabinet(Number(pipedrive?.dealId ?? 0), orderRow.order_number);
 
     let emailSent = false;
     try {

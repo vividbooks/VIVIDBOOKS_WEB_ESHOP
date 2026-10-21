@@ -646,10 +646,10 @@ function publicStudentView(s: StudentRow, fac: FacultyRow | null, opts?: { withS
 
 /* ── Kabinet (registr Ultra): roční licence na kódu studenta ────────────────── */
 
-type KabinetResult = { ok: boolean; status: number; body: Record<string, unknown> | null; text: string };
+export type KabinetResult = { ok: boolean; status: number; body: Record<string, unknown> | null; text: string };
 
-/** Volání hooku Kabinetu s tajemstvím (stejná konfigurace jako Edge funkce `kabinet-trial`). */
-async function kabinetHook(path: string, body: Record<string, unknown> | null, method: 'POST' | 'GET' = 'POST'): Promise<KabinetResult> {
+/** Volání hooku Kabinetu s tajemstvím (stejná konfigurace jako Edge funkce `kabinet-trial`). Nikdy nevyhazuje. */
+export async function kabinetHook(path: string, body: Record<string, unknown> | null, method: 'POST' | 'GET' = 'POST'): Promise<KabinetResult> {
   const secret = (Deno.env.get('KABINET_SECRET') || Deno.env.get('REGISTR_MAKE_SECRET') || '').trim();
   if (!secret) return { ok: false, status: 0, body: null, text: 'KABINET_SECRET není nastavený.' };
   const base = (Deno.env.get('KABINET_API_BASE') || DEFAULT_KABINET_BASE).replace(/\/+$/, '');
