@@ -1137,15 +1137,15 @@ function TestimonialsSection() {
 function FormSection() {
   return (
     <section id="prihlaska" className="scroll-mt-24 bg-[#EDE4F7] px-4 py-14 sm:px-6 md:px-12 md:py-16">
-      <div className="mx-auto grid max-w-[1100px] items-start gap-8 md:grid-cols-[1fr_1.15fr] md:gap-12">
-        <div className="md:sticky md:top-24">
+      <div className="mx-auto flex max-w-[760px] flex-col gap-8">
+        <div>
           <p className="mb-2 text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/45" style={{ fontFamily: FF }}>
             Přihláška do pilotáže
           </p>
           <h2 className="text-[30px] leading-[1.08] text-[#001161] md:text-[40px]" style={HEADING}>
             {formatTypography('Zkuste to s námi do konce školního roku')}
           </h2>
-          <ul className="mt-6 flex flex-col gap-3" style={{ fontFamily: FF }}>
+          <ul className="mt-6 grid gap-3 sm:grid-cols-2" style={{ fontFamily: FF }}>
             {[
               'Přístup pro všechny učitele a žáky vaší školy',
               'Matematika pro 1. i 2. stupeň',
@@ -1158,8 +1158,10 @@ function FormSection() {
               </li>
             ))}
           </ul>
-          <p className="mt-6 text-[14px] leading-relaxed text-[#001161]/60" style={{ fontFamily: FF }}>
-            Raději se nejdřív poradíte? Zavolejte nám na{' '}
+        </div>
+        <PilotForm />
+        <p className="text-center text-[14px] leading-relaxed text-[#001161]/60" style={{ fontFamily: FF }}>
+          Raději se nejdřív poradíte? Zavolejte nám na{' '}
             <a href="tel:+420602227674" className="font-bold text-[#001161] hover:underline">
               +420 602 227 674
             </a>{' '}
@@ -1168,9 +1170,7 @@ function FormSection() {
               hello@vividbooks.com
             </a>
             .
-          </p>
-        </div>
-        <PilotForm />
+        </p>
       </div>
     </section>
   );
