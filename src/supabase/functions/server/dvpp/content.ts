@@ -79,3 +79,31 @@ export function dedupeVideosByName<T extends { name: string; airedAt?: string }>
   const keptSet = new Set(kept.values());
   return videos.filter((v) => keptSet.has(v));
 }
+
+/**
+ * Řádky podle témat pod řadami. Záznam, který už je v některé řadě, se tu neopakuje;
+ * téma, kterému nic nezbude, zmizí. Bez řad (prázdná množina) jsou řádky jako dřív.
+ */
+export function topicRowsOutsideSeries<V extends { id: string; topicIds?: string[] }>(
+  videos: V[],
+  topics: Array<{ id: string; name: string; slug: string }>,
+  inSeries: Set<string>,
+): Array<{ key: string; title: string; videos: V[] }> {
+  const rest = videos.filter((v) => !inSeries.has(v.id));
+  const rows: Array<{ key: string; title: string; videos: V[] }> = [];
+  for (const t of topics) {
+    const vids = rest.filter((v) => (v.topicIds || []).includes(t.id));
+    if (vids.length) rows.push({ key: `topic:${t.slug}`, title: t.name.trim(), videos: vids });
+  }
+  const untagged = rest.filter((v) => !(v.topicIds || []).length);
+  if (untagged.length) rows.push({ key: 'topic:ostatni', title: 'Další záznamy', videos: untagged });
+  return rows;
+}
+
+/** Nejnovější záznamy podle data vysílání (bez data na konec). */
+export function newestVideos<V extends { airedAt?: string }>(videos: V[], limit = 10): V[] {
+  return videos
+    .filter((v) => v.airedAt)
+    .sort((a, b) => String(b.airedAt).localeCompare(String(a.airedAt)))
+    .slice(0, limit);
+}
