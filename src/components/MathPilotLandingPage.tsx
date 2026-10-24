@@ -8,6 +8,10 @@
  * s poznámkou PILOT_NOTE — škola dostane přístup hned a podle poznámky ho v Kabinetu
  * prodloužíme do konce školního roku. Žádosti odmítnuté Kabinetem (škola už má trial nebo předplatné)
  * se v Kabinetu zapíšou se stejnou poznámkou, takže je lze dohledat a vyřídit ručně.
+ *
+ * Formulář začíná otázkou „Má vaše škola Vividbooks?“: Ano → školu najdeme podle e-mailu
+ * (`/pilot/school-lookup`), Ne → přihláška školy. V obou cestách jde rovnou pozvat kolegy
+ * (`/pilot/invite`, server `pilotInvites.ts`); kdo školu přihlásit nemůže, pošle tip.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
@@ -29,6 +33,16 @@ import { productDetailPath } from '../utils/slugify';
 import { formatTypography } from '../utils/formatTypography';
 import { isValidEmailFormat, EMAIL_FORMAT_HINT_CS } from '../utils/emailValidation';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import {
+  ColleaguesField,
+  DEFAULT_INVITE_MESSAGE,
+  InviteResultList,
+  MessageField,
+  lookupSchool,
+  sendInvites,
+  type InviteResult,
+  type SchoolLookup,
+} from './pilotFormParts';
 import { MATEMATIKA_2_TAB_OVERRIDES } from '../data/matematika2SubjectTabOverrides';
 import {
   MATH2_ECOSYSTEM_EXCLUDED_TABS,
@@ -825,26 +839,206 @@ const INPUT =
 
 type Outcome =
   | { kind: 'codes'; teacherCode: string; studentCode: string }
-  | { kind: 'manual'; message: string };
+  | { kind: 'manual'; message: string }
+  | { kind: 'tip' };
+
+type TrialResponse = { ok?: boolean; status?: string; code?: string; message?: string; teacherCode?: string; studentCode?: string };
+
+/** Odpověď Kabinetu na přihlášku → co ukážeme učiteli. `hasSchool` = škola už Vividbooks má (cesta „Ano“). */
+function outcomeFromTrial(data: TrialResponse, hasSchool: boolean): Outcome {
+  if (data.ok && (data.status === 'created' || data.status === 'extended') && data.teacherCode && data.studentCode) {
+    return { kind: 'codes', teacherCode: data.teacherCode, studentCode: data.studentCode };
+  }
+  if (data.ok && (data.status === 'created' || data.status === 'extended')) {
+    return { kind: 'manual', message: 'Přístupové kódy vám pošleme e-mailem.' };
+  }
+  // Kabinet žádost zapsal s poznámkou pilotáže; škola už přístup má nebo ho nedávno měla.
+  if (data.code === 'HAS_ACTIVE_SUBSCRIPTION') {
+    return {
+      kind: 'manual',
+      message: hasSchool
+        ? 'Matematiku a Přijímací zkoušky vám k přístupu připojíme do dvou pracovních dnů. Kódy školy zůstávají stejné.'
+        : 'Vaše škola už u nás předplatné má. Ozveme se vám a pilotáž matematiky k němu připojíme.',
+    };
+  }
+  if (data.code === 'HAS_ACTIVE_TRIAL') {
+    return {
+      kind: 'manual',
+      message: hasSchool
+        ? 'Váš zkušební přístup prodloužíme do konce školního roku do dvou pracovních dnů. Kódy školy zůstávají stejné.'
+        : 'Vaše škola už zkušební přístup má. Ozveme se vám a prodloužíme ho do konce školního roku.',
+    };
+  }
+  return { kind: 'manual', message: 'Vaše škola u nás nedávno zkoušela přístup. Ozveme se vám a pilotáž vám nastavíme ručně.' };
+}
+
+function BackLink({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="mb-3 text-[14px] text-[#001161]/55 hover:text-[#001161]" style={{ fontFamily: FF }}>
+      ← Zpět
+    </button>
+  );
+}
+
+function StagePicker({ stages, onToggle }: { stages: number[]; onToggle: (n: number) => void }) {
+  return (
+    <fieldset className="mt-1">
+      <legend className="mb-2 text-[14px] font-bold text-[#001161]" style={{ fontFamily: FF }}>
+        Matematiku chcete pilotovat na
+      </legend>
+      <div className="flex flex-wrap gap-2">
+        {[1, 2].map((n) => {
+          const on = stages.includes(n);
+          return (
+            <button
+              key={n}
+              type="button"
+              onClick={() => onToggle(n)}
+              aria-pressed={on}
+              className={`rounded-xl border px-4 py-2.5 text-[14px] font-bold transition ${
+                on ? 'border-[#7C3AED] bg-[#f3eeff] text-[#5B21B6]' : 'border-[#001161]/15 bg-white text-[#001161]/60'
+              }`}
+              style={{ fontFamily: FF }}
+            >
+              {n}. stupni
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function SubmitButton({ submitting, children }: { submitting: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      type="submit"
+      disabled={submitting}
+      className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#6D28D9] disabled:opacity-60"
+      style={{ fontFamily: FF }}
+    >
+      {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
+      {children}
+    </button>
+  );
+}
+
+function ErrorBox({ error }: { error: string }) {
+  return error ? (
+    <p className="rounded-[12px] bg-red-50 px-4 py-3 text-[14px] text-red-700" style={{ fontFamily: FF }}>
+      {error}
+    </p>
+  ) : null;
+}
 
 function PilotForm() {
+  const [path, setPath] = useState<null | 'yes' | 'no' | 'tip'>(null);
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', pupils: '' });
   const [schoolName, setSchoolName] = useState('');
   const [ico, setIco] = useState('');
   const [stages, setStages] = useState<number[]>([1, 2]);
   const [wantsWorkbooks, setWantsWorkbooks] = useState(false);
   const [gdpr, setGdpr] = useState(false);
+  const [colleagues, setColleagues] = useState<string[]>([]);
+  const [message, setMessage] = useState(DEFAULT_INVITE_MESSAGE);
+  const [lookup, setLookup] = useState<SchoolLookup | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const [invites, setInvites] = useState<InviteResult[]>([]);
+  const [inviteError, setInviteError] = useState('');
 
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
+  const toggleStage = (n: number) => setStages((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n].sort()));
+  const go = (next: typeof path) => {
+    setPath(next);
+    setError('');
+    if (next !== 'yes') setLookup(null);
+  };
 
-  const toggleStage = (n: number) =>
-    setStages((s) => (s.includes(n) ? s.filter((x) => x !== n) : [...s, n].sort()));
+  const note = () =>
+    [
+      PILOT_NOTE,
+      `stupně: ${stages.join(' a ')}.`,
+      wantsWorkbooks ? `chce sešity se slevou${form.pupils.trim() ? `, cca ${form.pupils.trim()} žáků` : ''}` : 'sešity zatím ne',
+      colleagues.length ? `pozval kolegy: ${colleagues.length}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
 
-  const submit = async (e: React.FormEvent) => {
+  const inviteColleagues = async (mode: 'invite' | 'tip') => {
+    if (!colleagues.length) return;
+    const r = await sendInvites({ mode, inviterEmail: form.email.trim(), inviterName: form.name.trim(), emails: colleagues, message });
+    setInvites(r.results);
+    setInviteError(r.error || '');
+  };
+
+  const requestTrial = async (body: Record<string, unknown>): Promise<TrialResponse> => {
+    const res = await fetch(`${KABINET_TRIAL_FN}/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+      body: JSON.stringify(body),
+    });
+    const data = (await res.json().catch(() => null)) as TrialResponse | null;
+    if (!data) throw new Error(`Server neodpověděl (HTTP ${res.status}).`);
+    if (data.code === 'INVALID') throw new Error(data.message || 'Vyplňte prosím všechny povinné údaje.');
+    if (!(data.ok && (data.status === 'created' || data.status === 'extended')) && data.status !== 'rejected') {
+      throw new Error(data.message || `Přihlášku se nepodařilo odeslat (HTTP ${res.status}).`);
+    }
+    return data;
+  };
+
+  const failed = (err: unknown) =>
+    setError(
+      `${err instanceof Error ? err.message : 'Přihlášku se nepodařilo odeslat.'} Zkuste to prosím znovu, nebo napište na hello@vividbooks.com.`,
+    );
+
+  /* Ano, škola Vividbooks má: 1) e-mail → najdeme školu */
+  const findSchool = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isValidEmailFormat(form.email.trim())) return setError(EMAIL_FORMAT_HINT_CS);
+    setSubmitting(true);
+    setError('');
+    try {
+      setLookup(await lookupSchool(form.email.trim()));
+    } catch (err) {
+      failed(err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /* Ano: 2) odemknout matematiku a pozvat kolegy */
+  const attach = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('Vyplňte prosím jméno a příjmení.');
+    if (stages.length === 0) return setError('Vyberte prosím alespoň jeden stupeň.');
+    if (!gdpr) return setError('Potřebujeme váš souhlas se zpracováním osobních údajů.');
+    setSubmitting(true);
+    setError('');
+    try {
+      const data = await requestTrial({
+        fullName: form.name.trim(),
+        email: form.email.trim(),
+        schoolName: lookup?.schoolName || '',
+        subjects: stages.map((n) => `Mathematics-${n}`),
+        schoolStages: stages,
+        newsletter: false,
+        country: 'cz',
+        note: note(),
+      });
+      await inviteColleagues('invite');
+      setOutcome(outcomeFromTrial(data, true));
+    } catch (err) {
+      failed(err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /* Ne, zatím nemáme: přihláška školy (+ pozvat kolegy) */
+  const register = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.name.trim()) return setError('Vyplňte prosím jméno a příjmení.');
     if (!schoolName.trim() || ico.length < 6) return setError('Vyberte prosím školu a doplňte IČO.');
@@ -853,77 +1047,58 @@ function PilotForm() {
     if (!form.position) return setError('Vyberte prosím svou pozici.');
     if (stages.length === 0) return setError('Vyberte prosím alespoň jeden stupeň.');
     if (!gdpr) return setError('Potřebujeme váš souhlas se zpracováním osobních údajů.');
-
-    const note = [
-      PILOT_NOTE,
-      `stupně: ${stages.join(' a ')}.`,
-      wantsWorkbooks ? `chce sešity se slevou${form.pupils.trim() ? `, cca ${form.pupils.trim()} žáků` : ''}` : 'sešity zatím ne',
-    ].join(' · ');
-
     setSubmitting(true);
     setError('');
     try {
-      const res = await fetch(`${KABINET_TRIAL_FN}/request`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
-        body: JSON.stringify({
-          fullName: form.name.trim(),
-          email: form.email.trim(),
-          phone: form.phone.trim(),
-          position: form.position,
-          schoolName: schoolName.trim(),
-          ico,
-          subjects: stages.map((n) => `Mathematics-${n}`),
-          schoolStages: stages,
-          newsletter: false,
-          country: 'cz',
-          note,
-        }),
+      const data = await requestTrial({
+        fullName: form.name.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        position: form.position,
+        schoolName: schoolName.trim(),
+        ico,
+        subjects: stages.map((n) => `Mathematics-${n}`),
+        schoolStages: stages,
+        newsletter: false,
+        country: 'cz',
+        note: note(),
       });
-      const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; status?: string; code?: string; message?: string; teacherCode?: string; studentCode?: string }
-        | null;
-
-      if (!data) throw new Error(`Server neodpověděl (HTTP ${res.status}).`);
-      if (data.code === 'INVALID') {
-        setError(data.message || 'Vyplňte prosím všechny povinné údaje.');
-        return;
-      }
-      if (data.ok && (data.status === 'created' || data.status === 'extended') && data.teacherCode && data.studentCode) {
-        setOutcome({ kind: 'codes', teacherCode: data.teacherCode, studentCode: data.studentCode });
-        return;
-      }
-      if (data.ok && (data.status === 'created' || data.status === 'extended')) {
-        setOutcome({ kind: 'manual', message: 'Přístupové kódy vám pošleme e-mailem.' });
-        return;
-      }
-      if (data.status === 'rejected') {
-        // Kabinet žádost zapsal s poznámkou pilotáže; škola už přístup má nebo ho nedávno měla.
-        const message =
-          data.code === 'HAS_ACTIVE_SUBSCRIPTION'
-            ? 'Vaše škola už u nás předplatné má. Ozveme se vám a pilotáž matematiky k němu připojíme.'
-            : data.code === 'HAS_ACTIVE_TRIAL'
-              ? 'Vaše škola už zkušební přístup má. Ozveme se vám a prodloužíme ho do konce školního roku.'
-              : 'Vaše škola u nás nedávno zkoušela přístup. Ozveme se vám a pilotáž vám nastavíme ručně.';
-        setOutcome({ kind: 'manual', message });
-        return;
-      }
-      throw new Error(data.message || `Přihlášku se nepodařilo odeslat (HTTP ${res.status}).`);
+      await inviteColleagues('invite');
+      setOutcome(outcomeFromTrial(data, false));
     } catch (err) {
-      setError(
-        `${err instanceof Error ? err.message : 'Přihlášku se nepodařilo odeslat.'} Zkuste to prosím znovu, nebo napište na hello@vividbooks.com.`,
-      );
+      failed(err);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /* Tip kolegovi nebo vedení (bez přihlášky) */
+  const sendTip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim()) return setError('Vyplňte prosím své jméno.');
+    if (!isValidEmailFormat(form.email.trim())) return setError(EMAIL_FORMAT_HINT_CS);
+    if (!colleagues.length) return setError('Zadejte alespoň jeden e-mail.');
+    setSubmitting(true);
+    setError('');
+    try {
+      const r = await sendInvites({ mode: 'tip', inviterEmail: form.email.trim(), inviterName: form.name.trim(), emails: colleagues, message });
+      if (r.error) throw new Error(r.error);
+      setInvites(r.results);
+      setOutcome({ kind: 'tip' });
+    } catch (err) {
+      failed(err);
     } finally {
       setSubmitting(false);
     }
   };
 
   if (outcome) {
+    const anySent = invites.some((r) => r.status === 'sent');
     return (
       <div className="rounded-[24px] border border-green-200 bg-[#F0FDF4] p-7 text-center md:p-9">
         <CheckCircle2 className="mx-auto mb-3 h-12 w-12 text-green-500" />
         <h3 className="text-[26px] text-[#001161]" style={HEADING}>
-          Vítejte v pilotáži!
+          {outcome.kind === 'tip' ? 'Tip jsme poslali' : 'Vítejte v pilotáži!'}
         </h3>
         {outcome.kind === 'codes' ? (
           <>
@@ -945,25 +1120,206 @@ function PilotForm() {
                 </div>
               ))}
             </div>
-            <Link
-              to="/otevrit"
-              className="mt-6 inline-flex items-center justify-center rounded-xl bg-[#001161] px-6 py-3 text-[15px] font-bold text-white transition hover:bg-[#001161]/85"
-              style={{ fontFamily: FF }}
-            >
-              Otevřít aplikaci
-            </Link>
           </>
+        ) : outcome.kind === 'tip' ? (
+          <p className="mx-auto mt-2 max-w-[440px] text-[15px] leading-relaxed text-[#001161]/70" style={{ fontFamily: FF }}>
+            {formatTypography('Dostanou odkaz na tuhle přihlášku. Kopii se seznamem adres jsme poslali i vám.')}
+          </p>
         ) : (
           <p className="mx-auto mt-2 max-w-[440px] text-[15px] leading-relaxed text-[#001161]/70" style={{ fontFamily: FF }}>
             {formatTypography(`Přihlášku máme. ${outcome.message}`)}
           </p>
         )}
+        {outcome.kind !== 'tip' && anySent ? (
+          <p className="mx-auto mt-5 max-w-[440px] text-[14px] text-[#001161]/70" style={{ fontFamily: FF }}>
+            {formatTypography('Kolegům jsme poslali pozvánku vaším jménem. Kopii se seznamem adres máte v e-mailu.')}
+          </p>
+        ) : null}
+        <InviteResultList results={invites} tip={outcome.kind === 'tip'} />
+        {inviteError ? (
+          <p className="mx-auto mt-4 max-w-[440px] text-[13px] text-amber-700" style={{ fontFamily: FF }}>
+            {formatTypography(`Pozvánky kolegům: ${inviteError}`)}
+          </p>
+        ) : null}
+        {outcome.kind === 'codes' ? (
+          <Link
+            to="/otevrit"
+            className="mt-6 inline-flex items-center justify-center rounded-xl bg-[#001161] px-6 py-3 text-[15px] font-bold text-white transition hover:bg-[#001161]/85"
+            style={{ fontFamily: FF }}
+          >
+            Otevřít aplikaci
+          </Link>
+        ) : null}
       </div>
     );
   }
 
+  const card = 'rounded-[26px] bg-white p-5 shadow-sm ring-1 ring-[#001161]/8 md:p-8';
+  const workbooksBox = (
+    <>
+      <label className="mt-1 flex cursor-pointer items-start gap-3 rounded-[14px] bg-[#f8f9fc] p-4" style={{ fontFamily: FF }}>
+        <input type="checkbox" className="mt-1 h-4 w-4 accent-[#7C3AED]" checked={wantsWorkbooks} onChange={(e) => setWantsWorkbooks(e.target.checked)} />
+        <span className="text-[14px] leading-snug text-[#001161]">
+          <strong>Mám zájem i o pracovní sešity se slevou 20 %</strong>
+          <span className="block text-[13px] text-[#001161]/55">Připravíme vám nabídku podle počtu žáků.</span>
+        </span>
+      </label>
+      {wantsWorkbooks ? (
+        <input className={INPUT} placeholder="Přibližný počet žáků (nepovinné)" inputMode="numeric" value={form.pupils} onChange={set('pupils')} />
+      ) : null}
+    </>
+  );
+  const consent = (
+    <label className="mt-1 flex cursor-pointer items-start gap-3" style={{ fontFamily: FF }}>
+      <input type="checkbox" className="mt-1 h-4 w-4 accent-[#7C3AED]" checked={gdpr} onChange={(e) => setGdpr(e.target.checked)} />
+      <span className="text-[13px] leading-snug text-[#001161]/65">
+        Souhlasím se{' '}
+        <a href="/kontakt" target="_blank" rel="noreferrer" className="underline">
+          zpracováním osobních údajů
+        </a>{' '}
+        pro účely pilotáže. *
+      </span>
+    </label>
+  );
+  const inviteFields = (
+    <div className="mt-1 grid gap-3 border-t border-[#001161]/8 pt-4">
+      <ColleaguesField label="Pozvěte kolegy" optional emails={colleagues} onChange={setColleagues} />
+      {colleagues.length ? <MessageField value={message} onChange={setMessage} /> : null}
+    </div>
+  );
+
+  if (!path) {
+    const options: { key: 'yes' | 'no'; title: string; text: string; icon: string; tone: string }[] = [
+      {
+        key: 'yes',
+        title: 'Ano, naše škola Vividbooks má',
+        text: 'Připojíme vám matematiku a Přijímací zkoušky do konce školního roku a pozvete kolegy.',
+        icon: '✓',
+        tone: 'bg-[#ecfdf5] text-[#059669]',
+      },
+      {
+        key: 'no',
+        title: 'Ne, zatím nemáme',
+        text: 'Vyplníte krátkou přihlášku, matematiku máte odemčenou hned a kolegy pozvete rovnou.',
+        icon: '+',
+        tone: 'bg-[#f3eeff] text-[#7C3AED]',
+      },
+    ];
+    return (
+      <div className={card}>
+        <p className="mb-4 text-[20px] text-[#001161]" style={HEADING}>
+          Má vaše škola Vividbooks?
+        </p>
+        <div className="grid gap-3">
+          {options.map((o) => (
+            <button
+              key={o.key}
+              type="button"
+              onClick={() => go(o.key)}
+              className="flex items-start gap-4 rounded-[18px] border-[1.5px] border-[#001161]/15 bg-white p-4 text-left transition hover:border-[#7C3AED] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#7C3AED]/50"
+              style={{ fontFamily: FF }}
+            >
+              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl text-[20px] font-bold ${o.tone}`}>{o.icon}</span>
+              <span>
+                <strong className="block text-[17px] text-[#001161]">{o.title}</strong>
+                <span className="text-[14px] text-[#001161]/60">{formatTypography(o.text)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-4 text-center text-[13px] text-[#001161]/55" style={{ fontFamily: FF }}>
+          Nevíte? Vyberte „Ano“. Podle vašeho e-mailu to poznáme.
+        </p>
+      </div>
+    );
+  }
+
+  if (path === 'yes' && !lookup?.found) {
+    return (
+      <form onSubmit={findSchool} noValidate className={card}>
+        <BackLink onClick={() => go(null)} />
+        <div className="grid gap-3">
+          <label htmlFor="pilot-email" className="text-[14px] font-bold text-[#001161]" style={{ fontFamily: FF }}>
+            Váš školní e-mail
+          </label>
+          <input id="pilot-email" className={INPUT} type="email" value={form.email} onChange={set('email')} autoComplete="email" placeholder="jmeno@skola.cz" />
+          <p className="-mt-1 text-[12px] text-[#001161]/50" style={{ fontFamily: FF }}>
+            Podle něj najdeme vaši školu. Ten, se kterým se do Vividbooks přihlašujete.
+          </p>
+          {lookup && !lookup.found ? (
+            <div className="rounded-[14px] border border-amber-200 bg-[#fff7ed] p-4 text-[14px] leading-relaxed text-[#001161]/80" style={{ fontFamily: FF }}>
+              <strong className="block text-[#001161]">Tenhle e-mail u nás nemáme.</strong>
+              Zkontrolujte, jestli je to adresa, se kterou se do Vividbooks přihlašujete. Jestli vaše škola Vividbooks nemá, vyplňte krátkou
+              přihlášku.
+              <button type="button" onClick={() => go('no')} className="mt-2 block font-bold text-[#7C3AED] hover:underline">
+                Vyplnit přihlášku školy →
+              </button>
+            </div>
+          ) : null}
+          <ErrorBox error={error} />
+          <SubmitButton submitting={submitting}>Pokračovat</SubmitButton>
+        </div>
+      </form>
+    );
+  }
+
+  if (path === 'yes' && lookup?.found) {
+    const has = lookup.subjects?.length ? `Máte u nás ${lookup.subjects.join(', ')}. ` : '';
+    return (
+      <form onSubmit={attach} noValidate className={card}>
+        <BackLink onClick={() => setLookup(null)} />
+        <div className="grid gap-3">
+          <div className="flex items-center gap-3 rounded-[16px] border border-green-200 bg-[#ecfdf5] p-4" style={{ fontFamily: FF }}>
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#059669] text-[14px] font-bold text-white">ZŠ</span>
+            <span className="text-[14px] leading-snug text-[#001161]/80">
+              <strong className="block text-[16px] text-[#001161]">{lookup.schoolName}</strong>
+              {formatTypography(`${has}Matematiku a Přijímací zkoušky k tomu připojíme do konce školního roku, pro všechny učitele i žáky.`)}
+            </span>
+          </div>
+          <input className={INPUT} placeholder="Jméno a příjmení *" value={form.name} onChange={set('name')} autoComplete="name" />
+          <StagePicker stages={stages} onToggle={toggleStage} />
+          {inviteFields}
+          {workbooksBox}
+          {consent}
+          <ErrorBox error={error} />
+          <SubmitButton submitting={submitting}>
+            {colleagues.length ? `Odemknout matematiku a pozvat kolegy (${colleagues.length})` : 'Odemknout matematiku naší škole'}
+          </SubmitButton>
+          <p className="text-center text-[12px] text-[#001161]/45" style={{ fontFamily: FF }}>
+            Kódy školy zůstávají stejné. Učitelé i žáci uvidí matematiku pod svým účtem.
+          </p>
+        </div>
+      </form>
+    );
+  }
+
+  if (path === 'tip') {
+    return (
+      <form onSubmit={sendTip} noValidate className={card}>
+        <BackLink onClick={() => go('no')} />
+        <div className="grid gap-3">
+          <p className="text-[20px] text-[#001161]" style={HEADING}>
+            Pošlete tip kolegovi nebo vedení
+          </p>
+          <p className="-mt-1 text-[14px] text-[#001161]/60" style={{ fontFamily: FF }}>
+            Dostanou odkaz na tuhle přihlášku a školu přihlásí sami.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <input className={INPUT} placeholder="Vaše jméno *" value={form.name} onChange={set('name')} autoComplete="name" />
+            <input className={INPUT} placeholder="Váš e-mail *" type="email" value={form.email} onChange={set('email')} autoComplete="email" />
+          </div>
+          <ColleaguesField label="Komu tip pošlete" emails={colleagues} onChange={setColleagues} hint="Nejvýš 15 adres. Dostanou tip vaším jménem." />
+          <MessageField value={message} onChange={setMessage} />
+          <ErrorBox error={error} />
+          <SubmitButton submitting={submitting}>Poslat tip</SubmitButton>
+        </div>
+      </form>
+    );
+  }
+
   return (
-    <form onSubmit={submit} noValidate className="rounded-[26px] bg-white p-5 shadow-sm ring-1 ring-[#001161]/8 md:p-8">
+    <form onSubmit={register} noValidate className={card}>
+      <BackLink onClick={() => go(null)} />
       <div className="grid gap-3">
         <input className={INPUT} placeholder="Jméno a příjmení *" value={form.name} onChange={set('name')} autoComplete="name" />
         <SchoolField
@@ -988,82 +1344,19 @@ function PilotForm() {
             </option>
           ))}
         </select>
-
-        <fieldset className="mt-2">
-          <legend className="mb-2 text-[14px] font-bold text-[#001161]" style={{ fontFamily: FF }}>
-            Matematiku chcete pilotovat na
-          </legend>
-          <div className="flex flex-wrap gap-2">
-            {[1, 2].map((n) => {
-              const on = stages.includes(n);
-              return (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => toggleStage(n)}
-                  aria-pressed={on}
-                  className={`rounded-xl border px-4 py-2.5 text-[14px] font-bold transition ${
-                    on ? 'border-[#7C3AED] bg-[#f3eeff] text-[#5B21B6]' : 'border-[#001161]/15 bg-white text-[#001161]/60'
-                  }`}
-                  style={{ fontFamily: FF }}
-                >
-                  {n}. stupni
-                </button>
-              );
-            })}
-          </div>
-        </fieldset>
-
-        <label className="mt-2 flex cursor-pointer items-start gap-3 rounded-[14px] bg-[#f8f9fc] p-4" style={{ fontFamily: FF }}>
-          <input
-            type="checkbox"
-            className="mt-1 h-4 w-4 accent-[#7C3AED]"
-            checked={wantsWorkbooks}
-            onChange={(e) => setWantsWorkbooks(e.target.checked)}
-          />
-          <span className="text-[14px] leading-snug text-[#001161]">
-            <strong>Mám zájem i o pracovní sešity se slevou 20 %</strong>
-            <span className="block text-[13px] text-[#001161]/55">Připravíme vám nabídku podle počtu žáků.</span>
-          </span>
-        </label>
-        {wantsWorkbooks ? (
-          <input
-            className={INPUT}
-            placeholder="Přibližný počet žáků (nepovinné)"
-            inputMode="numeric"
-            value={form.pupils}
-            onChange={set('pupils')}
-          />
-        ) : null}
-
-        <label className="mt-1 flex cursor-pointer items-start gap-3" style={{ fontFamily: FF }}>
-          <input type="checkbox" className="mt-1 h-4 w-4 accent-[#7C3AED]" checked={gdpr} onChange={(e) => setGdpr(e.target.checked)} />
-          <span className="text-[13px] leading-snug text-[#001161]/65">
-            Souhlasím se{' '}
-            <a href="/kontakt" target="_blank" rel="noreferrer" className="underline">
-              zpracováním osobních údajů
-            </a>{' '}
-            pro účely pilotáže. *
-          </span>
-        </label>
-
-        {error ? (
-          <p className="rounded-[12px] bg-red-50 px-4 py-3 text-[14px] text-red-700" style={{ fontFamily: FF }}>
-            {error}
-          </p>
-        ) : null}
-
-        <button
-          type="submit"
-          disabled={submitting}
-          className="mt-2 inline-flex items-center justify-center gap-2 rounded-xl bg-[#7C3AED] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#6D28D9] disabled:opacity-60"
-          style={{ fontFamily: FF }}
-        >
-          {submitting ? <Loader2 className="h-5 w-5 animate-spin" /> : null}
-          Přihlásit školu do pilotáže
-        </button>
+        <StagePicker stages={stages} onToggle={toggleStage} />
+        {inviteFields}
+        {workbooksBox}
+        {consent}
+        <ErrorBox error={error} />
+        <SubmitButton submitting={submitting}>
+          {colleagues.length ? `Přihlásit školu a pozvat kolegy (${colleagues.length})` : 'Přihlásit školu do pilotáže'}
+        </SubmitButton>
         <p className="text-center text-[12px] text-[#001161]/45" style={{ fontFamily: FF }}>
-          Přihlášky přijímáme do {DEADLINE_LABEL}.
+          Přihlášky přijímáme do {DEADLINE_LABEL}.{' '}
+          <button type="button" onClick={() => go('tip')} className="font-bold text-[#7C3AED] hover:underline">
+            Nemůžete školu přihlásit sami? Pošlete tip kolegovi nebo vedení.
+          </button>
         </p>
       </div>
     </form>

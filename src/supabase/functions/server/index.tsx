@@ -39,6 +39,7 @@ import {
 } from './audienceFilter.ts';
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
 import { registerDvppRoutes } from './dvpp/routes.ts';
+import { registerPilotInviteRoutes } from './pilotInvites.ts';
 import { DVPP_AUTOMATION_FLOWS } from './dvpp/automations.ts';
 import type { RegistryRecord as DvppRegistryRecord } from './dvpp/schools.ts';
 import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
@@ -27985,6 +27986,9 @@ registerDvppRoutes(app, {
   buildEmailTemplate: (d) => vividbooksEmailTemplate({ headline: d.headline, body: d.body, ctaText: d.ctaText, ctaUrl: d.ctaUrl, preheader: d.preheader }),
 });
 
+/* ── Pilotáž matematiky: škola podle e-mailu a pozvání kolegů z /matematika-pilotovani ─────── */
+registerPilotInviteRoutes(app, { publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, '') });
+
 Deno.serve((incoming) => {
   const url = new URL(incoming.url);
   let p = url.pathname;
@@ -27999,6 +28003,7 @@ Deno.serve((incoming) => {
     p.startsWith('/public/') ||
     p.startsWith('/webhooks/') ||
     p.startsWith('/newsletter/') ||
+    p.startsWith('/pilot/') ||
     p.startsWith('/t/') ||
     p === '/unsubscribe' ||
     p.startsWith('/unsubscribe?') ||
