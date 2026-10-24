@@ -1309,12 +1309,11 @@ export function MathPilotLandingPage() {
         </section>
 
         <InteractiveSection />
-
+        <FormSection />
 
         <WorkbooksSection products={products as Product[]} />
         <MethodologySection />
         <TestimonialsSection />
-        <FormSection />
         <FaqSection />
       </main>
 
