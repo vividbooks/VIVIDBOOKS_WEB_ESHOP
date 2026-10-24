@@ -55,10 +55,10 @@ export function MathPilotPromoBox({ product, products }: { product: any; product
             {'Pilotáž matematiky · do 31. 12. 2026'}
           </p>
           <p className="mt-1 text-[16px] font-bold leading-snug text-[#001161] sm:text-[17px]">
-            {'Interaktivní verze na rok zdarma a sešity o 20 % levněji'}
+            {'Interaktivní verze zdarma do konce školního roku a sešity o 20 % levněji'}
           </p>
           <p className="mt-1 text-[13px] leading-snug text-[#001161]/65">
-            {'Tento sešit koupíte se slevou v balíčku celé řady nebo jednoho ročníku. K tomu celá interaktivní matematika pro školu na celý školní rok zdarma.'}
+            {'Tento sešit koupíte se slevou v balíčku celé řady nebo jednoho ročníku. K tomu celá interaktivní matematika pro školu zdarma až do konce školního roku.'}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link

@@ -1,12 +1,12 @@
 /**
  * Pilotáž matematiky 2026/27 — microsite akce z webináře.
  *
- * Nabídka: rok digitální matematiky (1. i 2. stupeň) zdarma a k tomu 20 % sleva na pracovní
- * sešity matematiky. Přihlášky do 31. 12. 2026.
+ * Nabídka: digitální matematika (1. i 2. stupeň) zdarma do konce školního roku 2026/27 a k tomu
+ * 20 % sleva na pracovní sešity matematiky. Přihlášky do 31. 12. 2026.
  *
  * Přihláška jde přes Edge funkci `kabinet-trial` do Kabinetu jako běžný trial z webu
  * s poznámkou PILOT_NOTE — škola dostane přístup hned a podle poznámky ho v Kabinetu
- * prodloužíme na celý rok. Žádosti odmítnuté Kabinetem (škola už má trial nebo předplatné)
+ * prodloužíme do konce školního roku. Žádosti odmítnuté Kabinetem (škola už má trial nebo předplatné)
  * se v Kabinetu zapíšou se stejnou poznámkou, takže je lze dohledat a vyřídit ručně.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -41,7 +41,7 @@ const FF = "'Fenomen Sans', sans-serif";
 const COOPER = "'Cooper Light', serif";
 const HEADING: React.CSSProperties = { fontFamily: FF, fontWeight: 700, letterSpacing: '-0.01em' };
 
-const PILOT_NOTE = 'Pilotáž matematiky 2026/27 (1 rok zdarma, 20 % na sešity)';
+const PILOT_NOTE = 'Pilotáž matematiky 2026/27 (zdarma do konce školního roku, 20 % na sešity)';
 const DEADLINE_LABEL = '31. 12. 2026';
 const DISCOUNT = 0.2;
 const PAGE_PATH = '/matematika-pilotovani';
@@ -903,7 +903,7 @@ function PilotForm() {
           data.code === 'HAS_ACTIVE_SUBSCRIPTION'
             ? 'Vaše škola už u nás předplatné má. Ozveme se vám a pilotáž matematiky k němu připojíme.'
             : data.code === 'HAS_ACTIVE_TRIAL'
-              ? 'Vaše škola už zkušební přístup má. Ozveme se vám a prodloužíme ho na celý rok.'
+              ? 'Vaše škola už zkušební přístup má. Ozveme se vám a prodloužíme ho do konce školního roku.'
               : 'Vaše škola u nás nedávno zkoušela přístup. Ozveme se vám a pilotáž vám nastavíme ručně.';
         setOutcome({ kind: 'manual', message });
         return;
@@ -929,7 +929,7 @@ function PilotForm() {
           <>
             <p className="mx-auto mt-2 max-w-[440px] text-[15px] leading-relaxed text-[#001161]/70" style={{ fontFamily: FF }}>
               {formatTypography(
-                'Matematiku máte odemčenou hned. Do dvou pracovních dnů vám přístup prodloužíme na celý rok a ozveme se kvůli sešitům.',
+                'Matematiku máte odemčenou hned. Do dvou pracovních dnů vám přístup prodloužíme do konce školního roku a ozveme se kvůli sešitům.',
               )}
             </p>
             <div className="mx-auto mt-6 grid max-w-md grid-cols-1 gap-3 text-left sm:grid-cols-2">
@@ -1143,7 +1143,7 @@ function FormSection() {
             Přihláška do pilotáže
           </p>
           <h2 className="text-[30px] leading-[1.08] text-[#001161] md:text-[40px]" style={HEADING}>
-            {formatTypography('Zkuste to s námi celý školní rok')}
+            {formatTypography('Zkuste to s námi do konce školního roku')}
           </h2>
           <ul className="mt-6 flex flex-col gap-3" style={{ fontFamily: FF }}>
             {[
@@ -1183,14 +1183,14 @@ const FAQ = [
       'Pro základní školy, které matematiku od Vividbooks zatím naplno nepoužívají. Přihlásit se může učitel, ředitel i zástupce, přístup pak dostane celá škola.',
   },
   {
-    question: 'Co se stane po roce?',
+    question: 'Co se stane na konci školního roku?',
     answer:
-      'Nic automaticky. Přístup skončí a nic se vám nenaúčtuje. Pokud budete chtít pokračovat, domluvíme se. Ke sešitům pro žáky máte digitální přístup zdarma i dál.',
+      'Pilotáž končí s koncem školního roku 2026/27. Nic se neprodlužuje automaticky: přístup skončí a nic se vám nenaúčtuje. Pokud budete chtít pokračovat, domluvíme se. Ke sešitům pro žáky máte digitální přístup zdarma i dál.',
   },
   {
     question: 'Musíme si objednat pracovní sešity?',
     answer:
-      'Ne. Interaktivní matematiku můžete používat k učebnicím a sešitům, které už ve škole máte, a celý rok je zdarma. Když budete chtít učit i s našimi pracovními sešity, objednáte si je se slevou 20 %.',
+      'Ne. Interaktivní matematiku můžete používat k učebnicím a sešitům, které už ve škole máte, a až do konce školního roku je zdarma. Když budete chtít učit i s našimi pracovními sešity, objednáte si je se slevou 20 %.',
   },
   {
     question: 'Naše škola už u vás má jiný předmět nebo zkušební přístup.',
@@ -1199,7 +1199,7 @@ const FAQ = [
   },
   {
     question: 'Do kdy se můžeme přihlásit?',
-    answer: `Přihlášky přijímáme do ${DEADLINE_LABEL}. Rok zdarma počítáme ode dne, kdy vám přístup otevřeme.`,
+    answer: `Přihlášky přijímáme do ${DEADLINE_LABEL}. Přístup otevřeme hned po přihlášení a platí do konce školního roku 2026/27, ať se přihlásíte v říjnu, nebo v prosinci.`,
   },
 ];
 
@@ -1248,7 +1248,7 @@ export function MathPilotLandingPage() {
       <SEOHead
         title="Máme nejlepší matematiku, a chceme vám to názorně ukázat"
         path={PAGE_PATH}
-        description="Vyzkoušejte matematiku Vividbooks pro 1. i 2. stupeň celý školní rok zdarma. K tomu pracovní sešity matematiky se slevou 20 %. Přihlášky do 31. 12. 2026."
+        description="Vyzkoušejte matematiku Vividbooks pro 1. i 2. stupeň zdarma do konce školního roku 2026/27. K tomu pracovní sešity matematiky se slevou 20 %. Přihlášky do 31. 12. 2026."
         jsonLd={faqJsonLd(FAQ)}
       />
 
@@ -1289,11 +1289,11 @@ export function MathPilotLandingPage() {
             </h1>
             <p className="mx-auto mt-5 max-w-[640px] text-[16px] leading-relaxed text-[#001161]/70 md:text-[18px]" style={{ fontFamily: FF }}>
               {formatTypography(
-                'Proto vám interaktivní verzi dáváme na celý školní rok zdarma. Tiskněte z ní, promítejte ji na tabuli a používejte ji k učebnicím, které už máte, nebo k našim sešitům se slevou 20 %.',
+                'Proto vám interaktivní verzi dáváme zdarma až do konce školního roku. Tiskněte z ní, promítejte ji na tabuli a používejte ji k učebnicím, které už máte, nebo k našim sešitům se slevou 20 %.',
               )}
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
-              <PrimaryButton href="#prihlaska">Získat matematiku zdarma na 1 rok</PrimaryButton>
+              <PrimaryButton href="#prihlaska">Získat matematiku zdarma do konce školního roku</PrimaryButton>
               <a
                 href="#sesity"
                 className="inline-flex items-center justify-center rounded-xl border border-[#001161]/15 bg-white/70 px-6 py-3.5 text-[16px] font-bold text-[#001161] transition hover:bg-white"
