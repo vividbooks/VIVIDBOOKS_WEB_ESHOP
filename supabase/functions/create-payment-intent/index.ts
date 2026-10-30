@@ -32,7 +32,8 @@ import {
   recordDraftUpdatedEvent,
   replaceDraftOrderItems,
 } from '../_shared/update-draft-order.ts';
-import { normalizeCzechPhone, PHONE_CZ_HINT } from '../_shared/phone-cz.ts';
+import { checkCzechPhone } from '../_shared/phone-cz.ts';
+import { checkFullName } from '../_shared/person-name.ts';
 
 type CheckoutItem = {
   productId: string;
@@ -348,9 +349,32 @@ Deno.serve(async (req) => {
     }, 400);
   }
 
-  const normalizedCustomerPhone = normalizeCzechPhone((customer as CheckoutCustomer).phone);
-  if (!normalizedCustomerPhone) {
-    return jsonResponse(req, { error: PHONE_CZ_HINT }, 400);
+  /** Fulfilment odmítne zásilku bez celého jména a příjmení — stejná kontrola jako ve formuláři. */
+  const customerNameCheck = checkFullName((customer as CheckoutCustomer).name);
+  if (!customerNameCheck.ok) {
+    return jsonResponse(req, { error: customerNameCheck.error }, 400);
+  }
+
+  /** Telefon vyžaduje dopravce. Jednotlivec musí mít mobil (SMS), škola / firma smí pevnou linku. */
+  const customerIsOrganization = Boolean(
+    String((customer as CheckoutCustomer).ico || '').trim() || String((customer as CheckoutCustomer).schoolName || '').trim(),
+  );
+  const customerPhoneCheck = checkCzechPhone((customer as CheckoutCustomer).phone, {
+    allowLandline: customerIsOrganization,
+  });
+  if (!customerPhoneCheck.ok) {
+    return jsonResponse(req, { error: customerPhoneCheck.error }, 400);
+  }
+  const normalizedCustomerPhone = customerPhoneCheck.phone;
+
+  const deliveryRecipientName = (shipping as CheckoutShipping).differentAddress
+    ? String((shipping as CheckoutShipping).deliveryAddress?.recipientName || '').trim()
+    : '';
+  if (deliveryRecipientName) {
+    const recipientNameCheck = checkFullName(deliveryRecipientName);
+    if (!recipientNameCheck.ok) {
+      return jsonResponse(req, { error: `Příjemce zásilky: ${recipientNameCheck.error}` }, 400);
+    }
   }
 
   if (!validateSeparateDeliveryIfNeeded(shipping)) {
