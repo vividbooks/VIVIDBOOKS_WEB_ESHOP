@@ -32,7 +32,6 @@ import {
   type ProductBundleRecord,
 } from '../utils/bundlePricing';
 import { ProductBundlePromoTile } from './ProductBundlePromoTile';
-import { MathPilotPromoBox, isPilotBundleId } from './MathPilotPromoBox';
 import type { MerchVariantOption } from '../types/merchVariants';
 import { isMerchWallArtBoardsProduct } from '../utils/merchProducts';
 import { mergeSchoolOrderDraft } from '../utils/schoolOrderDraft';
@@ -980,15 +979,10 @@ export function ProductDetailPage({
 
   /** Standardní balíčky se dál nabízí boxem „Přidat do objednávky"; akce N+M už jen informativně. */
   const standardBundlesForProduct = useMemo(
-    () => bundlesContainingThisProduct.filter((b) => !bundleIsNxPlusOneSubject(b) && !isPilotBundleId(b.id)),
+    () => bundlesContainingThisProduct.filter((b) => !bundleIsNxPlusOneSubject(b) && !String(b.id).startsWith('pilotaz-')),
     [bundlesContainingThisProduct],
   );
 
-  /** Pilotáž matematiky: sešit bývá ve dvou balíčcích (řada + ročník) — ukážeme jeden obecný box. */
-  const isInPilotBundle = useMemo(
-    () => bundlesContainingThisProduct.some((b) => isPilotBundleId(b.id)),
-    [bundlesContainingThisProduct],
-  );
 
   /** Akce N+M (10+1) se neobjednává přes web — u produktu ukážeme jen poznámku, jak ji uplatnit. */
   const hasNxPlusOneBundleForProduct = useMemo(
@@ -2264,9 +2258,8 @@ export function ProductDetailPage({
             )}
 
             {/* Balíček (KV) — jen tiskoviny v e-shopu */}
-            {isPrintProduct(product) && !isDistributorMode && (standardBundlesForProduct.length > 0 || hasNxPlusOneBundleForProduct || isInPilotBundle) && (
+            {isPrintProduct(product) && !isDistributorMode && (standardBundlesForProduct.length > 0 || hasNxPlusOneBundleForProduct) && (
               <div className="space-y-4 mt-4">
-                {isInPilotBundle && <MathPilotPromoBox product={product} products={products} />}
                 {standardBundlesForProduct.map((bundle) => (
                   <ProductBundlePromoTile
                     key={bundle.id}
