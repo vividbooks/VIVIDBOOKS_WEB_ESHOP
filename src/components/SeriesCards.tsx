@@ -258,11 +258,10 @@ const MATH1_SERIES: SeriesDef[] = [
 ];
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
+// Zatím jen 4. ročník (5. je v aplikaci taky).
 const CJS_SERIES: SeriesDef[] = [
   appOnlyCard('vlastiveda-4', 'Vlastivěda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
-  appOnlyCard('vlastiveda-5', 'Vlastivěda 5', 'Pracovní sešit', 'Pro 5. ročník', CJS_HREF),
   appOnlyCard('prirodoveda-4', 'Přírodověda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
-  appOnlyCard('prirodoveda-5', 'Přírodověda 5', 'Pracovní sešit', 'Pro 5. ročník', CJS_HREF),
 ];
 
 const INFORMATICS_SERIES: SeriesDef[] = [
@@ -394,7 +393,7 @@ export function SeriesCards({
     <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
       <div
         className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : cards.length === 2 ? 'md:grid-cols-2 xl:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4'
+          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4'
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
