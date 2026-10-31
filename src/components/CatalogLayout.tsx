@@ -217,7 +217,11 @@ const testExtraSubjects: Record<1 | 2, { label: string; href: string }[]> = {
     { label: 'D\u011bjepis', href: `${APP_LIBRARY}/stupen-2/dejepis` },
     { label: 'Zem\u011bpis', href: `${APP_LIBRARY}/stupen-2/zemepis` },
   ],
-  1: [{ label: 'Informatika', href: `${APP_LIBRARY}/stupen-1/informatika` }],
+  1: [
+    { label: 'Vlastiv\u011bda', href: `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet` },
+    { label: 'P\u0159\u00edrodov\u011bda', href: `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet` },
+    { label: 'Informatika', href: `${APP_LIBRARY}/stupen-1/informatika` },
+  ],
 };
 
 /* ── CatalogLayout ─────────────────────────────────────────────── */

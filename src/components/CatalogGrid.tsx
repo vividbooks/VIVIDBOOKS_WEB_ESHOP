@@ -2186,7 +2186,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         {sortedGroups.map(([mainGroup, subGroups], idx) => {
           const isExpanded  = expandedGroups.has(mainGroup);
           const appOnly = APP_ONLY_GROUPS.find((g) => g.group === mainGroup);
-          const isSecondGrdGroup = (g: string) => secondGradeSubjects.includes(g) || g === '2. stupe\u0148' || APP_ONLY_GROUPS.some((a) => a.group === g);
+          const isSecondGrdGroup = (g: string) => secondGradeSubjects.includes(g) || g === '2. stupe\u0148' || APP_ONLY_GROUPS.some((a) => a.group === g && a.stupen === 2);
           const isSecondGrd = isSecondGrdGroup(mainGroup);
           const nextEntry   = sortedGroups[idx + 1];
           const isLastSecond = isSecondGrd && nextEntry && !isSecondGrdGroup(nextEntry[0]);

@@ -25,6 +25,10 @@ type SeriesDef = {
   bg: string;
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
   placeholder?: boolean;
+  /** Text na zástupné obálce (výchozí `title`). */
+  placeholderText?: string;
+  /** Vlastní proklik (např. do knihovny aplikace, když web obsah nemá). */
+  href?: string;
   match?: (lowerName: string) => boolean;
   /** Karta digitální učebnice — obrázek online produktu předmětu (prop `digitalProduct`). */
   digital?: boolean;
@@ -231,10 +235,38 @@ const DIGITAL_CARD: SeriesDef = {
 };
 
 // Matematika 1. st.: v aplikaci je i 3. ročník, ale zatím bez obálek — karta až budou.
+const APP_LIBRARY = 'https://nove.vividbooks.com/knihovna';
+
+/** Sešit, který je zatím jen v aplikaci a nemá obálku: zástupné obálky, proklik do knihovny aplikace. */
+const appOnlyCard = (key: string, title: string, label: string, description: string, href: string, placeholderText = title): SeriesDef => ({
+  key,
+  title,
+  label,
+  description,
+  bg: '#f8f9fc',
+  placeholder: true,
+  placeholderText,
+  href,
+});
+
 const MATH1_SERIES: SeriesDef[] = [
   gradeCard(1, 'Tři díly a Početníček'),
   gradeCard(2, 'Tři díly a Početníček'),
+  // 3. ročník je zatím jen v aplikaci, bez obálek.
+  appOnlyCard('rocnik-3', '3. ročník', 'Pracovní sešity', 'Tři díly, zatím v aplikaci', `${APP_LIBRARY}/stupen-1/matematika`, 'Matematika 3'),
   DIGITAL_CARD,
+];
+
+const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
+const CJS_SERIES: SeriesDef[] = [
+  appOnlyCard('vlastiveda-4', 'Vlastivěda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
+  appOnlyCard('vlastiveda-5', 'Vlastivěda 5', 'Pracovní sešit', 'Pro 5. ročník', CJS_HREF),
+  appOnlyCard('prirodoveda-4', 'Přírodověda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
+  appOnlyCard('prirodoveda-5', 'Přírodověda 5', 'Pracovní sešit', 'Pro 5. ročník', CJS_HREF),
+];
+
+const INFORMATICS_SERIES: SeriesDef[] = [
+  appOnlyCard('informatika-4', 'Informatika 4', 'Pracovní sešit', 'Pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`),
 ];
 
 const PRVOUKA_SERIES: SeriesDef[] = [
@@ -282,8 +314,10 @@ const CZECH_SERIES: SeriesDef[] = [
  * Předměty, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
  * jako řádek za `after` a proklik vede do knihovny aplikace.
  */
-export const APP_ONLY_GROUPS: { group: string; after: string; href: string }[] = [
-  { group: 'Dějepis', after: 'Chemie', href: 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis' },
+export const APP_ONLY_GROUPS: { group: string; after: string; href: string; stupen: 1 | 2 }[] = [
+  { group: 'Dějepis', after: 'Chemie', href: 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis', stupen: 2 },
+  { group: 'Vlastivěda a přírodověda', after: 'Prvouka', href: 'https://nove.vividbooks.com/knihovna/stupen-1/clovek-a-jeho-svet', stupen: 1 },
+  { group: 'Informatika', after: 'Vlastivěda a přírodověda', href: 'https://nove.vividbooks.com/knihovna/stupen-1/informatika', stupen: 1 },
 ];
 
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
@@ -296,6 +330,8 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   'Matematika 1. stupeň': MATH1_SERIES,
   Prvouka: PRVOUKA_SERIES,
   'Český jazyk': CZECH_SERIES,
+  'Vlastivěda a přírodověda': CJS_SERIES,
+  Informatika: INFORMATICS_SERIES,
 };
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
@@ -350,21 +386,23 @@ export function SeriesCards({
         return s.coverParts ? pickParts(own) : pickCovers(own, s.coverGrades);
       })(),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
-  /** 3–4 karty: na xl vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
+  /** Na xl karty vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
   const four = cards.length >= 4;
-  const stacked = cards.length >= 2;
+  const stacked = cards.length >= 1;
 
   return (
     <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
       <div
         className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-3'
+          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : cards.length === 2 ? 'md:grid-cols-2 xl:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4'
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map((s) => {
           const [front] = s.covers;
-          const href = s.typ
+          const href = s.href
+            ? s.href
+            : s.typ
             ? `${subjectPath}?typ=${s.typ}`
             : s.rocnik ? `${subjectPath}?rocnik=${s.rocnik}` : subjectPath;
           return (
@@ -405,7 +443,7 @@ export function SeriesCards({
                       <div key={i} className={`${cls} aspect-[210/297] bg-[#001161] ring-1 ring-white/25 flex items-center px-2`}>
                         {i === 0 && (
                           <span className="text-white font-['Fenomen_Sans',sans-serif] font-bold text-[12px] lg:text-[14px] leading-[1.05]">
-                            {s.title}
+                            {s.placeholderText ?? s.title}
                           </span>
                         )}
                       </div>
