@@ -21,6 +21,7 @@ import {
   COOPER_ACCESS_INTRO_MUTED_STYLE,
 } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
+import { MathAppShowcase } from './MathAppShowcase';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { SubjectWebinarsSlider } from './SubjectWebinarsSlider';
@@ -658,6 +659,8 @@ export function SubjectPage({
   const digitalBooks = subjectProducts.filter(p => p.type === 'online' && p.image).slice(0, 3);
 
   const showComparison = ['Fyzika', 'Chemie', 'P\u0159\u00edrodopis'].includes(subject);
+  /** Matematika místo obecných záložek ukáže záložky, videa a aplikace (MathAppShowcase). */
+  const showMathShowcase = baseSubject === 'Matematika' && (subjectGradeNum === '1' || subjectGradeNum === '2');
   /** ČJ — metodické principy zatím nezobrazujeme (požadavek obsahu). */
   const showMethodPrinciples = baseSubject !== '\u010cesk\u00fd jazyk';
   const showMsmtSubjectBadge = subjectShowsMsmtDolozkaBadge(baseSubject);
@@ -1063,8 +1066,17 @@ export function SubjectPage({
         )}
       </div>
 
+      {/* ── Matematika: záložky, videa a další aplikace jako na detailu sešitu (dřív pilotáž) ── */}
+      {showMathShowcase && (
+        <MathAppShowcase
+          secondStage={subjectGradeNum === '2'}
+          intro="Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí. Pro všechny učitele i žáky školy."
+          videosBody="Krátká videa se zvukem: co v aplikaci najdete a jak s tím pracujete v hodině."
+        />
+      )}
+
       {/* ── TABS (Co vše obsahuje) — only for non-comparison subjects ── */}
-      {!showComparison && (
+      {!showComparison && !showMathShowcase && (
         <SubjectTabsSection
           subject={subject}
           displayName={cfg.displayName}

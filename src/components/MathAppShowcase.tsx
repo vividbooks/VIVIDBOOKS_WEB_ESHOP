@@ -41,7 +41,16 @@ const TAB_OVERRIDES_2ND = {
 };
 const EXCLUDED_TABS_2ND = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Aplikace Rýsování'];
 
-export function MathAppShowcase({ secondStage }: { secondStage: boolean }) {
+/** Výchozí texty platí pro detail sešitu; stránka předmětu posílá vlastní (bez řeči o sešitu). */
+export function MathAppShowcase({
+  secondStage,
+  intro = 'Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí. Ke třídní objednávce od 15 sešitů je v ceně.',
+  videosBody = 'Krátká videa se zvukem: co k sešitu dostanete a jak s tím pracujete v hodině.',
+}: {
+  secondStage: boolean;
+  intro?: string;
+  videosBody?: string;
+}) {
   const apps = MATH_APPS.filter((a) => (secondStage ? a.stage !== '1. stupeň' : a.stage === '1. stupeň')).filter(
     (a) => !(secondStage && APPS_IN_VIDEOS.has(a.name)),
   );
@@ -52,7 +61,7 @@ export function MathAppShowcase({ secondStage }: { secondStage: boolean }) {
           {formatTypography('Co všechno v aplikaci najdete')}
         </h2>
         <p className="mt-2 mb-6 max-w-[640px] text-[15px] leading-relaxed text-[#001161]/60" style={{ fontFamily: FF }}>
-          {formatTypography('Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí. Ke třídní objednávce od 15 sešitů je v ceně.')}
+          {formatTypography(intro)}
         </p>
         <div className="overflow-hidden rounded-[28px]">
           <SubjectTabsSection
@@ -71,7 +80,7 @@ export function MathAppShowcase({ secondStage }: { secondStage: boolean }) {
           controls
           className="mt-14 !px-0"
           title="Jak to vypadá v hodině"
-          body="Krátká videa se zvukem: co k sešitu dostanete a jak s tím pracujete v hodině."
+          body={videosBody}
         />
 
         {apps.length > 0 && (
