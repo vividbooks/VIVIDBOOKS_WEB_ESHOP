@@ -72,7 +72,8 @@ import { appPath } from '../utils/appBaseUrl';
 import { buildThankYouUrlAfterPayment, storePaymentIntentTrackingToken } from '../utils/checkoutThankYouRedirect';
 import { usePacketaApiKey } from '../utils/packeta/usePacketaApiKey';
 import { pushSchoolOrderStep } from '../utils/dataLayerEcommerce';
-import { isValidCzechPhone, PHONE_CZ_HINT } from '../utils/phoneCZ';
+import { checkCzechPhone, isValidCzechPhone, PHONE_CZ_COURIER_NOTE_SCHOOL } from '../utils/phoneCZ';
+import { checkFullName, isValidFullName } from '../utils/personName';
 import { useVividbooksPresence } from '@/lib/vividbooksPresence';
 import { MathInteractiveMeter } from './MathInteractiveIncluded';
 
@@ -1142,7 +1143,7 @@ export function OrderPage() {
   const canPrepareSchoolCardPayment = useMemo(() => {
     if (isDigitalServicesOnly || !hasSchoolWorkbookSelection) return false;
     if (!form.schoolName.trim() || !form.ico.trim()) return false;
-    if (!form.name.trim() || !isValidCzechPhone(form.phone)) return false;
+    if (!isValidFullName(form.name) || !isValidCzechPhone(form.phone, { allowLandline: true })) return false;
     if (!form.email.trim() || !isValidEmailFormat(form.email.trim())) return false;
     if (
       !hasStreetWithHouseNumber(form.street)
@@ -1152,6 +1153,7 @@ export function OrderPage() {
       return false;
     }
     if (hasSeparateDeliveryAddress) {
+      if (deliveryAddress.recipientName.trim() && !isValidFullName(deliveryAddress.recipientName)) return false;
       if (
         !hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)
         || !deliveryAddress.deliveryCity.trim()
@@ -1174,6 +1176,7 @@ export function OrderPage() {
     form.city,
     form.zip,
     hasSeparateDeliveryAddress,
+    deliveryAddress.recipientName,
     deliveryAddress.deliveryStreet,
     deliveryAddress.deliveryCity,
     deliveryAddress.deliveryZip,
@@ -1205,11 +1208,13 @@ export function OrderPage() {
     };
     if (!form.schoolName.trim()) return fail('Vypl\u0148te n\u00e1zev \u0161koly.', 'order-field-schoolName');
     if (!form.ico.trim()) return fail('Vypl\u0148te I\u010cO \u0161koly.', 'order-field-ico');
-    if (!form.name.trim()) return fail('Vypl\u0148te jm\u00e9no.', 'order-field-name');
+    const nameCheck = checkFullName(form.name);
+    if (!nameCheck.ok) return fail(nameCheck.error, 'order-field-name');
     if (!form.email.trim()) return fail('Vypl\u0148te e-mail.', 'order-field-email');
     if (!isValidEmailFormat(form.email.trim())) return fail(EMAIL_FORMAT_HINT_CS, 'order-field-email');
-    if (!form.phone.trim()) return fail('Vypl\u0148te telefon.', 'order-field-phone');
-    if (!isValidCzechPhone(form.phone)) return fail(PHONE_CZ_HINT, 'order-field-phone');
+    /** Škola smí zadat i pevnou linku (sekretariát), jen se ověří, že číslo v ČR existuje. */
+    const phoneCheck = checkCzechPhone(form.phone, { allowLandline: true });
+    if (!phoneCheck.ok) return fail(phoneCheck.error, 'order-field-phone');
     if (!form.position.trim()) return fail('Vyberte funkci / pozici u \u0161koly.', 'order-field-position');
     if (!form.street.trim()) return fail('Vypl\u0148te faktura\u010dn\u00ed adresu \u0161koly.', 'order-field-street');
     if (!hasStreetWithHouseNumber(form.street)) return fail(STREET_NUMBER_HINT_CS, 'order-field-street');
@@ -1217,6 +1222,10 @@ export function OrderPage() {
     if (!form.zip.trim()) return fail('Vypl\u0148te PS\u010c.', 'order-field-zip');
     if (!isValidCZSKPostalCode(form.zip)) return fail(POSTAL_CODE_HINT_CS, 'order-field-zip');
     if (hasSeparateDeliveryAddress) {
+      if (deliveryAddress.recipientName.trim()) {
+        const recipientCheck = checkFullName(deliveryAddress.recipientName);
+        if (!recipientCheck.ok) return fail(recipientCheck.error, 'order-field-recipientName');
+      }
       if (!deliveryAddress.deliveryStreet.trim()) return fail('Vypl\u0148te doru\u010dovac\u00ed adresu.', 'order-field-deliveryStreet');
       if (!hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)) {
         return fail(STREET_NUMBER_HINT_CS, 'order-field-deliveryStreet');
@@ -2816,9 +2825,9 @@ export function OrderPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
-                    { key: 'name', label: 'Jméno *' },
+                    { key: 'name', label: 'Jméno a příjmení *', placeholder: 'Např. Jana Nováková', autoComplete: 'name' },
                     { key: 'email', label: 'E-mail *', type: 'email' },
-                    { key: 'phone', label: 'Telefon *' },
+                    { key: 'phone', label: 'Telefon *', type: 'tel', placeholder: 'Např. 739 056 178', autoComplete: 'tel' },
                   ].map((field) => (
                     <label key={field.key} id={`order-field-${field.key}`} className="block">
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
@@ -2847,6 +2856,9 @@ export function OrderPage() {
                       ) : (
                         <input
                           type={field.type ?? 'text'}
+                          inputMode={field.type === 'tel' ? 'tel' : undefined}
+                          autoComplete={field.autoComplete}
+                          placeholder={field.placeholder}
                           value={form[field.key as keyof typeof form] as string}
                           onChange={(event) => {
                             setForm((prev) => ({ ...prev, [field.key]: event.target.value }));
@@ -2860,6 +2872,11 @@ export function OrderPage() {
                       {field.key === 'email' && emailMxHint ? (
                         <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
                           {emailMxHint}
+                        </span>
+                      ) : null}
+                      {field.key === 'phone' ? (
+                        <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] leading-snug text-[#001161]/60">
+                          {PHONE_CZ_COURIER_NOTE_SCHOOL}
                         </span>
                       ) : null}
                     </label>
@@ -3009,7 +3026,7 @@ export function OrderPage() {
                       )}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {[
-                        { key: 'recipientName', label: 'Jméno příjemce', icon: User, placeholder: 'Např. kabinet fyziky' },
+                        { key: 'recipientName', label: 'Jméno a příjmení příjemce', icon: User, placeholder: 'Např. Jana Nováková (kabinet napište do poznámky)' },
                         { key: 'deliveryStreet', label: 'Doručovací ulice a číslo *', icon: Home },
                         { key: 'deliveryCity', label: 'Doručovací město *', icon: MapPin },
                         { key: 'deliveryZip', label: 'Doručovací PSČ *', icon: MapPin },

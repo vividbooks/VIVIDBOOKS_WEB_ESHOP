@@ -125,6 +125,7 @@ Asistent / scrape synchronizace blogu a webinářů nově bere veřejný host z 
 |----------|-------------|
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | `stripe-webhook`, `create-payment-intent`, `resume-checkout` |
 | `BASECOM_API_TOKEN`, `BASECOM_ORDER_STATUS_ID`, `BASECOM_CUSTOM_SOURCE_ID`, `BASECOM_CANCELLED_ORDER_STATUS_ID`, `BASECOM_INVENTORY_FEED_URL` | Base.com, sklad, export |
+| `BASECOM_CONTACT_REVIEW_ORDER_STATUS_ID` | Volitelně — stav v Base pro objednávky s necelým jménem příjemce / neplatným telefonem (bez automatického přenosu do FF), viz [DEPLOYMENT.md](./DEPLOYMENT.md). |
 | `IDOKLAD_CLIENT_ID`, `IDOKLAD_CLIENT_SECRET`, číselníky `IDOKLAD_*` | Faktury po platbě (`process-export-queue`) |
 | `PIPEDRIVE_INBOUND_WEBHOOK_SECRET`, `PIPEDRIVE_INBOUND_PIPELINE_IDS`, `PIPEDRIVE_INBOUND_SHIPPING_METHOD` (default `ppl`), `PIPEDRIVE_INBOUND_SHIPPING_PRICE_HALER`, `PIPEDRIVE_INBOUND_ESHOP_ORDER_ID_FIELD` | `pipedrive-inbound-deal` |
 | `FULFILMENT_CZ_API_TOKEN`, případně `FULFILMENT_STOCK_*` | Zásoby z fulfilmentu (`product-stock-status`) — viz níže |

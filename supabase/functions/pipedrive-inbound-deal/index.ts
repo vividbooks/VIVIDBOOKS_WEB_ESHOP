@@ -103,6 +103,7 @@ import {
   streetHasHouseNumber,
 } from '../_shared/czech-address-enrichment.ts';
 import { orgAddressLine, personPostalLine } from '../_shared/pipedrive-address.ts';
+import { extractCzechPhone } from '../_shared/phone-cz.ts';
 import { processExportQueueCronHeaders } from '../_shared/process-export-queue-auth.ts';
 
 const corsHeaders = (origin: string | null) => ({
@@ -352,20 +353,21 @@ function readPersonEmail(person: Record<string, unknown>): string {
   return '';
 }
 
+/**
+ * Telefon osoby z PD. V CRM bývá `tel:583213910`, dvě čísla v jednom poli nebo číslo slepené se jménem —
+ * vezmeme první platné české číslo (přednost má mobil, kvůli SMS od dopravce) ze všech zadaných telefonů.
+ * Když žádné platné není, vrací se původní text a export do Base na to upozorní.
+ */
 function readPersonPhone(person: Record<string, unknown>): string {
   const raw = person?.phone;
-  if (typeof raw === 'string') {
-    const t = raw.trim();
-    if (t) return t;
-  }
-  if (!Array.isArray(raw)) return '';
-  for (const entry of raw) {
-    const v = typeof entry === 'object' && entry && 'value' in entry
-      ? String((entry as { value?: string }).value || '').trim()
-      : String(entry || '').trim();
-    if (v) return v;
-  }
-  return '';
+  const values = (Array.isArray(raw) ? raw : [raw])
+    .map((entry) => (
+      typeof entry === 'object' && entry && 'value' in entry
+        ? String((entry as { value?: string }).value || '').trim()
+        : String(entry || '').trim()
+    ))
+    .filter(Boolean);
+  return extractCzechPhone(values.join(' ; ')) ?? values[0] ?? '';
 }
 
 function moneyToHaler(value: unknown): number {
