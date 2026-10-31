@@ -2252,6 +2252,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
                 <SeriesCards
                   mainGroup={mainGroup}
                   books={sortedSubEntries.flatMap(([, books]) => books)}
+                  digitalProduct={allRowBooks[0]?.id?.startsWith('license-') ? undefined : allRowBooks[0]}
                   navigate={navigate}
                 />
               ) : isExpanded ? (

@@ -22,6 +22,8 @@ type SeriesDef = {
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
   placeholder?: boolean;
   match?: (lowerName: string) => boolean;
+  /** Karta digitální učebnice — obrázek online produktu předmětu (prop `digitalProduct`). */
+  digital?: boolean;
   /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady), aby karty nebyly stejné. */
   coverGrades?: [number, number];
   /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou; první je vpředu. */
@@ -60,6 +62,15 @@ const MATH_SERIES: SeriesDef[] = [
     placeholder: true,
     match: (n) => n.includes('moje matematik'),
   },
+  {
+    key: 'digital',
+    title: 'Digitální učebnice',
+    label: 'Digitální přístup',
+    description: 'Celá učebnice online, na tabuli i u žáků',
+    typ: 'digital',
+    bg: '#f8f9fc',
+    digital: true,
+  },
 ];
 
 const PHYSICS_SERIES: SeriesDef[] = [
@@ -94,6 +105,14 @@ const PHYSICS_SERIES: SeriesDef[] = [
       { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
     ],
   },
+  {
+    key: 'digital',
+    title: 'Digitální učebnice',
+    label: 'Digitální přístup',
+    description: 'Celá učebnice online, na tabuli i u žáků',
+    bg: '#f8f9fc',
+    digital: true,
+  },
 ];
 
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
@@ -121,16 +140,21 @@ function pickCovers(books: any[], [front, back]: [number, number] = [0, 1]): Cov
 export function SeriesCards({
   mainGroup,
   books,
+  digitalProduct,
   navigate,
 }: {
   mainGroup: string;
   books: any[];
+  /** Online produkt předmětu (digitální učebnice); bez obrázku se karta digitální učebnice nezobrazí. */
+  digitalProduct?: { name?: string; image?: string };
   navigate: (path: string) => void;
 }) {
   const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
-    covers: s.staticCovers ?? pickCovers(
+    covers: s.digital
+      ? (digitalProduct?.image ? [{ name: digitalProduct.name || s.title, image: digitalProduct.image }] : [])
+      : s.staticCovers ?? pickCovers(
       books.filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase())),
       s.coverGrades,
     ),
@@ -140,7 +164,7 @@ export function SeriesCards({
     <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
       <div
         className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          cards.length >= 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'
+          cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
@@ -159,7 +183,15 @@ export function SeriesCards({
               style={{ backgroundColor: s.bg }}
               className="group/series snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2"
             >
-              <div className="relative w-[42%] shrink-0 self-center aspect-[3/4]">
+              <div className="relative w-[42%] max-w-[160px] shrink-0 self-center aspect-[3/4]">
+                {s.digital && front && (
+                  <img
+                    src={front.image}
+                    alt={front.name}
+                    loading="lazy"
+                    className="absolute inset-0 h-full w-full object-contain transition-transform duration-300 group-hover/series:-translate-y-1"
+                  />
+                )}
                 {!front && (
                   <>
                     <div className="absolute left-[14%] top-[2%] w-[78%] aspect-[210/297] rounded-[6px] bg-[#001161] shadow-md transition-transform duration-300 rotate-[8deg] group-hover/series:rotate-[11deg]" />
@@ -170,7 +202,7 @@ export function SeriesCards({
                     </div>
                   </>
                 )}
-                {back && (
+                {back && !s.digital && (
                   <img
                     src={back.image}
                     alt=""
@@ -178,7 +210,7 @@ export function SeriesCards({
                     className="absolute left-[14%] top-[2%] w-[78%] rounded-[6px] shadow-md transition-transform duration-300 rotate-[8deg] group-hover/series:rotate-[11deg]"
                   />
                 )}
-                {front && (
+                {front && !s.digital && (
                   <img
                     src={front.image}
                     alt={front.name}
