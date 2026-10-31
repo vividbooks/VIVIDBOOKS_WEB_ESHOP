@@ -17,7 +17,7 @@ type SeriesDef = {
   description: string;
   /** Hodnota `?typ=` na stránce předmětu (SERIES_TYP_PARAMS v SubjectPage); bez ní vede karta na celý předmět. */
   typ?: string;
-  /** Světlé pozadí karty — z palety štítků předmětů (CATEGORY_BG v UnifiedBookCard). */
+  /** Pozadí karty (zatím jednotná světle šedá webu; lze dát každé řadě jinou). */
   bg: string;
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
   placeholder?: boolean;
@@ -35,7 +35,7 @@ const MATH_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Žáci objevují matematické jevy',
     typ: 'krok',
-    bg: '#E2F8FF',
+    bg: '#F0F2F8',
     match: (n) => n.includes('krok za krokem'),
   },
   {
@@ -44,7 +44,7 @@ const MATH_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
     typ: 'pro-vsechny',
-    bg: '#EEEAFF',
+    bg: '#F0F2F8',
     match: (n) => n.includes('pro všechny'),
   },
   {
@@ -52,7 +52,7 @@ const MATH_SERIES: SeriesDef[] = [
     title: 'Moje Matematika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
-    bg: '#FFF8E0',
+    bg: '#F0F2F8',
     placeholder: true,
     match: (n) => n.includes('moje matematik'),
   },
@@ -64,7 +64,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Krok za krokem',
     label: 'Pracovní sešity',
     description: 'Žáci objevují fyzikální jevy',
-    bg: '#E2F8FF',
+    bg: '#F0F2F8',
     staticCovers: [
       { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
       { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
@@ -75,7 +75,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Pro všechny',
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
-    bg: '#EEEAFF',
+    bg: '#F0F2F8',
     match: (n) => n.includes('pracovní sešit'),
   },
   {
@@ -83,7 +83,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Moje Fyzika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
-    bg: '#FFF8E0',
+    bg: '#F0F2F8',
     staticCovers: [
       { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
       { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
