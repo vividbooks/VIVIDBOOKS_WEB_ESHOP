@@ -159,12 +159,14 @@ export function SeriesCards({
       s.coverGrades,
     ),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
+  /** 4 karty: na xl vedle sebe a na výšku (obálka nahoře, text pod ní), níž mřížka 2×2. */
+  const four = cards.length >= 4;
 
   return (
     <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
       <div
         className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'
+          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
@@ -181,9 +183,9 @@ export function SeriesCards({
                 navigate(href);
               }}
               style={{ backgroundColor: s.bg }}
-              className="group/series snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2"
+              className={`group/series relative snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${four ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
-              <div className="relative w-[42%] max-w-[160px] shrink-0 self-center aspect-[3/4]">
+              <div className={`relative w-[42%] max-w-[160px] shrink-0 self-center aspect-[3/4] ${four ? 'xl:w-[52%] xl:self-start xl:mt-1' : ''}`}>
                 {s.digital && front && (
                   <img
                     src={front.image}
@@ -220,10 +222,10 @@ export function SeriesCards({
                 )}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className="self-end rounded-full bg-white px-2.5 py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap">
+                <span className={`self-end rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:right-4' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
                   {s.label}
                 </span>
-                <h3 className="my-auto py-3 text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[17px] lg:text-[21px] leading-[1.1]">
+                <h3 className={`my-auto py-3 ${four ? 'xl:my-0 xl:pt-4 xl:pb-1.5' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[17px] lg:text-[21px] leading-[1.1]`}>
                   {s.title}
                 </h3>
                 <p className="text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[14px] lg:text-[15px] leading-snug">
