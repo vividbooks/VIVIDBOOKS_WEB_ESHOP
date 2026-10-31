@@ -5,6 +5,7 @@ import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
+import { MathSeriesCards } from './MathSeriesCards';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
@@ -702,7 +703,9 @@ function CatalogHeroSliderSkeleton({
   );
 }
 
-export default function CatalogGrid() {
+/** `test` = neveřejná kopie na /homepage-test (noindex); změny homepage se tu zkouší, než jdou na `/`. */
+export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | 'test' } = {}) {
+  const isTestVariant = variant === 'test';
   const navigate  = useNavigate();
   const location  = useLocation();
   const { products } = useProducts();
@@ -1437,6 +1440,7 @@ export default function CatalogGrid() {
       {/* SEO */}
       <SEOHead
         path="/"
+        noIndex={isTestVariant}
         description="Kompletní katalog interaktivních digitálních učebnic a pracovních sešitů Vividbooks pro české základní školy. Matematika, fyzika, chemie, přírodopis a další."
         imageAlt="Katalog interaktivních učebnic a pracovních sešitů Vividbooks pro základní školy"
         imageWidth={1200}
@@ -2183,6 +2187,8 @@ export default function CatalogGrid() {
             if (b === 'Krok za krokem') return 1;
             return a.localeCompare(b);
           });
+          /** Test homepage: Matematika 2. stupeň jako tři karty řad místo pásu sešitů. */
+          const showSeriesCards = isTestVariant && groupingMode === 'subject' && mainGroup === 'Matematika 2. stupe\u0148';
           const allRowBooks: any[] = [
             getDigitalLicenseForGroup(mainGroup),
             ...sortedSubEntries.flatMap(([, books]) => books),
@@ -2213,7 +2219,7 @@ export default function CatalogGrid() {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                     </svg>
                   </button>
-                  {!isExpanded && (
+                  {!isExpanded && !showSeriesCards && (
                     <div className="flex items-center gap-2 shrink-0">
                       {/* Å ipka zpÄ›t â€” zobrazÃ­ se aÅ¾ po odscrollovÃ¡nÃ­ */}
                       {(scrollPositions[mainGroup] ?? 0) > 10 && (
@@ -2242,7 +2248,13 @@ export default function CatalogGrid() {
                 </div>
               </div>
 
-              {isExpanded ? (
+              {showSeriesCards ? (
+                <MathSeriesCards
+                  mainGroup={mainGroup}
+                  books={sortedSubEntries.flatMap(([, books]) => books)}
+                  navigate={navigate}
+                />
+              ) : isExpanded ? (
                 <div className="mb-8 -mt-[50px]">
                   {sortedSubEntries.map(([subGroup, books], index) => (
                     <div

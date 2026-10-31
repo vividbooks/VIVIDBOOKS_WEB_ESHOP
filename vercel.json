@@ -1,4 +1,10 @@
 {
+  "headers": [
+    {
+      "source": "/homepage-test",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/edge/:path*",

@@ -229,6 +229,8 @@ export default function CatalogLayout() {
   const isSchoolOrderView = location.pathname === '/objednat';
   const isCheckoutView = location.pathname === '/pokladna';
   const isResumePaymentView = location.pathname === '/platit';
+  /** Úvod: ostrá homepage `/` i neveřejná testovací kopie `/homepage-test` */
+  const isHomeView = location.pathname === '/' || location.pathname === '/homepage-test';
   const isCheckoutLikeSidebar = isCheckoutView || isSchoolOrderView;
   const { step: orderStep } = useOrderNav();
   /** Krok „Počty“ — více místa vlevo: bez loga, odkaz nahoře */
@@ -244,7 +246,7 @@ export default function CatalogLayout() {
 
   /* ── scroll to catalog section ─────────────────────────────── */
   const scrollToSection = (id: string) => {
-    if (location.pathname !== '/') {
+    if (!isHomeView) {
       navigate('/', { state: { scrollTo: id } });
       return;
     }
@@ -611,7 +613,7 @@ export default function CatalogLayout() {
             /* Mobilní horní lišta — v toku dokumentu (ne sticky/fixed), logo + CTA + menu */
             <div className="md:hidden relative z-40 shrink-0 bg-white border-b border-gray-100 px-4 py-3 pt-[max(0.5rem,env(safe-area-inset-top))]">
               <div className="flex items-center justify-between gap-2">
-                {location.pathname === '/' ? (
+                {isHomeView ? (
                   <div className="scale-75 origin-left -my-1 cursor-pointer" onClick={() => navigate('/')}>
                     <VividbooksLogo />
                   </div>
@@ -728,7 +730,7 @@ export default function CatalogLayout() {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                           const slug  = subjectToSlug(item);
-                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && location.pathname === '/');
+                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && isHomeView);
                           return (
                             <button
                               key={item}
@@ -754,7 +756,7 @@ export default function CatalogLayout() {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                           const slug  = subjectToSlug(item);
-                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && location.pathname === '/');
+                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && isHomeView);
                           return (
                             <button
                               key={item}
@@ -833,7 +835,7 @@ export default function CatalogLayout() {
             }`}
        
           >
-            {location.pathname === '/' && !isCheckoutLikeSidebar && (
+            {isHomeView && !isCheckoutLikeSidebar && (
               <div className="md:hidden px-4 pt-2 pb-2 border-b border-gray-100/90 bg-white">
                 <div className="relative group/nav">
                   <div

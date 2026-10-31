@@ -140,6 +140,14 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
           children: [
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },
+            // Neveřejná testovací kopie homepage (noindex, nikde neodkázaná) — změny se zapínají přes variant="test".
+            {
+              path: 'homepage-test',
+              lazy: async () => {
+                const { default: CatalogGrid } = await import('./components/CatalogGrid');
+                return { Component: () => React.createElement(CatalogGrid, { variant: 'test' }) };
+              },
+            },
             {
               path: 'predmet/:slug',
               lazy: lazyNamed(() => import('./components/SubjectPageRoute'), 'SubjectPageRoute'),
