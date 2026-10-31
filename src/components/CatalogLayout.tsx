@@ -251,22 +251,20 @@ export default function CatalogLayout() {
       return next;
     });
   const showStupen = (n: 1 | 2) => !isTestHome || openStupne.has(n);
-  /** Nadpis stupně: na testovací homepage tlačítko s šipkou, jinak beze změny. */
+  /** Nadpis stupně: na testovací homepage rozbalovací položka jako „Novinky a blog“ (SidebarAccordion), jinak beze změny. */
   const stupenHeading = (n: 1 | 2, className: string) =>
     isTestHome ? (
       <button
         type="button"
         onClick={() => toggleStupen(n)}
         aria-expanded={openStupne.has(n)}
-        className={`${className} flex w-full items-center justify-between text-left cursor-pointer hover:text-[#001161]/80`}
+        className="w-full flex items-center justify-between px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all cursor-pointer"
       >
-        {`${n}. stupe\u0148`}
-        <svg
-          className={`size-3.5 shrink-0 transition-transform ${openStupne.has(n) ? 'rotate-180' : ''}`}
-          fill="none" viewBox="0 0 24 24" stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
-        </svg>
+        <span>{`${n}. stupe\u0148`}</span>
+        <ChevronDown
+          className={`w-4 h-4 shrink-0 transition-transform duration-200 ${openStupne.has(n) ? 'rotate-180' : ''}`}
+          strokeWidth={2.5}
+        />
       </button>
     ) : (
       <span className={className}>{`${n}. stupe\u0148`}</span>
@@ -500,7 +498,7 @@ export default function CatalogLayout() {
                 {/* Subject nav */}
                 <div className="px-[calc(1rem*0.85)] pt-[calc(0.75rem*0.85)] pb-[calc(0.5rem*0.85)]">
                   {stupenHeading(2, "text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)]")}
-                  {showStupen(2) && <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                  {showStupen(2) && <div className={`flex flex-col gap-[calc(0.125rem*0.85)] ${isTestHome ? 'pl-3' : ''}`}>
                     {secondGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -514,7 +512,7 @@ export default function CatalogLayout() {
                     {testExtraButtons(2, "w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all", () => setMobileSidebarOpen(false))}
                   </div>}
                   {stupenHeading(1, "text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)] mt-[calc(0.75rem*0.85)]")}
-                  {showStupen(1) && <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                  {showStupen(1) && <div className={`flex flex-col gap-[calc(0.125rem*0.85)] ${isTestHome ? 'pl-3' : ''}`}>
                     {firstGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -769,11 +767,11 @@ export default function CatalogLayout() {
                     </p>
                   </div>
 
-                  <div className="space-y-[calc(1.25rem*0.85)]">
+                  <div className={isTestHome ? "flex flex-col gap-[calc(0.25rem*0.85)]" : "space-y-[calc(1.25rem*0.85)]"}>
                     {/* 2. stupeň */}
                     <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                       {stupenHeading(2, "text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]")}
-                      {showStupen(2) && <div className="flex flex-col">
+                      {showStupen(2) && <div className={`flex flex-col ${isTestHome ? 'pl-3' : ''}`}>
                         {(groupingMode === 'subject' ? secondGradeSubjects : secondGradeLevels).map(item => {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -798,7 +796,7 @@ export default function CatalogLayout() {
                     {/* 1. stupeň */}
                     <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                       {stupenHeading(1, "text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]")}
-                      {showStupen(1) && <div className="flex flex-col">
+                      {showStupen(1) && <div className={`flex flex-col ${isTestHome ? 'pl-3' : ''}`}>
                         {(groupingMode === 'subject' ? firstGradeSubjects : firstGradeLevels).map(item => {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
