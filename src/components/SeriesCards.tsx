@@ -17,12 +17,14 @@ type SeriesDef = {
   description: string;
   /** Hodnota `?typ=` na stránce předmětu (SERIES_TYP_PARAMS v SubjectPage); bez ní vede karta na celý předmět. */
   typ?: string;
-  /** Pozadí karty (zatím jednotná světle šedá webu; lze dát každé řadě jinou). */
+  /** Pozadí karty (zatím jednotná světlá šedá webu; lze dát každé řadě jinou). */
   bg: string;
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
   placeholder?: boolean;
   match?: (lowerName: string) => boolean;
-  /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou. */
+  /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady), aby karty nebyly stejné. */
+  coverGrades?: [number, number];
+  /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou; první je vpředu. */
   staticCovers?: Cover[];
 };
 
@@ -35,7 +37,8 @@ const MATH_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Žáci objevují matematické jevy',
     typ: 'krok',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
+    coverGrades: [0, 2],
     match: (n) => n.includes('krok za krokem'),
   },
   {
@@ -44,7 +47,8 @@ const MATH_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
     typ: 'pro-vsechny',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
+    coverGrades: [1, 3],
     match: (n) => n.includes('pro všechny'),
   },
   {
@@ -52,7 +56,7 @@ const MATH_SERIES: SeriesDef[] = [
     title: 'Moje Matematika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
     placeholder: true,
     match: (n) => n.includes('moje matematik'),
   },
@@ -64,10 +68,10 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Krok za krokem',
     label: 'Pracovní sešity',
     description: 'Žáci objevují fyzikální jevy',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
     staticCovers: [
-      { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
       { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
+      { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
     ],
   },
   {
@@ -75,7 +79,8 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Pro všechny',
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
+    coverGrades: [3, 1],
     match: (n) => n.includes('pracovní sešit'),
   },
   {
@@ -83,10 +88,10 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Moje Fyzika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
-    bg: '#F0F2F8',
+    bg: '#f8f9fc',
     staticCovers: [
+      { name: 'Fyzika 8 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-8-19456.png` },
       { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
-      { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
     ],
   },
 ];
@@ -98,6 +103,20 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
 };
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
+const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name;
+
+/** Dvě obálky různých ročníků: z každého ročníku první díl, pak vybrané podle `coverGrades`. */
+function pickCovers(books: any[], [front, back]: [number, number] = [0, 1]): Cover[] {
+  const perGrade = new Map<string, any>();
+  [...books].sort(byOrder).forEach((b) => {
+    const g = gradeOf(String(b.name || ''));
+    if (!perGrade.has(g)) perGrade.set(g, b);
+  });
+  const list = [...perGrade.values()];
+  if (list.length === 0) return [];
+  const picked = [list[front % list.length], list[back % list.length]];
+  return (picked[0] === picked[1] ? [picked[0]] : picked).map((b) => ({ name: b.name, image: b.image }));
+}
 
 export function SeriesCards({
   mainGroup,
@@ -111,10 +130,10 @@ export function SeriesCards({
   const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
-    covers: s.staticCovers ?? books
-      .filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase()))
-      .sort(byOrder)
-      .slice(0, 2),
+    covers: s.staticCovers ?? pickCovers(
+      books.filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase())),
+      s.coverGrades,
+    ),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
 
   return (
