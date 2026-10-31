@@ -703,7 +703,7 @@ function CatalogHeroSliderSkeleton({
   );
 }
 
-/** `test` = neveřejná kopie na /homepage-test (noindex); změny homepage se tu zkouší, než jdou na `/`. */
+/** `test` = neveřejná kopie na TEST_HOMEPAGE_PATH (noindex); změny homepage se tu zkouší, než jdou na `/`. */
 export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | 'test' } = {}) {
   const isTestVariant = variant === 'test';
   const navigate  = useNavigate();

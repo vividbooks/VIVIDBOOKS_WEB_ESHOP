@@ -15,6 +15,7 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { useSchoolOrderDraftMeta } from '../utils/schoolOrderDraft';
 import { subjectToSlug } from '../utils/slugify';
 import { DvppLeadMagnetPage } from './DvppLeadMagnetPage';
+import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 
 /* ── Logo: viewBox musí pokrýt celý řádek BOOKS (y≈866); 655 ořezával půlku písmen ── */
 const VIVIDBOOKS_LOGO_VIEWBOX = '0 0 1786.62 869.93';
@@ -243,10 +244,10 @@ export default function CatalogLayout() {
   const isSchoolOrderView = location.pathname === '/objednat';
   const isCheckoutView = location.pathname === '/pokladna';
   const isResumePaymentView = location.pathname === '/platit';
-  /** Úvod: ostrá homepage `/` i neveřejná testovací kopie `/homepage-test` */
-  const isHomeView = location.pathname === '/' || location.pathname === '/homepage-test';
+  /** Úvod: ostrá homepage `/` i neveřejná testovací kopie (TEST_HOMEPAGE_PATH) */
+  const isHomeView = location.pathname === '/' || location.pathname === TEST_HOMEPAGE_PATH;
   /** Testovací homepage: menu s předměty jen z aplikace a rozbalovacími stupni (výchozí zabalené). */
-  const isTestHome = location.pathname === '/homepage-test';
+  const isTestHome = location.pathname === TEST_HOMEPAGE_PATH;
   const [openStupne, setOpenStupne] = useState<Set<1 | 2>>(() => new Set());
   const toggleStupen = (n: 1 | 2) =>
     setOpenStupne((prev) => {

@@ -2,7 +2,7 @@ import React from 'react';
 import { subjectToSlug } from '../utils/slugify';
 
 /**
- * Homepage (zatím jen /homepage-test): místo pásu sešitů předmětu tři velké karty řad.
+ * Homepage (zatím jen testovací kopie, TEST_HOMEPAGE_PATH): místo pásu sešitů předmětu tři velké karty řad.
  * Obálky bere z reálných produktů dané řady, nebo ze `staticCovers` (řady, které zatím jsou jen
  * v aplikaci nove.vividbooks.com, ne v katalogu webu). Řada bez obálek se nezobrazí, pokud nemá
  * `placeholder` (pak místo obálek dva modré sešity s názvem řady).

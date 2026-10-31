@@ -6,6 +6,7 @@ import { ChunkLoadErrorFallback } from './components/ChunkLoadErrorFallback';
 import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
+import { TEST_HOMEPAGE_PATH } from './config/testHomepage';
 
 /** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
 function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
@@ -142,7 +143,7 @@ export const router = createBrowserRouter(
             { index: true, lazy: lazyDefault(() => import('./components/CatalogGrid')) },
             // Neveřejná testovací kopie homepage (noindex, nikde neodkázaná) — změny se zapínají přes variant="test".
             {
-              path: 'homepage-test',
+              path: TEST_HOMEPAGE_PATH.slice(1),
               lazy: async () => {
                 const { default: CatalogGrid } = await import('./components/CatalogGrid');
                 return { Component: () => React.createElement(CatalogGrid, { variant: 'test' }) };
