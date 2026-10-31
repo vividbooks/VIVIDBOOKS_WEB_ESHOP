@@ -206,7 +206,7 @@ export function SeriesCards({
                   ];
                   const order = slots.length === 2 ? [0, 2] : [0, 1, 2];
                   return slots.map((c, i) => {
-                    const cls = `absolute left-[24%] bottom-[6%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[order[i]]}`;
+                    const cls = `absolute left-[24%] bottom-[14%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[order[i]]}`;
                     if (c) return <img key={i} src={c.image} alt={i === 0 ? c.name : ''} loading="lazy" className={cls} />;
                     return (
                       <div key={i} className={`${cls} aspect-[210/297] bg-[#001161] ring-1 ring-white/25 flex items-center px-2`}>
@@ -221,7 +221,7 @@ export function SeriesCards({
                 })()}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className={`self-end rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:right-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
+                <span className={`self-start rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
                   {s.label}
                 </span>
                 <h3 className={`my-auto py-3 ${four ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
