@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
-import { MathSeriesCards } from './MathSeriesCards';
+import { SeriesCards, SERIES_BY_GROUP } from './SeriesCards';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
@@ -2187,8 +2187,8 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
             if (b === 'Krok za krokem') return 1;
             return a.localeCompare(b);
           });
-          /** Test homepage: Matematika 2. stupeň jako tři karty řad místo pásu sešitů. */
-          const showSeriesCards = isTestVariant && groupingMode === 'subject' && mainGroup === 'Matematika 2. stupe\u0148';
+          /** Test homepage: předměty se řadami (Matematika 2. st., Fyzika) jako karty řad místo pásu sešitů. */
+          const showSeriesCards = isTestVariant && groupingMode === 'subject' && mainGroup in SERIES_BY_GROUP;
           const allRowBooks: any[] = [
             getDigitalLicenseForGroup(mainGroup),
             ...sortedSubEntries.flatMap(([, books]) => books),
@@ -2249,7 +2249,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
               </div>
 
               {showSeriesCards ? (
-                <MathSeriesCards
+                <SeriesCards
                   mainGroup={mainGroup}
                   books={sortedSubEntries.flatMap(([, books]) => books)}
                   navigate={navigate}

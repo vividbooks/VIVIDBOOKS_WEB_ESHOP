@@ -2,10 +2,13 @@ import React from 'react';
 import { subjectToSlug } from '../utils/slugify';
 
 /**
- * Homepage (zatím jen /homepage-test): místo pásu sešitů Matematiky 2. stupně tři velké karty řad.
- * Obálky bere z reálných produktů dané řady; řada bez produktů v katalogu se nezobrazí,
- * pokud nemá `placeholder` (pak místo obálek dva modré sešity s názvem řady).
+ * Homepage (zatím jen /homepage-test): místo pásu sešitů předmětu tři velké karty řad.
+ * Obálky bere z reálných produktů dané řady, nebo ze `staticCovers` (řady, které zatím jsou jen
+ * v aplikaci nove.vividbooks.com, ne v katalogu webu). Řada bez obálek se nezobrazí, pokud nemá
+ * `placeholder` (pak místo obálek dva modré sešity s názvem řady).
  */
+
+type Cover = { name: string; image: string };
 
 type SeriesDef = {
   key: string;
@@ -18,10 +21,14 @@ type SeriesDef = {
   bg: string;
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
   placeholder?: boolean;
-  match: (lowerName: string) => boolean;
+  match?: (lowerName: string) => boolean;
+  /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou. */
+  staticCovers?: Cover[];
 };
 
-const SERIES: SeriesDef[] = [
+const APP_COVERS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/obalky';
+
+const MATH_SERIES: SeriesDef[] = [
   {
     key: 'krok',
     title: 'Krok za krokem',
@@ -51,9 +58,48 @@ const SERIES: SeriesDef[] = [
   },
 ];
 
+const PHYSICS_SERIES: SeriesDef[] = [
+  {
+    key: 'krok',
+    title: 'Krok za krokem',
+    label: 'Pracovní sešity',
+    description: 'Žáci objevují fyzikální jevy',
+    bg: '#E2F8FF',
+    staticCovers: [
+      { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
+      { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
+    ],
+  },
+  {
+    key: 'pro-vsechny',
+    title: 'Pro všechny',
+    label: 'Pracovní sešity',
+    description: 'Spousta úloh v různých úrovních',
+    bg: '#EEEAFF',
+    match: (n) => n.includes('pracovní sešit'),
+  },
+  {
+    key: 'moje-fyzika',
+    title: 'Moje Fyzika',
+    label: 'Učebnice / portfolio',
+    description: 'Učební text s vlastním prostorem',
+    bg: '#FFF8E0',
+    staticCovers: [
+      { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
+      { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
+    ],
+  },
+];
+
+/** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
+export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
+  'Matematika 2. stupeň': MATH_SERIES,
+  Fyzika: PHYSICS_SERIES,
+};
+
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
 
-export function MathSeriesCards({
+export function SeriesCards({
   mainGroup,
   books,
   navigate,
@@ -63,10 +109,10 @@ export function MathSeriesCards({
   navigate: (path: string) => void;
 }) {
   const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
-  const cards = SERIES.map((s) => ({
+  const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
-    covers: books
-      .filter((b) => b.image && s.match(String(b.name || '').toLowerCase()))
+    covers: s.staticCovers ?? books
+      .filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase()))
       .sort(byOrder)
       .slice(0, 2),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
@@ -92,7 +138,7 @@ export function MathSeriesCards({
                 navigate(href);
               }}
               style={{ backgroundColor: s.bg }}
-              className="group/series snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 rounded-[28px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2"
+              className="group/series snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2"
             >
               <div className="relative w-[42%] shrink-0 self-center aspect-[3/4]">
                 {!front && (
