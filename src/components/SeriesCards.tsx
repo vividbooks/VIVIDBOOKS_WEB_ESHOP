@@ -335,7 +335,16 @@ const CZECH_SERIES: SeriesDef[] = [
       { name: 'Slabikář 3', image: `${APP_COVERS}/slabikar-3-20261028c.png` },
     ],
   },
-  DIGITAL_CARD,
+  {
+    key: 'ctenarska-gramotnost',
+    title: 'Čtenářská gramotnost',
+    label: 'Sešity',
+    description: 'První čtení, Čteme o vlastivědě, o přírodovědě a o informatice',
+    bg: '#f8f9fc',
+    // Sešity zatím bez obálek.
+    placeholder: true,
+    placeholderText: 'První čtení',
+  },
 ];
 
 /**
