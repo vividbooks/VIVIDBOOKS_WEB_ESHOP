@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
-import { SeriesCards, SERIES_BY_GROUP } from './SeriesCards';
+import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS } from './SeriesCards';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
@@ -1318,7 +1318,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
 
   const sortedGroups = useMemo(() => {
     const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka', 'Ostatn\u00ed'];
-    return Object.entries(groupedWorkbooks).sort(([a], [b]) => {
+    const sorted = Object.entries(groupedWorkbooks).sort(([a], [b]) => {
       if (groupingMode === 'grade') return a.localeCompare(b);
       const ia = order.indexOf(a), ib = order.indexOf(b);
       if (ia !== -1 && ib !== -1) return ia - ib;
@@ -1326,7 +1326,16 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       if (ib !== -1) return 1;
       return a.localeCompare(b);
     });
-  }, [groupedWorkbooks, groupingMode]);
+    /* Test homepage: předměty jen z aplikace (Dějepis) jako řádek s kartami řad. */
+    if (isTestVariant && groupingMode === 'subject' && sorted.length > 0) {
+      APP_ONLY_GROUPS.forEach(({ group, after }) => {
+        if (sorted.some(([g]) => g === group)) return;
+        const at = sorted.findIndex(([g]) => g === after);
+        sorted.splice(at === -1 ? sorted.length : at + 1, 0, [group, {}]);
+      });
+    }
+    return sorted;
+  }, [groupedWorkbooks, groupingMode, isTestVariant]);
 
   /** Skupiny katalogu (Matematika 2. stupeÅˆ, â€¦): obÃ¡lky stahovat aÅ¾ kdyÅ¾ je blok na obrazovce (+ rootMargin), shora dolÅ¯. */
   const [catalogImgReadyGroups, setCatalogImgReadyGroups] = useState<Set<string>>(() => new Set());
@@ -2176,9 +2185,15 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       <div className="px-4 md:px-8 mt-8">
         {sortedGroups.map(([mainGroup, subGroups], idx) => {
           const isExpanded  = expandedGroups.has(mainGroup);
-          const isSecondGrd = secondGradeSubjects.includes(mainGroup) || mainGroup === '2. stupe\u0148';
+          const appOnly = APP_ONLY_GROUPS.find((g) => g.group === mainGroup);
+          const isSecondGrdGroup = (g: string) => secondGradeSubjects.includes(g) || g === '2. stupe\u0148' || APP_ONLY_GROUPS.some((a) => a.group === g);
+          const isSecondGrd = isSecondGrdGroup(mainGroup);
           const nextEntry   = sortedGroups[idx + 1];
-          const isLastSecond = isSecondGrd && nextEntry && !secondGradeSubjects.includes(nextEntry[0]) && nextEntry[0] !== '2. stupe\u0148';
+          const isLastSecond = isSecondGrd && nextEntry && !isSecondGrdGroup(nextEntry[0]);
+          const openSubject = () => {
+            if (appOnly) window.location.href = appOnly.href;
+            else navigate(`/predmet/${subjectToSlug(mainGroup)}`);
+          };
           const isFirstGrd  = firstGradeSubjects.includes(mainGroup) || mainGroup === '1. stupe\u0148';
           const isLastFirst  = isFirstGrd && (!nextEntry || (!firstGradeSubjects.includes(nextEntry[0]) && nextEntry[0] !== '1. stupe\u0148'));
 
@@ -2187,7 +2202,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
             if (b === 'Krok za krokem') return 1;
             return a.localeCompare(b);
           });
-          /** Test homepage: předměty se řadami (Matematika 2. st., Fyzika) jako karty řad místo pásu sešitů. */
+          /** Test homepage: předměty se řadami (Matematika 2. st., Fyzika, Přírodopis, Chemie, Dějepis) jako karty řad místo pásu sešitů. */
           const showSeriesCards = isTestVariant && groupingMode === 'subject' && mainGroup in SERIES_BY_GROUP;
           const allRowBooks: any[] = [
             getDigitalLicenseForGroup(mainGroup),
@@ -2205,13 +2220,13 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
               <div className="relative z-10 mb-1 flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center md:gap-3">
                 <h2
                   className="text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 cursor-pointer hover:opacity-75 transition-opacity whitespace-nowrap"
-                  onClick={() => navigate(`/predmet/${subjectToSlug(mainGroup)}`)}
+                  onClick={openSubject}
                 >
                   {mainGroup}
                 </h2>
                 <div className="flex w-full items-center justify-between gap-3 md:ml-auto md:w-auto md:justify-start">
                   <button
-                    onClick={() => navigate(`/predmet/${subjectToSlug(mainGroup)}`)}
+                    onClick={openSubject}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white font-['Fenomen_Sans',sans-serif] text-[13px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97] cursor-pointer group/openbtn"
                   >
                     {'Otev\u0159\u00edt cel\u00fd p\u0159edm\u011bt'}

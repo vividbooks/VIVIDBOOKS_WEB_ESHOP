@@ -116,19 +116,122 @@ const PHYSICS_SERIES: SeriesDef[] = [
   },
 ];
 
+const BIOLOGY_SERIES: SeriesDef[] = [
+  {
+    key: 'sesity',
+    title: 'Pracovní sešity',
+    label: '6.–9. ročník',
+    description: 'Sešit ke každému ročníku',
+    bg: '#f8f9fc',
+    coverGrades: [0, 1, 2],
+    match: (n) => n.includes('pracovní sešit'),
+  },
+  {
+    key: 'muj-prirodopis',
+    title: 'Můj Přírodopis',
+    label: 'Učebnice / portfolio',
+    description: 'Učební text s vlastním prostorem',
+    bg: '#f8f9fc',
+    staticCovers: [
+      { name: 'Přírodopis 6 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-6-91865.png` },
+      { name: 'Přírodopis 7 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-7-91865.png` },
+      { name: 'Přírodopis 8 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-8-91865.png` },
+    ],
+  },
+  {
+    key: 'digital',
+    title: 'Digitální učebnice',
+    label: 'Digitální přístup',
+    description: 'Celá učebnice online, na tabuli i u žáků',
+    bg: '#f8f9fc',
+    digital: true,
+  },
+];
+
+const CHEMISTRY_SERIES: SeriesDef[] = [
+  {
+    key: 'sesity',
+    title: 'Pracovní sešity',
+    label: '8.–9. ročník',
+    description: 'Sešit ke každému ročníku',
+    bg: '#f8f9fc',
+    coverGrades: [0, 1],
+    match: (n) => n.includes('pracovní sešit'),
+  },
+  {
+    key: 'rvp-2025',
+    title: 'Chemie podle RVP 2025',
+    label: 'Učebnice',
+    description: 'Nová učebnice pro 8. a 9. ročník',
+    bg: '#f8f9fc',
+    staticCovers: [
+      { name: 'Chemie podle RVP 2025 · 8. ročník', image: 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/chemie-rvp/obalka-8-mukycssf.png' },
+      { name: 'Chemie podle RVP 2025 · 9. ročník', image: 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/chemie-rvp/obalka-9-mukycv6j.png' },
+    ],
+  },
+  {
+    key: 'digital',
+    title: 'Digitální učebnice',
+    label: 'Digitální přístup',
+    description: 'Celá učebnice online, na tabuli i u žáků',
+    bg: '#f8f9fc',
+    digital: true,
+  },
+];
+
+const HISTORY_COVERS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/covers';
+
+const HISTORY_SERIES: SeriesDef[] = [
+  {
+    key: 'krok',
+    title: 'Krok za krokem',
+    label: 'Pracovní sešity',
+    description: 'Sešit pro 7., 8. a 9. ročník',
+    bg: '#f8f9fc',
+    staticCovers: [
+      { name: 'Dějepis 7 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-7-20261027.jpg` },
+      { name: 'Dějepis 8 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-8-20261027.jpg` },
+      { name: 'Dějepis 9 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-9-20261027.jpg` },
+    ],
+  },
+  {
+    key: 'muj-dejepis',
+    title: 'Můj Dějepis',
+    label: 'Učebnice / portfolio',
+    description: 'Učební text s vlastním prostorem',
+    bg: '#f8f9fc',
+    // V aplikaci jsou zatím jen jednobarevné plochy bez názvu — proto zástupné obálky.
+    placeholder: true,
+  },
+];
+
+/**
+ * Předměty, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
+ * jako řádek za `after` a proklik vede do knihovny aplikace.
+ */
+export const APP_ONLY_GROUPS: { group: string; after: string; href: string }[] = [
+  { group: 'Dějepis', after: 'Chemie', href: 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis' },
+];
+
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
 export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   'Matematika 2. stupeň': MATH_SERIES,
   Fyzika: PHYSICS_SERIES,
+  Přírodopis: BIOLOGY_SERIES,
+  Chemie: CHEMISTRY_SERIES,
+  Dějepis: HISTORY_SERIES,
 };
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
 const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name;
+/** Podle ročníku (6. první), v rámci ročníku podle `poradi` (1. díl před 2.). */
+const byGrade = (a: any, b: any) =>
+  (Number(gradeOf(String(a.name || ''))) || 99) - (Number(gradeOf(String(b.name || ''))) || 99) || byOrder(a, b);
 
 /** Obálky různých ročníků (až tři): z každého ročníku první díl, pak vybrané podle `coverGrades`. */
 function pickCovers(books: any[], order: number[] = [0, 1, 2]): Cover[] {
   const perGrade = new Map<string, any>();
-  [...books].sort(byOrder).forEach((b) => {
+  [...books].sort(byGrade).forEach((b) => {
     const g = gradeOf(String(b.name || ''));
     if (!perGrade.has(g)) perGrade.set(g, b);
   });
@@ -150,7 +253,8 @@ export function SeriesCards({
   digitalProduct?: { name?: string; image?: string };
   navigate: (path: string) => void;
 }) {
-  const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
+  const subjectPath =
+    APP_ONLY_GROUPS.find((g) => g.group === mainGroup)?.href ?? `/predmet/${subjectToSlug(mainGroup)}`;
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
     covers: s.digital
@@ -160,14 +264,15 @@ export function SeriesCards({
       s.coverGrades,
     ),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
-  /** 4 karty: na xl vedle sebe a na výšku (obálka nahoře, text pod ní), níž mřížka 2×2. */
+  /** 3–4 karty: na xl vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
   const four = cards.length >= 4;
+  const stacked = cards.length >= 2;
 
   return (
     <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
       <div
         className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2'
+          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-3'
         }`}
         style={{ scrollbarWidth: 'none' }}
       >
@@ -179,14 +284,14 @@ export function SeriesCards({
               key={s.key}
               href={href}
               onClick={(e) => {
-                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0 || /^https?:/.test(href)) return;
                 e.preventDefault();
                 navigate(href);
               }}
               style={{ backgroundColor: s.bg }}
-              className={`group/series relative snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${four ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
+              className={`group/series relative snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
-              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${four ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
+              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
                 {s.digital && front && (
                   <img
                     src={front.image}
@@ -221,10 +326,10 @@ export function SeriesCards({
                 })()}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className={`self-start rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
+                <span className={`self-start rounded-full bg-white px-2.5 ${stacked ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
                   {s.label}
                 </span>
-                <h3 className={`my-auto py-3 ${four ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
+                <h3 className={`my-auto py-3 ${stacked ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
                   {s.title}
                 </h3>
                 <p className="text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[13px] lg:text-[14px] leading-snug">
