@@ -17,6 +17,10 @@ type SeriesDef = {
   description: string;
   /** Hodnota `?typ=` na stránce předmětu (SERIES_TYP_PARAMS v SubjectPage); bez ní vede karta na celý předmět. */
   typ?: string;
+  /** Hodnota `?rocnik=` na stránce předmětu (karty po ročnících na 1. stupni). */
+  rocnik?: string;
+  /** Z katalogu: obálky dílů jedné řady (1. díl vpředu) místo různých ročníků. */
+  coverParts?: boolean;
   /** Pozadí karty (zatím jednotná světlá šedá webu; lze dát každé řadě jinou). */
   bg: string;
   /** Řada zatím není v katalogu — ukázat zástupné obálky místo skrytí karty. */
@@ -205,6 +209,75 @@ const HISTORY_SERIES: SeriesDef[] = [
   },
 ];
 
+/** Karta po ročnících (1. stupeň): obálky dílů daného ročníku, proklik s filtrem ročníku. */
+const gradeCard = (rocnik: number, description: string): SeriesDef => ({
+  key: `rocnik-${rocnik}`,
+  title: `${rocnik}. ročník`,
+  label: 'Pracovní sešity',
+  description,
+  rocnik: String(rocnik),
+  bg: '#f8f9fc',
+  coverParts: true,
+  match: (n) => n.includes(`${rocnik}. ročník`) && n.includes('díl'),
+});
+
+const DIGITAL_CARD: SeriesDef = {
+  key: 'digital',
+  title: 'Digitální učebnice',
+  label: 'Digitální přístup',
+  description: 'Celá učebnice online, na tabuli i u žáků',
+  bg: '#f8f9fc',
+  digital: true,
+};
+
+// Matematika 1. st.: v aplikaci je i 3. ročník, ale zatím bez obálek — karta až budou.
+const MATH1_SERIES: SeriesDef[] = [
+  gradeCard(1, 'Tři díly a Početníček'),
+  gradeCard(2, 'Tři díly a Početníček'),
+  DIGITAL_CARD,
+];
+
+const PRVOUKA_SERIES: SeriesDef[] = [
+  gradeCard(1, 'Pracovní sešit ve dvou dílech'),
+  gradeCard(2, 'Pracovní sešit ve dvou dílech'),
+  gradeCard(3, 'Pracovní sešit, 1. díl'),
+  DIGITAL_CARD,
+];
+
+const CZECH_SERIES: SeriesDef[] = [
+  {
+    key: 'vazane',
+    title: 'Vázané písmo',
+    label: 'Písanky a čáranka',
+    description: 'Písanka ve třech dílech a čáranka',
+    bg: '#f8f9fc',
+    coverParts: true,
+    match: (n) => n.includes('pro vázané písmo'),
+  },
+  {
+    key: 'nevazane',
+    title: 'Nevázané písmo',
+    label: 'Písanky a čáranka',
+    description: 'Písanka ve třech dílech a čáranka',
+    bg: '#f8f9fc',
+    coverParts: true,
+    match: (n) => n.includes('pro nevázané písmo'),
+  },
+  {
+    key: 'slabikare',
+    title: 'Slabikáře',
+    label: 'Čtení',
+    description: 'Slabikář ve třech dílech',
+    bg: '#f8f9fc',
+    staticCovers: [
+      { name: 'Slabikář 1', image: `${APP_COVERS}/slabikar-1-20261028c.png` },
+      { name: 'Slabikář 2', image: `${APP_COVERS}/slabikar-2-20261028c.png` },
+      { name: 'Slabikář 3', image: `${APP_COVERS}/slabikar-3-20261028c.png` },
+    ],
+  },
+  DIGITAL_CARD,
+];
+
 /**
  * Předměty, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
  * jako řádek za `after` a proklik vede do knihovny aplikace.
@@ -220,6 +293,9 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   Přírodopis: BIOLOGY_SERIES,
   Chemie: CHEMISTRY_SERIES,
   Dějepis: HISTORY_SERIES,
+  'Matematika 1. stupeň': MATH1_SERIES,
+  Prvouka: PRVOUKA_SERIES,
+  'Český jazyk': CZECH_SERIES,
 };
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
@@ -227,6 +303,16 @@ const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name
 /** Podle ročníku (6. první), v rámci ročníku podle `poradi` (1. díl před 2.). */
 const byGrade = (a: any, b: any) =>
   (Number(gradeOf(String(a.name || ''))) || 99) - (Number(gradeOf(String(b.name || ''))) || 99) || byOrder(a, b);
+
+const partOf = (name: string) => Number(name.match(/(\d+)\.\s*díl/i)?.[1]) || 99;
+
+/** Až tři díly jedné řady: podle čísla dílu (bez dílu, např. čáranka, až za nimi), pak podle `poradi`. */
+function pickParts(books: any[]): Cover[] {
+  return [...books]
+    .sort((a, b) => partOf(String(a.name || '')) - partOf(String(b.name || '')) || byOrder(a, b))
+    .slice(0, 3)
+    .map((b) => ({ name: b.name, image: b.image }));
+}
 
 /** Obálky různých ročníků (až tři): z každého ročníku první díl, pak vybrané podle `coverGrades`. */
 function pickCovers(books: any[], order: number[] = [0, 1, 2]): Cover[] {
@@ -259,10 +345,10 @@ export function SeriesCards({
     ...s,
     covers: s.digital
       ? (digitalProduct?.image ? [{ name: digitalProduct.name || s.title, image: digitalProduct.image }] : [])
-      : s.staticCovers ?? pickCovers(
-      books.filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase())),
-      s.coverGrades,
-    ),
+      : s.staticCovers ?? (() => {
+        const own = books.filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase()));
+        return s.coverParts ? pickParts(own) : pickCovers(own, s.coverGrades);
+      })(),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
   /** 3–4 karty: na xl vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
   const four = cards.length >= 4;
@@ -278,7 +364,9 @@ export function SeriesCards({
       >
         {cards.map((s) => {
           const [front] = s.covers;
-          const href = s.typ ? `${subjectPath}?typ=${s.typ}` : subjectPath;
+          const href = s.typ
+            ? `${subjectPath}?typ=${s.typ}`
+            : s.rocnik ? `${subjectPath}?rocnik=${s.rocnik}` : subjectPath;
           return (
             <a
               key={s.key}
