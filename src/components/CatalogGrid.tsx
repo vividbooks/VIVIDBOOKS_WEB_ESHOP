@@ -2306,8 +2306,9 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
               )}
               <div className="border-t border-[#001161]/8 mt-1 mb-1" />
             </div>,
-            isLastSecond ? <VividbooksFeatures key={`vvf-${mainGroup}`} grade={2} /> : null,
-            isLastFirst  ? <VividbooksFeatures key={`vvf1-${mainGroup}`} grade={1} /> : null,
+            /* Test homepage: bez bloků „Co umí Vividbooks“. */
+            isLastSecond && !isTestVariant ? <VividbooksFeatures key={`vvf-${mainGroup}`} grade={2} /> : null,
+            isLastFirst && !isTestVariant ? <VividbooksFeatures key={`vvf1-${mainGroup}`} grade={1} /> : null,
           ];
         })}
       </div>
