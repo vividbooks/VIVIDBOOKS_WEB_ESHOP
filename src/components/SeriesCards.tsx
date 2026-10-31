@@ -24,8 +24,8 @@ type SeriesDef = {
   match?: (lowerName: string) => boolean;
   /** Karta digitální učebnice — obrázek online produktu předmětu (prop `digitalProduct`). */
   digital?: boolean;
-  /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady), aby karty nebyly stejné. */
-  coverGrades?: [number, number];
+  /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady; první je vpředu), aby karty nebyly stejné. */
+  coverGrades?: number[];
   /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou; první je vpředu. */
   staticCovers?: Cover[];
 };
@@ -40,7 +40,7 @@ const MATH_SERIES: SeriesDef[] = [
     description: 'Žáci objevují matematické jevy',
     typ: 'krok',
     bg: '#f8f9fc',
-    coverGrades: [0, 2],
+    coverGrades: [0, 2, 3],
     match: (n) => n.includes('krok za krokem'),
   },
   {
@@ -50,7 +50,7 @@ const MATH_SERIES: SeriesDef[] = [
     description: 'Spousta úloh v různých úrovních',
     typ: 'pro-vsechny',
     bg: '#f8f9fc',
-    coverGrades: [1, 3],
+    coverGrades: [1, 0, 3],
     match: (n) => n.includes('pro všechny'),
   },
   {
@@ -91,7 +91,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
     bg: '#f8f9fc',
-    coverGrades: [3, 1],
+    coverGrades: [3, 0, 1],
     match: (n) => n.includes('pracovní sešit'),
   },
   {
@@ -103,6 +103,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     staticCovers: [
       { name: 'Fyzika 8 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-8-19456.png` },
       { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
+      { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
     ],
   },
   {
@@ -124,8 +125,8 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
 const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name;
 
-/** Dvě obálky různých ročníků: z každého ročníku první díl, pak vybrané podle `coverGrades`. */
-function pickCovers(books: any[], [front, back]: [number, number] = [0, 1]): Cover[] {
+/** Obálky různých ročníků (až tři): z každého ročníku první díl, pak vybrané podle `coverGrades`. */
+function pickCovers(books: any[], order: number[] = [0, 1, 2]): Cover[] {
   const perGrade = new Map<string, any>();
   [...books].sort(byOrder).forEach((b) => {
     const g = gradeOf(String(b.name || ''));
@@ -133,8 +134,8 @@ function pickCovers(books: any[], [front, back]: [number, number] = [0, 1]): Cov
   });
   const list = [...perGrade.values()];
   if (list.length === 0) return [];
-  const picked = [list[front % list.length], list[back % list.length]];
-  return (picked[0] === picked[1] ? [picked[0]] : picked).map((b) => ({ name: b.name, image: b.image }));
+  const picked = [...new Set(order.map((i) => list[i % list.length]))];
+  return picked.map((b) => ({ name: b.name, image: b.image }));
 }
 
 export function SeriesCards({
@@ -171,7 +172,7 @@ export function SeriesCards({
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map((s) => {
-          const [front, back] = s.covers;
+          const [front] = s.covers;
           const href = s.typ ? `${subjectPath}?typ=${s.typ}` : subjectPath;
           return (
             <a
@@ -185,7 +186,7 @@ export function SeriesCards({
               style={{ backgroundColor: s.bg }}
               className={`group/series relative snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${four ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
-              <div className={`relative w-[42%] max-w-[160px] shrink-0 self-center aspect-[3/4] ${four ? 'xl:w-[52%] xl:self-start xl:mt-1' : ''}`}>
+              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${four ? 'xl:w-full xl:max-w-[190px] xl:self-start xl:mt-9' : ''}`}>
                 {s.digital && front && (
                   <img
                     src={front.image}
@@ -194,41 +195,39 @@ export function SeriesCards({
                     className="absolute inset-0 h-full w-full object-contain transition-transform duration-300 group-hover/series:-translate-y-1"
                   />
                 )}
-                {!front && (
-                  <>
-                    <div className="absolute left-[14%] top-[2%] w-[78%] aspect-[210/297] rounded-[6px] bg-[#001161] shadow-md transition-transform duration-300 rotate-[8deg] group-hover/series:rotate-[11deg]" />
-                    <div className="absolute left-0 bottom-[2%] w-[78%] aspect-[210/297] rounded-[6px] bg-[#001161] shadow-lg ring-1 ring-white/25 transition-transform duration-300 group-hover/series:-translate-y-1 flex items-center px-2">
-                      <span className="text-white font-['Fenomen_Sans',sans-serif] font-bold text-[13px] lg:text-[16px] leading-[1.05]">
-                        {s.title}
-                      </span>
-                    </div>
-                  </>
-                )}
-                {back && !s.digital && (
-                  <img
-                    src={back.image}
-                    alt=""
-                    loading="lazy"
-                    className="absolute left-[14%] top-[2%] w-[78%] rounded-[6px] shadow-md transition-transform duration-300 rotate-[8deg] group-hover/series:rotate-[11deg]"
-                  />
-                )}
-                {front && !s.digital && (
-                  <img
-                    src={front.image}
-                    alt={front.name}
-                    loading="lazy"
-                    className="absolute left-0 bottom-[2%] w-[78%] rounded-[6px] shadow-lg transition-transform duration-300 group-hover/series:-translate-y-1"
-                  />
-                )}
+                {!s.digital && (() => {
+                  /* Vějíř: obálky otočené kolem společného bodu dole, první vpředu uprostřed. */
+                  const placeholder = s.covers.length === 0;
+                  const slots = placeholder ? [null, null, null] : s.covers;
+                  const pos = [
+                    'z-[3] shadow-lg group-hover/series:-translate-y-1',
+                    'z-[1] shadow-md -rotate-[14deg] -translate-x-[18%] group-hover/series:-rotate-[18deg] group-hover/series:-translate-x-[24%]',
+                    'z-[2] shadow-md rotate-[14deg] translate-x-[18%] group-hover/series:rotate-[18deg] group-hover/series:translate-x-[24%]',
+                  ];
+                  const order = slots.length === 2 ? [0, 2] : [0, 1, 2];
+                  return slots.map((c, i) => {
+                    const cls = `absolute left-[24%] bottom-[6%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[order[i]]}`;
+                    if (c) return <img key={i} src={c.image} alt={i === 0 ? c.name : ''} loading="lazy" className={cls} />;
+                    return (
+                      <div key={i} className={`${cls} aspect-[210/297] bg-[#001161] ring-1 ring-white/25 flex items-center px-2`}>
+                        {i === 0 && (
+                          <span className="text-white font-['Fenomen_Sans',sans-serif] font-bold text-[12px] lg:text-[14px] leading-[1.05]">
+                            {s.title}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className={`self-end rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:right-4' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
+                <span className={`self-end rounded-full bg-white px-2.5 ${four ? 'xl:absolute xl:top-4 xl:right-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
                   {s.label}
                 </span>
-                <h3 className={`my-auto py-3 ${four ? 'xl:my-0 xl:pt-4 xl:pb-1.5' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[17px] lg:text-[21px] leading-[1.1]`}>
+                <h3 className={`my-auto py-3 ${four ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
                   {s.title}
                 </h3>
-                <p className="text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[14px] lg:text-[15px] leading-snug">
+                <p className="text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[13px] lg:text-[14px] leading-snug">
                   {s.description}
                 </p>
               </div>
