@@ -2216,6 +2216,8 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
               id={groupingMode === 'subject' ? mainGroup.replace(/\s+/g, '-').toLowerCase() : undefined}
               className={`mb-4 ${groupingMode === 'subject' ? 'catalog-section scroll-mt-24' : ''}`}
             >
+              {/* Spojené řádky (Dějepis | Zeměpis …) mají nadpisy předmětů v SeriesCards. */}
+              {!appOnly && (
               <div className="relative z-10 mb-1 flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center md:gap-3">
                 <h2
                   className={`text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 whitespace-nowrap ${appOnly ? '' : 'cursor-pointer hover:opacity-75 transition-opacity'}`}
@@ -2263,6 +2265,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
                   )}
                 </div>
               </div>
+              )}
 
               {showSeriesCards ? (
                 <SeriesCards

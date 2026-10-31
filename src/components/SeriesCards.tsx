@@ -29,6 +29,8 @@ type SeriesDef = {
   placeholderText?: string;
   /** Vlastní proklik (např. do knihovny aplikace, když web obsah nemá). */
   href?: string;
+  /** Ve spojeném řádku (APP_ONLY_GROUPS): předmět, jehož nadpis stojí nad kartou. */
+  subject?: string;
   match?: (lowerName: string) => boolean;
   /** Karta digitální učebnice — obrázek online produktu předmětu (prop `digitalProduct`). */
   digital?: boolean;
@@ -195,9 +197,10 @@ const HISTORY_HREF = 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis';
 const HISTORY_GEO_SERIES: SeriesDef[] = [
   {
     key: 'dejepis-krok',
-    title: 'Dějepis',
+    subject: 'Dějepis',
+    title: 'Krok za krokem',
     label: 'Pracovní sešity',
-    description: 'Krok za krokem pro 7.–9. ročník',
+    description: 'Sešit pro 7., 8. a 9. ročník',
     bg: '#f8f9fc',
     href: HISTORY_HREF,
     staticCovers: [
@@ -208,6 +211,7 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
   },
   {
     key: 'muj-dejepis',
+    subject: 'Dějepis',
     title: 'Můj Dějepis',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
@@ -217,12 +221,13 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     href: HISTORY_HREF,
   },
   {
-    key: 'zemepis-6',
-    title: 'Zeměpis 6',
-    label: 'Pracovní sešity',
-    description: 'Tematické sešity pro 6. ročník',
+    key: 'muj-zemepis',
+    subject: 'Zeměpis',
+    title: 'Můj Zeměpis',
+    label: 'Učebnice / portfolio',
+    description: 'Učební text s vlastním prostorem',
     bg: '#f8f9fc',
-    // Zatím jen v aplikaci, bez obálek.
+    // V aplikaci zatím tematické sešity pro 6. ročník, bez obálek.
     placeholder: true,
     href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
   },
@@ -275,9 +280,9 @@ const MATH1_SERIES: SeriesDef[] = [
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 /** Vlastivěda, přírodověda a informatika v jednom řádku; zatím jen 4. ročník (5. je v aplikaci taky). */
 const CJS_INFO_SERIES: SeriesDef[] = [
-  appOnlyCard('vlastiveda-4', 'Vlastivěda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
-  appOnlyCard('prirodoveda-4', 'Přírodověda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
-  appOnlyCard('informatika-4', 'Informatika 4', 'Pracovní sešit', 'Pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`),
+  { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Pracovní sešit', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4'), subject: 'Vlastivěda' },
+  { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Pracovní sešit', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4'), subject: 'Přírodověda' },
+  { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4'), subject: 'Informatika' },
 ];
 
 const PRVOUKA_SERIES: SeriesDef[] = [
@@ -398,15 +403,7 @@ export function SeriesCards({
   const four = cards.length >= 4;
   const stacked = cards.length >= 1;
 
-  return (
-    <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
-      <div
-        className={`flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${
-          four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4'
-        }`}
-        style={{ scrollbarWidth: 'none' }}
-      >
-        {cards.map((s) => {
+  const renderCard = (s: (typeof cards)[number]) => {
           const [front] = s.covers;
           const href = s.href
             ? s.href
@@ -472,7 +469,46 @@ export function SeriesCards({
               </div>
             </a>
           );
-        })}
+  };
+
+  const stripClass = (cols: string) =>
+    `flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${cols}`;
+
+  /* Spojený řádek: nad kartami nadpisy předmětů (Dějepis | Zeměpis), šířka sloupců podle počtu karet. */
+  if (cards.some((c) => c.subject)) {
+    const blocks: { subject: string; items: typeof cards }[] = [];
+    cards.forEach((c) => {
+      const last = blocks[blocks.length - 1];
+      if (last && last.subject === c.subject) last.items.push(c);
+      else blocks.push({ subject: c.subject ?? '', items: [c] });
+    });
+    const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-3', 4: 'md:grid-cols-4' };
+    const SPAN: Record<number, string> = { 1: 'md:col-span-1', 2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4' };
+    return (
+      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${COLS[Math.min(cards.length, 4)]}`}>
+        {blocks.map((b) => (
+          <div key={b.subject} className={`min-w-0 ${SPAN[b.items.length] ?? ''}`}>
+            <h2 className="mb-3 text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight whitespace-nowrap">
+              {b.subject}
+            </h2>
+            <div className="-mx-4 md:mx-0 px-4 md:px-0">
+              <div className={stripClass(COLS[b.items.length] ?? '')} style={{ scrollbarWidth: 'none' }}>
+                {b.items.map(renderCard)}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
+      <div
+        className={stripClass(four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
+        style={{ scrollbarWidth: 'none' }}
+      >
+        {cards.map(renderCard)}
       </div>
     </div>
   );
