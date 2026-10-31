@@ -50,7 +50,7 @@ const MATH_SERIES: SeriesDef[] = [
     description: 'Spousta úloh v různých úrovních',
     typ: 'pro-vsechny',
     bg: '#f8f9fc',
-    coverGrades: [1, 0, 3],
+    coverGrades: [0, 1, 3],
     match: (n) => n.includes('pro všechny'),
   },
   {
@@ -81,8 +81,8 @@ const PHYSICS_SERIES: SeriesDef[] = [
     description: 'Žáci objevují fyzikální jevy',
     bg: '#f8f9fc',
     staticCovers: [
-      { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
       { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
+      { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
     ],
   },
   {
@@ -91,7 +91,7 @@ const PHYSICS_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
     bg: '#f8f9fc',
-    coverGrades: [3, 0, 1],
+    coverGrades: [0, 1, 2],
     match: (n) => n.includes('pracovní sešit'),
   },
   {
@@ -101,9 +101,9 @@ const PHYSICS_SERIES: SeriesDef[] = [
     description: 'Učební text s vlastním prostorem',
     bg: '#f8f9fc',
     staticCovers: [
-      { name: 'Fyzika 8 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-8-19456.png` },
       { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
       { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
+      { name: 'Fyzika 8 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-8-19456.png` },
     ],
   },
   {
@@ -186,7 +186,7 @@ export function SeriesCards({
               style={{ backgroundColor: s.bg }}
               className={`group/series relative snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${four ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
-              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${four ? 'xl:w-full xl:max-w-[190px] xl:self-start xl:mt-9' : ''}`}>
+              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${four ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
                 {s.digital && front && (
                   <img
                     src={front.image}
