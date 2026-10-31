@@ -210,6 +210,16 @@ const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk
 const secondGradeLevels   = ['6. ro\u010dn\u00edk', '7. ro\u010dn\u00edk', '8. ro\u010dn\u00edk', '9. ro\u010dn\u00edk'];
 const firstGradeLevels    = ['1. ro\u010dn\u00edk', '2. ro\u010dn\u00edk'];
 
+/** Jen testovací homepage: předměty, které jsou zatím jen v aplikaci (proklik do její knihovny). */
+const APP_LIBRARY = 'https://nove.vividbooks.com/knihovna';
+const testExtraSubjects: Record<1 | 2, { label: string; href: string }[]> = {
+  2: [
+    { label: 'D\u011bjepis', href: `${APP_LIBRARY}/stupen-2/dejepis` },
+    { label: 'Zem\u011bpis', href: `${APP_LIBRARY}/stupen-2/zemepis` },
+  ],
+  1: [{ label: 'Informatika', href: `${APP_LIBRARY}/stupen-1/informatika` }],
+};
+
 /* ── CatalogLayout ─────────────────────────────────────────────── */
 export default function CatalogLayout() {
   const location  = useLocation();
@@ -231,6 +241,44 @@ export default function CatalogLayout() {
   const isResumePaymentView = location.pathname === '/platit';
   /** Úvod: ostrá homepage `/` i neveřejná testovací kopie `/homepage-test` */
   const isHomeView = location.pathname === '/' || location.pathname === '/homepage-test';
+  /** Testovací homepage: menu s předměty jen z aplikace a rozbalovacími stupni (výchozí zabalené). */
+  const isTestHome = location.pathname === '/homepage-test';
+  const [openStupne, setOpenStupne] = useState<Set<1 | 2>>(() => new Set());
+  const toggleStupen = (n: 1 | 2) =>
+    setOpenStupne((prev) => {
+      const next = new Set(prev);
+      if (next.has(n)) next.delete(n); else next.add(n);
+      return next;
+    });
+  const showStupen = (n: 1 | 2) => !isTestHome || openStupne.has(n);
+  /** Nadpis stupně: na testovací homepage tlačítko s šipkou, jinak beze změny. */
+  const stupenHeading = (n: 1 | 2, className: string) =>
+    isTestHome ? (
+      <button
+        type="button"
+        onClick={() => toggleStupen(n)}
+        aria-expanded={openStupne.has(n)}
+        className={`${className} flex w-full items-center justify-between text-left cursor-pointer hover:text-[#001161]/80`}
+      >
+        {`${n}. stupe\u0148`}
+        <svg
+          className={`size-3.5 shrink-0 transition-transform ${openStupne.has(n) ? 'rotate-180' : ''}`}
+          fill="none" viewBox="0 0 24 24" stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+    ) : (
+      <span className={className}>{`${n}. stupe\u0148`}</span>
+    );
+  const testExtraButtons = (n: 1 | 2, className: string, after?: () => void) =>
+    isTestHome && groupingMode === 'subject'
+      ? testExtraSubjects[n].map(({ label, href }) => (
+          <button key={label} type="button" onClick={() => { after?.(); window.location.href = href; }} className={className}>
+            {label}
+          </button>
+        ))
+      : null;
   const isCheckoutLikeSidebar = isCheckoutView || isSchoolOrderView;
   const { step: orderStep } = useOrderNav();
   /** Krok „Počty“ — více místa vlevo: bez loga, odkaz nahoře */
@@ -451,8 +499,8 @@ export default function CatalogLayout() {
 
                 {/* Subject nav */}
                 <div className="px-[calc(1rem*0.85)] pt-[calc(0.75rem*0.85)] pb-[calc(0.5rem*0.85)]">
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)]">2. stupeň</p>
-                  <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                  {stupenHeading(2, "text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)]")}
+                  {showStupen(2) && <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                     {secondGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -463,9 +511,10 @@ export default function CatalogLayout() {
                         </button>
                       );
                     })}
-                  </div>
-                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)] mt-[calc(0.75rem*0.85)]">1. stupeň</p>
-                  <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
+                    {testExtraButtons(2, "w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all", () => setMobileSidebarOpen(false))}
+                  </div>}
+                  {stupenHeading(1, "text-[11px] font-bold uppercase tracking-wider text-[#001161]/40 mb-[calc(0.5rem*0.85)] mt-[calc(0.75rem*0.85)]")}
+                  {showStupen(1) && <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
                     {firstGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -476,7 +525,8 @@ export default function CatalogLayout() {
                         </button>
                       );
                     })}
-                  </div>
+                    {testExtraButtons(1, "w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all", () => setMobileSidebarOpen(false))}
+                  </div>}
                 </div>
 
                 <div className="px-[calc(1rem*0.85)] pt-[calc(0.125rem*0.85)] pb-[calc(0.55rem*0.85)]">
@@ -722,10 +772,8 @@ export default function CatalogLayout() {
                   <div className="space-y-[calc(1.25rem*0.85)]">
                     {/* 2. stupeň */}
                     <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
-                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]">
-                        {'2. stupe\u0148'}
-                      </span>
-                      <div className="flex flex-col">
+                      {stupenHeading(2, "text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]")}
+                      {showStupen(2) && <div className="flex flex-col">
                         {(groupingMode === 'subject' ? secondGradeSubjects : secondGradeLevels).map(item => {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -743,15 +791,14 @@ export default function CatalogLayout() {
                             </button>
                           );
                         })}
-                      </div>
+                        {testExtraButtons(2, "w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer text-[#001161] hover:bg-white border border-transparent hover:border-gray-200")}
+                      </div>}
                     </div>
 
                     {/* 1. stupeň */}
                     <div className="flex flex-col gap-[calc(0.125rem*0.85)]">
-                      <span className="text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]">
-                        {'1. stupe\u0148'}
-                      </span>
-                      <div className="flex flex-col">
+                      {stupenHeading(1, "text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]")}
+                      {showStupen(1) && <div className="flex flex-col">
                         {(groupingMode === 'subject' ? firstGradeSubjects : firstGradeLevels).map(item => {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
@@ -769,7 +816,8 @@ export default function CatalogLayout() {
                             </button>
                           );
                         })}
-                      </div>
+                        {testExtraButtons(1, "w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer text-[#001161] hover:bg-white border border-transparent hover:border-gray-200")}
+                      </div>}
                     </div>
                   </div>
 
