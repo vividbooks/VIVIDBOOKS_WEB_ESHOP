@@ -306,22 +306,13 @@ const PRVOUKA_SERIES: SeriesDef[] = [
 
 const CZECH_SERIES: SeriesDef[] = [
   {
-    key: 'vazane',
-    title: 'Vázané písmo',
-    label: 'Písanky a čáranka',
-    description: 'Písanka ve třech dílech a čáranka',
+    key: 'pisanky',
+    title: 'Písanky',
+    label: 'Vázané i nevázané písmo',
+    description: 'Písanky ve třech dílech a čáranky',
     bg: '#f8f9fc',
     coverParts: true,
-    match: (n) => n.includes('pro vázané písmo'),
-  },
-  {
-    key: 'nevazane',
-    title: 'Nevázané písmo',
-    label: 'Písanky a čáranka',
-    description: 'Písanka ve třech dílech a čáranka',
-    bg: '#f8f9fc',
-    coverParts: true,
-    match: (n) => n.includes('pro nevázané písmo'),
+    match: (n) => n.includes('pro vázané písmo') || n.includes('pro nevázané písmo'),
   },
   {
     key: 'slabikare',
@@ -345,6 +336,7 @@ const CZECH_SERIES: SeriesDef[] = [
     placeholder: true,
     placeholderText: 'První čtení',
   },
+  DIGITAL_CARD,
 ];
 
 /**
