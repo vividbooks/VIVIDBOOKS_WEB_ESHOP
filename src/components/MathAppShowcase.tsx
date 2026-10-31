@@ -55,7 +55,7 @@ export function MathAppShowcase({
     (a) => !(secondStage && APPS_IN_VIDEOS.has(a.name)),
   );
   return (
-    <section id="co-v-aplikaci" className="scroll-mt-24 px-4 pt-16 sm:px-6">
+    <section id="co-v-aplikaci" className="scroll-mt-24 px-4 pt-16 pb-16 sm:px-6 md:pb-24">
       <div className="mx-auto max-w-[1200px]">
         <h2 className="text-[30px] font-bold leading-tight tracking-[-0.01em] text-[#001161] md:text-[38px]" style={{ fontFamily: FF }}>
           {formatTypography('Co všechno v aplikaci najdete')}
