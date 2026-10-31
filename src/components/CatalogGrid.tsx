@@ -2191,8 +2191,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
           const nextEntry   = sortedGroups[idx + 1];
           const isLastSecond = isSecondGrd && nextEntry && !isSecondGrdGroup(nextEntry[0]);
           const openSubject = () => {
-            if (appOnly) window.location.href = appOnly.href;
-            else navigate(`/predmet/${subjectToSlug(mainGroup)}`);
+            if (!appOnly) navigate(`/predmet/${subjectToSlug(mainGroup)}`);
           };
           const isFirstGrd  = firstGradeSubjects.includes(mainGroup) || mainGroup === '1. stupe\u0148';
           const isLastFirst  = isFirstGrd && (!nextEntry || (!firstGradeSubjects.includes(nextEntry[0]) && nextEntry[0] !== '1. stupe\u0148'));
@@ -2219,12 +2218,13 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
             >
               <div className="relative z-10 mb-1 flex flex-col gap-2.5 md:flex-row md:flex-wrap md:items-center md:gap-3">
                 <h2
-                  className="text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 cursor-pointer hover:opacity-75 transition-opacity whitespace-nowrap"
+                  className={`text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight shrink-0 whitespace-nowrap ${appOnly ? '' : 'cursor-pointer hover:opacity-75 transition-opacity'}`}
                   onClick={openSubject}
                 >
                   {mainGroup}
                 </h2>
                 <div className="flex w-full items-center justify-between gap-3 md:ml-auto md:w-auto md:justify-start">
+                  {!appOnly && (
                   <button
                     onClick={openSubject}
                     className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#001161] text-[#001161] hover:bg-[#001161] hover:text-white font-['Fenomen_Sans',sans-serif] text-[13px] font-bold whitespace-nowrap transition-all hover:scale-[1.03] active:scale-[0.97] cursor-pointer group/openbtn"
@@ -2234,6 +2234,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                     </svg>
                   </button>
+                  )}
                   {!isExpanded && !showSeriesCards && (
                     <div className="flex items-center gap-2 shrink-0">
                       {/* Å ipka zpÄ›t â€” zobrazÃ­ se aÅ¾ po odscrollovÃ¡nÃ­ */}

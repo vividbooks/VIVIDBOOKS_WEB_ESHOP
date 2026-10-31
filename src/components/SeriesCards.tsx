@@ -189,13 +189,17 @@ const CHEMISTRY_SERIES: SeriesDef[] = [
 
 const HISTORY_COVERS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/covers';
 
-const HISTORY_SERIES: SeriesDef[] = [
+const HISTORY_HREF = 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis';
+
+/** Dějepis a zeměpis v jednom řádku (oba zatím jen v aplikaci). */
+const HISTORY_GEO_SERIES: SeriesDef[] = [
   {
-    key: 'krok',
-    title: 'Krok za krokem',
+    key: 'dejepis-krok',
+    title: 'Dějepis',
     label: 'Pracovní sešity',
-    description: 'Sešit pro 7., 8. a 9. ročník',
+    description: 'Krok za krokem pro 7.–9. ročník',
     bg: '#f8f9fc',
+    href: HISTORY_HREF,
     staticCovers: [
       { name: 'Dějepis 7 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-7-20261027.jpg` },
       { name: 'Dějepis 8 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-8-20261027.jpg` },
@@ -210,6 +214,17 @@ const HISTORY_SERIES: SeriesDef[] = [
     bg: '#f8f9fc',
     // V aplikaci jsou zatím jen jednobarevné plochy bez názvu — proto zástupné obálky.
     placeholder: true,
+    href: HISTORY_HREF,
+  },
+  {
+    key: 'zemepis-6',
+    title: 'Zeměpis 6',
+    label: 'Pracovní sešity',
+    description: 'Tematické sešity pro 6. ročník',
+    bg: '#f8f9fc',
+    // Zatím jen v aplikaci, bez obálek.
+    placeholder: true,
+    href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
   },
 ];
 
@@ -258,13 +273,10 @@ const MATH1_SERIES: SeriesDef[] = [
 ];
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
-// Zatím jen 4. ročník (5. je v aplikaci taky).
-const CJS_SERIES: SeriesDef[] = [
+/** Vlastivěda, přírodověda a informatika v jednom řádku; zatím jen 4. ročník (5. je v aplikaci taky). */
+const CJS_INFO_SERIES: SeriesDef[] = [
   appOnlyCard('vlastiveda-4', 'Vlastivěda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
   appOnlyCard('prirodoveda-4', 'Přírodověda 4', 'Pracovní sešit', 'Pro 4. ročník', CJS_HREF),
-];
-
-const INFORMATICS_SERIES: SeriesDef[] = [
   appOnlyCard('informatika-4', 'Informatika 4', 'Pracovní sešit', 'Pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`),
 ];
 
@@ -310,13 +322,12 @@ const CZECH_SERIES: SeriesDef[] = [
 ];
 
 /**
- * Předměty, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
- * jako řádek za `after` a proklik vede do knihovny aplikace.
+ * Řádky z předmětů, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
+ * za `after`; každá karta vede do svého předmětu v aplikaci (`href`), tlačítko celého předmětu chybí.
  */
-export const APP_ONLY_GROUPS: { group: string; after: string; href: string; stupen: 1 | 2 }[] = [
-  { group: 'Dějepis', after: 'Chemie', href: 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis', stupen: 2 },
-  { group: 'Vlastivěda a přírodověda', after: 'Prvouka', href: 'https://nove.vividbooks.com/knihovna/stupen-1/clovek-a-jeho-svet', stupen: 1 },
-  { group: 'Informatika', after: 'Vlastivěda a přírodověda', href: 'https://nove.vividbooks.com/knihovna/stupen-1/informatika', stupen: 1 },
+export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2 }[] = [
+  { group: 'Dějepis a zeměpis', after: 'Chemie', stupen: 2 },
+  { group: 'Vlastivěda, přírodověda a informatika', after: 'Prvouka', stupen: 1 },
 ];
 
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
@@ -325,12 +336,11 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   Fyzika: PHYSICS_SERIES,
   Přírodopis: BIOLOGY_SERIES,
   Chemie: CHEMISTRY_SERIES,
-  Dějepis: HISTORY_SERIES,
+  'Dějepis a zeměpis': HISTORY_GEO_SERIES,
   'Matematika 1. stupeň': MATH1_SERIES,
   Prvouka: PRVOUKA_SERIES,
   'Český jazyk': CZECH_SERIES,
-  'Vlastivěda a přírodověda': CJS_SERIES,
-  Informatika: INFORMATICS_SERIES,
+  'Vlastivěda, přírodověda a informatika': CJS_INFO_SERIES,
 };
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
@@ -374,8 +384,7 @@ export function SeriesCards({
   digitalProduct?: { name?: string; image?: string };
   navigate: (path: string) => void;
 }) {
-  const subjectPath =
-    APP_ONLY_GROUPS.find((g) => g.group === mainGroup)?.href ?? `/predmet/${subjectToSlug(mainGroup)}`;
+  const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
     covers: s.digital
