@@ -221,6 +221,18 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     href: HISTORY_HREF,
   },
   {
+    key: 'zemepis-sesity',
+    subject: 'Zeměpis',
+    title: 'Zeměpis obecný nebo regionální',
+    label: 'Pracovní sešity',
+    description: 'Dva typy sešitů podle zaměření výuky',
+    bg: '#f8f9fc',
+    // Zatím bez obálek (v aplikaci tematické sešity pro 6. ročník).
+    placeholder: true,
+    placeholderText: 'Zeměpis',
+    href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
+  },
+  {
     key: 'muj-zemepis',
     subject: 'Zeměpis',
     title: 'Můj Zeměpis',
@@ -487,12 +499,12 @@ export function SeriesCards({
     return (
       <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${COLS[Math.min(cards.length, 4)]}`}>
         {blocks.map((b) => (
-          <div key={b.subject} className={`min-w-0 ${SPAN[b.items.length] ?? ''}`}>
+          <div key={b.subject} className={`min-w-0 flex flex-col ${SPAN[b.items.length] ?? ''}`}>
             <h2 className="mb-3 text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight whitespace-nowrap">
               {b.subject}
             </h2>
-            <div className="-mx-4 md:mx-0 px-4 md:px-0">
-              <div className={stripClass(COLS[b.items.length] ?? '')} style={{ scrollbarWidth: 'none' }}>
+            <div className="flex-1 -mx-4 md:mx-0 px-4 md:px-0">
+              <div className={`${stripClass(COLS[b.items.length] ?? '')} md:h-full`} style={{ scrollbarWidth: 'none' }}>
                 {b.items.map(renderCard)}
               </div>
             </div>
