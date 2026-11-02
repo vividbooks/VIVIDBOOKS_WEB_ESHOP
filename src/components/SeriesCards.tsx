@@ -409,8 +409,10 @@ const TILE_BG = ['#EEEAFF', '#E2F8FF', '#E8F9EE', '#FFF8E0', '#FFF2EC', '#FEF1F1
  * Návrhy náhledu karty digitální učebnice (jen testovací homepage, `?dig=1`–`5`; bez parametru produktový obrázek).
  * 1 vějíř obálek témat · 2 tablet s knihovnou témat · 3 okno prohlížeče · 4 dlaždice ročníků · 5 sešit + tablet.
  */
-function DigitalPreview({ variant, group, product, workbook }: {
+function DigitalPreview({ variant, group, product, workbook, eager = false }: {
   variant: number;
+  /** Kompaktní dlaždice (stránka předmětu): načíst hned — líné načítání ve vodorovném pásu na mobilu nenaběhne. */
+  eager?: boolean;
   group: string;
   product?: Cover;
   workbook?: Cover;
@@ -430,7 +432,7 @@ function DigitalPreview({ variant, group, product, workbook }: {
     return (
       <>
         {topics.slice(0, 3).map((c, i) => (
-          <img key={c.image} src={c.image} alt={i === 0 ? c.name : ''} loading="lazy"
+          <img key={c.image} src={c.image} alt={i === 0 ? c.name : ''} loading={eager ? 'eager' : 'lazy'}
             className={`absolute left-[24%] bottom-[14%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[i]}`} />
         ))}
       </>
@@ -441,7 +443,7 @@ function DigitalPreview({ variant, group, product, workbook }: {
       <div className="absolute inset-x-[2%] top-[16%] -rotate-[4deg] rounded-[12px] bg-[#001161] p-[4%] shadow-lg transition-transform duration-300 group-hover/series:rotate-0">
         <div className="grid grid-cols-3 gap-[4%] rounded-[6px] bg-white p-[5%]">
           {topics.slice(0, 6).map((c) => (
-            <img key={c.image} src={c.image} alt="" loading="lazy" className="aspect-[570/808] w-full rounded-[3px] object-cover" />
+            <img key={c.image} src={c.image} alt="" loading={eager ? 'eager' : 'lazy'} className="aspect-[570/808] w-full rounded-[3px] object-cover" />
           ))}
         </div>
       </div>
@@ -457,7 +459,7 @@ function DigitalPreview({ variant, group, product, workbook }: {
         <div className="grid grid-cols-3 gap-[5%] p-[6%]">
           {topics.slice(0, 3).map((c) => (
             <div key={c.image} className="min-w-0">
-              <img src={c.image} alt="" loading="lazy" className="aspect-[570/808] w-full rounded-[3px] object-cover shadow-sm" />
+              <img src={c.image} alt="" loading={eager ? 'eager' : 'lazy'} className="aspect-[570/808] w-full rounded-[3px] object-cover shadow-sm" />
               <p className="mt-1 truncate text-center text-[8px] text-[#001161]/70 font-['Fenomen_Sans',sans-serif]">{c.name}</p>
             </div>
           ))}
@@ -483,14 +485,14 @@ function DigitalPreview({ variant, group, product, workbook }: {
   if (v === 5 && workbook && product) {
     return (
       <>
-        <img src={workbook.image} alt="" loading="lazy"
+        <img src={workbook.image} alt="" loading={eager ? 'eager' : 'lazy'}
           className="absolute left-[6%] top-[8%] w-[46%] -rotate-[8deg] rounded-[6px] shadow-md transition-transform duration-300 group-hover/series:-rotate-[12deg]" />
-        <img src={product.image} alt={product.name} loading="lazy"
+        <img src={product.image} alt={product.name} loading={eager ? 'eager' : 'lazy'}
           className="absolute right-0 bottom-[2%] w-[80%] object-contain transition-transform duration-300 group-hover/series:-translate-y-1" />
       </>
     );
   }
-  return product ? <img src={product.image} alt={product.name} loading="lazy" className={imgCls} /> : null;
+  return product ? <img src={product.image} alt={product.name} loading={eager ? 'eager' : 'lazy'} className={imgCls} /> : null;
 }
 
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
@@ -592,13 +594,13 @@ export function SeriesCards({
               ref={active ? (el) => {
                 // Na mobilu (vodorovný pás) posunout pás na vybranou dlaždici.
                 const strip = el?.parentElement;
-                if (el && strip && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = el.offsetLeft - strip.offsetLeft - 16;
+                if (el && strip && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = el.offsetLeft - strip.offsetLeft;
               } : undefined}
-              className={`group/series relative ${active ? 'ring-2 ring-[#001161]' : ''} snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] ${compact ? 'p-3 lg:p-3.5 min-h-[120px]' : 'p-4 lg:p-5 min-h-[190px] lg:min-h-[220px]'} transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
+              className={`group/series relative ${active ? 'ring-2 ring-inset ring-[#001161]' : ''} snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] ${compact ? 'p-3 lg:p-3.5 min-h-[120px]' : 'p-4 lg:p-5 min-h-[190px] lg:min-h-[220px]'} transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
               <div className={`relative shrink-0 self-center aspect-square ${compact ? 'w-[40%] max-w-[124px] mr-3' : 'w-[46%] max-w-[180px]'} ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
                 {s.digital && front && (
-                  <DigitalPreview variant={digVariant} group={mainGroup} product={front} workbook={workbookCover} />
+                  <DigitalPreview variant={digVariant} group={mainGroup} product={front} workbook={workbookCover} eager={compact} />
                 )}
                 {!s.digital && (() => {
                   /* Vějíř: obálky otočené kolem společného bodu dole, první vpředu uprostřed. */
@@ -612,7 +614,7 @@ export function SeriesCards({
                   const order = slots.length === 2 ? [0, 2] : [0, 1, 2];
                   return slots.map((c, i) => {
                     const cls = `absolute left-[24%] bottom-[14%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[order[i]]}`;
-                    if (c) return <img key={i} src={c.image} alt={i === 0 ? c.name : ''} loading="lazy" className={cls} />;
+                    if (c) return <img key={i} src={c.image} alt={i === 0 ? c.name : ''} loading={compact ? 'eager' : 'lazy'} className={cls} />;
                     return (
                       <div key={i} className={`${cls} aspect-[210/297] bg-[#001161] ring-1 ring-white/25 flex items-center px-2`}>
                         {i === 0 && (

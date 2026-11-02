@@ -1049,12 +1049,12 @@ export function SubjectPage({
           <div className="space-y-12 mt-2">
             {booksByGrade.map(({ grade, books }) => (
               <div key={grade}>
-                <div className="flex items-center gap-3 mb-5">
+                <div className="relative z-10 flex items-center gap-3 mb-5">
                   <span className="text-[#001161] text-[18px] font-bold shrink-0" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>{grade}</span>
                   <div className="h-px flex-1 bg-[#001161]/8" />
                 </div>
                 {books.length > 0 ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch">
+                  <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : ''}`}>
                     {books.map((book: any) => (
                       <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
                     ))}
@@ -1071,7 +1071,7 @@ export function SubjectPage({
           <div className="space-y-12 mt-2">
             {mathSeriesBlocks.map(({ key, title, books }) => (
               <div key={key}>
-                <div className="flex items-center gap-3 mb-2">
+                <div className="relative z-10 flex items-center gap-3 mb-2">
                   <span
                     className="text-[#001161] text-[18px] font-bold shrink-0"
                     style={{ fontFamily: "'Fenomen Sans', sans-serif" }}
@@ -1080,7 +1080,7 @@ export function SubjectPage({
                   </span>
                   <div className="h-px flex-1 bg-[#001161]/8" />
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch">
+                <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : ''}`}>
                   {books.map((book: any) => (
                     <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
                   ))}
@@ -1090,7 +1090,7 @@ export function SubjectPage({
           </div>
         ) : filteredBooks.length > 0 ? (
           <div
-            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${showSeriesPanels ? '' : 'mt-2'}`}
+            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : showSeriesPanels ? '' : 'mt-2'}`}
           >
             {filteredBooks.map(book => (
               <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
