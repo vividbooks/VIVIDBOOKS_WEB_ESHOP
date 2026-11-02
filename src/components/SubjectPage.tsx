@@ -868,18 +868,19 @@ export function SubjectPage({
 
       {/* Testovací verze: dlaždice řad jako v e-shopu hned pod hlavičkou (klik = filtr řady). */}
       {isTestVariant && SERIES_BY_GROUP[subject] ? (
-        <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-5">
+        <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-4">
           <SeriesCards
             mainGroup={subject}
             books={subjectProducts.filter((p) => p.type !== 'online')}
             digitalProduct={subjectProducts.find((p) => p.type === 'online')}
             navigate={navigate}
+            compact
           />
         </div>
       ) : null}
 
       {/* ── BOOKS ── */}
-      <div className={`${isTestVariant ? 'pt-6 pb-12' : 'py-12'} px-6 md:px-12 max-w-[1200px] mx-auto`}>
+      <div className={`${isTestVariant ? 'pt-4 pb-12' : 'py-12'} px-6 md:px-12 max-w-[1200px] mx-auto`}>
 
         <div className="flex items-center gap-4 mb-0">
           <h2

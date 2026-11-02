@@ -527,12 +527,15 @@ export function SeriesCards({
   books,
   digitalProduct,
   navigate,
+  compact = false,
 }: {
   mainGroup: string;
   books: any[];
   /** Online produkt předmětu (digitální učebnice); bez obrázku se karta digitální učebnice nezobrazí. */
   digitalProduct?: { name?: string; image?: string };
   navigate: (path: string) => void;
+  /** Nízké karty naležato (stránka předmětu) — víc místa pro produkty pod nimi. */
+  compact?: boolean;
 }) {
   /** Karty jsou jen na testovací verzi — vedou na testovací stránku předmětu (s dlaždicemi řad nahoře). */
   const subjectPath = `${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(mainGroup)}`;
@@ -553,7 +556,7 @@ export function SeriesCards({
   })).filter((s) => s.covers.length > 0 || s.placeholder);
   /** Na xl karty vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
   const four = cards.length >= 4;
-  const stacked = cards.length >= 1;
+  const stacked = !compact && cards.length >= 1;
 
   const renderCard = (s: (typeof cards)[number]) => {
           const [front] = s.covers;
@@ -576,9 +579,9 @@ export function SeriesCards({
               }}
               style={{ backgroundColor: s.bg }}
               aria-current={active ? 'page' : undefined}
-              className={`group/series relative ${active ? 'ring-2 ring-[#001161]' : ''} snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] p-4 lg:p-5 min-h-[190px] lg:min-h-[220px] transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
+              className={`group/series relative ${active ? 'ring-2 ring-[#001161]' : ''} snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] ${compact ? 'p-3 lg:p-3.5 min-h-[120px]' : 'p-4 lg:p-5 min-h-[190px] lg:min-h-[220px]'} transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
-              <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
+              <div className={`relative shrink-0 self-center aspect-square ${compact ? 'w-[40%] max-w-[124px] mr-3' : 'w-[46%] max-w-[180px]'} ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
                 {s.digital && front && (
                   <DigitalPreview variant={digVariant} group={mainGroup} product={front} workbook={workbookCover} />
                 )}
@@ -598,7 +601,7 @@ export function SeriesCards({
                     return (
                       <div key={i} className={`${cls} aspect-[210/297] bg-[#001161] ring-1 ring-white/25 flex items-center px-2`}>
                         {i === 0 && (
-                          <span className="text-white font-['Fenomen_Sans',sans-serif] font-bold text-[12px] lg:text-[14px] leading-[1.05]">
+                          <span className={`text-white font-['Fenomen_Sans',sans-serif] font-bold leading-[1.05] ${compact ? 'text-[9px]' : 'text-[12px] lg:text-[14px]'}`}>
                             {s.placeholderText ?? s.title}
                           </span>
                         )}
@@ -611,10 +614,10 @@ export function SeriesCards({
                 <span className={`self-start rounded-full bg-white px-2.5 ${stacked ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
                   {s.label}
                 </span>
-                <h3 className={`my-auto py-3 ${stacked ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
+                <h3 className={`${compact ? 'mt-auto pt-2 pb-0.5 !text-[15px]' : 'my-auto py-3'} ${stacked ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
                   {s.title}
                 </h3>
-                <p className="text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[13px] lg:text-[14px] leading-snug">
+                <p className={`text-[#001161]/70 font-['Fenomen_Sans',sans-serif] leading-snug ${compact ? 'text-[12px] lg:text-[12.5px]' : 'text-[13px] lg:text-[14px]'}`}>
                   {s.description}
                 </p>
               </div>
@@ -654,9 +657,9 @@ export function SeriesCards({
   }
 
   return (
-    <div className="mt-3 mb-5 -mx-4 md:mx-0 px-4 md:px-0">
+    <div className={`${compact ? 'mb-2' : 'mt-3 mb-5'} -mx-4 md:mx-0 px-4 md:px-0`}>
       <div
-        className={stripClass(four ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
+        className={stripClass(four || compact ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map(renderCard)}
