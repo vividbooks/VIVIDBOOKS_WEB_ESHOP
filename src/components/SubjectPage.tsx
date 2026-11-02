@@ -778,9 +778,10 @@ export function SubjectPage({
             className="rounded-[15px] sm:rounded-[20px] md:rounded-[22px] overflow-hidden"
             style={{ background: cfg.heroColor }}
           >
-            <div className="px-5 sm:px-8 md:px-12 pt-6 pb-8">
+            {/* Testovací verze: úspornější hlavička (méně výšky, víc místa pro produkty). */}
+            <div className={isTestVariant ? 'px-5 sm:px-6 md:px-8 py-4' : 'px-5 sm:px-8 md:px-12 pt-6 pb-8'}>
               {/* Horní řádek: Zpět + RVP + doložka (+ „Pro …“ jen kde dává smysl) */}
-              <div className="flex items-center gap-3 mb-5 flex-wrap">
+              <div className={`flex items-center gap-3 flex-wrap ${isTestVariant ? 'mb-1.5' : 'mb-5'}`}>
                 <button
                   onClick={onBack}
                   className="inline-flex items-center gap-1.5 text-[#001161]/50 hover:text-[#001161] text-[13px] transition-colors cursor-pointer group shrink-0"
@@ -813,7 +814,7 @@ export function SubjectPage({
 
               {/* Nadpis předmětu + úvod autora: klik na podtržený řádek rozbalí text (bez vzhledu tlačítka) */}
               <h1
-                className={`text-[#001161] text-[34px] sm:text-[42px] md:text-[52px] leading-[1.05] tracking-tight ${showAuthorIntro ? 'mb-2' : 'mb-0'}`}
+                className={`text-[#001161] ${isTestVariant ? 'text-[28px] md:text-[34px]' : 'text-[34px] sm:text-[42px] md:text-[52px]'} leading-[1.05] tracking-tight ${showAuthorIntro ? (isTestVariant ? 'mb-1' : 'mb-2') : 'mb-0'}`}
                 style={{ fontFamily: "'Cooper Light', serif" }}
               >
                 {cfg.displayName}
@@ -867,7 +868,7 @@ export function SubjectPage({
 
       {/* Testovací verze: dlaždice řad jako v e-shopu hned pod hlavičkou (klik = filtr řady). */}
       {isTestVariant && SERIES_BY_GROUP[subject] ? (
-        <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-8">
+        <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-5">
           <SeriesCards
             mainGroup={subject}
             books={subjectProducts.filter((p) => p.type !== 'online')}
