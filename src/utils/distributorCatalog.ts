@@ -7,6 +7,7 @@
 
 /** Digitální přístupy a licence se prodávají jen předplatným — distributor je neobjednává. */
 export function isDistributorOrderableProduct(product: any): boolean {
+  if (product?.unpublished === true) return false;
   const type = String(product?.type || '').trim().toLowerCase();
   return type !== 'online' && type !== 'license';
 }

@@ -406,6 +406,11 @@ async function getAllProducts() {
   return data?.products || [];
 }
 
+/** Neveřejný (připravený, ještě nevydaný) produkt — nepatří do sitemap, exportů ani AI výběru do e-mailů. */
+function isUnpublishedProduct(product: any): boolean {
+  return product?.unpublished === true;
+}
+
 async function saveAllProducts(products: any[]) {
   const data = {
     products: products.map((p) => syncProductPriceAmount(p)),
@@ -1199,7 +1204,7 @@ function productToMarketingFeedItem(product: any, allProducts: readonly any[]): 
   if (!MARKETING_FEED_PRODUCT_TYPES.has(type)) {
     return { skip: { ...baseSkip, reason: 'unsupported_type' } };
   }
-  if (product?.hideFromCatalog === true || product?.handedness === 'left') {
+  if (product?.hideFromCatalog === true || isUnpublishedProduct(product) || product?.handedness === 'left') {
     return { skip: { ...baseSkip, reason: 'hidden_from_catalog' } };
   }
   if (!id) return { skip: { ...baseSkip, reason: 'missing_id' } };
@@ -1603,7 +1608,7 @@ app.get('/make-server-93a20b6f/test-webflow', async (c) => {
 });
 
 app.get('/make-server-93a20b6f/export-distributor-pack', async (c) => {
-  const products = await getAllProducts();
+  const products = (await getAllProducts()).filter((p: any) => !isUnpublishedProduct(p));
   const headers = ['ID', 'Název', 'Kategorie', 'Typ', 'Cena', 'ISBN', 'Obrázek', 'Popis'];
   const rows = products.map((p: any) => [
     p.id, p.name, p.category, p.type, p.price, p.isbn || '', p.image || '', (p.description || '').replace(/\n/g, ' ')
@@ -5334,7 +5339,7 @@ function normProductAiText(s: string): string {
  * levácké) jsou na konci katalogu a AI je „nevidí“. Preferuj produkty relevantní k promptu.
  */
 function selectProductsForEmailAi(products: any[], queryText: string, limit: number): any[] {
-  const list = Array.isArray(products) ? products.filter((p) => p && (p.id || p.name)) : [];
+  const list = Array.isArray(products) ? products.filter((p) => p && (p.id || p.name) && !isUnpublishedProduct(p)) : [];
   const cap = Math.max(1, Math.floor(limit) || 80);
   if (list.length <= cap) return list;
 
@@ -9472,7 +9477,8 @@ app.get('/make-server-93a20b6f/sitemap.xml', async (c) => {
 
   try {
     const products = await getAllProducts();
-    productUrls = products.map((p: any) => productUrlPath(p, products));
+    // Slugy počítá z celého katalogu (stejně jako web), neveřejné produkty jen vynechá.
+    productUrls = products.filter((p: any) => !isUnpublishedProduct(p)).map((p: any) => productUrlPath(p, products));
   } catch {}
 
   const urls = [

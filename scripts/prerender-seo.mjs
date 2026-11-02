@@ -300,20 +300,24 @@ async function fetchProductsCatalog() {
     });
     if (!res.ok) {
       console.warn(`[prerender-seo] products fetch failed: HTTP ${res.status}`);
-      return { bySlug: new Map(), count: 0 };
+      return { bySlug: new Map(), unpublishedSlugs: new Set(), count: 0 };
     }
     const data = await res.json();
     const products = Array.isArray(data?.products) ? data.products : [];
     const slugById = assignProductSlugs(products);
     const bySlug = new Map();
+    const unpublishedSlugs = new Set();
     for (const product of products) {
       const slug = slugById.get(productIdentity(product));
-      if (slug) bySlug.set(slug, product);
+      if (!slug) continue;
+      // Neveřejné produkty neprerenderujeme (slugy ostatních se počítají z celého katalogu, takže se nezmění).
+      if (product?.unpublished === true) unpublishedSlugs.add(slug);
+      else bySlug.set(slug, product);
     }
-    return { bySlug, count: products.length };
+    return { bySlug, unpublishedSlugs, count: products.length };
   } catch (err) {
     console.warn(`[prerender-seo] products fetch error: ${err?.message || err}`);
-    return { bySlug: new Map(), count: 0 };
+    return { bySlug: new Map(), unpublishedSlugs: new Set(), count: 0 };
   }
 }
 
@@ -587,7 +591,7 @@ function loadSitemapPaths() {
   return [...new Set(paths)];
 }
 
-async function collectPages(productsBySlug, homepageHeroOg = null) {
+async function collectPages(productsBySlug, homepageHeroOg = null, unpublishedSlugs = new Set()) {
   const byPath = new Map();
   for (const page of SEO_PAGES) {
     byPath.set(page.path, { ...page });
@@ -611,6 +615,8 @@ async function collectPages(productsBySlug, homepageHeroOg = null) {
   let fromSitemap = 0;
   for (const pathname of loadSitemapPaths()) {
     if (byPath.has(pathname)) continue;
+    // Starší sitemap (build před nasazením Edge funkce) může neveřejný produkt ještě obsahovat.
+    if (pathname.startsWith('/produkt/') && unpublishedSlugs.has(decodeURIComponent(pathname.slice('/produkt/'.length)))) continue;
     const page = pageFromSitemapPath(pathname, productsBySlug);
     if (!page) continue;
     byPath.set(pathname, page);
@@ -646,7 +652,7 @@ async function main() {
 
   await syncLiveSitemap();
 
-  const { bySlug: productsBySlug, count: productCount } = await fetchProductsCatalog();
+  const { bySlug: productsBySlug, unpublishedSlugs, count: productCount } = await fetchProductsCatalog();
   console.log(`[prerender-seo] Loaded ${productCount} products for Product OG + JSON-LD`);
 
   const homepageHeroOg = await fetchHomepageHeroOg();
@@ -656,7 +662,7 @@ async function main() {
     console.warn('[prerender-seo] Homepage hero OG unavailable — using curated defaults');
   }
 
-  const { pages, fromSitemap, fromCatalog } = await collectPages(productsBySlug, homepageHeroOg);
+  const { pages, fromSitemap, fromCatalog } = await collectPages(productsBySlug, homepageHeroOg, unpublishedSlugs);
   let written = 0;
   let productsWithPrice = 0;
 

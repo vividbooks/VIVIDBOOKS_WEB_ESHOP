@@ -1218,6 +1218,7 @@ export function ProductDetailPage({
       <SEOHead
         title={product.name}
         path={productDetailPath(product, products)}
+        noIndex={product.unpublished === true}
         description={desc || `${product.name} \u2014 ${product.category}. Interaktivn\u00ed u\u010debn\u00ed materi\u00e1l od Vividbooks.`}
         image={resolveShareImageUrl({ explicitImage: product.image, category: product.category })}
         imageAlt={buildOgImageAlt({ productName: product.name, categoryLabel: product.category })}
