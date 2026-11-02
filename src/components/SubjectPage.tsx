@@ -154,8 +154,8 @@ function useWindowWidth() {
 /* ─────────────────────────────────────────────
    Book card
 ───────────────────────────────────────────── */
-function BookCard({ book, onClick }: { book: any; onClick?: () => void }) {
-  return <UnifiedBookCard book={book} onClick={onClick} variant="catalog" />;
+function BookCard({ book, onClick, compactCover }: { book: any; onClick?: () => void; compactCover?: boolean }) {
+  return <UnifiedBookCard book={book} onClick={onClick} variant="catalog" compactCover={compactCover} />;
 }
 
 /* ──────────────────────────────────────────
@@ -1054,9 +1054,9 @@ export function SubjectPage({
                   <div className="h-px flex-1 bg-[#001161]/8" />
                 </div>
                 {books.length > 0 ? (
-                  <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : ''}`}>
+                  <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch`}>
                     {books.map((book: any) => (
-                      <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
+                      <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} compactCover={isTestVariant} />
                     ))}
                   </div>
                 ) : (
@@ -1080,9 +1080,9 @@ export function SubjectPage({
                   </span>
                   <div className="h-px flex-1 bg-[#001161]/8" />
                 </div>
-                <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : ''}`}>
+                <div className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch`}>
                   {books.map((book: any) => (
-                    <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
+                    <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} compactCover={isTestVariant} />
                   ))}
                 </div>
               </div>
@@ -1090,10 +1090,10 @@ export function SubjectPage({
           </div>
         ) : filteredBooks.length > 0 ? (
           <div
-            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? '-mt-[44px]' : showSeriesPanels ? '' : 'mt-2'}`}
+            className={`grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-1 sm:gap-x-5 gap-y-0 items-stretch ${isTestVariant ? 'mt-4' : showSeriesPanels ? '' : 'mt-2'}`}
           >
             {filteredBooks.map(book => (
-              <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} />
+              <BookCard key={book.id} book={book} onClick={() => onProductClick?.(book)} compactCover={isTestVariant} />
             ))}
           </div>
         ) : (

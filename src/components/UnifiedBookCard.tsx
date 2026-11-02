@@ -85,6 +85,8 @@ export interface UnifiedBookCardProps {
   onDownload?: (e: React.MouseEvent, book: any) => void;
   /** Vizitka katalogu: nezačít stahovat obálku, dokud není skupina řádků odemčená (viewport). */
   deferCoverImage?: boolean;
+  /** Nižší pás obálky (4/3 místo 3/4) bez prázdného místa nad sešitem; zatím jen testovací stránka předmětu. */
+  compactCover?: boolean;
   hideSubjectBadgeOnMobile?: boolean;
   /**
    * Přepiš bobánky akce z kontextu (např. když karta není pod ProductsProvider).
@@ -101,6 +103,7 @@ export function UnifiedBookCard({
   onDownload,
   hideSubjectBadgeOnMobile = false,
   deferCoverImage = false,
+  compactCover = false,
   promotionCardBadges: promotionCardBadgesProp,
 }: UnifiedBookCardProps) {
   const [isLandscape, setIsLandscape] = React.useState(false);
@@ -149,7 +152,7 @@ export function UnifiedBookCard({
         Pevná výška pásu obrázku (aspect 3/4 u všech) → bobánek a název začínají ve stejné
         výšce bez ohledu na počet řádků pod nimi. flex-1 jen dole vyplní buňku mřížky.
       */}
-      <div className="relative mb-1 aspect-[3/4] w-full shrink-0 overflow-visible">
+      <div className={`relative mb-1 ${compactCover ? 'aspect-[4/3]' : 'aspect-[3/4]'} w-full shrink-0 overflow-visible`}>
         {promotionCardBadges.length > 0 && (
           <div className="pointer-events-none absolute left-2 top-[38%] z-20 flex max-w-[calc(100%-1rem)] flex-col items-start gap-1">
             {promotionCardBadges.map((label, i) => (
