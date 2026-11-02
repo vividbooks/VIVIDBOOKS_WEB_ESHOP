@@ -295,6 +295,10 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/GrowthAgentPage')),
         },
         {
+          path: 'google-ads',
+          lazy: lazyDefault(() => import('./components/admin/GoogleAdsGrowthPage')),
+        },
+        {
           path: 'marketing-agent',
           lazy: lazyDefault(() => import('./components/admin/MarketingAgent')),
         },

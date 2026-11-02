@@ -117,6 +117,7 @@ const MARKETING_SIDEBAR = [
     section: 'AI & RAG',
     items: [
       { label: 'Growth Agent', icon: Sparkles, path: '/marketing/growth-agent', badge: 'AI', badgeColor: 'purple' },
+      { label: 'Google Ads', icon: Sparkles, path: '/marketing/google-ads', badge: 'Auto', badgeColor: 'amber' },
       { label: 'Marketing Agent', icon: Sparkles, path: '/marketing/marketing-agent', badge: 'AI', badgeColor: 'purple' },
       { label: 'SEO Agent', icon: Brain, path: '/marketing/seo-agent', badge: 'AI', badgeColor: 'amber' },
       { label: 'RAG Znalosti', icon: Brain, path: '/marketing/rag', badge: 'Návrh', badgeColor: 'amber' },
@@ -360,6 +361,7 @@ export default function AdminLayout() {
     galerie: 'Galerie obrázků',
     kalendar: 'Kalendář',
     'growth-agent': 'Growth Agent',
+    'google-ads': 'Google Ads',
     agent: 'Web operator assistant',
     'visual-editor': 'Vizuální editor',
   };

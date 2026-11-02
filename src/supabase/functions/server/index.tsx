@@ -27,6 +27,7 @@ import {
 } from './identityUpsert.ts';
 import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExport.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
+import { registerGoogleAdsGrowthRoutes } from './googleAdsGrowth.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
@@ -27936,6 +27937,22 @@ registerDvppRoutes(app, {
   },
   loadWebinars: async () => ((await getCollection(WEBINARS_KEY)) as Array<Record<string, unknown>>) || [],
   buildEmailTemplate: (d) => vividbooksEmailTemplate({ headline: d.headline, body: d.body, ctaText: d.ctaText, ctaUrl: d.ctaUrl, preheader: d.preheader }),
+});
+
+/* ── Google Ads: denní hledanost, návrhy reklam a schvalovaný zápis (vše pozastavené) ─────── */
+registerGoogleAdsGrowthRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+  loadFeedItems: async () => buildMarketingFeed(await getAllProducts()).items,
+  publicOrigin: () => getPublicSiteOrigin(),
 });
 
 Deno.serve((incoming) => {
