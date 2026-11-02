@@ -29,6 +29,7 @@ import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExpor
 import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
 import { forwardPostaEvent, postaEventFromWebhook, registerKabinetPostaRoutes } from './kabinetPosta.ts';
+import { registerGoogleAdsGrowthRoutes } from './googleAdsGrowth.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
@@ -28024,6 +28025,22 @@ registerDvppRoutes(app, {
 
 /* ── Pilotáž matematiky: škola podle e-mailu a pozvání kolegů z /matematika-pilotovani ─────── */
 registerPilotInviteRoutes(app, { publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, '') });
+
+/* ── Google Ads: denní hledanost, návrhy reklam a schvalovaný zápis (vše pozastavené) ─────── */
+registerGoogleAdsGrowthRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+  loadFeedItems: async () => buildMarketingFeed(await getAllProducts()).items,
+  publicOrigin: () => getPublicSiteOrigin(),
+});
 
 Deno.serve((incoming) => {
   const url = new URL(incoming.url);
