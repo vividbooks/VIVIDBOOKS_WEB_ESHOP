@@ -24,6 +24,16 @@ import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
 import {
+  checkCzechPhone,
+  czechPhoneKind,
+  extractCzechPhone,
+  PHONE_CZ_HINT,
+  PHONE_CZ_MOBILE_HINT,
+  PHONE_CZ_NOT_EXISTING_HINT,
+} from '../supabase/functions/_shared/phone-cz.ts';
+import { checkFullName, FULL_NAME_HINT, FULL_NAME_INSTITUTION_HINT } from '../supabase/functions/_shared/person-name.ts';
+import { prepareBasecomContact } from '../supabase/functions/_shared/basecom-contact-check.ts';
+import {
   buildExistingBaseOrderLookupParams,
   findExistingBaseOrderId,
 } from '../supabase/functions/_shared/basecom-find-existing-order.ts';
@@ -274,6 +284,80 @@ registerTest('buildExistingBaseOrderLookupParams searches from the day before th
   assert.equal(params.filter_email, 'ucitel@skola.cz');
   // bez e-mailu se filtr neposílá (Base by jinak nevrátil nic)
   assert.equal('filter_email' in buildExistingBaseOrderLookupParams({ created_at: '2026-09-17T10:00:00.000Z', customer_email: '' }), false);
+});
+
+registerTest('czechPhoneKind rozliší mobil, pevnou linku a čísla, která v ČR neexistují', () => {
+  assert.equal(czechPhoneKind('739 056 178'), 'mobile');
+  assert.equal(czechPhoneKind('+420 601 234 987'), 'mobile');
+  assert.equal(czechPhoneKind('00420702123987'), 'mobile');
+  assert.equal(czechPhoneKind('583 213 910'), 'landline');
+  assert.equal(czechPhoneKind('222 333 444'), 'landline');
+  assert.equal(czechPhoneKind('910 123 987'), 'landline');
+
+  /** Předvolby, které v ČR nejsou (1xx, 0xx, 609, 700) nebo nejsou pro kurýra (800 bezplatná, 90x prémiová). */
+  for (const phone of ['123456789', '012345678', '609123987', '700123987', '800123456', '900123456', '849922929']) {
+    assert.equal(czechPhoneKind(phone), null, phone);
+  }
+  /** Zjevně vymyšlená čísla — samé stejné číslice nebo řada v účastnické části. */
+  for (const phone of ['777777777', '999999999', '222222222', '739123456', '602654321']) {
+    assert.equal(czechPhoneKind(phone), null, phone);
+  }
+  assert.equal(czechPhoneKind('73905617'), null);
+  assert.equal(czechPhoneKind(''), null);
+});
+
+registerTest('checkCzechPhone vyžaduje mobil u jednotlivce a pevnou linku pustí jen škole / firmě', () => {
+  assert.deepEqual(checkCzechPhone(' 739 056 178 ', { allowLandline: false }), { ok: true, phone: '+420739056178', kind: 'mobile' });
+  assert.deepEqual(checkCzechPhone('583 213 910', { allowLandline: true }), { ok: true, phone: '+420583213910', kind: 'landline' });
+  assert.deepEqual(checkCzechPhone('583 213 910', { allowLandline: false }), { ok: false, error: PHONE_CZ_MOBILE_HINT });
+  assert.deepEqual(checkCzechPhone('123', { allowLandline: true }), { ok: false, error: PHONE_CZ_HINT });
+  assert.deepEqual(checkCzechPhone('777 777 777', { allowLandline: true }), { ok: false, error: PHONE_CZ_NOT_EXISTING_HINT });
+  assert.deepEqual(checkCzechPhone('  ', { allowLandline: true }), { ok: false, error: 'Vyplňte telefon.' });
+});
+
+registerTest('extractCzechPhone vytáhne platné číslo z textu z Pipedrivu, přednost má mobil', () => {
+  assert.equal(extractCzechPhone('tel:583213910'), '+420583213910');
+  assert.equal(extractCzechPhone('737152211Plachá'), '+420737152211');
+  assert.equal(extractCzechPhone('561111444,774115270'), '+420774115270');
+  assert.equal(extractCzechPhone('Kancelář 553 000 111, mobil 731 222 333'), '+420731222333');
+  assert.equal(extractCzechPhone('(+420) 739 056 178'), '+420739056178');
+  assert.equal(extractCzechPhone('420739056178'), '+420739056178');
+  /** Delší řada číslic není telefon — nebereme z ní prvních 9 číslic. */
+  assert.equal(extractCzechPhone('879564654654'), null);
+  assert.equal(extractCzechPhone('+042721336455'), null);
+  assert.equal(extractCzechPhone(''), null);
+  assert.equal(extractCzechPhone(null), null);
+});
+
+registerTest('checkFullName chce celé jméno a příjmení osoby, ne název školy nebo kabinetu', () => {
+  assert.deepEqual(checkFullName('  Jana   Nováková '), { ok: true, name: 'Jana Nováková' });
+  for (const name of ['Mgr. Jana Nováková', 'Jana Nováková, Ph.D.', 'Maria de la Cruz', "Anna-Marie O'Brien", 'Ng Li', 'Jan K Novák']) {
+    assert.equal(checkFullName(name).ok, true, name);
+  }
+  for (const name of ['Jana', 'Mgr Jana', 'Mgr. Nováková', 'Jan K.', 'J. Novák', 'test test', 'jana@seznam.cz', 'Novák 123']) {
+    assert.deepEqual(checkFullName(name), { ok: false, error: FULL_NAME_HINT }, name);
+  }
+  for (const name of ['kabinet fyziky', 'Základní škola Kunratice', 'ZŠ Praha 4', 'Sborovna 2. stupeň']) {
+    assert.deepEqual(checkFullName(name), { ok: false, error: FULL_NAME_INSTITUTION_HINT }, name);
+  }
+  assert.deepEqual(checkFullName(''), { ok: false, error: 'Vyplňte jméno a příjmení.' });
+  assert.equal(checkFullName(`Jana ${'Nováková'.repeat(15)}`).ok, false);
+});
+
+registerTest('prepareBasecomContact opraví telefon z textu a vrátí problémy, kvůli kterým by FF zásilku odmítl', () => {
+  assert.deepEqual(
+    prepareBasecomContact({ deliveryFullname: ' Jana  Nováková ', phone: 'tel:583213910' }),
+    { deliveryFullname: 'Jana Nováková', phone: '+420583213910', issues: [] },
+  );
+
+  const bad = prepareBasecomContact({ deliveryFullname: 'Jana', phone: '' });
+  assert.equal(bad.deliveryFullname, 'Jana');
+  assert.equal(bad.phone, '');
+  assert.deepEqual(bad.issues, ['Jméno příjemce „Jana“ není celé jméno a příjmení.', 'Chybí telefon.']);
+
+  const badPhone = prepareBasecomContact({ deliveryFullname: 'Jana Nováková', phone: '+042721336455' });
+  assert.equal(badPhone.phone, '+042721336455');
+  assert.deepEqual(badPhone.issues, ['Telefon „+042721336455“ není platné české číslo.']);
 });
 
 registerTest('trimCompanyNameForBase keeps short names, normalizes whitespace, trims to Base limit', () => {

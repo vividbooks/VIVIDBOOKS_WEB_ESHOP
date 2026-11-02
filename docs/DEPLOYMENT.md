@@ -110,6 +110,12 @@ Pro nové objednávky, které mají čekat na přenos do FF, nastavte:
 supabase secrets set BASECOM_ORDER_STATUS_ID=438571 --project-ref iekkundgizzdbmkzatdl
 ```
 
+**Kontakt pro kurýra.** Fulfilment odmítne zásilku (stav `441051` Error FF), když jméno příjemce není celé jméno a příjmení nebo chybí platný telefon. Pokladna, školní i distributorská objednávka to kontrolují už ve formuláři (`supabase/functions/_shared/person-name.ts`, `supabase/functions/_shared/phone-cz.ts`: jednotlivec musí zadat mobil, škola / firma smí pevnou linku). Pro objednávky, které přesto projdou (import z Pipedrivu, starší rozpracované), `process-export-queue` před `addOrder` vytáhne platné číslo z textu (`tel:…`, dvě čísla v poli) a problém zapíše do `admin_comments` v Base a do alertu `basecom_contact_invalid` v adminu. Volitelně lze takové objednávky posílat do samostatného stavu bez automatického přenosu do FF:
+
+```bash
+supabase secrets set BASECOM_CONTACT_REVIEW_ORDER_STATUS_ID=<id stavu „Ke kontrole“> --project-ref iekkundgizzdbmkzatdl
+```
+
 #### iDoklad ([API v3](https://api.idoklad.cz/Help/v3/cs/index.html))
 
 Po úspěšné platbě kartou zařadí `stripe-webhook` úlohu `idoklad` do `export_queue` **pro každou zaplacenou objednávku** (bez ohledu na IČO). Stejně se faktura zařadí u inbound objednávek z Pipedrive (pokud není chybějící kontakt). Zpracuje ji funkce **`process-export-queue`** (OAuth **client credentials**, pak `POST https://api.idoklad.cz/v3/IssuedInvoices`). U objednávek ve stavu zaplaceno se do iDokladu posílá i **`DateOfPayment`** (den vystavení), aby byl doklad veden jako uhrazený; odeslání PDF e-mailem řeší pravidla v samotném iDokladu.

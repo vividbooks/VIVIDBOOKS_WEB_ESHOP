@@ -68,7 +68,7 @@ import {
   EMAIL_FORMAT_HINT_CS,
   EMAIL_MX_REJECT_CS,
 } from '../../../utils/emailValidation.ts';
-import { normalizeCzechPhone, PHONE_CZ_HINT } from '../../../utils/phoneCZ.ts';
+import { checkCzechPhone } from '../../../utils/phoneCZ.ts';
 import {
   buildTrialActivityNoteText,
   buildTrialDealNoteHtml,
@@ -21532,10 +21532,12 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       return c.json({ error: emailOk.message }, 400);
     }
 
-    const phone = normalizeCzechPhone(body.phone);
-    if (!phone) {
-      return c.json({ error: PHONE_CZ_HINT }, 400);
+    /** Distributor je firma — pevná linka projde, číslo ale musí v ČR existovat (vyžaduje ho dopravce). */
+    const phoneCheck = checkCzechPhone(body.phone, { allowLandline: true });
+    if (!phoneCheck.ok) {
+      return c.json({ error: phoneCheck.error }, 400);
     }
+    const phone = phoneCheck.phone;
 
     const rawItems = Array.isArray(body.items) ? body.items : [];
     const requested: Array<{ productId: string; quantity: number }> = [];

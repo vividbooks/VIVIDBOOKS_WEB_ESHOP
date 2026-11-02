@@ -20,7 +20,7 @@ import { fetchSchoolSearchResults } from '../../utils/schoolSearchApi';
 import { isDistributorOrderableProduct } from '../../utils/distributorCatalog';
 import { EMAIL_FORMAT_HINT_CS, isValidEmailFormat, normalizeEmail } from '../../utils/emailValidation';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
-import { isValidCzechPhone, PHONE_CZ_HINT } from '../../utils/phoneCZ';
+import { checkCzechPhone, PHONE_CZ_COURIER_NOTE_SCHOOL } from '../../utils/phoneCZ';
 import { RouteHydrateFallback } from '../RouteHydrateFallback';
 import { SEOHead } from '../SEOHead';
 
@@ -244,8 +244,10 @@ export function DistributorOrderPage() {
       setError(EMAIL_FORMAT_HINT_CS);
       return;
     }
-    if (!isValidCzechPhone(phone)) {
-      setError(PHONE_CZ_HINT);
+    /** Distributor je firma — pevná linka projde, jen musí v ČR existovat. */
+    const phoneCheck = checkCzechPhone(phone, { allowLandline: true });
+    if (!phoneCheck.ok) {
+      setError(phoneCheck.error);
       return;
     }
     if (selectedLines.length === 0) {
@@ -409,8 +411,12 @@ export function DistributorOrderPage() {
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="+420 739 056 178"
                 autoComplete="tel"
+                inputMode="tel"
                 className={checkoutTextInputClass(false)}
               />
+              <p className="mt-1 text-[12px] leading-snug text-[#001161]/60">
+                {PHONE_CZ_COURIER_NOTE_SCHOOL}
+              </p>
             </div>
           </div>
         </section>

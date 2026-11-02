@@ -53,7 +53,13 @@ import {
 import { loadSavedDvppContacts, type SavedDvppContact } from '../../utils/dvppSavedContacts';
 import { isValidCZSKPostalCode, POSTAL_CODE_HINT_CS } from '../../utils/postalCodeCZSK';
 import { hasStreetWithHouseNumber, STREET_NUMBER_HINT_CS } from '../../utils/streetHouseNumberCZ';
-import { isValidCzechPhone, PHONE_CZ_HINT } from '../../utils/phoneCZ';
+import {
+  checkCzechPhone,
+  isValidCzechPhone,
+  PHONE_CZ_COURIER_NOTE,
+  PHONE_CZ_COURIER_NOTE_SCHOOL,
+} from '../../utils/phoneCZ';
+import { checkFullName, isValidFullName } from '../../utils/personName';
 import { usePacketaApiKey } from '../../utils/packeta/usePacketaApiKey';
 
 type CheckoutStep = 1 | 2 | 3 | 4 | 5;
@@ -561,10 +567,13 @@ export function CheckoutPage() {
 
   const canGoBack = currentStep > 1;
 
+  /** Jednotlivec musí zadat mobil (SMS od dopravce), škola smí i pevnou linku. */
+  const phoneAllowsLandline = customerType === 'school';
+
   const isCustomerStepValid = useMemo(() => (
-    customer.name.trim().length > 0 &&
+    isValidFullName(customer.name) &&
     isValidEmailFormat(customer.email.trim()) &&
-    isValidCzechPhone(customer.phone) &&
+    isValidCzechPhone(customer.phone, { allowLandline: phoneAllowsLandline }) &&
     (customerType === 'individual' || (
       customer.schoolName.trim().length > 0 &&
       customer.ico.trim().length > 0
@@ -573,11 +582,12 @@ export function CheckoutPage() {
     customer.city.trim().length > 0 &&
     isValidCZSKPostalCode(customer.zip) &&
     (!hasSeparateDeliveryAddress || (
+      (!deliveryAddress.recipientName.trim() || isValidFullName(deliveryAddress.recipientName)) &&
       hasStreetWithHouseNumber(deliveryAddress.deliveryStreet) &&
       deliveryAddress.deliveryCity.trim().length > 0 &&
       isValidCZSKPostalCode(deliveryAddress.deliveryZip)
     ))
-  ), [customer, customerType, hasSeparateDeliveryAddress, deliveryAddress]);
+  ), [customer, customerType, phoneAllowsLandline, hasSeparateDeliveryAddress, deliveryAddress]);
 
   const isShippingStepValid = useMemo(() => (
     shipping.method !== 'zasilkovna' || !!shipping.pickupPointId
@@ -1033,10 +1043,11 @@ export function CheckoutPage() {
   const validateCustomerStep = () => {
     const nextErrors: Partial<Record<keyof CustomerFormState | keyof DeliveryAddressState, string>> = {};
 
-    if (!customer.name.trim()) nextErrors.name = 'Vyplňte jméno.';
+    const nameCheck = checkFullName(customer.name);
+    if (!nameCheck.ok) nextErrors.name = nameCheck.error;
     if (!isValidEmailFormat(customer.email.trim())) nextErrors.email = EMAIL_FORMAT_HINT_CS;
-    if (!customer.phone.trim()) nextErrors.phone = 'Vyplňte telefon.';
-    else if (!isValidCzechPhone(customer.phone)) nextErrors.phone = PHONE_CZ_HINT;
+    const phoneCheck = checkCzechPhone(customer.phone, { allowLandline: phoneAllowsLandline });
+    if (!phoneCheck.ok) nextErrors.phone = phoneCheck.error;
     if (customerType === 'school' && !customer.schoolName.trim()) nextErrors.schoolName = 'Vyberte školu.';
     if (customerType === 'school' && !customer.ico.trim()) nextErrors.ico = 'Vyplňte IČO školy.';
     if (!customer.street.trim()) nextErrors.street = 'Vyplňte ulici a číslo.';
@@ -1044,6 +1055,10 @@ export function CheckoutPage() {
     if (!customer.city.trim()) nextErrors.city = 'Vyplňte město.';
     if (!customer.zip.trim()) nextErrors.zip = 'Vyplňte PSČ.';
     else if (!isValidCZSKPostalCode(customer.zip)) nextErrors.zip = POSTAL_CODE_HINT_CS;
+    if (hasSeparateDeliveryAddress && deliveryAddress.recipientName.trim()) {
+      const recipientCheck = checkFullName(deliveryAddress.recipientName);
+      if (!recipientCheck.ok) nextErrors.recipientName = recipientCheck.error;
+    }
     if (hasSeparateDeliveryAddress && !deliveryAddress.deliveryStreet.trim()) {
       nextErrors.deliveryStreet = 'Vyplňte doručovací ulici a číslo.';
     } else if (hasSeparateDeliveryAddress && !hasStreetWithHouseNumber(deliveryAddress.deliveryStreet)) {
@@ -1057,7 +1072,7 @@ export function CheckoutPage() {
 
     const validatedKeys: Array<keyof CustomerFormState | keyof DeliveryAddressState> = [
       'name', 'email', 'phone', 'schoolName', 'ico', 'street', 'city', 'zip',
-      'deliveryStreet', 'deliveryCity', 'deliveryZip',
+      'recipientName', 'deliveryStreet', 'deliveryCity', 'deliveryZip',
     ];
     setFormErrors((prev) => {
       const merged = { ...prev };
@@ -1071,7 +1086,7 @@ export function CheckoutPage() {
 
     const ORDER: Array<keyof CustomerFormState | keyof DeliveryAddressState> = [
       'name', 'email', 'phone', 'schoolName', 'ico', 'street', 'city', 'zip',
-      'deliveryStreet', 'deliveryCity', 'deliveryZip',
+      'recipientName', 'deliveryStreet', 'deliveryCity', 'deliveryZip',
     ];
     const first = ORDER.find((k) => nextErrors[k]);
     if (first) {
@@ -1667,9 +1682,9 @@ export function CheckoutPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {[
-                    { key: 'name', label: 'Jméno *' },
+                    { key: 'name', label: 'Jméno a příjmení *', placeholder: 'Např. Jana Nováková', autoComplete: 'name' },
                     { key: 'email', label: 'E-mail *', type: 'email' },
-                    { key: 'phone', label: 'Telefon *' },
+                    { key: 'phone', label: 'Telefon *', type: 'tel', placeholder: 'Např. 739 056 178', autoComplete: 'tel' },
                   ].map((field) => (
                     <label key={field.key} id={`checkout-field-${field.key}`} className="block">
                       <span className="block font-['Fenomen_Sans',sans-serif] text-[13px] font-bold text-[#001161] mb-2">
@@ -1693,6 +1708,9 @@ export function CheckoutPage() {
                       ) : (
                         <input
                           type={field.type ?? 'text'}
+                          inputMode={field.type === 'tel' ? 'tel' : undefined}
+                          autoComplete={field.autoComplete}
+                          placeholder={field.placeholder}
                           value={customer[field.key as keyof CustomerFormState]}
                           onChange={(event) =>
                             handleCustomerChange(field.key as keyof CustomerFormState, event.target.value)
@@ -1710,6 +1728,11 @@ export function CheckoutPage() {
                       {field.key !== 'email' && formErrors[field.key as keyof CustomerFormState] ? (
                         <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] text-[#dc2626]">
                           {formErrors[field.key as keyof CustomerFormState]}
+                        </span>
+                      ) : null}
+                      {field.key === 'phone' ? (
+                        <span className="block mt-2 font-['Fenomen_Sans',sans-serif] text-[12px] leading-snug text-[#001161]/60">
+                          {phoneAllowsLandline ? PHONE_CZ_COURIER_NOTE_SCHOOL : PHONE_CZ_COURIER_NOTE}
                         </span>
                       ) : null}
                     </label>

@@ -8,8 +8,8 @@ import {
 import postgres from 'npm:postgres';
 import { idokladSdkHeaders, idokladSdkPostJsonHeaders } from '../_shared/idoklad-sdk-headers.ts';
 import { sendOrderEmail, type OrderEmailType } from '../_shared/order-email.ts';
-import { upsertWorkflowStep } from '../_shared/order-monitoring.ts';
-import { normalizeCzechPhone } from '../_shared/phone-cz.ts';
+import { openOrUpdateOrderAlert, upsertWorkflowStep } from '../_shared/order-monitoring.ts';
+import { prepareBasecomContact } from '../_shared/basecom-contact-check.ts';
 import { trimCompanyNameForBase } from '../_shared/base-company-name.ts';
 import { enrichCzechAddressParts, normalizeCzechZip } from '../_shared/czech-address-enrichment.ts';
 import { hasSeparateDeliveryAddress } from '../_shared/checkout-delivery-address.ts';
@@ -666,6 +666,16 @@ function resolveBasecomOrderStatusId(order: OrderRow): number {
   return Number.isInteger(schoolId) ? schoolId : defaultId;
 }
 
+/**
+ * Volitelný stav v Base pro objednávky s neplatným jménem / telefonem příjemce (`BASECOM_CONTACT_REVIEW_ORDER_STATUS_ID`).
+ * Stav nesmí mít automatický přenos do FF — objednávka v něm počká, než ji někdo v BaseLinkeru opraví.
+ * Bez nastavení jde objednávka do běžného stavu a problém je jen v admin poznámce a v alertu.
+ */
+function resolveBasecomContactReviewStatusId(): number | null {
+  const n = Number.parseInt((Deno.env.get('BASECOM_CONTACT_REVIEW_ORDER_STATUS_ID') || '').trim(), 10);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Volitelný přepis `order_status_id` v Base z payloadu fronty (např. webhook `pipedrive-inbound-deal`). */
 function resolvePayloadBasecomOrderStatusId(payload: Record<string, unknown> | null | undefined): number | null {
   if (!payload || typeof payload !== 'object') return null;
@@ -919,13 +929,46 @@ async function handleBasecomExport(
   const effectiveUserComments = payloadUserComments || order.note || '';
   const separateDelivery = hasSeparateDeliveryAddress(order);
 
+  /** Kontakt pro kurýra: necelé jméno nebo neplatný telefon by fulfilment odmítl (Error FF). */
+  const contact = prepareBasecomContact({
+    deliveryFullname: separateDelivery
+      ? (order.delivery_recipient_name || order.customer_name)
+      : order.customer_name,
+    phone: order.customer_phone,
+  });
+  const contactReviewStatusId = contact.issues.length > 0 ? resolveBasecomContactReviewStatusId() : null;
+  if (contact.issues.length > 0) {
+    console.log(
+      '[export-basecom] contact_needs_review',
+      JSON.stringify({ orderId: order.id, orderNumber: order.order_number, issues: contact.issues, contactReviewStatusId }),
+    );
+    try {
+      await openOrUpdateOrderAlert(sql, {
+        orderId: order.id,
+        alertType: 'basecom_contact_invalid',
+        severity: 'warning',
+        dedupeKey: `basecom_contact_invalid:order:${order.id}`,
+        title: `Neplatný kontakt pro kurýra u ${order.order_number}`,
+        message: `${contact.issues.join(' ')} Opravte údaje v BaseLinkeru, jinak fulfilment zásilku odmítne (Error FF).`,
+        payload: { orderNumber: order.order_number, issues: contact.issues, contactReviewStatusId },
+      });
+    } catch (e) {
+      console.log(
+        '[export-basecom] contact_alert_error',
+        JSON.stringify({ orderId: order.id, error: e instanceof Error ? e.message : String(e) }),
+      );
+    }
+  }
+
   const parameters: Record<string, unknown> = {
-    order_status_id: orderStatusId,
+    order_status_id: contactReviewStatusId ?? orderStatusId,
     custom_source_id: customSourceId,
     date_add: Math.floor(new Date(order.created_at).getTime() / 1000),
     user_comments: effectiveUserComments,
-    admin_comments: `VB order: ${order.order_number}`,
-    phone: normalizeCzechPhone(order.customer_phone) || order.customer_phone || '',
+    admin_comments: contact.issues.length > 0
+      ? `VB order: ${order.order_number} | KONTROLA před FF: ${contact.issues.join(' ')}`.slice(0, 200)
+      : `VB order: ${order.order_number}`,
+    phone: contact.phone,
     email: order.customer_email,
     user_login: order.customer_email,
     currency: 'CZK',
@@ -936,9 +979,7 @@ async function handleBasecomExport(
     delivery_price: amountInCzk(order.shipping_price),
     /** Doručovací adresa: když zákazník v pokladně zapnul „Doručit na jinou adresu“, jde do Base
      *  ona (`orders.delivery_*`), jinak fakturační. Dřív šla vždy fakturační → zásilka na špatnou adresu. */
-    delivery_fullname: separateDelivery
-      ? (order.delivery_recipient_name || order.customer_name)
-      : order.customer_name,
+    delivery_fullname: contact.deliveryFullname,
     /** Base API: `delivery_company` je varchar(156) — delší název školy by export shodil. */
     delivery_company: trimCompanyNameForBase(order.school_name) || '',
     delivery_address: separateDelivery ? order.delivery_street : (order.street || ''),
