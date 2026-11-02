@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocation } from 'react-router';
 import { subjectToSlug } from '../utils/slugify';
 
 /**
@@ -361,6 +362,136 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   'Vlastivěda, přírodověda a informatika': CJS_INFO_SERIES,
 };
 
+/** Obálky témat digitální učebnice z aplikace (knihovna nove.vividbooks.com) — pro návrhy náhledu digitální učebnice. */
+const APP_ASSETS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/files/assets/';
+const DIGITAL_TOPICS: Record<string, Cover[]> = {
+  Fyzika: [
+    { name: 'Základy', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-ae196c64-2124-4951-9b09-279dbea1b387-ae196c64-2124-4951-9b09-279dbea1b387/image/694d5ba44611ad23cba1db1a88dac0a49e99eaf6.jpg` },
+    { name: 'Síly', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-4b7cba6d-1dcf-4e74-aecd-92e9d4b69ea2-4b7cba6d-1dcf-4e74-aecd-92e9d4b69ea2/image/edfc05ce3ae2d7b84f8c5d9344c0ea22f8e98750.png` },
+    { name: 'Kapaliny a plyny', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-11-8a5f2956-ed92-4dea-b3fa-3754cef76d8a/image/7c696505e7652e5fb624dacb5d10c8a634c5e334.jpg` },
+    { name: 'Optika', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-6985106b-2525-43ef-8bea-dc59ff7c5156-6985106b-2525-43ef-8bea-dc59ff7c5156/image/166d06f23f949113ba94a742e9d8ec7ceaab6b3c.png` },
+    { name: 'Energie', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-1e01327f-17f2-40ca-86ed-be522a801ef3-1e01327f-17f2-40ca-86ed-be522a801ef3/image/a7e8d198aeaff00a2fcffbe714479e00e44d8a06.png` },
+    { name: 'Akustika', image: `${APP_ASSETS}56445062-fb40-431a-b971-78c9167bbbdb-book-0256c342-a33e-4451-ad8b-5ae9dd94d401-0256c342-a33e-4451-ad8b-5ae9dd94d401/image/4f64b9f4bef72e1e9220c9aa5fb445c27b17b011.png` },
+  ],
+  'Přírodopis': [
+    { name: 'Vznik života', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-107-ba259038-719a-443a-a973-6a228893d4d8/image/3badc55e5a140b3540dd9799990278d9ccd8ce17.jpg` },
+    { name: 'Bezobratlí živočichové', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-6d9d8ce2-460e-43b8-a4be-16fe14cf0816-6d9d8ce2-460e-43b8-a4be-16fe14cf0816/image/d84b777b8ad1cb8e886bc44f60766475628c4159.jpg` },
+    { name: 'Obratlovci', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-8aaf292b-8c75-43f9-a8f7-f82609fc01be-8aaf292b-8c75-43f9-a8f7-f82609fc01be/image/38c447f3b44444bd4bd60a49ca5d692aeb0d6fc8.jpg` },
+    { name: 'Houby a vyšší rostliny', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-110-2348614c-7abd-42c1-946a-05b2f91da8b2/image/5091925419293a9fee046406bc8855c603becd2b.jpg` },
+    { name: 'Člověk', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-eb616f84-b40a-48dd-8aa8-098b557fa3bd-eb616f84-b40a-48dd-8aa8-098b557fa3bd/image/f9d71ff80c2f4de1086e8b98574182f8c30306e6.png` },
+    { name: 'Geologie', image: `${APP_ASSETS}87d4d9a7-b620-4c44-9f9a-b3315086aabe-book-5288b72e-0145-4dae-b2d4-3a8490c11639-5288b72e-0145-4dae-b2d4-3a8490c11639/image/db137bb646599261dc0320d9f5048b2336f69c80.jpg` },
+  ],
+  Chemie: [
+    { name: 'Chemie a bezpečnost', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-100-d9d44eb8-7c8c-44be-aa17-30ef39340d53/image/e82a893a4651b3d11c439d505348620172b2cf7c.png` },
+    { name: 'Chemické látky a směsi', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-82-c044f1e8-6fc2-459f-83e5-225ffae73987/image/2daa1873bec0d581bd5c6905e049172324fea112.png` },
+    { name: 'Atomy a prvky', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-73-f9014f55-63a1-4c71-911c-155cacc2e213/image/f10bdfb5ad270ba7c16273bab0ff8fd997d3e2ae.png` },
+    { name: 'Chemická vazba', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-75b66a7c-90c8-49ff-bb20-2745db19c114-75b66a7c-90c8-49ff-bb20-2745db19c114/image/bb25d2d2d9b30538677837aa0f2e2467d66cde63.png` },
+    { name: 'Chemické reakce', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-59c5badf-42c6-4e9f-98b1-b9a0e72cacc0-59c5badf-42c6-4e9f-98b1-b9a0e72cacc0/image/11d8c29c48f4273cede18cf5fbcdb16dcec21c31.png` },
+    { name: 'Anorganické sloučeniny', image: `${APP_ASSETS}48d19b2f-442d-4816-ae2b-a3ca6910ee8e-book-9a908be8-f99a-470a-b507-e1366d279029-9a908be8-f99a-470a-b507-e1366d279029/image/57705e740a7154c5f8c96e988daad3b35965275b.jpg` },
+  ],
+};
+
+/** Dlaždice ročníků jako v knihovně aplikace (matematika a 1. stupeň nemají obálky témat). */
+const DIGITAL_GRADES: Record<string, string[]> = {
+  'Matematika 2. stupeň': ['6₁', '6₂', '7₁', '7₂', '8₁', '8₂', '9₁', '9₂'],
+  Fyzika: ['6', '7', '8', '9'],
+  'Přírodopis': ['6', '7', '8', '9'],
+  Chemie: ['8', '9'],
+  'Matematika 1. stupeň': ['1₁', '1₂', '1₃', '2₁', '2₂', '2₃'],
+  'Český jazyk': ['1', '2', '3', '4', '5'],
+  Prvouka: ['1', '2', '3'],
+};
+/** Pastelové barvy dlaždic — z palety štítků předmětů (CATEGORY_BG v UnifiedBookCard). */
+const TILE_BG = ['#EEEAFF', '#E2F8FF', '#E8F9EE', '#FFF8E0', '#FFF2EC', '#FEF1F1'];
+
+/**
+ * Návrhy náhledu karty digitální učebnice (jen testovací homepage, `?dig=1`–`5`; bez parametru produktový obrázek).
+ * 1 vějíř obálek témat · 2 tablet s knihovnou témat · 3 okno prohlížeče · 4 dlaždice ročníků · 5 sešit + tablet.
+ */
+function DigitalPreview({ variant, group, product, workbook }: {
+  variant: number;
+  group: string;
+  product?: Cover;
+  workbook?: Cover;
+}) {
+  const topics = DIGITAL_TOPICS[group] ?? [];
+  const grades = DIGITAL_GRADES[group] ?? [];
+  // Bez obálek témat (matematika, 1. stupeň) padají návrhy 1–3 na dlaždice ročníků.
+  const v = variant >= 1 && variant <= 3 && topics.length < 3 ? 4 : variant;
+  const imgCls = 'absolute inset-0 h-full w-full object-contain transition-transform duration-300 group-hover/series:-translate-y-1';
+
+  if (v === 1) {
+    const pos = [
+      'z-[3] shadow-lg group-hover/series:-translate-y-1',
+      'z-[1] shadow-md -rotate-[14deg] -translate-x-[18%] group-hover/series:-rotate-[18deg] group-hover/series:-translate-x-[24%]',
+      'z-[2] shadow-md rotate-[14deg] translate-x-[18%] group-hover/series:rotate-[18deg] group-hover/series:translate-x-[24%]',
+    ];
+    return (
+      <>
+        {topics.slice(0, 3).map((c, i) => (
+          <img key={c.image} src={c.image} alt={i === 0 ? c.name : ''} loading="lazy"
+            className={`absolute left-[24%] bottom-[14%] w-[52%] origin-bottom rounded-[6px] transition-transform duration-300 ${pos[i]}`} />
+        ))}
+      </>
+    );
+  }
+  if (v === 2) {
+    return (
+      <div className="absolute inset-x-[2%] top-[16%] -rotate-[4deg] rounded-[12px] bg-[#001161] p-[4%] shadow-lg transition-transform duration-300 group-hover/series:rotate-0">
+        <div className="grid grid-cols-3 gap-[4%] rounded-[6px] bg-white p-[5%]">
+          {topics.slice(0, 6).map((c) => (
+            <img key={c.image} src={c.image} alt="" loading="lazy" className="aspect-[570/808] w-full rounded-[3px] object-cover" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (v === 3) {
+    return (
+      <div className="absolute inset-x-0 top-[18%] overflow-hidden rounded-[10px] bg-white shadow-lg ring-1 ring-[#001161]/10 transition-transform duration-300 group-hover/series:-translate-y-1">
+        <div className="flex items-center gap-[3%] bg-[#F0F2F8] px-[5%] py-[3%]">
+          {[0, 1, 2].map((i) => <span key={i} className="size-[6px] rounded-full bg-[#001161]/25" />)}
+          <span className="ml-[3%] truncate rounded-full bg-white px-2 text-[9px] text-[#001161]/60 font-['Fenomen_Sans',sans-serif]">nove.vividbooks.com</span>
+        </div>
+        <div className="grid grid-cols-3 gap-[5%] p-[6%]">
+          {topics.slice(0, 3).map((c) => (
+            <div key={c.image} className="min-w-0">
+              <img src={c.image} alt="" loading="lazy" className="aspect-[570/808] w-full rounded-[3px] object-cover shadow-sm" />
+              <p className="mt-1 truncate text-center text-[8px] text-[#001161]/70 font-['Fenomen_Sans',sans-serif]">{c.name}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (v === 4 && grades.length > 0) {
+    const cols = grades.length > 6 ? 'grid-cols-4' : grades.length > 4 ? 'grid-cols-3' : 'grid-cols-2';
+    return (
+      <div className={`absolute top-[10%] rounded-[14px] bg-white p-[7%] shadow-lg ring-1 ring-[#001161]/5 transition-transform duration-300 group-hover/series:-translate-y-1 ${grades.length <= 4 ? 'inset-x-[16%]' : 'inset-x-0'}`}>
+        <div className={`grid ${cols} gap-[8%]`}>
+          {grades.map((g, i) => (
+            <span key={g} style={{ backgroundColor: TILE_BG[i % TILE_BG.length] }}
+              className="flex aspect-square items-center justify-center rounded-[8px] text-[#001161] font-['Fenomen_Sans',sans-serif] font-bold text-[15px] lg:text-[17px]">
+              {g}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (v === 5 && workbook && product) {
+    return (
+      <>
+        <img src={workbook.image} alt="" loading="lazy"
+          className="absolute left-[6%] top-[8%] w-[46%] -rotate-[8deg] rounded-[6px] shadow-md transition-transform duration-300 group-hover/series:-rotate-[12deg]" />
+        <img src={product.image} alt={product.name} loading="lazy"
+          className="absolute right-0 bottom-[2%] w-[80%] object-contain transition-transform duration-300 group-hover/series:-translate-y-1" />
+      </>
+    );
+  }
+  return product ? <img src={product.image} alt={product.name} loading="lazy" className={imgCls} /> : null;
+}
+
 const byOrder = (a: any, b: any) => (a.poradi ?? 999) - (b.poradi ?? 999);
 const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name;
 /** Podle ročníku (6. první), v rámci ročníku podle `poradi` (1. díl před 2.). */
@@ -403,6 +534,9 @@ export function SeriesCards({
   navigate: (path: string) => void;
 }) {
   const subjectPath = `/predmet/${subjectToSlug(mainGroup)}`;
+  /** Návrh náhledu digitální učebnice: `?dig=1`–`5` (jen pro srovnání variant). */
+  const digVariant = Number(new URLSearchParams(useLocation().search).get('dig')) || 0;
+  const workbookCover = pickCovers(books.filter((b) => b.image), [0])[0];
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
     covers: s.digital
@@ -437,12 +571,7 @@ export function SeriesCards({
             >
               <div className={`relative w-[46%] max-w-[180px] shrink-0 self-center aspect-square ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
                 {s.digital && front && (
-                  <img
-                    src={front.image}
-                    alt={front.name}
-                    loading="lazy"
-                    className="absolute inset-0 h-full w-full object-contain transition-transform duration-300 group-hover/series:-translate-y-1"
-                  />
+                  <DigitalPreview variant={digVariant} group={mainGroup} product={front} workbook={workbookCover} />
                 )}
                 {!s.digital && (() => {
                   /* Vějíř: obálky otočené kolem společného bodu dole, první vpředu uprostřed. */
