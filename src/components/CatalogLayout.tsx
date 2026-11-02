@@ -247,7 +247,10 @@ export default function CatalogLayout() {
   /** Úvod: ostrá homepage `/` i neveřejná testovací kopie (TEST_HOMEPAGE_PATH) */
   const isHomeView = location.pathname === '/' || location.pathname === TEST_HOMEPAGE_PATH;
   /** Testovací homepage: menu s předměty jen z aplikace a rozbalovacími stupni (výchozí zabalené). */
-  const isTestHome = location.pathname === TEST_HOMEPAGE_PATH;
+  const isTestHome = location.pathname === TEST_HOMEPAGE_PATH || location.pathname.startsWith(`${TEST_HOMEPAGE_PATH}/`);
+  /** Na testovací verzi vedou předměty v menu na testovací stránky předmětu. */
+  const subjectBase = isTestHome ? `${TEST_HOMEPAGE_PATH}/predmet` : '/predmet';
+  const isSubjectActive = (item: string) => location.pathname === `${subjectBase}/${subjectToSlug(item)}`;
   const [openStupne, setOpenStupne] = useState<Set<1 | 2>>(() => new Set());
   const toggleStupen = (n: 1 | 2) =>
     setOpenStupne((prev) => {
@@ -255,7 +258,8 @@ export default function CatalogLayout() {
       if (next.has(n)) next.delete(n); else next.add(n);
       return next;
     });
-  const showStupen = (n: 1 | 2) => !isTestHome || openStupne.has(n);
+  const showStupen = (n: 1 | 2) =>
+    !isTestHome || openStupne.has(n) || (n === 2 ? secondGradeSubjects : firstGradeSubjects).some(isSubjectActive);
   /** Nadpis stupně: na testovací homepage rozbalovací položka jako „Novinky a blog“ (SidebarAccordion), jinak beze změny. */
   const stupenHeading = (n: 1 | 2, className: string) =>
     isTestHome ? (
@@ -508,7 +512,7 @@ export default function CatalogLayout() {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                       return (
-                        <button key={item} onClick={() => { navigate(`/predmet/${slug}`); setMobileSidebarOpen(false); }}
+                        <button key={item} onClick={() => { navigate(`${subjectBase}/${slug}`); setMobileSidebarOpen(false); }}
                           className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
                           {label}
                         </button>
@@ -522,7 +526,7 @@ export default function CatalogLayout() {
                       const slug = subjectToSlug(item);
                       const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                       return (
-                        <button key={item} onClick={() => { navigate(`/predmet/${slug}`); setMobileSidebarOpen(false); }}
+                        <button key={item} onClick={() => { navigate(`${subjectBase}/${slug}`); setMobileSidebarOpen(false); }}
                           className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
                           {label}
                         </button>
@@ -781,11 +785,11 @@ export default function CatalogLayout() {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                           const slug  = subjectToSlug(item);
-                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && isHomeView);
+                          const isActive = location.pathname === `${subjectBase}/${slug}` || (activeSection === id && isHomeView);
                           return (
                             <button
                               key={item}
-                              onClick={() => navigate(`/predmet/${slug}`)}
+                              onClick={() => navigate(`${subjectBase}/${slug}`)}
                               className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
                                 isActive ? 'bg-[#c8d7f7] text-[#001161]' : 'text-[#001161] hover:bg-white border border-transparent hover:border-gray-200'
                               }`}
@@ -806,11 +810,11 @@ export default function CatalogLayout() {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                           const slug  = subjectToSlug(item);
-                          const isActive = location.pathname === `/predmet/${slug}` || (activeSection === id && isHomeView);
+                          const isActive = location.pathname === `${subjectBase}/${slug}` || (activeSection === id && isHomeView);
                           return (
                             <button
                               key={item}
-                              onClick={() => navigate(`/predmet/${slug}`)}
+                              onClick={() => navigate(`${subjectBase}/${slug}`)}
                               className={`w-full text-left px-3 py-[calc(0.375rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] transition-all cursor-pointer ${
                                 isActive ? 'bg-[#c8d7f7] text-[#001161]' : 'text-[#001161] hover:bg-white border border-transparent hover:border-gray-200'
                               }`}

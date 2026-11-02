@@ -6,6 +6,7 @@ import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
 import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS } from './SeriesCards';
+import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
@@ -2191,7 +2192,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
           const nextEntry   = sortedGroups[idx + 1];
           const isLastSecond = isSecondGrd && nextEntry && !isSecondGrdGroup(nextEntry[0]);
           const openSubject = () => {
-            if (!appOnly) navigate(`/predmet/${subjectToSlug(mainGroup)}`);
+            if (!appOnly) navigate(`${isTestVariant ? TEST_HOMEPAGE_PATH : ''}/predmet/${subjectToSlug(mainGroup)}`);
           };
           const isFirstGrd  = firstGradeSubjects.includes(mainGroup) || mainGroup === '1. stupe\u0148';
           const isLastFirst  = isFirstGrd && (!nextEntry || (!firstGradeSubjects.includes(nextEntry[0]) && nextEntry[0] !== '1. stupe\u0148'));

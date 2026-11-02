@@ -8,7 +8,8 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_HEADERS = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 
-export function SubjectPageRoute() {
+/** `test` = testovací stránka předmětu pod testovací homepage (dlaždice řad nahoře, noindex). */
+export function SubjectPageRoute({ variant = 'live' }: { variant?: 'live' | 'test' } = {}) {
   const { slug }   = useParams<{ slug: string }>();
   const navigate   = useNavigate();
   const { products } = useProducts();
@@ -99,6 +100,7 @@ export function SubjectPageRoute() {
       onOrder={() => navigate(`/objednat?predmet=${encodeURIComponent(subject)}`, { state: { category: subject } })}
       onProductClick={(p) => navigate(productDetailPath(p, products))}
       hideTopNav
+      variant={variant}
     />
   );
 }

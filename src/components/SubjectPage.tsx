@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { SeriesCards, SERIES_BY_GROUP } from './SeriesCards';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -421,6 +422,8 @@ interface SubjectPageProps {
   onOrder?: () => void;
   onProductClick?: (product: any) => void;
   hideTopNav?: boolean;
+  /** `test` = testovací verze: dlaždice řad nahoře místo přepínače typu, noindex. */
+  variant?: 'live' | 'test';
 }
 
 export function SubjectPage({
@@ -431,7 +434,9 @@ export function SubjectPage({
   onOrder,
   onProductClick,
   hideTopNav = false,
+  variant = 'live',
 }: SubjectPageProps) {
+  const isTestVariant = variant === 'test';
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const baseSubject = subject.replace(/\s+\d+\.\s*stupe.*$/i, '').trim();
@@ -749,6 +754,7 @@ export function SubjectPage({
     <div className="bg-white min-h-screen">
       {!hideTopNav && <TopNav onOrder={onOrder} />}
       <SEOHead
+        noIndex={isTestVariant}
         title={seoTitle}
         path={`/predmet/${subjectToSlug(subject)}`}
         description={`${seoTitle} \u2014 ${cfg.tagline}`}
@@ -859,8 +865,20 @@ export function SubjectPage({
         </div>
       </div>
 
+      {/* Testovací verze: dlaždice řad jako v e-shopu hned pod hlavičkou (klik = filtr řady). */}
+      {isTestVariant && SERIES_BY_GROUP[subject] ? (
+        <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-8">
+          <SeriesCards
+            mainGroup={subject}
+            books={subjectProducts.filter((p) => p.type !== 'online')}
+            digitalProduct={subjectProducts.find((p) => p.type === 'online')}
+            navigate={navigate}
+          />
+        </div>
+      ) : null}
+
       {/* ── BOOKS ── */}
-      <div className="py-12 px-6 md:px-12 max-w-[1200px] mx-auto">
+      <div className={`${isTestVariant ? 'pt-6 pb-12' : 'py-12'} px-6 md:px-12 max-w-[1200px] mx-auto`}>
 
         <div className="flex items-center gap-4 mb-0">
           <h2
@@ -912,7 +930,7 @@ export function SubjectPage({
         )}
 
         {/* Series panels */}
-        {showSeriesPanels && (() => {
+        {showSeriesPanels && !isTestVariant && (() => {
           const SERIES_INFO = [
             {
               id: 'krok' as const,

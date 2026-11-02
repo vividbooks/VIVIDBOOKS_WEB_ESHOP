@@ -149,6 +149,14 @@ export const router = createBrowserRouter(
                 return { Component: () => React.createElement(CatalogGrid, { variant: 'test' }) };
               },
             },
+            // Testovací stránka předmětu (dlaždice řad nahoře), jen z testovací homepage.
+            {
+              path: `${TEST_HOMEPAGE_PATH.slice(1)}/predmet/:slug`,
+              lazy: async () => {
+                const { SubjectPageRoute } = await import('./components/SubjectPageRoute');
+                return { Component: () => React.createElement(SubjectPageRoute, { variant: 'test' }) };
+              },
+            },
             {
               path: 'predmet/:slug',
               lazy: lazyNamed(() => import('./components/SubjectPageRoute'), 'SubjectPageRoute'),

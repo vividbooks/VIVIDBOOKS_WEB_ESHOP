@@ -3,6 +3,10 @@
     {
       "source": "/nahled-hp-rov3htqga4",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/nahled-hp-rov3htqga4/:path*",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
   "rewrites": [
