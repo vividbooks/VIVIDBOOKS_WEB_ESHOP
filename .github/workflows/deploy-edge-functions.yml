@@ -131,6 +131,7 @@ jobs:
             echo "=== deploy $fn ==="
             # `verify_jwt` se řídí per-function v supabase/config.toml.
             # Globální --no-verify-jwt by přepsal i admin / interní funkce, které JWT vyžadují.
+            # --yes: novější CLI bez terminálu jinak nasazení odmítne („Confirmation required“).
             supabase functions deploy "$fn" \
-              --project-ref "$SUPABASE_PROJECT_REF"
+              --project-ref "$SUPABASE_PROJECT_REF" --yes
           done
