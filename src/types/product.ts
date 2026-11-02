@@ -22,6 +22,8 @@ export interface Product {
   isbn?: string;
   /** Skryje produkt v přehledech katalogu (homepage, předmět, /katalog). Detail zůstane dostupný. */
   hideFromCatalog?: boolean;
+  /** Neveřejný produkt (připravený, ještě nevydaný): mimo katalog, sitemap, SEO prerender, AI výběr do e-mailů; detail má noindex. */
+  unpublished?: boolean;
   /** U písanek: verze pro praváky / leváky. */
   handedness?: 'right' | 'left';
   poradi?: number;

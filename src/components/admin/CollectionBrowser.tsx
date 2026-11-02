@@ -155,6 +155,12 @@ const PRODUCT_FIELDS: FieldDef[] = [
     type: 'boolean',
     hint: 'Produkt zůstane na detailu (např. přepínač praváci/leváci), ale nezobrazí se na homepage ani v katalogu.',
   },
+  {
+    key: 'unpublished',
+    label: 'Neveřejný (připravený produkt)',
+    type: 'boolean',
+    hint: 'Kromě katalogu zmizí i ze sitemap, SEO prerenderu, exportu pro distributory a AI výběru do e-mailů; detail má noindex. Zapínejte spolu se „Skrýt z přehledu katalogu“.',
+  },
   { key: 'item_id', label: 'Item ID (XML feed)', type: 'text', hint: 'Externí ID pro Google/Meta feed. Nechte prázdné, pokud má feed použít interní ID položky.' },
   { key: 'basecomProductId', label: 'Base.com Product ID', type: 'text' },
   { key: 'basecomSku', label: 'Base.com SKU', type: 'text', hint: 'Standardně bereme Shoptet ID. Toto pole slouží jen jako výjimka / override.' },
