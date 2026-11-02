@@ -1078,6 +1078,12 @@ type MarketingFeedSkip = {
 
 const MARKETING_FEED_PRODUCT_TYPES = new Set(['workbook', 'online', 'license']);
 const MARKETING_FEED_BRAND = 'Vividbooks';
+const MARKETING_FEED_SHIPPING = [
+  { service: 'DPD', price: '89.00 CZK' },
+  { service: 'Zásilkovna Z-Point', price: '79.00 CZK' },
+  { service: 'GLS', price: '89.00 CZK' },
+  { service: 'PPL', price: '99.00 CZK' },
+];
 
 function stripMarketingFeedText(value: unknown, maxLength: number): string {
   return String(value ?? '')
@@ -1203,6 +1209,8 @@ function productToMarketingFeedItem(product: any, allProducts: readonly any[]): 
 
   const priceAmount = parseMarketingFeedPriceAmount(product);
   if (priceAmount == null) return { skip: { ...baseSkip, reason: 'missing_price' } };
+  // Zdarma nepatří do Shoppingu: nulová cena Merchant Center zamítá a zbytečně by žrala kliky.
+  if (priceAmount <= 0) return { skip: { ...baseSkip, reason: 'free_product' } };
 
   const description =
     stripMarketingFeedText(product?.description || product?.obsah || product?.note || product?.poznamka, 5000) ||
@@ -1262,6 +1270,10 @@ function buildGoogleMarketingFeedXml(items: MarketingFeedItem[]): string {
     const identifierRows = item.gtin
       ? `      <g:gtin>${escapeXml(item.gtin)}</g:gtin>`
       : `      <g:mpn>${escapeXml(item.mpn)}</g:mpn>`;
+    // Doprava jen u tištěného zboží; digitální licence se neposílají.
+    const shippingRows = item.googleProductCategory === 'Media > Books'
+      ? MARKETING_FEED_SHIPPING.map((o) => `      <g:shipping>\n        <g:country>CZ</g:country>\n        <g:service>${escapeXml(o.service)}</g:service>\n        <g:price>${o.price}</g:price>\n      </g:shipping>`).join('\n')
+      : '';
     return `    <item>
       <g:id>${escapeXml(item.itemId)}</g:id>
       <g:title>${escapeXml(item.title)}</g:title>
@@ -1274,6 +1286,7 @@ function buildGoogleMarketingFeedXml(items: MarketingFeedItem[]): string {
       <g:brand>${escapeXml(item.brand)}</g:brand>
 ${identifierRows}
       <g:google_product_category>${escapeXml(item.googleProductCategory)}</g:google_product_category>
+${shippingRows}
       <g:product_type>${escapeXml(item.productType)}</g:product_type>
     </item>`;
   });
@@ -1338,7 +1351,7 @@ function buildMarketingFeedHeaders(origin: string | null) {
   };
 }
 
-const MARKETING_FEED_VERSION = 'feed-20260519';
+const MARKETING_FEED_VERSION = 'feed-20261102';
 
 const ALLOWED_API_ORIGINS = [
   'https://new.vividbooks.com',

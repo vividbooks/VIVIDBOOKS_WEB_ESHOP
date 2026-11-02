@@ -11,6 +11,14 @@
   ],
   "rewrites": [
     {
+      "source": "/feed-google.xml",
+      "destination": "https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/make-server-93a20b6f/marketing-feed/google.xml"
+    },
+    {
+      "source": "/feed-meta.csv",
+      "destination": "https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/make-server-93a20b6f/marketing-feed/meta.csv"
+    },
+    {
       "source": "/api/edge/:path*",
       "destination": "https://iekkundgizzdbmkzatdl.supabase.co/functions/v1/:path*"
     },
