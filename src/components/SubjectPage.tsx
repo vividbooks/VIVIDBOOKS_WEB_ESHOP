@@ -876,12 +876,34 @@ export function SubjectPage({
             navigate={navigate}
             compact
           />
+          {/* Druhá úroveň výběru: ročníky ve stejném jazyce jako dlaždice řad. */}
+          {subjectRocnikOptions.length > 1 && (
+            <div className="mt-1 flex flex-wrap items-center gap-2.5" role="group" aria-label="Ročník">
+              {[null, ...subjectRocnikOptions].map((r) => {
+                const on = r === null ? subjectRocnikFilter == null : subjectRocnikFilter === r;
+                return (
+                  <button
+                    key={r ?? 'vse'}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => (r === null ? clearRocnikFilter() : toggleRocnik(r))}
+                    className={`rounded-[14px] bg-[#f8f9fc] px-4 py-2.5 text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[15px] leading-tight transition-all duration-200 cursor-pointer hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2 ${
+                      on ? 'ring-2 ring-[#001161]' : ''
+                    }`}
+                  >
+                    {r === null ? 'Všechny ročníky' : `${r}. ročník`}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       ) : null}
 
       {/* ── BOOKS ── */}
       <div className={`${isTestVariant ? 'pt-4 pb-12' : 'py-12'} px-6 md:px-12 max-w-[1200px] mx-auto`}>
 
+        {!isTestVariant && (
         <div className="flex items-center gap-4 mb-0">
           <h2
             className="text-[#001161] text-[26px] md:text-[32px] leading-[1.08] shrink-0"
@@ -891,8 +913,9 @@ export function SubjectPage({
           </h2>
           <div className="h-px flex-1 bg-[#001161]/10 self-center min-w-0" />
         </div>
+        )}
 
-        {subjectRocnikOptions.length > 1 && (
+        {subjectRocnikOptions.length > 1 && !isTestVariant && (
           <div className="mt-3 mb-1 flex flex-col gap-2">
             <div className="flex flex-wrap items-baseline gap-x-[14px] gap-y-2.5">
               <span className="font-['Fenomen_Sans',sans-serif] text-[12px] font-bold uppercase tracking-[0.14em] text-[#001161]/40 shrink-0 pt-0.5">

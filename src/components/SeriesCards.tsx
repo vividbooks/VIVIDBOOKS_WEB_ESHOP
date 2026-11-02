@@ -543,7 +543,12 @@ export function SeriesCards({
   /** Návrh náhledu digitální učebnice: `?dig=1`–`5` (jen pro srovnání variant). */
   const digVariant = Number(new URLSearchParams(location.search).get('dig')) || 0;
   /** Na stránce předmětu je karta aktivní, když její filtr odpovídá adrese. */
-  const isActiveHref = (href: string) => href.includes('?') && `${location.pathname}${location.search}` === href;
+  const isActiveHref = (href: string) => {
+    const [path, query] = href.split('?');
+    if (!query || path !== location.pathname) return false;
+    const current = new URLSearchParams(location.search);
+    return [...new URLSearchParams(query)].every(([k, v]) => current.get(k) === v);
+  };
   const workbookCover = pickCovers(books.filter((b) => b.image), [0])[0];
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
@@ -566,8 +571,13 @@ export function SeriesCards({
             ? `${subjectPath}?typ=${s.typ}`
             : s.rocnik ? `${subjectPath}?rocnik=${s.rocnik}` : subjectPath;
           const active = isActiveHref(filterHref);
-          // Druhý klik na aktivní kartu filtr zruší.
-          const href = active ? subjectPath : filterHref;
+          // Na stránce předmětu: přepnutí řady zachová vybraný ročník; druhý klik na aktivní kartu řadu zruší.
+          const keptRocnik = !s.href && !s.rocnik && location.pathname === subjectPath
+            ? new URLSearchParams(location.search).get('rocnik')
+            : null;
+          const withRocnik = (url: string) =>
+            keptRocnik ? `${url}${url.includes('?') ? '&' : '?'}rocnik=${keptRocnik}` : url;
+          const href = withRocnik(active ? subjectPath : filterHref);
           return (
             <a
               key={s.key}
@@ -579,6 +589,11 @@ export function SeriesCards({
               }}
               style={{ backgroundColor: s.bg }}
               aria-current={active ? 'page' : undefined}
+              ref={active ? (el) => {
+                // Na mobilu (vodorovný pás) posunout pás na vybranou dlaždici.
+                const strip = el?.parentElement;
+                if (el && strip && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = el.offsetLeft - strip.offsetLeft - 16;
+              } : undefined}
               className={`group/series relative ${active ? 'ring-2 ring-[#001161]' : ''} snap-start shrink-0 w-[82%] sm:w-[60%] md:w-auto flex items-stretch gap-4 ${stacked ? 'xl:flex-col xl:gap-0' : ''} rounded-[20px] ${compact ? 'p-3 lg:p-3.5 min-h-[120px]' : 'p-4 lg:p-5 min-h-[190px] lg:min-h-[220px]'} transition-all duration-200 hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2`}
             >
               <div className={`relative shrink-0 self-center aspect-square ${compact ? 'w-[40%] max-w-[124px] mr-3' : 'w-[46%] max-w-[180px]'} ${stacked ? 'xl:w-full xl:max-w-[190px] xl:self-center xl:mt-9' : ''}`}>
