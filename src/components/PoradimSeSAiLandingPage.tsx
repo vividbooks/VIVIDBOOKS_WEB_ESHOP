@@ -528,7 +528,7 @@ export function PoradimSeSAiLandingPage() {
             />
 
             <article className="mt-10 overflow-hidden rounded-[30px] bg-[#0F1B6B] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]">
-              <div className="grid gap-8 p-7 md:p-10 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="grid items-center gap-10 p-8 md:p-12 lg:grid-cols-2">
                 <div>
                   <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#FFDD00]">Hlavní nabídka</p>
                   <h3 className="mt-2 text-[34px] leading-tight md:text-[40px]" style={{ fontFamily: COOPER }}>
@@ -539,9 +539,9 @@ export function PoradimSeSAiLandingPage() {
                     od {czk(Math.round(programTiers[0].price * SHARE))}
                     <span className="ml-2 text-[15px] font-bold text-white/55">ročně</span>
                   </p>
-                  <div className="mt-5 grid gap-1.5 text-[14px] text-white/70">
+                  <div className="mt-6 grid gap-2.5 text-[14px] text-white/70">
                     {programTiers.map((t) => (
-                      <div key={t.label} className="flex justify-between gap-4 border-b border-white/10 pb-1.5">
+                      <div key={t.label} className="flex justify-between gap-4 border-b border-white/10 pb-2.5">
                         <span>{t.label}</span>
                         <span>
                           {czk(t.price)} / rok · <span className="font-bold text-white">škola {czk(Math.round(t.price * SHARE))}</span>
@@ -550,22 +550,20 @@ export function PoradimSeSAiLandingPage() {
                     ))}
                   </div>
                 </div>
-                <div className="grid gap-3">
-                  <div className="rounded-[20px] bg-[#FFDD00] p-5 text-[#0F1B6B]">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <p className="text-[18px] font-bold">Vividbooks s AI pro celou školu</p>
-                      <p className="text-[12px] font-bold uppercase tracking-[0.08em]">v ceně programu</p>
-                    </div>
+                <div className="grid gap-4">
+                  <div className="rounded-[20px] bg-[#FFDD00] px-6 py-5 text-[#0F1B6B]">
+                    <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#0F1B6B]/70">V ceně programu</p>
+                    <p className="mt-1 text-[18px] font-bold">Vividbooks s AI pro celou školu</p>
                     <p className="mt-1 text-[14px] leading-relaxed text-[#0F1B6B]/80">
-                      <T>Licence pro všechny učitele po celou dobu projektu: knihovna materiálů s doložkou MŠMT, vividboard a Vividbooks AI. Tokeny jsou v ceně.</T>
+                      <T>Knihovna s doložkou MŠMT, vividboard a Vividbooks AI pro všechny učitele. Tokeny v ceně.</T>
                     </p>
                   </div>
-                  <div className="rounded-[20px] bg-white/10 p-5">
+                  <div className="rounded-[20px] bg-white/10 p-6">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <p className="text-[18px] font-bold">Vzdělávání pro celou sborovnu</p>
                       <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#FFDD00]">16 + 10 hodin podle výzvy</p>
                     </div>
-                    <ul className="mt-3 grid gap-2">
+                    <ul className="mt-4 grid gap-3">
                       {programEducation.map((pt) => (
                         <li key={pt} className="flex gap-3 text-[15px] leading-relaxed text-white/80">
                           <Check className="mt-1 h-4 w-4 shrink-0 text-[#FFDD00]" />
