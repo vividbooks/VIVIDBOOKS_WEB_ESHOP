@@ -89,8 +89,8 @@ function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci', onC
 
 /** Aktivity výzvy (PpŽP – specifická část) a co k nim dodá Vividbooks. */
 const activities = [
-  { code: 'Aktivita 2', title: 'Pravidla bezpečného využívání AI', ours: 'Vzor školních pravidel pro AI.' },
-  { code: 'Aktivita 3', title: 'Přípravy na výuku s AI', ours: 'Vividbooks AI připraví z tématu, fotky nebo PDF interaktivní aktivity.' },
+  { code: 'Aktivita 2', title: 'Pravidla bezpečného využívání AI', ours: 'Vzor školních pravidel: co se s AI smí, jak chránit data žáků a kdo za co odpovídá.' },
+  { code: 'Aktivita 3', title: 'Přípravy na výuku s AI', ours: 'AI připraví aktivity z ověřených materiálů. Odpovídají učivu a ročníku, učitel je zkontroluje a upraví.' },
   { code: 'Aktivita 4', title: 'AI a zpětná vazba žákům', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
   { code: 'Aktivita 7', title: 'Vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace.' },
   { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
@@ -109,7 +109,7 @@ const showcase = [
     src: '/aplikace/news-02-ai.png',
     pos: 'object-center',
     title: 'AI z ověřených dat',
-    body: 'Vividbooks AI tvoří úlohy přímo z materiálů knihovny, ne z náhodných zdrojů na internetu. Díky tomu nehalucinuje.',
+    body: 'Vividbooks AI tvoří úlohy přímo z materiálů knihovny, ne z náhodných zdrojů na internetu. Díky tomu nehalucinuje a nevzniká generický obsah, který žákům nic nedá.',
   },
   {
     src: '/vividboard/ai-grading.webp',
@@ -138,7 +138,7 @@ const plans = [
     tagline: 'Pro žáky celé školy',
     points: [
       'Licence Vividbooks pro žáky',
-      'AI v aplikaci i pro žáky, pod dohledem učitele',
+      'AI pro žáky v bezpečném prostředí: učitel určuje, s čím pracují',
       'Veškeré náklady na AI (tokeny) jsou v ceně licence',
     ],
     covers: 'Aktivity 3 a 4',
@@ -356,7 +356,7 @@ export function PoradimSeSAiLandingPage() {
                 <span className="text-[#FFDD00]">pro vaši školu</span>
               </h1>
               <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed md:text-[19px] lg:mx-0 text-white/85">
-                <T>Nová výzva MŠMT podpoří školy, které chtějí AI ve výuce používat smysluplně a bezpečně. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
+                <T>Výzva MŠMT podpoří školy, které chtějí AI ve výuce používat bezpečně a zodpovědně, tak aby žákům opravdu pomáhala. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
               </p>
               <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
                 <PrimaryCta className="px-6 py-3.5" onColor />
@@ -414,7 +414,7 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Ukázky z aplikace"
               title="Takhle s AI pracují učitelé ve Vividbooks"
-              body={<T>Vividbooks používá přes 600 základních škol. AI pracuje nad knihovnou materiálů, kterou učitelé znají.</T>}
+              body={<T>AI u nás nenahrazuje učitele, ale šetří mu práci. Pracuje nad ověřenou knihovnou, kterou používá přes 600 základních škol, a každý výstup má pod kontrolou učitel.</T>}
             />
             <div className="mt-10 grid gap-6 md:grid-cols-3">
               {showcase.map((item) => (
@@ -433,6 +433,26 @@ export function PoradimSeSAiLandingPage() {
                   </figcaption>
                 </figure>
               ))}
+            </div>
+            <div className="mt-8 rounded-[28px] bg-[#0F1B6B] p-6 text-white md:p-8">
+              <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#FFDD00]">Bezpečně a zodpovědně</p>
+              <div className="mt-5 grid gap-6 md:grid-cols-3">
+                {[
+                  ['Učitel má poslední slovo', 'AI navrhuje, učitel rozhoduje. Nic se k žákům nedostane bez jeho kontroly.'],
+                  ['Ověřený obsah', 'AI vychází z materiálů s doložkou MŠMT, ne z náhodných zdrojů na internetu.'],
+                  ['Žáci v bezpečí', 'Žáci nevidí správné odpovědi a pracují jen s tím, co jim učitel zadá.'],
+                ].map(([title, body]) => (
+                  <div key={title} className="flex gap-3">
+                    <Check className="mt-1 h-5 w-5 shrink-0 text-[#FFDD00]" />
+                    <div>
+                      <p className="text-[16px] font-bold">{title}</p>
+                      <p className="mt-1 text-[14px] leading-relaxed text-white/70">
+                        <T>{body}</T>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </section>
