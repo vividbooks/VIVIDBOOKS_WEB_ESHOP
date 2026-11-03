@@ -13,6 +13,7 @@ import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { marketingUrl } from '../config/marketingSite';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { subjectToSlug } from '../utils/slugify';
+import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import {
   FyzikaAccessJourney,
@@ -513,6 +514,24 @@ export function SubjectPage({
     return Array.from(s).sort((a, b) => Number(a) - Number(b));
   }, [subjectProducts]);
 
+  /**
+   * Testovací varianta, Matematika: řádek ročníků přes oba stupně — ročníky druhého stupně vedou
+   * na jeho testovací stránku s `?rocnik=`.
+   */
+  const otherMathStage = isTestVariant && baseSubject === 'Matematika' && subjectGradeNum
+    ? `Matematika ${subjectGradeNum === '1' ? '2' : '1'}. stupe\u0148`
+    : null;
+  const otherStageRocnikOptions = useMemo(() => {
+    if (!otherMathStage) return [];
+    const s = new Set<string>();
+    for (const p of products) {
+      if (p.category !== otherMathStage || !isTestCatalogVisible(p)) continue;
+      const r = subjectPageExtractRocnik(p);
+      if (r) s.add(r);
+    }
+    return Array.from(s);
+  }, [products, otherMathStage]);
+
   const subjectRocnikFilter = useMemo(() => {
     if (!rocnikParam) return null;
     if (subjectRocnikOptions.length === 0) return null;
@@ -529,11 +548,12 @@ export function SubjectPage({
 
   const prevSubjectRef = useRef<string | null>(null);
   useEffect(() => {
-    if (prevSubjectRef.current !== null && prevSubjectRef.current !== subject) {
+    // Testovací varianta: ročník z druhého stupně matematiky přichází s `?rocnik=` — nemazat.
+    if (prevSubjectRef.current !== null && prevSubjectRef.current !== subject && !isTestVariant) {
       setSearchParams({}, { replace: true });
     }
     prevSubjectRef.current = subject;
-  }, [subject, setSearchParams]);
+  }, [subject, setSearchParams, isTestVariant]);
 
   useEffect(() => {
     const r = searchParams.get('rocnik');
@@ -883,14 +903,17 @@ export function SubjectPage({
           {/* Druhá úroveň výběru: ročníky ve stejném jazyce jako dlaždice řad. */}
           {subjectRocnikOptions.length > 1 && (
             <div className="mt-1 flex flex-wrap items-center gap-2.5" role="group" aria-label="Ročník">
-              {[null, ...subjectRocnikOptions].map((r) => {
+              {[null, ...[...subjectRocnikOptions, ...otherStageRocnikOptions].sort((a, b) => Number(a) - Number(b))].map((r) => {
                 const on = r === null ? subjectRocnikFilter == null : subjectRocnikFilter === r;
+                const otherStage = r !== null && otherMathStage && !subjectRocnikOptions.includes(r) ? otherMathStage : null;
                 return (
                   <button
                     key={r ?? 'vse'}
                     type="button"
                     aria-pressed={on}
-                    onClick={() => (r === null ? clearRocnikFilter() : toggleRocnik(r))}
+                    onClick={() => (otherStage
+                      ? navigate(`${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(otherStage)}?rocnik=${r}`)
+                      : r === null ? clearRocnikFilter() : toggleRocnik(r!))}
                     className={`rounded-[14px] bg-[#f8f9fc] px-4 py-2.5 text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[15px] leading-tight transition-all duration-200 cursor-pointer hover:shadow-[0_12px_32px_-12px_rgba(0,17,97,0.25)] hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#001161]/30 focus-visible:ring-offset-2 ${
                       on ? 'ring-2 ring-[#001161]' : ''
                     }`}
