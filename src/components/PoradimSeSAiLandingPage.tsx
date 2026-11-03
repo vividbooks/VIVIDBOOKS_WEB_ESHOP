@@ -96,17 +96,27 @@ const activities = [
   { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
 ];
 
-const studentFeatures = [
-  { title: 'Testy a písemky', body: 'Učitel zadá test ve vividboardu, žáci ho vyplní v počítači nebo tabletu. Na 2. stupni se testy opravují samy.' },
-  { title: 'Procvičování', body: 'Žáci si učivo procvičí i mimo hodinu. V matematice Početník přizpůsobí tempo každému žákovi.' },
-  { title: 'Pomůžeme s hodnocením', body: 'Přehled výsledků třídy a nejtěžších otázek. S nastavením hodnocení s AI pro projekt vám poradíme.' },
-];
-
 /** Ukázky z aplikace (obrázky z public/). */
 const showcase = [
-  { src: '/aplikace/news-02-ai.png', title: 'Test na jednu větu', body: 'Učitel napíše, co potřebuje, a Vividbooks AI připraví test z materiálů knihovny. Pak ho jen upraví.' },
-  { src: '/vividboard/hero-slider-1.webp', title: 'Hodina ve vividboardu', body: 'Hotová lekce na tabuli i v zařízení žáků, s aktivitami a soutěžemi.' },
-  { src: '/vividboard/ai-grading.webp', title: 'Výsledky na jednom místě', body: 'Přehled úspěšnosti třídy i nejtěžších otázek. Na 2. stupni se testy opravují samy.' },
+  {
+    src: '/aplikace/news-01-knihovna.png',
+    overlay: '/app-uvod/workbooks.png',
+    pos: 'object-right-top',
+    title: 'Knihovna s doložkou MŠMT',
+    body: 'Lekce, pracovní listy, testy a metodiky pro 1. i 2. stupeň, včetně tištěných pracovních sešitů.',
+  },
+  {
+    src: '/aplikace/news-02-ai.png',
+    pos: 'object-center',
+    title: 'AI z ověřených dat',
+    body: 'Vividbooks AI tvoří úlohy přímo z materiálů knihovny, ne z náhodných zdrojů na internetu. Díky tomu nehalucinuje.',
+  },
+  {
+    src: '/vividboard/ai-grading.webp',
+    pos: 'object-left-top',
+    title: 'Testy, procvičování a hodnocení',
+    body: 'Žáci kromě výuky píšou testy a procvičují. Na 2. stupni se testy opravují samy a s hodnocením vám pomůžeme.',
+  },
 ];
 
 /** Ceník licencí (za školu a rok, vč. DPH). Ceny drž jen tady. */
@@ -326,7 +336,6 @@ export function PoradimSeSAiLandingPage() {
             {[
               ['#vyzva', 'Výzva v kostce'],
               ['#ukazky', 'Ukázky'],
-              ['#knihovna', 'Knihovna'],
               ['#aktivity', 'Co dodáme'],
               ['#cenik', 'Ceník'],
               ['#postup', 'Jak to proběhne'],
@@ -414,8 +423,11 @@ export function PoradimSeSAiLandingPage() {
             <div className="mt-10 grid gap-6 md:grid-cols-3">
               {showcase.map((item) => (
                 <figure key={item.title} className="overflow-hidden rounded-[26px] border border-[#001161]/8 bg-[#eef1fb]">
-                  <div className="aspect-[4/3] overflow-hidden bg-[#dfe4f7]">
-                    <img src={item.src} alt={item.title} loading="lazy" className="h-full w-full object-cover object-top" />
+                  <div className="relative aspect-[4/3] overflow-hidden bg-[#dfe4f7]">
+                    <img src={item.src} alt={item.title} loading="lazy" className={`h-full w-full object-cover ${item.pos ?? 'object-top'}`} />
+                    {item.overlay ? (
+                      <img src={item.overlay} alt="Tištěné pracovní sešity Vividbooks" loading="lazy" className="absolute -bottom-3 left-3 w-[40%] drop-shadow-[0_12px_20px_rgba(0,17,97,0.3)]" />
+                    ) : null}
                   </div>
                   <figcaption className="p-5">
                     <p className="text-[18px] font-bold text-[#001161]">{item.title}</p>
@@ -425,69 +437,6 @@ export function PoradimSeSAiLandingPage() {
                   </figcaption>
                 </figure>
               ))}
-            </div>
-          </div>
-        </section>
-
-        <section id="knihovna" className="scroll-mt-24 bg-[#eef1fb] px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[1fr_1.1fr]">
-            <div>
-              <Badge>Knihovna Vividbooks</Badge>
-              <h2 className="mt-4 text-[32px] leading-[1.06] tracking-[-0.02em] text-[#001161] md:text-[44px]" style={{ fontFamily: COOPER }}>
-                AI, která stojí na ověřených učebnicích
-              </h2>
-              <div className="mt-7 grid gap-4">
-                {[
-                  ['Knihovna s doložkou MŠMT', 'Interaktivní lekce, učební texty, pracovní listy, metodiky a testy pro 1. i 2. stupeň.'],
-                  ['Včetně tištěných sešitů', 'Ke každé stránce sešitu najde učitel v aplikaci řešení i navazující materiály.'],
-                  ['AI vychází z ověřených dat', 'Vividbooks AI tvoří úlohy z materiálů knihovny, ne z náhodných zdrojů z internetu. Drží se učiva a nevymýšlí si.'],
-                ].map(([title, body]) => (
-                  <div key={title} className="flex gap-3">
-                    <Check className="mt-1 h-5 w-5 shrink-0 text-[#5B4FD8]" />
-                    <div>
-                      <p className="text-[17px] font-bold text-[#001161]">{title}</p>
-                      <p className="mt-1 text-[15px] leading-relaxed text-[#001161]/62">
-                        <T>{body}</T>
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="relative mx-auto w-full max-w-[560px] pb-10">
-              <div className="overflow-hidden rounded-[24px] border-[6px] border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.16)]">
-                <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks: složky učiva fyziky" loading="lazy" className="block w-full" />
-              </div>
-              <img
-                src="/app-uvod/workbooks.png"
-                alt="Tištěné pracovní sešity Vividbooks"
-                loading="lazy"
-                className="absolute -bottom-2 -left-6 w-[46%] drop-shadow-[0_18px_30px_rgba(0,17,97,0.25)] md:-left-12"
-              />
-            </div>
-          </div>
-        </section>
-
-        <section id="zaci" className="scroll-mt-24 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[0.9fr_1.1fr]">
-            <div className="order-2 lg:order-1">
-              <img src="/app-screenshots/nova-1.png" alt="Žákovská aktivita ve vividboardu na tabletu" loading="lazy" className="mx-auto block w-full max-w-[520px]" />
-            </div>
-            <div className="order-1 lg:order-2">
-              <SectionTitle
-                eyebrow="Pro žáky"
-                title="Žáci nejen v hodině, ale i v testech a procvičování"
-              />
-              <div className="mt-7 grid gap-4">
-                {studentFeatures.map((f) => (
-                  <div key={f.title} className="rounded-[20px] border border-[#001161]/8 bg-[#eef1fb] p-5">
-                    <p className="text-[17px] font-bold text-[#001161]">{f.title}</p>
-                    <p className="mt-1 text-[15px] leading-relaxed text-[#001161]/62">
-                      <T>{f.body}</T>
-                    </p>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
         </section>
