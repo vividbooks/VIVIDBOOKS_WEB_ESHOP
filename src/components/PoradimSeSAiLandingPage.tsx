@@ -96,9 +96,15 @@ const activities = [
   { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
 ];
 
+const studentFeatures = [
+  { title: 'Testy a písemky', body: 'Učitel zadá test ve vividboardu, žáci ho vyplní v počítači nebo tabletu. Na 2. stupni se testy opravují samy.' },
+  { title: 'Procvičování', body: 'Žáci si učivo procvičí i mimo hodinu. V matematice Početník přizpůsobí tempo každému žákovi.' },
+  { title: 'Pomůžeme s hodnocením', body: 'Přehled výsledků třídy a nejtěžších otázek. S nastavením hodnocení s AI pro projekt vám poradíme.' },
+];
+
 /** Ukázky z aplikace (obrázky z public/). */
 const showcase = [
-  { src: '/vividboard/tool-ai.webp', title: 'AI připraví otázky', body: 'Z tématu, fotky učebnice nebo PDF vytvoří interaktivní aktivitu. Učitel ji jen upraví.' },
+  { src: '/aplikace/news-02-ai.png', title: 'Test na jednu větu', body: 'Učitel napíše, co potřebuje, a Vividbooks AI připraví test z materiálů knihovny. Pak ho jen upraví.' },
   { src: '/vividboard/hero-slider-1.webp', title: 'Hodina ve vividboardu', body: 'Hotová lekce na tabuli i v zařízení žáků, s aktivitami a soutěžemi.' },
   { src: '/vividboard/ai-grading.webp', title: 'Výsledky na jednom místě', body: 'Přehled úspěšnosti třídy i nejtěžších otázek. Na 2. stupni se testy opravují samy.' },
 ];
@@ -318,8 +324,9 @@ export function PoradimSeSAiLandingPage() {
           <VividLogo />
           <nav className="hidden items-center gap-5 md:flex" aria-label="Navigace stránky">
             {[
-              ['#ukazky', 'Ukázky'],
               ['#vyzva', 'Výzva v kostce'],
+              ['#ukazky', 'Ukázky'],
+              ['#knihovna', 'Knihovna'],
               ['#aktivity', 'Co dodáme'],
               ['#cenik', 'Ceník'],
               ['#postup', 'Jak to proběhne'],
@@ -342,17 +349,17 @@ export function PoradimSeSAiLandingPage() {
             <div className="text-center lg:text-left">
               <Badge>Výzva OP JAK č. 02_26_048</Badge>
               <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#001161] sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
-                Poradím se s AI.
+                Výzva Poradím se s AI
                 <br />
-                <span className="text-[#5B4FD8]">S Vividbooks.</span>
+                <span className="text-[#5B4FD8]">pro vaši školu</span>
               </h1>
               <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed text-[#001161]/68 md:text-[19px] lg:mx-0">
-                <T>Výzva MŠMT podpoří školy, které chtějí AI používat smysluplně a bezpečně. Pomůžeme vám s přípravou projektu a dodáme aplikaci s Vividbooks AI i vzdělávání pro sborovnu.</T>
+                <T>Nová výzva MŠMT podpoří školy, které chtějí AI ve výuce používat smysluplně a bezpečně. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
               </p>
               <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
                 <PrimaryCta className="px-6 py-3.5" />
-                <a href="#ukazky" className="inline-flex items-center justify-center rounded-xl bg-[#001161] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#0a1f80]">
-                  Ukázky z aplikace
+                <a href="#vyzva" className="inline-flex items-center justify-center rounded-xl bg-[#001161] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#0a1f80]">
+                  Co výzva vyžaduje
                 </a>
               </div>
               <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-[#001161]/10 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
@@ -369,17 +376,29 @@ export function PoradimSeSAiLandingPage() {
                 ))}
               </div>
             </div>
-            <div className="relative mx-auto w-full max-w-[600px]">
-              <div className="overflow-hidden rounded-[22px] border border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.18)]">
-                <img src="/app-screenshots/nova-4.png" alt="Knihovna Vividbooks v aplikaci" className="block w-full" />
+            <div className="relative mx-auto w-full max-w-[520px]">
+              <div className="overflow-hidden rounded-[24px] border-[6px] border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.18)]">
+                <img src="/vividboard/tool-ai.webp" alt="AI vytváří otázku z obsahu výuky" className="block w-full" />
               </div>
-              <div className="absolute -bottom-10 -left-4 w-[48%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-10">
-                <img src="/vividboard/tool-ai.webp" alt="Vividbooks AI vytváří otázku z obsahu" className="block w-full" />
-              </div>
-              <div className="absolute -right-3 -top-6 rounded-2xl bg-[#5B4FD8] px-4 py-3 text-[13px] font-bold text-white shadow-lg md:-right-6">
-                Vividbooks AI
-                <span className="block text-[11px] font-medium text-white/70">tokeny v ceně licence</span>
-              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="vyzva" className="scroll-mt-24 px-4 py-16 sm:px-6 md:px-10 md:py-20">
+          <div className="mx-auto max-w-[820px]">
+            <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
+            <div className="mt-8 grid gap-3">
+              {[
+                'Žadatel se AI ve vzdělávání pravidelně věnoval už v roce 2025 a umí to doložit.',
+                'Projekt má aspoň pět dalších škol aspoň dvou druhů (třeba ZŠ a MŠ) a souhlas zřizovatele.',
+                'V každé škole se zapojí vedení a aspoň polovina pedagogů.',
+                'Škola jako žadatel hradí nejméně 5 % nákladů.',
+              ].map((item) => (
+                <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
+                  <T>{item}</T>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -410,21 +429,65 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="vyzva" className="scroll-mt-24 px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto max-w-[820px]">
-            <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
-            <div className="mt-8 grid gap-3">
-              {[
-                'Žadatel se AI ve vzdělávání pravidelně věnoval už v roce 2025 a umí to doložit.',
-                'Projekt má aspoň pět dalších škol aspoň dvou druhů (třeba ZŠ a MŠ) a souhlas zřizovatele.',
-                'V každé škole se zapojí vedení a aspoň polovina pedagogů.',
-                'Škola jako žadatel hradí nejméně 5 % nákladů.',
-              ].map((item) => (
-                <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
-                  <T>{item}</T>
-                </div>
-              ))}
+        <section id="knihovna" className="scroll-mt-24 bg-[#eef1fb] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+          <div className="mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[1fr_1.1fr]">
+            <div>
+              <Badge>Knihovna Vividbooks</Badge>
+              <h2 className="mt-4 text-[32px] leading-[1.06] tracking-[-0.02em] text-[#001161] md:text-[44px]" style={{ fontFamily: COOPER }}>
+                AI, která stojí na ověřených učebnicích
+              </h2>
+              <div className="mt-7 grid gap-4">
+                {[
+                  ['Knihovna s doložkou MŠMT', 'Interaktivní lekce, učební texty, pracovní listy, metodiky a testy pro 1. i 2. stupeň.'],
+                  ['Včetně tištěných sešitů', 'Ke každé stránce sešitu najde učitel v aplikaci řešení i navazující materiály.'],
+                  ['AI vychází z ověřených dat', 'Vividbooks AI tvoří úlohy z materiálů knihovny, ne z náhodných zdrojů z internetu. Drží se učiva a nevymýšlí si.'],
+                ].map(([title, body]) => (
+                  <div key={title} className="flex gap-3">
+                    <Check className="mt-1 h-5 w-5 shrink-0 text-[#5B4FD8]" />
+                    <div>
+                      <p className="text-[17px] font-bold text-[#001161]">{title}</p>
+                      <p className="mt-1 text-[15px] leading-relaxed text-[#001161]/62">
+                        <T>{body}</T>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="relative mx-auto w-full max-w-[560px] pb-10">
+              <div className="overflow-hidden rounded-[24px] border-[6px] border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.16)]">
+                <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks: složky učiva fyziky" loading="lazy" className="block w-full" />
+              </div>
+              <img
+                src="/app-uvod/workbooks.png"
+                alt="Tištěné pracovní sešity Vividbooks"
+                loading="lazy"
+                className="absolute -bottom-2 -left-6 w-[46%] drop-shadow-[0_18px_30px_rgba(0,17,97,0.25)] md:-left-12"
+              />
+            </div>
+          </div>
+        </section>
+
+        <section id="zaci" className="scroll-mt-24 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
+          <div className="mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="order-2 lg:order-1">
+              <img src="/app-screenshots/nova-1.png" alt="Žákovská aktivita ve vividboardu na tabletu" loading="lazy" className="mx-auto block w-full max-w-[520px]" />
+            </div>
+            <div className="order-1 lg:order-2">
+              <SectionTitle
+                eyebrow="Pro žáky"
+                title="Žáci nejen v hodině, ale i v testech a procvičování"
+              />
+              <div className="mt-7 grid gap-4">
+                {studentFeatures.map((f) => (
+                  <div key={f.title} className="rounded-[20px] border border-[#001161]/8 bg-[#eef1fb] p-5">
+                    <p className="text-[17px] font-bold text-[#001161]">{f.title}</p>
+                    <p className="mt-1 text-[15px] leading-relaxed text-[#001161]/62">
+                      <T>{f.body}</T>
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </section>
