@@ -358,7 +358,7 @@ export function PoradimSeSAiLandingPage() {
             <div className="text-center lg:text-left">
               <Badge>Výzva OP JAK č. 02_26_048</Badge>
               <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#001161] sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
-                Výzva Poradím se s AI
+                Výzva Poradím se s AI
                 <br />
                 <span className="text-[#5B4FD8]">pro vaši školu</span>
               </h1>
@@ -385,8 +385,11 @@ export function PoradimSeSAiLandingPage() {
                 ))}
               </div>
             </div>
-            <div className="relative mx-auto w-full max-w-[520px]">
-              <div className="overflow-hidden rounded-[24px] border-[6px] border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.18)]">
+            <div className="relative mx-auto w-full max-w-[600px] pb-10">
+              <div className="overflow-hidden rounded-[22px] shadow-[0_30px_80px_rgba(0,17,97,0.18)]">
+                <img src="/aplikace/tema-01-nova-aplikace.webp" alt="Knihovna Vividbooks v aplikaci" className="block w-full" />
+              </div>
+              <div className="absolute -bottom-2 -left-4 w-[50%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-10">
                 <img src="/vividboard/tool-ai.webp" alt="AI vytváří otázku z obsahu výuky" className="block w-full" />
               </div>
             </div>
