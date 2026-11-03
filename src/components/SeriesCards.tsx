@@ -40,6 +40,8 @@ type SeriesDef = {
   digital?: boolean;
   /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady; první je vpředu), aby karty nebyly stejné. */
   coverGrades?: number[];
+  /** Text rozklikávacího „Více o řadě …“ na stránce předmětu; bez něj zástupný [TEXT] (texty nevymýšlet). */
+  about?: string;
 };
 
 const MATH_SERIES: SeriesDef[] = [
@@ -52,6 +54,8 @@ const MATH_SERIES: SeriesDef[] = [
     bg: '#f8f9fc',
     coverGrades: [0, 2, 3],
     match: (n) => n.includes('krok za krokem'),
+    // Skill vividbooks + popisek řady na živé stránce předmětu.
+    about: 'Pro učitele, kteří nechají žáky samostatně objevovat. Vede žáky k vlastnímu objevování a procvičení učiva, v sešitě je víc volného místa na řešení.',
   },
   {
     key: 'pro-vsechny',
@@ -62,6 +66,7 @@ const MATH_SERIES: SeriesDef[] = [
     bg: '#f8f9fc',
     coverGrades: [0, 1, 3],
     match: (n) => n.includes('pro všechny'),
+    about: 'Hodně procvičování a diferenciace: úlohy ve 3 úrovních obtížnosti (zelená, oranžová, červená) a rozsáhlá online aplikace s tisíci úlohami. Díky pestrým úlohám různé obtížnosti vede k důkladnému pochopení. Obě řady lze kombinovat.',
   },
   {
     key: 'moje-matematika',
@@ -81,6 +86,7 @@ const MATH_SERIES: SeriesDef[] = [
     typ: 'digital',
     bg: '#f8f9fc',
     digital: true,
+    about: 'Tisíce příkladů v různých obtížnostech, soutěže a interaktivní pracovní listy. Zdarma od 15 ks sešitů. Lze zakoupit i samostatně bez sešitů.',
   },
 ];
 
@@ -589,6 +595,10 @@ export function SeriesCards({
     const current = new URLSearchParams(location.search);
     return [...new URLSearchParams(query)].every(([k, v]) => current.get(k) === v);
   };
+  /** Rozbalený popis řady („Více o řadě …“) na stránce předmětu. */
+  const [aboutKey, setAboutKey] = React.useState<string | null>(null);
+  const toggleAbout = (key: string) => setAboutKey((k) => (k === key ? null : key));
+  const aboutLabel = (s: SeriesDef) => (s.digital ? 'Více o digitální učebnici' : `Více o řadě ${s.title}`);
   const workbookCover = pickCovers(books.filter((b) => b.image), [0])[0];
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
@@ -678,9 +688,29 @@ export function SeriesCards({
                 <h3 className={`${compact ? 'mt-auto pt-2 pb-0.5 !text-[15px]' : 'my-auto py-3'} ${stacked ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
                   {s.title}
                 </h3>
-                <p className={`text-[#001161]/70 font-['Fenomen_Sans',sans-serif] leading-snug ${compact ? 'text-[12px] lg:text-[12.5px]' : 'text-[13px] lg:text-[14px]'}`}>
-                  {s.description}
-                </p>
+                {compact && !s.rocnik ? (
+                  // Stránka předmětu: místo popisku jen rozklikávací „Více o řadě …“ (text pod dlaždicemi).
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={aboutKey === s.key}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleAbout(s.key); }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return;
+                      e.preventDefault(); e.stopPropagation(); toggleAbout(s.key);
+                    }}
+                    className="self-start inline-flex items-center gap-1 text-[#001161]/70 hover:text-[#001161] font-['Fenomen_Sans',sans-serif] text-[12px] lg:text-[12.5px] leading-snug underline decoration-[#001161]/30 underline-offset-[3px] cursor-pointer"
+                  >
+                    {aboutLabel(s)}
+                    <svg className={`w-3 h-3 shrink-0 transition-transform ${aboutKey === s.key ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </span>
+                ) : (
+                  <p className={`text-[#001161]/70 font-['Fenomen_Sans',sans-serif] leading-snug ${compact ? 'text-[12px] lg:text-[12.5px]' : 'text-[13px] lg:text-[14px]'}`}>
+                    {s.description}
+                  </p>
+                )}
               </div>
             </a>
           );
@@ -725,6 +755,16 @@ export function SeriesCards({
       >
         {cards.map(renderCard)}
       </div>
+      {compact && (() => {
+        const open = cards.find((c) => c.key === aboutKey);
+        if (!open) return null;
+        return (
+          <div className="mt-3 rounded-[14px] bg-[#f8f9fc] px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[#001161]">
+            <p className="text-[14px] font-semibold">{aboutLabel(open)}</p>
+            <p className="mt-1 text-[13.5px] leading-relaxed text-[#001161]/75">{open.about ?? '[TEXT]'}</p>
+          </div>
+        );
+      })()}
     </div>
   );
 }
