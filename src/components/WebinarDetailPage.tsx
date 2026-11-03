@@ -933,6 +933,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             <div className="rounded-[28px] bg-[#F0F2F8] px-5 py-8 md:px-10">
               {requireFullSurveyReg ? (
                 <WebinarRegistrationFormFields
+                  hideDvpp={!!(webinar as any)?.noDvppCertificate}
                   form={form}
                   notTeacher={notTeacher}
                   onTogglePedagogMode={handleTogglePedagogMode}
@@ -1048,7 +1049,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
             participantSchoolIco={form.ico.replace(/\D/g, '')}
             onAnswersChange={onPostSurveyAnswersChange}
             scope="post"
-            certificateKindOverride="dvpp"
+            certificateKindOverride={(webinar as any)?.noDvppCertificate ? 'feedback' : 'dvpp'}
             variant="fullscreen"
           />
         </div>
@@ -1309,6 +1310,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 </motion.div>
               ) : (
                 <WebinarRegistrationFormFields
+                  hideDvpp={!!(webinar as any)?.noDvppCertificate}
                   form={form}
                   notTeacher={notTeacher}
                   onTogglePedagogMode={handleTogglePedagogMode}

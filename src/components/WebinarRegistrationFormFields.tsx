@@ -63,6 +63,8 @@ type Props = {
   /** Jméno z aplikace učebnic, kterým jsme formulář předvyplnili. */
   prefilledFromAppName?: string;
   onClearAppPrefill?: () => void;
+  /** Webinář bez akreditace DVPP (`noDvppCertificate`): formulář certifikát DVPP neslibuje. */
+  hideDvpp?: boolean;
 };
 
 /**
@@ -89,6 +91,7 @@ export function WebinarRegistrationFormFields({
   submitButtonText = 'P\u0159ihl\u00e1sit',
   prefilledFromAppName,
   onClearAppPrefill,
+  hideDvpp = false,
 }: Props) {
   /** Pozice určuje, na co se ptáme: učitel → předměty, vedení / poradce → stupeň. */
   const subjectQuestion = trialSubjectQuestionForPosition(form.position);
@@ -116,9 +119,11 @@ export function WebinarRegistrationFormFields({
             {notTeacher ? 'Nejsem pedagog' : 'Jsem pedagog'}
           </p>
           <p className="font-['Fenomen_Sans',sans-serif] text-[12px] text-[#001161]/45 leading-tight mt-0.5">
-            {notTeacher
-              ? 'Nepot\u0159ebuji certifik\u00e1t DVPP'
-              : 'Po webin\u00e1\u0159i obdr\u017e\u00edm certifik\u00e1t DVPP'}
+            {hideDvpp
+              ? 'Vypln\u00edm \u00fadaje o \u0161kole'
+              : notTeacher
+                ? 'Nepot\u0159ebuji certifik\u00e1t DVPP'
+                : 'Po webin\u00e1\u0159i obdr\u017e\u00edm certifik\u00e1t DVPP'}
           </p>
         </div>
         <button
