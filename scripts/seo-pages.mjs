@@ -234,6 +234,22 @@ export const SEO_PAGES = [
     ],
   },
   {
+    path: '/poradim-se-s-ai',
+    title: 'Poradím se s AI – projekt pro vaši školu',
+    description:
+      'Výzva OP JAK Poradím se s AI: Vividbooks pomůže škole s přípravou projektu a dodá aplikaci s Vividbooks AI i vzdělávání pro sborovnu. Žádosti do 30. 12. 2026.',
+    h1: 'Výzva Poradím se s AI pro vaši školu',
+    h2: 'Bezpečná a zodpovědná AI ve výuce s Vividbooks',
+    answer:
+      'Výzva MŠMT Poradím se s AI (OP JAK č. 02_26_048) podporuje školy, které chtějí AI ve výuce používat bezpečně a zodpovědně. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. Žádosti se podávají do 30. 12. 2026 do 14:00.',
+    jsonLd: [
+      breadcrumb([
+        { name: 'Katalog', url: '/' },
+        { name: 'Poradím se s AI', url: '/poradim-se-s-ai' },
+      ]),
+    ],
+  },
+  {
     path: '/kampane/editor-sesitu',
     title: 'Editor sešitů',
     description:
