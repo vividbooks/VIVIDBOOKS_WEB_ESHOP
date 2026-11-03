@@ -122,9 +122,9 @@ const showcase = [
 /** Ceník (za školu a rok, vč. DPH). Ceny drž jen tady. */
 /** Cena programu podle velikosti sborovny. */
 const programTiers = [
-  { label: 'do 15 učitelů', price: 79000 },
-  { label: '15–30 učitelů', price: 110000 },
-  { label: 'nad 30 učitelů', price: 149000 },
+  { label: 'do 15 učitelů', price: 74000 },
+  { label: '15–30 učitelů', price: 89000 },
+  { label: 'nad 30 učitelů', price: 99000 },
 ];
 const SHARE = 0.05;
 
