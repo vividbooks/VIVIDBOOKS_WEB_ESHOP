@@ -211,12 +211,15 @@ const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk
 const secondGradeLevels   = ['6. ro\u010dn\u00edk', '7. ro\u010dn\u00edk', '8. ro\u010dn\u00edk', '9. ro\u010dn\u00edk'];
 const firstGradeLevels    = ['1. ro\u010dn\u00edk', '2. ro\u010dn\u00edk'];
 
-/** Jen testovací homepage: předměty, které jsou zatím jen v aplikaci (proklik do její knihovny). */
+/**
+ * Jen testovací homepage: předměty mimo katalog webu. `subject` = testovací stránka předmětu,
+ * jinak proklik do knihovny aplikace.
+ */
 const APP_LIBRARY = 'https://nove.vividbooks.com/knihovna';
-const testExtraSubjects: Record<1 | 2, { label: string; href: string }[]> = {
+const testExtraSubjects: Record<1 | 2, { label: string; href?: string; subject?: string }[]> = {
   2: [
-    { label: 'D\u011bjepis', href: `${APP_LIBRARY}/stupen-2/dejepis` },
-    { label: 'Zem\u011bpis', href: `${APP_LIBRARY}/stupen-2/zemepis` },
+    { label: 'D\u011bjepis', subject: 'D\u011bjepis' },
+    { label: 'Zem\u011bpis', subject: 'Zem\u011bpis' },
   ],
   1: [
     { label: 'Vlastiv\u011bda', href: `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet` },
@@ -259,7 +262,7 @@ export default function CatalogLayout() {
       return next;
     });
   const showStupen = (n: 1 | 2) =>
-    !isTestHome || openStupne.has(n) || (n === 2 ? secondGradeSubjects : firstGradeSubjects).some(isSubjectActive);
+    !isTestHome || openStupne.has(n) || [...(n === 2 ? secondGradeSubjects : firstGradeSubjects), ...testExtraSubjects[n].flatMap((x) => x.subject ?? [])].some(isSubjectActive);
   /** Nadpis stupně: na testovací homepage rozbalovací položka jako „Novinky a blog“ (SidebarAccordion), jinak beze změny. */
   const stupenHeading = (n: 1 | 2, className: string) =>
     isTestHome ? (
@@ -280,8 +283,13 @@ export default function CatalogLayout() {
     );
   const testExtraButtons = (n: 1 | 2, className: string, after?: () => void) =>
     isTestHome && groupingMode === 'subject'
-      ? testExtraSubjects[n].map(({ label, href }) => (
-          <button key={label} type="button" onClick={() => { after?.(); window.location.href = href; }} className={className}>
+      ? testExtraSubjects[n].map(({ label, href, subject }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => { after?.(); if (subject) navigate(`${subjectBase}/${subjectToSlug(subject)}`); else if (href) window.location.href = href; }}
+            className={`${className} ${subject && isSubjectActive(subject) ? 'bg-[#c8d7f7]' : ''}`}
+          >
             {label}
           </button>
         ))

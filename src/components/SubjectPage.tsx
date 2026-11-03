@@ -444,7 +444,26 @@ export function SubjectPage({
   const gradeNumMatch = subject.match(/(\d+)\.\s*stupe/i);
   const subjectGradeNum = gradeNumMatch ? gradeNumMatch[1] : null;
 
-  const cfg = SUBJECT_CONFIGS[baseSubject] || SUBJECT_CONFIGS['Matematika'];
+  /**
+   * Testovací varianta: předmět bez konfigurace a textů v adminu (Dějepis, Zeměpis) — jen název,
+   * dlaždice, ročníky a sešity; odznaky, úvod a sekce pod sešity nemají z čeho vzniknout.
+   */
+  const bareSubject = isTestVariant && !SUBJECT_CONFIGS[baseSubject];
+  const cfg: SubjectConfig = bareSubject
+    ? {
+        ...SUBJECT_CONFIGS['Matematika'],
+        displayName: baseSubject,
+        displayNameGenitive: baseSubject,
+        tagline: '',
+        heroColor: '#F0F2F8',
+        heroColorDark: '#F0F2F8',
+        grades: [],
+        heroRocnikLine: undefined,
+        heroText: '',
+        authorIntroHeading: '',
+        authorIntroBody: '',
+      }
+    : SUBJECT_CONFIGS[baseSubject] || SUBJECT_CONFIGS['Matematika'];
 
   /* Hero: primárně jedno pole heroText (operátor), jinak pár nadpis + text z API/configu. */
   const fromApi = subjectHeroMeta && typeof subjectHeroMeta === 'object';
@@ -816,8 +835,8 @@ export function SubjectPage({
                   </svg>
                   {'Zp\u011bt'}
                 </button>
-                <div className="w-px h-4 bg-[#001161]/20 shrink-0" aria-hidden />
-                <div className="flex flex-wrap items-center gap-2">
+                {!bareSubject && <div className="w-px h-4 bg-[#001161]/20 shrink-0" aria-hidden />}
+                {!bareSubject && <div className="flex flex-wrap items-center gap-2">
                   <ProductComplianceBadge>{'Podle RVP'}</ProductComplianceBadge>
                   {showMsmtSubjectBadge ? (
                     <ProductComplianceBadge>{'Dolo\u017eka M\u0160MT'}</ProductComplianceBadge>
@@ -833,7 +852,7 @@ export function SubjectPage({
                       {heroRocnikLabel}
                     </span>
                   ) : null}
-                </div>
+                </div>}
               </div>
 
               {/* Nadpis předmětu + úvod autora: klik na podtržený řádek rozbalí text (bez vzhledu tlačítka) */}
@@ -893,13 +912,14 @@ export function SubjectPage({
       {/* Testovací verze: dlaždice řad jako v e-shopu hned pod hlavičkou (klik = filtr řady). */}
       {isTestVariant && SERIES_BY_GROUP[subject] ? (
         <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-4">
-          <SeriesCards
+          {/* Matematika 1. st.: dlaždice ročníků by opakovaly řádek ročníků pod nimi. */}
+          {subject !== 'Matematika 1. stupe\u0148' && <SeriesCards
             mainGroup={subject}
             books={subjectProducts.filter((p) => p.type !== 'online')}
             digitalProduct={subjectProducts.find((p) => p.type === 'online')}
             navigate={navigate}
             compact
-          />
+          />}
           {/* Druhá úroveň výběru: ročníky ve stejném jazyce jako dlaždice řad. */}
           {subjectRocnikOptions.length > 1 && (
             <div className="mt-1 flex flex-wrap items-center gap-2.5" role="group" aria-label="Ročník">
@@ -1136,6 +1156,7 @@ export function SubjectPage({
         )}
       </div>
 
+      {!bareSubject && (<>
       {/* ── Matematika: záložky, videa a další aplikace jako na detailu sešitu (dřív pilotáž) ── */}
       {showMathShowcase && (
         <MathAppShowcase
@@ -1282,6 +1303,7 @@ export function SubjectPage({
           </button>
         </div>
       </div>
+      </>)}
 
       {typeof document !== 'undefined' &&
         createPortal(

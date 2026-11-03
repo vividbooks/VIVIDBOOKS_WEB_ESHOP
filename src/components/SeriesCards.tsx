@@ -185,54 +185,57 @@ const CHEMISTRY_SERIES: SeriesDef[] = [
   },
 ];
 
-const HISTORY_HREF = 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis';
-
-/** Dějepis a zeměpis v jednom řádku (na webu zatím jen neveřejné sešity, bez stránky předmětu). */
-const HISTORY_GEO_SERIES: SeriesDef[] = [
+/** Dějepis a zeměpis: na webu zatím jen neveřejné sešity; testovací stránky předmětů je ukazují. */
+const HISTORY_SERIES: SeriesDef[] = [
   {
     key: 'dejepis-krok',
-    subject: 'Dějepis',
     title: 'Krok za krokem',
     label: 'Pracovní sešity',
     description: 'Sešit pro 7., 8. a 9. ročník',
+    typ: 'krok',
     bg: '#f8f9fc',
-    href: HISTORY_HREF,
     match: (n) => n.includes('dějepis') && n.includes('krok za krokem'),
   },
   {
     key: 'muj-dejepis',
-    subject: 'Dějepis',
     title: 'Můj Dějepis',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
+    typ: 'muj-dejepis',
     bg: '#f8f9fc',
     placeholder: true,
-    href: HISTORY_HREF,
     match: (n) => n.includes('můj dějepis'),
   },
+];
+
+const GEO_SERIES: SeriesDef[] = [
   {
     key: 'zemepis-sesity',
-    subject: 'Zeměpis',
     title: 'Zeměpis obecný nebo regionální',
     label: 'Pracovní sešity',
     description: 'Dva typy sešitů podle zaměření výuky',
+    typ: 'sesity',
     bg: '#f8f9fc',
     placeholder: true,
     placeholderText: 'Zeměpis',
-    href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
     match: (n) => n.includes('zeměpis obecný') || n.includes('zeměpis regionální'),
   },
   {
     key: 'muj-zemepis',
-    subject: 'Zeměpis',
     title: 'Můj Zeměpis',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
+    typ: 'muj-zemepis',
     bg: '#f8f9fc',
     placeholder: true,
-    href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
     match: (n) => n.includes('můj zeměpis'),
   },
+];
+
+/** Homepage: dějepis a zeměpis v jednom řádku, karty vedou na testovací stránku svého předmětu. */
+const HISTORY_GEO_SERIES: SeriesDef[] = [
+  ...HISTORY_SERIES.map((x) => ({ ...x, subject: 'Dějepis' })),
+  ...GEO_SERIES.map((x) => ({ ...x, subject: 'Zeměpis' })),
 ];
 
 /** Karta po ročnících (1. stupeň): obálky dílů daného ročníku, proklik s filtrem ročníku. */
@@ -374,6 +377,8 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   Přírodopis: BIOLOGY_SERIES,
   Chemie: CHEMISTRY_SERIES,
   'Dějepis a zeměpis': HISTORY_GEO_SERIES,
+  Dějepis: HISTORY_SERIES,
+  Zeměpis: GEO_SERIES,
   'Matematika 1. stupeň': MATH1_SERIES,
   Prvouka: PRVOUKA_SERIES,
   'Český jazyk': CZECH_SERIES,
@@ -585,13 +590,16 @@ export function SeriesCards({
 
   const renderCard = (s: (typeof cards)[number]) => {
           const [front] = s.covers;
-          const filterHref = s.subject && front?.product
+          // Karta ze spojeného řádku: stránka svého předmětu, pokud ji test má, jinak detail sešitu.
+          const ownPage = s.subject && SERIES_BY_GROUP[s.subject];
+          const cardPath = ownPage ? `${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(s.subject!)}` : subjectPath;
+          const filterHref = s.subject && !ownPage && front?.product
             ? productDetailPath(front.product, products)
             : s.href
             ? s.href
             : s.typ
-            ? `${subjectPath}?typ=${s.typ}`
-            : s.rocnik ? `${subjectPath}?rocnik=${s.rocnik}` : subjectPath;
+            ? `${cardPath}?typ=${s.typ}`
+            : s.rocnik ? `${cardPath}?rocnik=${s.rocnik}` : cardPath;
           const active = isActiveHref(filterHref);
           // Na stránce předmětu: přepnutí řady zachová vybraný ročník; druhý klik na aktivní kartu řadu zruší.
           const keptRocnik = !s.href && !s.rocnik && location.pathname === subjectPath

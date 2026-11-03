@@ -8,6 +8,11 @@ import { projectId, publicAnonKey } from '../utils/supabase/info';
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 const AUTH_HEADERS = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' };
 
+const TEST_ONLY_SUBJECTS: Record<string, string> = {
+  dejepis: 'D\u011bjepis',
+  zemepis: 'Zem\u011bpis',
+};
+
 /** `test` = testovací stránka předmětu pod testovací homepage (dlaždice řad nahoře, noindex). */
 export function SubjectPageRoute({ variant = 'live' }: { variant?: 'live' | 'test' } = {}) {
   const { slug }   = useParams<{ slug: string }>();
@@ -15,7 +20,8 @@ export function SubjectPageRoute({ variant = 'live' }: { variant?: 'live' | 'tes
   const { products } = useProducts();
   const [subjectHeroMeta, setSubjectHeroMeta] = useState<SubjectHeroMeta | undefined>(undefined);
 
-  const subject = slug ? slugToSubject(slug) : null;
+  /** Testovací varianta: i předměty, které na webu stránku zatím nemají (jen neveřejné sešity). */
+  const subject = slug ? slugToSubject(slug) ?? (variant === 'test' ? TEST_ONLY_SUBJECTS[slug] ?? null : null) : null;
 
   useEffect(() => {
     if (!slug || !subject) {
