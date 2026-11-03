@@ -129,7 +129,7 @@ const activities = [
   },
 ];
 
-/** Ceník licencí (za školu a rok). Ceny drž jen tady. */
+/** Ceník licencí (za školu a rok, vč. DPH). Ceny drž jen tady. */
 const plans = [
   {
     name: 'AI pro učitele',
@@ -562,7 +562,7 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Ceník"
               title="Jednoduše: licence na rok, AI v ceně"
-              body={<T>Neplatíte za každý dotaz ani za tokeny. Vše, co AI v aplikaci spotřebuje, je zahrnuté v roční licenci.</T>}
+              body={<T>Neplatíte za každý dotaz ani za tokeny. Vše, co AI v aplikaci spotřebuje, je zahrnuté v roční licenci. Ceny jsou včetně DPH.</T>}
             />
             <div className="mt-10 grid gap-5 md:grid-cols-2">
               {plans.map((plan, i) => (
