@@ -344,27 +344,27 @@ export function PoradimSeSAiLandingPage() {
       </header>
 
       <main>
-        <section className="relative mx-3 mt-3 overflow-hidden rounded-[36px] bg-[#6E3BF0] px-5 pb-16 pt-10 text-white sm:px-8 md:mx-6 md:px-12 md:pb-20 md:pt-14">
-          <div className="absolute -right-28 -top-28 h-[460px] w-[460px] rounded-full bg-white/10 blur-3xl" />
-          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-[#FFDD00]/15 blur-3xl" />
+        <section className="relative mx-3 mt-3 overflow-hidden rounded-[36px] bg-[#E0E5F8] px-5 pb-16 pt-10 text-[#0F1B6B] sm:px-8 md:mx-6 md:px-12 md:pb-20 md:pt-14">
+          <div className="absolute -right-28 -top-28 h-[460px] w-[460px] rounded-full bg-[#6E3BF0]/12 blur-3xl" />
+          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-white/50 blur-3xl" />
           <div className="relative mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
             <div className="text-center lg:text-left">
-              <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-white">Výzva OP JAK č. 02_26_048</span>
-              <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-white sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
+              <span className="inline-flex rounded-full bg-[#6E3BF0]/10 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-[#6E3BF0]">Výzva OP JAK č. 02_26_048</span>
+              <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#0F1B6B] sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
                 Výzva Poradím se s AI
                 <br />
-                <span className="text-[#FFDD00]">pro vaši školu</span>
+                <span className="text-[#6E3BF0]">pro vaši školu</span>
               </h1>
-              <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed md:text-[19px] lg:mx-0 text-white/85">
+              <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed md:text-[19px] lg:mx-0 text-[#0F1B6B]/75">
                 <T>Výzva MŠMT podpoří školy, které chtějí AI ve výuce používat bezpečně a zodpovědně, tak aby žákům opravdu pomáhala. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
               </p>
               <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
-                <PrimaryCta className="px-6 py-3.5" onColor />
+                <PrimaryCta className="px-6 py-3.5" />
                 <a href="#vyzva" className="inline-flex items-center justify-center rounded-xl bg-[#0F1B6B] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#1a2a8a]">
                   Co výzva vyžaduje
                 </a>
               </div>
-              <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-white/20 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
+              <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-[#0F1B6B]/12 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
                 {[
                   ['300 mil. Kč', 'celková alokace výzvy'],
                   ['2–15 mil. Kč', 'rozpočet projektu pro 6 a více škol'],
@@ -372,8 +372,8 @@ export function PoradimSeSAiLandingPage() {
                   ['30. 12. 2026', 'podání žádosti do 14:00'],
                 ].map(([value, text]) => (
                   <div key={value}>
-                    <p className="text-[20px] font-bold leading-none text-white md:text-[22px]">{value}</p>
-                    <p className="mt-1 text-[12px] leading-snug text-white/65">{text}</p>
+                    <p className="text-[20px] font-bold leading-none text-[#0F1B6B] md:text-[22px]">{value}</p>
+                    <p className="mt-1 text-[12px] leading-snug text-[#0F1B6B]/55">{text}</p>
                   </div>
                 ))}
               </div>
@@ -389,7 +389,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="vyzva" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-[#F8F3E2] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="vyzva" className="scroll-mt-24 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[820px]">
             <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
             <div className="mt-8 grid gap-3">
