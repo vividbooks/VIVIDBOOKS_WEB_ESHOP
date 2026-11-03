@@ -435,9 +435,22 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Ukázky z aplikace"
               title="Takhle s AI pracují učitelé ve Vividbooks"
-              body={<T>AI u nás nenahrazuje učitele, ale šetří mu práci. Pracuje nad ověřenou knihovnou, kterou používá přes 600 základních škol, a každý výstup má pod kontrolou učitel.</T>}
+              body={<T>AI u nás nenahrazuje učitele, ale šetří mu práci. Pracuje nad ověřenou knihovnou, kterou používá přes 700 škol, a každý výstup má pod kontrolou učitel.</T>}
             />
-            <div className="mt-10 grid gap-6 md:grid-cols-3">
+            <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
+              {[
+                ['700+', 'škol pracuje s Vividbooks'],
+                ['Doložky MŠMT', 'k učebním materiálům'],
+                ['7 let', 'tvoříme vzdělávací materiály'],
+                ['Nové RVP', 'kompetence a badatelská výuka'],
+              ].map(([value, text]) => (
+                <div key={value} className="rounded-[22px] bg-white/70 px-5 py-4 text-center">
+                  <p className="text-[24px] font-bold leading-tight text-[#6E3BF0] md:text-[28px]">{value}</p>
+                  <p className="mt-1 text-[13px] leading-snug text-[#0F1B6B]/65">{text}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-6 grid gap-6 md:grid-cols-3">
               {showcase.map((item) => (
                 <figure key={item.title} className="overflow-hidden rounded-[26px] bg-white shadow-sm">
                   <div className="relative aspect-[4/3] overflow-hidden bg-[#dfe4f7]">
