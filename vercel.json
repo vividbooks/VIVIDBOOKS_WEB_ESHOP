@@ -1,4 +1,10 @@
 {
+  "headers": [
+    {
+      "source": "/plan-vydani-q7m4tx",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    }
+  ],
   "rewrites": [
     {
       "source": "/feed-google.xml",

@@ -6,6 +6,7 @@ import { ChunkLoadErrorFallback } from './components/ChunkLoadErrorFallback';
 import { RouteErrorBoundary } from './components/RouteErrorBoundary';
 import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
+import { RELEASE_PLAN_PATH } from './config/releasePlan';
 
 /** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
 function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
@@ -130,6 +131,11 @@ export const router = createBrowserRouter(
         {
           path: 'katalog',
           lazy: lazyNamed(() => import('./components/CatalogCleanPage'), 'CatalogCleanPage'),
+        },
+        // Neveřejná časová osa vydání nových titulů (noindex, nikde neodkázaná).
+        {
+          path: RELEASE_PLAN_PATH.slice(1),
+          lazy: lazyNamed(() => import('./components/ReleasePlanPage'), 'ReleasePlanPage'),
         },
         {
           lazy: lazyDefault(() => import('./components/CatalogLayout')),
