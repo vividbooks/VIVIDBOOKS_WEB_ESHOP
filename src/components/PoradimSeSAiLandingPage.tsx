@@ -324,76 +324,24 @@ function Chip({ children, className = '' }: { children: React.ReactNode; classNa
   );
 }
 
-/** Obrázek v úvodu. Varianty 1–4 jsou návrhy k porovnání (?hero=1..4), 0 = výchozí. */
-function HeroVisual({ variant }: { variant: number }) {
-  if (variant === 1) {
-    // Žák a učitel: tablet s aktivitou + chat s AI
-    return (
-      <div className="relative mx-auto w-full max-w-[600px] pb-6">
-        <img src="/app-screenshots/nova-1.png" alt="Žákovská aktivita na tabletu" className="ml-auto block w-[86%]" />
-        <div className={`absolute -left-2 bottom-0 w-[52%] overflow-hidden rounded-[18px] border-4 border-white bg-white ${SHADOW} md:-left-8`}>
-          <img src="/aplikace/news-02-ai.png" alt="Učitel zadává AI vytvoření testu" className="block aspect-[4/3] w-full object-cover object-top" />
-        </div>
-        <Chip className="right-2 top-2">Učitel má poslední slovo</Chip>
-      </div>
-    );
-  }
-  if (variant === 2) {
-    // Knihovna a tištěné sešity
-    return (
-      <div className="relative mx-auto w-full max-w-[540px] pb-12">
-        <div className={`overflow-hidden rounded-[26px] border-[6px] border-white bg-white ${SHADOW}`}>
-          <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks" className="block aspect-[5/4] w-full object-cover object-top" />
-        </div>
-        <img src="/app-uvod/workbooks.png" alt="Tištěné pracovní sešity Vividbooks" className="absolute -bottom-4 -right-4 w-[48%] drop-shadow-[0_18px_30px_rgba(0,17,97,0.28)] md:-right-12" />
-        <Chip className="-left-3 top-8 md:-left-10">Doložka MŠMT</Chip>
-        <Chip className="-left-3 top-24 md:-left-10">AI z ověřených dat</Chip>
-      </div>
-    );
-  }
-  if (variant === 3) {
-    // Vějíř tří obrazovek: AI → hodina → výsledky
-    const cards = [
-      { src: '/aplikace/news-02-ai.png', alt: 'AI připraví test', cls: '-rotate-6 left-0 top-10 z-10' },
-      { src: '/vividboard/hero-slider-1.webp', alt: 'Hodina ve vividboardu', cls: 'left-[22%] top-0 z-20' },
-      { src: '/vividboard/ai-grading.webp', alt: 'Výsledky testu', cls: 'rotate-6 left-[44%] top-12 z-10' },
-    ];
-    return (
-      <div className="relative mx-auto h-[340px] w-full max-w-[620px] md:h-[400px]">
-        {cards.map((c) => (
-          <div key={c.src} className={`absolute w-[56%] overflow-hidden rounded-[20px] border-4 border-white bg-white ${SHADOW} ${c.cls}`}>
-            <img src={c.src} alt={c.alt} className="block aspect-[4/3] w-full object-cover object-top" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (variant === 4) {
-    // Vividboard na tabletu a telefonu + štítky výhod
-    return (
-      <div className="relative mx-auto w-full max-w-[600px] py-6">
-        <img src="/vividboard/hero-slider-1.webp" alt="Lekce ve vividboardu na tabletu a telefonu" className="block w-full drop-shadow-[0_30px_50px_rgba(0,17,97,0.18)]" />
-        <Chip className="-left-2 top-0 md:-left-6">AI z ověřených dat</Chip>
-        <Chip className="right-0 top-1/3">Tokeny v ceně licence</Chip>
-        <Chip className="bottom-0 left-1/4">Bezpečné pro žáky</Chip>
-      </div>
-    );
-  }
+/** Obrázek v úvodu: knihovna, sešity a AI, která tvoří otázku z obsahu. */
+function HeroVisual() {
   return (
-    <div className="relative mx-auto w-full max-w-[600px] pb-10">
-      <div className={`overflow-hidden rounded-[22px] ${SHADOW}`}>
-        <img src="/aplikace/tema-01-nova-aplikace.webp" alt="Knihovna Vividbooks v aplikaci" className="block w-full" />
+    <div className="relative mx-auto w-full max-w-[560px] pb-16">
+      <div className={`ml-auto w-[88%] overflow-hidden rounded-[26px] border-[6px] border-white bg-white ${SHADOW}`}>
+        <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks" className="block aspect-[5/4] w-full object-cover object-top" />
       </div>
-      <div className="absolute -bottom-2 -left-4 w-[50%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-10">
+      <img src="/app-uvod/workbooks.png" alt="Tištěné pracovní sešity Vividbooks" className="absolute -right-4 bottom-10 w-[36%] drop-shadow-[0_18px_30px_rgba(0,17,97,0.28)] md:-right-10" />
+      <div className="absolute -left-2 bottom-0 w-[52%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-8">
         <img src="/vividboard/tool-ai.webp" alt="AI vytváří otázku z obsahu výuky" className="block w-full" />
       </div>
+      <Chip className="-left-2 top-6 md:-left-8">Doložka MŠMT</Chip>
+      <Chip className="-left-2 top-20 md:-left-8">AI z ověřených dat</Chip>
     </div>
   );
 }
 
 export function PoradimSeSAiLandingPage() {
-  const [searchParams] = useSearchParams();
-  const heroVariant = Number(searchParams.get('hero')) || 0;
   return (
     <div className="min-h-screen bg-white text-[#001161]" style={{ fontFamily: FF }}>
       <SEOHead
@@ -458,7 +406,7 @@ export function PoradimSeSAiLandingPage() {
                 ))}
               </div>
             </div>
-            <HeroVisual variant={heroVariant} />
+            <HeroVisual />
           </div>
         </section>
 
