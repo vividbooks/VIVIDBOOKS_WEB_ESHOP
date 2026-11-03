@@ -154,12 +154,6 @@ const trainings = [
 
 const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
 
-const steps = [
-  { title: 'Ozvete se nám', body: 'Krátký hovor zdarma: kolik máte pedagogů a co od AI čekáte.' },
-  { title: 'Pošleme nabídku', body: 'Orientační nabídku použijete do průzkumu trhu. Výběr dodavatele je na vás.' },
-  { title: 'Dodáme, co si vyberete', body: 'Licence, workshopy a podporu po celou dobu projektu.' },
-];
-
 const faq = [
   {
     question: 'Jak doložíme, že jsme se AI věnovali už v roce 2025?',
@@ -338,7 +332,6 @@ export function PoradimSeSAiLandingPage() {
               ['#ukazky', 'Ukázky'],
               ['#aktivity', 'Co dodáme'],
               ['#cenik', 'Ceník'],
-              ['#postup', 'Jak to proběhne'],
               ['#otazky', 'Otázky'],
             ].map(([href, text]) => (
               <a key={href} href={href} className="text-[14px] font-bold text-[#001161]/56 transition hover:text-[#001161]">
@@ -563,31 +556,6 @@ export function PoradimSeSAiLandingPage() {
             </div>
             <div className="mt-8 text-center">
               <PrimaryCta className="px-6 py-3.5" label="Chci nabídku pro naši školu" />
-            </div>
-          </div>
-        </section>
-
-        <section id="postup" className="scroll-mt-24 bg-[#f5f7fd] px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionTitle
-              align="center"
-              eyebrow="Postup"
-              title="Jak to proběhne"
-              body={<T>S přípravou projektu vám rádi pomůžeme.</T>}
-            />
-            <div className="mt-10 grid gap-5 md:grid-cols-3">
-              {steps.map((step, index) => (
-                <article key={step.title} className="relative rounded-[26px] border border-[#001161]/8 bg-white p-6 shadow-sm">
-                  <p className="text-[48px] font-bold leading-none text-[#5B4FD8]/20">{String(index + 1).padStart(2, '0')}</p>
-                  <h3 className="mt-5 text-[24px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
-                    {step.title}
-                  </h3>
-                  <p className="mt-3 text-[15px] leading-relaxed text-[#001161]/62">
-                    <T>{step.body}</T>
-                  </p>
-                  {index < steps.length - 1 ? <ArrowRight className="absolute -right-3 top-1/2 hidden h-6 w-6 -translate-y-1/2 text-[#5B4FD8] md:block" /> : null}
-                </article>
-              ))}
             </div>
           </div>
         </section>
