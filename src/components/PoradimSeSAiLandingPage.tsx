@@ -92,8 +92,8 @@ const activities = [
   { code: 'Aktivita 2 · povinná', title: 'Vnitřní pravidla pro bezpečné využívání AI ve škole', ours: 'Vzor školních pravidel: co se s AI smí, jak chránit data žáků a kdo za co odpovídá.' },
   { code: 'Aktivita 3', title: 'Přípravy na výuku s využitím AI', ours: 'AI připraví aktivity z ověřených materiálů. Odpovídají učivu a ročníku, učitel je zkontroluje a upraví.' },
   { code: 'Aktivita 4', title: 'AI a zpětná vazba při sledování pokroku žáka', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
+  { code: 'Aktivita 6', title: 'Řízení školy ve spojitosti s pedagogickou praxí', ours: 'AI expert připraví s vedením agentní systémy, které ubírají papírování a uvolní čas na výuku.' },
   { code: 'Aktivity 2–9', title: 'Povinné vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace do povinných 16 + 10 hodin.' },
-  { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
 ];
 
 /** Ukázky z aplikace (obrázky z public/). */
@@ -148,7 +148,7 @@ const plans = [
 /** Placené vzdělávání k licencím (vč. DPH). */
 const trainings = [
   { name: 'Workshop pro sborovnu', price: '25 000 Kč', period: 'jednorázově', body: 'Prezenčně ve škole, 8 × 45 minut, tedy polovina povinného společného vzdělávání. Učitelé si s Vividbooks AI připraví vlastní hodinu.' },
-  { name: 'AI ambasador', price: '30 000 Kč', period: 'za rok', body: 'Příprava učitele, který bude AI ve škole rozvíjet, a pravidelné konzultace s naším týmem.' },
+  { name: 'AI expert pro vedení školy', price: '149 000 Kč', period: 'za rok', body: 'Náš AI expert s vedením navrhne a nastaví agentní systémy, které ubírají papírování: dokumenty, komunikaci, plánování i ŠVP. K tomu workshop pro vedení a průběžná podpora po celý rok.' },
   { name: 'Individuální konzultace', price: 'podle rozsahu', period: '', body: 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.' },
 ];
 
