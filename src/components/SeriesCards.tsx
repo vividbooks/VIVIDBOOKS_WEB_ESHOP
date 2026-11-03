@@ -204,6 +204,8 @@ const HISTORY_SERIES: SeriesDef[] = [
     description: 'Učební text s vlastním prostorem',
     typ: 'muj-dejepis',
     bg: '#f8f9fc',
+    // 6. ročník má zatím jen zástupnou obálku — dopředu skutečné obálky 7.–9. ročníku.
+    coverGrades: [1, 2, 3],
     placeholder: true,
     match: (n) => n.includes('můj dějepis'),
   },
