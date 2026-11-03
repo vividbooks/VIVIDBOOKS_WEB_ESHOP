@@ -100,7 +100,6 @@ const activities = [
 const showcase = [
   {
     src: '/aplikace/news-01-knihovna.png',
-    overlay: '/app-uvod/workbooks.png',
     pos: 'object-right-top',
     title: 'Knihovna s doložkou MŠMT',
     body: 'Lekce, pracovní listy, testy a metodiky pro 1. i 2. stupeň, včetně tištěných pracovních sešitů.',
@@ -475,9 +474,12 @@ export function PoradimSeSAiLandingPage() {
                 ))}
               </div>
             </div>
-            <p className="mx-auto mt-8 max-w-[820px] text-center text-[17px] leading-relaxed text-[#0F1B6B]/75 md:text-[18px]">
-              <T>S Vividbooks dnes pracuje přes 700 škol. Učební materiály tvoříme už 7 let, mají doložky MŠMT a rozvíjejí kompetence podle nového RVP včetně badatelské výuky. AI je u nás nadstavbou nad tímhle ověřeným obsahem.</T>
-            </p>
+            <div className="mx-auto mt-10 grid max-w-[980px] items-center gap-8 md:grid-cols-[0.8fr_1.2fr]">
+              <img src="/app-uvod/workbooks.png" alt="Tištěné pracovní sešity Vividbooks" loading="lazy" className="mx-auto block w-full max-w-[340px] drop-shadow-[0_20px_34px_rgba(0,17,97,0.22)]" />
+              <p className="text-center text-[17px] leading-relaxed text-[#0F1B6B]/75 md:text-left md:text-[19px]">
+                <T>S Vividbooks dnes pracuje přes 700 škol. Učební materiály a pracovní sešity tvoříme už 7 let, mají doložky MŠMT a rozvíjejí kompetence podle nového RVP včetně badatelské výuky. AI je u nás nadstavbou nad tímhle ověřeným obsahem.</T>
+              </p>
+            </div>
           </div>
         </section>
 
