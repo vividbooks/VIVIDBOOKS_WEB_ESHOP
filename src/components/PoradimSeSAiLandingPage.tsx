@@ -129,50 +129,39 @@ const activities = [
   },
 ];
 
-/**
- * Balíčky a orientační ceny (vč. DPH). Ceny k potvrzení obchodem — drž je jen tady.
- */
-const packages = [
+/** Ceník licencí (za školu a rok). Ceny drž jen tady. */
+const plans = [
   {
-    eyebrow: 'Začátek ve sborovně',
-    name: 'Workshop AI ve výuce',
-    price: '25 000 Kč',
-    period: 'jednorázově',
-    body: 'Prezenční workshop pro celou sborovnu (8 × 45 minut). Učitelé si s Vividbooks AI připraví vlastní hodinu ze svého předmětu a odejdou s hotovým materiálem.',
-    covers: 'Aktivita 3 a společné vzdělávání pedagogů',
-  },
-  {
-    eyebrow: 'Celý rok v aplikaci',
-    name: 'Licence s Vividbooks AI',
-    price: '15 000 Kč',
-    period: 'za rok',
-    body: 'Aplikace Vividbooks pro všechny zapojené učitele: Vividbooks AI, knihovna materiálů, vividboard a testy, které se na 2. stupni opravují samy.',
+    name: 'AI pro učitele',
+    price: 15000,
+    tagline: 'Pro celou sborovnu',
+    points: [
+      'Vividbooks AI pro všechny učitele školy',
+      'Knihovna materiálů, vividboard a testy',
+      'Veškeré náklady na AI (tokeny) jsou v ceně licence',
+    ],
     covers: 'Aktivity 3, 4 a 7',
   },
   {
-    eyebrow: 'Člověk pro AI ve škole',
-    name: 'Program AI ambasador',
-    price: '30 000 Kč',
-    period: 'za rok',
-    body: 'Příprava učitele, který bude AI ve škole rozvíjet: úvodní školení, pravidelné konzultace s naším týmem a podklady, se kterými pomůže kolegům.',
-    covers: 'Aktivita 8',
-  },
-  {
-    eyebrow: 'Doporučujeme',
-    name: 'Kompletní balíček',
-    price: '52 000 Kč',
-    period: 'první rok',
-    body: 'Workshop pro sborovnu, roční licence s Vividbooks AI pro celý tým a individuální konzultace pro učitele během roku.',
-    covers: 'Aktivity 3, 4, 7 a individuální vzdělávání',
-    featured: true,
+    name: 'AI pro žáky',
+    price: 49900,
+    tagline: 'Pro žáky celé školy',
+    points: [
+      'Licence Vividbooks pro žáky',
+      'AI v aplikaci i pro žáky, pod dohledem učitele',
+      'Veškeré náklady na AI (tokeny) jsou v ceně licence',
+    ],
+    covers: 'Aktivity 3 a 4',
   },
 ];
 
-const coPay = [
-  ['1 rok', '40 000 Kč', '2 000 Kč'],
-  ['2 roky', '70 000 Kč', '3 500 Kč'],
-  ['3 roky', '85 000 Kč', '4 250 Kč'],
+const services = [
+  ['Workshopy pro sborovnu', 'Prezenčně ve škole, na vlastních hodinách učitelů. Započítají se do společného vzdělávání.'],
+  ['AI ambasador', 'Příprava a průběžné konzultace pro učitele, který bude AI ve škole rozvíjet.'],
+  ['Individuální konzultace', 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.'],
 ];
+
+const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
 
 const steps = [
   {
@@ -568,65 +557,93 @@ export function PoradimSeSAiLandingPage() {
         </section>
 
         <section id="cenik" className="scroll-mt-24 bg-[#eefbf6] px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto max-w-[1200px]">
+          <div className="mx-auto max-w-[1100px]">
             <SectionTitle
               align="center"
               eyebrow="Ceník"
-              title="Co nabízíme a za kolik"
-              body={<T>Vyberte jednotlivou část, nebo kompletní balíček. Ceny jsou orientační a včetně DPH. Pro rozpočet žádosti vám pošleme nabídku i bez DPH.</T>}
+              title="Jednoduše: licence na rok, AI v ceně"
+              body={<T>Neplatíte za každý dotaz ani za tokeny. Vše, co AI v aplikaci spotřebuje, je zahrnuté v roční licenci.</T>}
             />
-            <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
-              {packages.map((pkg) => (
+            <div className="mt-10 grid gap-5 md:grid-cols-2">
+              {plans.map((plan, i) => (
                 <article
-                  key={pkg.name}
-                  className={`flex flex-col rounded-[26px] border p-6 ${pkg.featured ? 'border-[#03CA90]/40 bg-[#001161] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]' : 'border-[#001161]/8 bg-white text-[#001161]'}`}
+                  key={plan.name}
+                  className={`flex flex-col rounded-[28px] p-7 md:p-8 ${i === 1 ? 'bg-[#001161] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]' : 'border border-[#001161]/8 bg-white text-[#001161]'}`}
                 >
-                  <p className={`text-[12px] font-bold uppercase tracking-[0.13em] ${pkg.featured ? 'text-[#03CA90]' : 'text-[#03a978]'}`}>{pkg.eyebrow}</p>
-                  <h3 className="mt-2 text-[24px] leading-tight" style={{ fontFamily: COOPER }}>
-                    {pkg.name}
-                  </h3>
-                  <p className="mt-4 text-[32px] font-bold leading-none">{pkg.featured ? `cca ${pkg.price}` : pkg.price}</p>
-                  <p className={`mt-1 text-[13px] font-bold ${pkg.featured ? 'text-white/50' : 'text-[#001161]/45'}`}>{pkg.period}</p>
-                  <p className={`mt-4 flex-1 text-[14px] leading-relaxed ${pkg.featured ? 'text-white/70' : 'text-[#001161]/62'}`}>
-                    <T>{pkg.body}</T>
+                  <div className="flex items-baseline justify-between gap-4">
+                    <h3 className="text-[30px] leading-tight" style={{ fontFamily: COOPER }}>
+                      {plan.name}
+                    </h3>
+                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#03CA90]' : 'text-[#03a978]'}`}>{plan.tagline}</span>
+                  </div>
+                  <p className="mt-5 text-[40px] font-bold leading-none">
+                    {czk(plan.price)}
+                    <span className={`ml-2 text-[15px] font-bold ${i === 1 ? 'text-white/50' : 'text-[#001161]/45'}`}>/ rok</span>
                   </p>
-                  <p className={`mt-5 border-t pt-4 text-[13px] font-bold ${pkg.featured ? 'border-white/10 text-white/70' : 'border-[#001161]/8 text-[#001161]/60'}`}>
-                    Pokrývá: {pkg.covers}
+                  <ul className="mt-6 grid flex-1 gap-3">
+                    {plan.points.map((pt) => (
+                      <li key={pt} className={`flex gap-3 text-[15px] leading-relaxed ${i === 1 ? 'text-white/75' : 'text-[#001161]/70'}`}>
+                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#03CA90]" />
+                        <T>{pt}</T>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className={`mt-6 border-t pt-4 text-[13px] font-bold ${i === 1 ? 'border-white/10 text-white/60' : 'border-[#001161]/8 text-[#001161]/55'}`}>
+                    Do projektu jako: {plan.covers}
                   </p>
                 </article>
               ))}
             </div>
 
-            <div className="mt-8 grid items-center gap-8 rounded-[30px] bg-white p-6 md:p-9 lg:grid-cols-[0.9fr_1.1fr]">
-              <div>
-                <Badge>Spoluúčast školy</Badge>
-                <h3 className="mt-4 text-[30px] leading-tight text-[#001161] md:text-[36px]" style={{ fontFamily: COOPER }}>
-                  Kolik zaplatí škola ze svého?
-                </h3>
-                <p className="mt-4 text-[15px] leading-relaxed text-[#001161]/62">
-                  <T>Je-li žadatelem škola, hradí nejméně 5 % způsobilých výdajů projektu. Při víceletém projektu tak za podporu na celou dobu zaplatí ze svého zhruba tolik jako za jedno běžné školení.</T>
-                </p>
-                <p className="mt-4 text-[13px] leading-relaxed text-[#001161]/45">
-                  <T>Výpočet je orientační a platí pro školu jako žadatele. Licence jsou způsobilé jen po dobu projektu.</T>
-                </p>
+            <div className="mt-6 rounded-[28px] border border-[#001161]/8 bg-white p-6 md:p-8">
+              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
+                K licencím můžeme dodat i vzdělávání
+              </h3>
+              <div className="mt-5 grid gap-5 md:grid-cols-3">
+                {services.map(([title, body]) => (
+                  <div key={title}>
+                    <p className="text-[15px] font-bold text-[#001161]">{title}</p>
+                    <p className="mt-1 text-[14px] leading-relaxed text-[#001161]/60">
+                      <T>{body}</T>
+                    </p>
+                  </div>
+                ))}
               </div>
-              <div className="overflow-hidden rounded-2xl border border-[#001161]/10">
-                <table className="w-full text-left text-[15px]">
-                  <thead className="bg-[#f5f7fd] text-[12px] uppercase tracking-[0.1em] text-[#001161]/50">
+              <p className="mt-5 text-[13px] text-[#001161]/45">Cenu vzdělávání připravíme podle velikosti sborovny a počtu hodin.</p>
+            </div>
+
+            <div className="mt-6 rounded-[28px] bg-white p-6 md:p-8">
+              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
+                Kolik z toho zaplatí škola ze svého
+              </h3>
+              <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/55">
+                <T>Je-li žadatelem škola, hradí nejméně 5 % způsobilých výdajů. Licence jsou způsobilé jen po dobu projektu.</T>
+              </p>
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[460px] text-left text-[15px]">
+                  <thead className="text-[12px] uppercase tracking-[0.1em] text-[#001161]/45">
                     <tr>
-                      <th className="px-4 py-3 font-bold">Délka</th>
-                      <th className="px-4 py-3 font-bold">Hodnota programu</th>
-                      <th className="px-4 py-3 font-bold">Škola hradí 5 %</th>
+                      <th className="py-2 pr-4 font-bold">Délka projektu</th>
+                      <th className="py-2 pr-4 font-bold">AI pro učitele</th>
+                      <th className="py-2 font-bold">Učitelé i žáci</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {coPay.map(([len, total, own]) => (
-                      <tr key={len} className="border-t border-[#001161]/8">
-                        <td className="px-4 py-3 font-bold text-[#001161]">{len}</td>
-                        <td className="px-4 py-3 text-[#001161]/70">{total}</td>
-                        <td className="px-4 py-3 font-bold text-[#03a978]">{own}</td>
-                      </tr>
-                    ))}
+                    {[1, 2, 3].map((years) => {
+                      const teachers = plans[0].price * years;
+                      const both = (plans[0].price + plans[1].price) * years;
+                      return (
+                        <tr key={years} className="border-t border-[#001161]/8">
+                          <td className="py-3 pr-4 font-bold text-[#001161]">{years === 1 ? '1 rok' : `${years} roky`}</td>
+                          <td className="py-3 pr-4 text-[#001161]/70">
+                            {czk(teachers)} · <span className="font-bold text-[#03a978]">škola {czk(Math.round(teachers * 0.05))}</span>
+                          </td>
+                          <td className="py-3 text-[#001161]/70">
+                            {czk(both)} · <span className="font-bold text-[#03a978]">škola {czk(Math.round(both * 0.05))}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
