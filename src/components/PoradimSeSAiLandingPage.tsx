@@ -163,6 +163,10 @@ const faq = [
     answer: 'Ano, aspoň pět škol nejméně dvou druhů (MŠ, ZŠ, SŠ). Každá smí být jen v jednom projektu. Pokud je hledáte, poradíme.',
   },
   {
+    question: 'Co dalšího výzva vyžaduje?',
+    answer: 'Hlavní část aktivit musí vést žadatel sám, dodavatel může jen pomáhat. V týmu projektu je povinně bezpečnostní expert. Žadatel zřízený obcí nebo krajem potřebuje souhlas zřizovatele. Zapojené školy nic nehradí.',
+  },
+  {
     question: 'Kolik nás to bude stát?',
     answer: 'Škola jako žadatel hradí nejméně 5 % nákladů projektu, zapojené školy nic. Záloha je až 50 % u projektu do 5 mil. Kč, nad tuto částku nejvýš 30 %. Licence jsou z projektu placené jen po dobu jeho trvání.',
   },
@@ -418,14 +422,13 @@ export function PoradimSeSAiLandingPage() {
 
         <section id="vyzva" className="scroll-mt-24 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[820px]">
-            <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
+            <SectionTitle eyebrow="Výzva v kostce" title="Splňuje vaše škola podmínky?" body={<T>Nejspíš ano, pokud:</T>} />
             <div className="mt-8 grid gap-3">
               {[
-                'Žadatel existuje aspoň 2 roky a v roce 2025 sám pravidelně vzdělával žáky nebo pedagogy v práci s AI. Žadatelem nemusí být škola.',
-                'Projekt má aspoň 5 spolupracujících škol nejméně dvou druhů (MŠ, ZŠ, SŠ). Každá škola smí být jen v jednom projektu.',
-                'V každé škole se zapojí vedení a aspoň polovina pedagogů. Každý absolvuje 16 × 45 minut společného (ne jen online) a 10 × 45 minut individuálního vzdělávání.',
-                'Hlavní část aktivit vede žadatel sám, dodavatel může jen pomáhat. V týmu je povinně bezpečnostní expert.',
-                'Škola jako žadatel hradí nejméně 5 % nákladů projektu, zapojené školy nic. Je-li žadatel zřízený obcí nebo krajem, potřebuje souhlas zřizovatele.',
+                'funguje aspoň dva roky,',
+                'umí doložit, že se už v roce 2025 pravidelně věnovala AI ve vzdělávání,',
+                'do projektu zapojí vedení a aspoň polovinu učitelů,',
+                'spojí se s dalšími pěti školami, aspoň dvou typů (třeba ZŠ a MŠ).',
               ].map((item) => (
                 <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
                   <Check className="mt-1 h-4 w-4 shrink-0 text-[#6E3BF0]" />
@@ -433,6 +436,9 @@ export function PoradimSeSAiLandingPage() {
                 </div>
               ))}
             </div>
+            <p className="mt-6 text-[14px] leading-relaxed text-[#0F1B6B]/55">
+              <T>Škola jako žadatel platí ze svého jen 5 % nákladů. Každý zapojený učitel projde 16 vyučovacích hodin společného a 10 hodin individuálního vzdělávání. Ostatní podrobnosti najdete v otázkách níže.</T>
+            </p>
           </div>
         </section>
 
