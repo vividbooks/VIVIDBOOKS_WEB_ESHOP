@@ -132,7 +132,6 @@ const SHARE = 0.05;
 const programEducation = [
   'Dva workshopy ve škole: úvodní 8 hodin a pololetní 4 hodiny',
   'Sdílení se spolupracujícími školami, 4 hodiny',
-  'Individuální konzultace, 10 hodin na učitele',
   'Příprava školního AI ambasadora a šablony k doložení výstupů',
 ];
 
@@ -550,9 +549,6 @@ export function PoradimSeSAiLandingPage() {
                       </div>
                     ))}
                   </div>
-                  <p className="mt-3 text-[13px] text-white/50">
-                    <T>Cena zahrnuje vzdělávání i licenci pro všechny učitele školy.</T>
-                  </p>
                 </div>
                 <div className="grid gap-3">
                   <div className="rounded-[20px] bg-[#FFDD00] p-5 text-[#0F1B6B]">
