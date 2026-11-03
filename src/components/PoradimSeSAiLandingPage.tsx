@@ -122,6 +122,13 @@ const plans = [
   },
 ];
 
+/** Placené vzdělávání k licencím (vč. DPH). */
+const trainings = [
+  { name: 'Workshop pro sborovnu', price: '25 000 Kč', period: 'jednorázově', body: 'Prezenčně ve škole, 8 × 45 minut. Učitelé si s Vividbooks AI připraví vlastní hodinu.' },
+  { name: 'AI ambasador', price: '30 000 Kč', period: 'za rok', body: 'Příprava učitele, který bude AI ve škole rozvíjet, a pravidelné konzultace s naším týmem.' },
+  { name: 'Individuální konzultace', price: 'podle rozsahu', period: '', body: 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.' },
+];
+
 const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
 
 const steps = [
@@ -433,9 +440,25 @@ export function PoradimSeSAiLandingPage() {
               ))}
             </div>
 
-            <p className="mt-5 text-center text-[14px] text-[#001161]/55">
-              <T>K licencím dodáme i workshopy pro sborovnu a přípravu AI ambasadora. Cenu připravíme podle velikosti sborovny.</T>
-            </p>
+            <div className="mt-6 rounded-[28px] border border-[#001161]/8 bg-white p-6 md:p-8">
+              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
+                Vzdělávání k licencím
+              </h3>
+              <div className="mt-5 grid gap-5 md:grid-cols-3">
+                {trainings.map((t) => (
+                  <div key={t.name} className="rounded-2xl bg-[#f5f7fd] p-5">
+                    <p className="text-[15px] font-bold text-[#001161]">{t.name}</p>
+                    <p className="mt-2 text-[24px] font-bold leading-none text-[#001161]">
+                      {t.price}
+                      {t.period ? <span className="ml-2 text-[13px] font-bold text-[#001161]/45">{t.period}</span> : null}
+                    </p>
+                    <p className="mt-3 text-[14px] leading-relaxed text-[#001161]/60">
+                      <T>{t.body}</T>
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <div className="mt-6 rounded-[28px] bg-white p-6 md:p-8">
               <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
