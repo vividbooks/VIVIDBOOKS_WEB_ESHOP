@@ -2,16 +2,9 @@ import React, { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import {
   ArrowRight,
-  BookOpen,
-  CalendarDays,
   Check,
   ChevronDown,
-  ClipboardCheck,
-  GraduationCap,
   Loader2,
-  ShieldCheck,
-  Sparkles,
-  Users,
 } from 'lucide-react';
 import { SEOHead, faqJsonLd } from './SEOHead';
 import logoPaths from '../imports/svg-fupfguvmdt';
@@ -96,37 +89,11 @@ function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci' }: {
 
 /** Aktivity výzvy (PpŽP – specifická část) a co k nim dodá Vividbooks. */
 const activities = [
-  {
-    code: 'Aktivita 2',
-    mandatory: true,
-    title: 'Vnitřní pravidla pro bezpečné využívání AI',
-    ours: 'Vzor školních pravidel pro AI, který s bezpečnostním expertem projektu upravíte na míru, a podklady k ochraně dat žáků.',
-    output: 'Schválená školní pravidla pro AI',
-  },
-  {
-    code: 'Aktivita 3',
-    title: 'Přípravy na výuku s využitím AI',
-    ours: 'Vividbooks AI připraví z tématu, fotky učebnice, PDF nebo webu hotové interaktivní aktivity. Navazují na knihovnu materiálů, kterou škola zná.',
-    output: 'Přípravy hodin s AI a jejich reflexe',
-  },
-  {
-    code: 'Aktivita 4',
-    title: 'AI a zpětná vazba při sledování pokroku žáka',
-    ours: 'Na 2. stupni testy ve vividboardu, které se opravují samy, a přehled, které otázky dělaly žákům největší potíže.',
-    output: 'Popis hodnocení s AI a ukázky z výuky',
-  },
-  {
-    code: 'Aktivita 7',
-    title: 'Vzdělávání a seberozvoj pedagogů s AI',
-    ours: 'Workshopy pro sborovnu a individuální konzultace, které můžete započítat do povinného vzdělávání pedagogů v projektu.',
-    output: 'Reflexe práce s AI za každého pedagoga',
-  },
-  {
-    code: 'Aktivita 8',
-    title: 'AI ambasador',
-    ours: 'Průvodce pro učitele, který bude AI ve škole rozvíjet: konzultace, podklady pro kolegy a přímá linka na náš tým.',
-    output: 'Report o činnosti AI ambasadora',
-  },
+  { code: 'Aktivita 2', title: 'Pravidla bezpečného využívání AI', ours: 'Vzor školních pravidel pro AI.' },
+  { code: 'Aktivita 3', title: 'Přípravy na výuku s AI', ours: 'Vividbooks AI připraví z tématu, fotky nebo PDF interaktivní aktivity.' },
+  { code: 'Aktivita 4', title: 'AI a zpětná vazba žákům', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
+  { code: 'Aktivita 7', title: 'Vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace.' },
+  { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
 ];
 
 /** Ceník licencí (za školu a rok, vč. DPH). Ceny drž jen tady. */
@@ -155,66 +122,34 @@ const plans = [
   },
 ];
 
-const services = [
-  ['Workshopy pro sborovnu', 'Prezenčně ve škole, na vlastních hodinách učitelů. Započítají se do společného vzdělávání.'],
-  ['AI ambasador', 'Příprava a průběžné konzultace pro učitele, který bude AI ve škole rozvíjet.'],
-  ['Individuální konzultace', 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.'],
-];
-
 const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
 
 const steps = [
-  {
-    title: 'Ozvete se nám',
-    body: 'Na krátkém hovoru zjistíme, kolik máte pedagogů, s čím už AI zkoušíte a kam chcete školu posunout. Konzultace je zdarma.',
-  },
-  {
-    title: 'Pošleme orientační nabídku',
-    body: 'Napíšeme, které části projektu můžeme dodat a za kolik. Poslouží vám jako podklad pro průzkum trhu. Výběr dodavatele je vždy na vás.',
-  },
-  {
-    title: 'Dodáme, co si vyberete',
-    body: 'Po schválení a výběru dodavatele dodáme licence aplikace, workshopy a podporu AI ambasadora. Projekt vede a věcně realizuje vaše škola.',
-  },
+  { title: 'Ozvete se nám', body: 'Krátký hovor zdarma: kolik máte pedagogů a co od AI čekáte.' },
+  { title: 'Pošleme nabídku', body: 'Orientační nabídku použijete do průzkumu trhu. Výběr dodavatele je na vás.' },
+  { title: 'Dodáme, co si vyberete', body: 'Licence, workshopy a podporu po celou dobu projektu.' },
 ];
 
 const faq = [
   {
-    question: 'Kdo může o podporu z výzvy Poradím se s AI žádat?',
-    answer:
-      'Mateřské, základní, střední a vyšší odborné školy, vysoké školy, zařízení pro další vzdělávání pedagogů, paměťové instituce, neziskové organizace a vybrané právnické osoby. Žadatel musí existovat aspoň dva roky a doložit, že se v roce 2025 věnoval AI ve vzdělávání.',
-  },
-  {
-    question: 'Do kdy je potřeba podat žádost?',
-    answer: 'Žádosti se podávají v aplikaci IS KP21+ do 30. 12. 2026 do 14:00. Projekt pak může trvat 12 až 36 měsíců.',
-  },
-  {
     question: 'Jak doložíme, že jsme se AI věnovali už v roce 2025?',
-    answer:
-      'Musí jít o pravidelnou nebo opakovanou činnost, ne jednorázovou akci, a čestné prohlášení nestačí. Doložit ji můžete pozvánkami, sylaby, prezenčními listinami nebo smlouvami. Pokud to vaše škola nesplní, může být žadatelem jiná ze spolupracujících škol.',
-  },
-  {
-    question: 'Musíme už používat Vividbooks?',
-    answer: 'Ne. Pokud nás už znáte, navážeme na materiály, které učitelé používají. Pokud ne, aplikaci si před rozhodnutím můžete zdarma vyzkoušet.',
+    answer: 'Pozvánkami, sylaby, prezenčními listinami nebo smlouvami. Čestné prohlášení nestačí. Pokud to vaše škola nesplní, může být žadatelem jiná ze spolupracujících škol.',
   },
   {
     question: 'Musíme si sami najít partnerské školy?',
-    answer:
-      'Projekt potřebuje aspoň pět spolupracujících škol aspoň dvou druhů, například ZŠ a MŠ. Každá škola může být jen v jednom projektu, proto si partnery ověřte dřív, než je uvedete v žádosti. Pokud je teprve hledáte, rádi poradíme.',
+    answer: 'Ano, aspoň pět škol aspoň dvou druhů. Každá smí být jen v jednom projektu. Pokud je hledáte, poradíme.',
   },
   {
     question: 'Kolik nás to bude stát?',
-    answer:
-      'Je-li žadatelem škola, hradí ze svého nejméně 5 % způsobilých výdajů. Záloha je až 50 % u projektu do 5 mil. Kč, nad tuto částku nejvýš 30 %. Licence aplikace s AI jsou způsobilé jen za dobu projektu. Pokud ji chcete používat i potom, platí se běžná cena.',
+    answer: 'Škola jako žadatel hradí nejméně 5 % a dostane zálohu (až 50 % u projektu do 5 mil. Kč). Licence jsou z projektu placené jen po dobu jeho trvání.',
   },
   {
     question: 'Musíme dodavatele vybírat ve výběrovém řízení?',
-    answer:
-      'Řídí se to pravidly pro zakázky v projektech OP JAK. Nad 50 000 Kč je povinný průzkum trhu, nad 750 000 Kč bez DPH výběrové řízení, a části jedné zakázky se nesmí dělit. Náš podklad berte jako orientační nabídku do průzkumu trhu, ne jako hotový rozpočet.',
+    answer: 'Nad 50 000 Kč je povinný průzkum trhu, nad 750 000 Kč bez DPH výběrové řízení. Naše nabídka slouží jako podklad do průzkumu trhu.',
   },
   {
     question: 'Kdy se dozvíme výsledek?',
-    answer: 'Výzva je kolová, hodnotit se začne po uzávěrce 30. 12. 2026. Hodnocení podle MŠMT potrvá nejméně šest měsíců.',
+    answer: 'Hodnotit se začne po uzávěrce 30. 12. 2026, podle MŠMT nejméně šest měsíců.',
   },
 ];
 
@@ -293,14 +228,6 @@ function LeadForm() {
           <input required className={input} value={form.name} onChange={set('name')} autoComplete="name" />
         </label>
         <label>
-          <span className={label}>IČO školy</span>
-          <input className={input} value={form.ico} onChange={set('ico')} inputMode="numeric" />
-        </label>
-        <label>
-          <span className={label}>Vaše role</span>
-          <input className={input} value={form.role} onChange={set('role')} placeholder="ředitel/ka, učitel/ka…" />
-        </label>
-        <label>
           <span className={label}>E-mail *</span>
           <input required type="email" className={input} value={form.email} onChange={set('email')} autoComplete="email" />
         </label>
@@ -325,10 +252,6 @@ function LeadForm() {
               <option key={o}>{o}</option>
             ))}
           </select>
-        </label>
-        <label className="sm:col-span-2">
-          <span className={label}>Co by vám pomohlo? (nepovinné)</span>
-          <textarea rows={3} className={input} value={form.message} onChange={set('message')} />
         </label>
       </div>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" value={form.website} onChange={set('website')} className="hidden" aria-hidden />
@@ -431,53 +354,21 @@ export function PoradimSeSAiLandingPage() {
         </section>
 
         <section id="vyzva" className="scroll-mt-24 px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto grid max-w-[1200px] gap-10 lg:grid-cols-[1fr_0.9fr]">
-            <div>
-              <SectionTitle
-                eyebrow="Výzva v kostce"
-                title="O co ve výzvě jde"
-                body={
-                  <T>
-                    Cílem je, aby školy používaly AI jako nástroj pro lepší výuku, ne jako hračku. Podporuje se vzdělávání učitelů, sdílení praxe mezi školami, bezpečná pravidla a práce s AI při přípravě, hodnocení i vedení školy.
-                  </T>
-                }
-              />
-              <div className="mt-8 grid gap-3">
-                {[
-                  'Žadatel existuje aspoň dva roky a v roce 2025 se pravidelně věnoval AI ve vzdělávání (dokládá se pozvánkami, sylaby, prezenčními listinami).',
-                  'Projekt má aspoň pět dalších spolupracujících škol aspoň dvou druhů (třeba ZŠ a MŠ). Každá škola smí být jen v jednom projektu.',
-                  'V každé škole se zapojí vedení a aspoň polovina pedagogů. Každý absolvuje 16 × 45 minut společného vzdělávání (ne jen online) a 10 × 45 minut individuálního.',
-                  'Povinně se řeší řízení projektu a pravidla bezpečného využívání AI s bezpečnostním expertem v týmu projektu. Další aktivity si škola vybere.',
-                  'S projektem musí souhlasit zřizovatel. U obce to často znamená zasedání rady, proto to neodkládejte.',
-                  'Škola jako žadatel hradí nejméně 5 % způsobilých výdajů.',
-                ].map((item) => (
-                  <div key={item} className="flex gap-3 text-[15px] leading-relaxed text-[#001161]/70">
-                    <Check className="mt-1 h-4 w-4 shrink-0 text-[#03CA90]" />
-                    <T>{item}</T>
-                  </div>
-                ))}
-              </div>
+          <div className="mx-auto max-w-[820px]">
+            <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
+            <div className="mt-8 grid gap-3">
+              {[
+                'Žadatel se AI ve vzdělávání pravidelně věnoval už v roce 2025 a umí to doložit.',
+                'Projekt má aspoň pět dalších škol aspoň dvou druhů (třeba ZŠ a MŠ) a souhlas zřizovatele.',
+                'V každé škole se zapojí vedení a aspoň polovina pedagogů.',
+                'Škola jako žadatel hradí nejméně 5 % nákladů.',
+              ].map((item) => (
+                <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#03CA90]" />
+                  <T>{item}</T>
+                </div>
+              ))}
             </div>
-            <aside className="rounded-[30px] bg-[#001161] p-7 text-white shadow-[0_24px_80px_rgba(0,17,97,0.2)] md:p-9">
-              <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-white/40">Nejčastější zádrhel</p>
-              <p className="mt-5 text-[26px] leading-snug" style={{ fontFamily: COOPER }}>
-                Výzva chce doložit, že se škola AI ve výuce věnovala už v roce 2025.
-              </p>
-              <p className="mt-4 text-[15px] leading-relaxed text-white/60">
-                <T>Čestné prohlášení nestačí, počítají se pozvánky, sylaby, prezenční listiny nebo smlouvy. Na konzultaci spolu projdeme, co máte, a kdo z partnerských škol může být žadatelem.</T>
-              </p>
-              <div className="my-7 h-px bg-white/10" />
-              <div className="grid gap-3 text-[14px] text-white/70">
-                <div className="flex gap-3">
-                  <CalendarDays className="h-5 w-5 shrink-0 text-[#03CA90]" />
-                  <span>Příjem žádostí od 23. 6. do 30. 12. 2026, 14:00</span>
-                </div>
-                <div className="flex gap-3">
-                  <ClipboardCheck className="h-5 w-5 shrink-0 text-[#03CA90]" />
-                  <span>Žádost se podává v IS KP21+ (iskp21.mssf.cz)</span>
-                </div>
-              </div>
-            </aside>
           </div>
         </section>
 
@@ -487,71 +378,18 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Co dodáme"
               title="Aktivity výzvy a co k nim máme"
-              body={<T>Aktivity vede a realizuje vaše škola, výzva nedovoluje svěřit je celé dodavateli. Tady je, čím je můžeme podpořit.</T>}
+              body={<T>Aktivity vede vaše škola, my je podpoříme.</T>}
             />
-            <div className="mt-10 grid gap-4">
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {activities.map((a) => (
-                <article key={a.code} className="grid gap-4 rounded-[24px] border border-[#001161]/8 bg-white p-6 md:grid-cols-[0.9fr_1.3fr_0.8fr] md:items-center">
-                  <div>
-                    <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#03a978]">
-                      {a.code}
-                      {a.mandatory ? ' · povinná' : ''}
-                    </p>
-                    <h3 className="mt-1 text-[19px] font-bold leading-snug text-[#001161]">{a.title}</h3>
-                  </div>
-                  <p className="text-[15px] leading-relaxed text-[#001161]/66">
+                <article key={a.code} className="rounded-[22px] border border-[#001161]/8 bg-white p-5">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#03a978]">{a.code}</p>
+                  <h3 className="mt-1 text-[17px] font-bold leading-snug text-[#001161]">{a.title}</h3>
+                  <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/62">
                     <T>{a.ours}</T>
                   </p>
-                  <div className="rounded-2xl bg-[#eefbf6] px-4 py-3 text-[13px] font-bold leading-snug text-[#017d5b]">
-                    Výstup školy: {a.output}
-                  </div>
                 </article>
               ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="px-4 py-16 sm:px-6 md:px-10 md:py-20">
-          <div className="mx-auto max-w-[1200px]">
-            <SectionTitle
-              align="center"
-              eyebrow="Proč Vividbooks"
-              title="AI nad materiály, které vaši učitelé znají"
-              body={<T>Vividbooks používá přes 600 základních škol. AI u nás nestojí vedle výuky, ale pracuje s knihovnou učebních materiálů s doložkou MŠMT.</T>}
-            />
-            <div className="mt-10 grid gap-5 md:grid-cols-3">
-              {[
-                [Sparkles, 'Vividbooks AI', 'Z tématu, fotky učebnice, PDF nebo webu připraví hotové interaktivní aktivity. Učitel je jen upraví.'],
-                [BookOpen, 'Knihovna a vividboard', 'Lekce, pracovní listy a testy, které si učitel zkopíruje a upraví. Na 2. stupni se testy ve vividboardu opravují samy.'],
-                [GraduationCap, 'Workshopy pro sborovnu', 'Učíme na vaší vlastní výuce a materiálech, ne na teorii. Prezenčně ve škole i jako navazující konzultace.'],
-              ].map(([Icon, title, body]) => {
-                const TypedIcon = Icon as typeof Sparkles;
-                return (
-                  <article key={String(title)} className="rounded-[24px] border border-[#001161]/8 bg-white p-6 shadow-sm">
-                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#eefbf6] text-[#03a978]">
-                      <TypedIcon className="h-5 w-5" />
-                    </div>
-                    <h3 className="mt-4 text-[19px] font-bold text-[#001161]">{String(title)}</h3>
-                    <p className="mt-2 text-[15px] leading-relaxed text-[#001161]/62">
-                      <T>{String(body)}</T>
-                    </p>
-                  </article>
-                );
-              })}
-            </div>
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              <div className="flex gap-4 rounded-[24px] border border-[#03CA90]/20 bg-[#03CA90]/8 p-6">
-                <ShieldCheck className="h-6 w-6 shrink-0 text-[#03a978]" />
-                <p className="text-[15px] leading-relaxed text-[#001161]/70">
-                  <T>Bezpečně: žáci v aplikaci nevidí správné odpovědi a učitel má pod kontrolou, co jim sdílí. Ke školním pravidlům pro AI vám dáme vzor, který s bezpečnostním expertem projektu upravíte.</T>
-                </p>
-              </div>
-              <div className="flex gap-4 rounded-[24px] border border-[#7C3AED]/15 bg-[#7C3AED]/6 p-6">
-                <Users className="h-6 w-6 shrink-0 text-[#7C3AED]" />
-                <p className="text-[15px] leading-relaxed text-[#001161]/70">
-                  <T>Hledáte partnerské školy? Poradíme, jak je najít. Každou školu přitom doporučíme jen do jednoho projektu, protože dvojí zařazení žádost zastaví.</T>
-                </p>
-              </div>
             </div>
           </div>
         </section>
@@ -595,29 +433,16 @@ export function PoradimSeSAiLandingPage() {
               ))}
             </div>
 
-            <div className="mt-6 rounded-[28px] border border-[#001161]/8 bg-white p-6 md:p-8">
-              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
-                K licencím můžeme dodat i vzdělávání
-              </h3>
-              <div className="mt-5 grid gap-5 md:grid-cols-3">
-                {services.map(([title, body]) => (
-                  <div key={title}>
-                    <p className="text-[15px] font-bold text-[#001161]">{title}</p>
-                    <p className="mt-1 text-[14px] leading-relaxed text-[#001161]/60">
-                      <T>{body}</T>
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-5 text-[13px] text-[#001161]/45">Cenu vzdělávání připravíme podle velikosti sborovny a počtu hodin.</p>
-            </div>
+            <p className="mt-5 text-center text-[14px] text-[#001161]/55">
+              <T>K licencím dodáme i workshopy pro sborovnu a přípravu AI ambasadora. Cenu připravíme podle velikosti sborovny.</T>
+            </p>
 
             <div className="mt-6 rounded-[28px] bg-white p-6 md:p-8">
               <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
                 Kolik z toho zaplatí škola ze svého
               </h3>
               <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/55">
-                <T>Je-li žadatelem škola, hradí nejméně 5 % způsobilých výdajů. Licence jsou způsobilé jen po dobu projektu.</T>
+                <T>Při 5% spoluúčasti, pokud je žadatelem škola.</T>
               </p>
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full min-w-[460px] text-left text-[15px]">
@@ -660,7 +485,7 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Postup"
               title="Jak to proběhne"
-              body={<T>Nemusíte mít hotový projekt ani vědět, které aktivity vybrat. Do uzávěrky zbývá pár týdnů, proto začněte co nejdřív.</T>}
+              body={<T>S přípravou projektu vám rádi pomůžeme.</T>}
             />
             <div className="mt-10 grid gap-5 md:grid-cols-3">
               {steps.map((step, index) => (
