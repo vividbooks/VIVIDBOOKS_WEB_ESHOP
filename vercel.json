@@ -7,6 +7,10 @@
     {
       "source": "/nahled-hp-rov3htqga4/:path*",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/plan-vydani-q7m4tx",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
   "rewrites": [
