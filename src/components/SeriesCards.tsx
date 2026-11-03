@@ -656,7 +656,8 @@ export function SeriesCards({
                 })()}
               </div>
               <div className="flex min-w-0 flex-1 flex-col">
-                <span className={`self-start rounded-full bg-white px-2.5 ${stacked ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold whitespace-nowrap`}>
+                {/* Štítek nesmí přetéct z úzké karty: max. šířka sloupce, delší text se zalomí. */}
+                <span className={`self-start max-w-full rounded-[12px] bg-white px-2.5 ${stacked ? 'xl:absolute xl:top-4 xl:left-4 xl:z-10 xl:max-w-[calc(100%-2rem)]' : ''} py-1 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[11px] lg:text-[12px] font-bold leading-tight`}>
                   {s.label}
                 </span>
                 <h3 className={`${compact ? 'mt-auto pt-2 pb-0.5 !text-[15px]' : 'my-auto py-3'} ${stacked ? 'xl:my-0 xl:pt-5 xl:pb-1' : ''} text-[#001161] font-['Fenomen_Sans',sans-serif] font-semibold text-[16px] lg:text-[18px] leading-[1.1]`}>
