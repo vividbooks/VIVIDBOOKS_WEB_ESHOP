@@ -89,11 +89,12 @@ function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci', onC
 
 /** Aktivity výzvy (PpŽP – specifická část) a co k nim dodá Vividbooks. */
 const activities = [
+  { code: 'Aktivity 2–9', title: 'Povinné vzdělávání pedagogů', ours: 'Celé pokryje náš program: 16 hodin společně a 10 hodin individuálně.' },
   { code: 'Aktivita 2 · povinná', title: 'Vnitřní pravidla pro bezpečné využívání AI ve škole', ours: 'Vzor školních pravidel: co se s AI smí, jak chránit data žáků a kdo za co odpovídá.' },
-  { code: 'Aktivita 3', title: 'Přípravy na výuku s využitím AI', ours: 'AI připraví aktivity z ověřených materiálů. Odpovídají učivu a ročníku, učitel je zkontroluje a upraví.' },
-  { code: 'Aktivita 4', title: 'AI a zpětná vazba při sledování pokroku žáka', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
-  { code: 'Aktivita 6', title: 'Řízení školy ve spojitosti s pedagogickou praxí', ours: 'AI expert připraví s vedením agentní systémy, které ubírají papírování a uvolní čas na výuku.' },
-  { code: 'Aktivity 2–9', title: 'Povinné vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace do povinných 16 + 10 hodin.' },
+  { code: 'Aktivita 3', title: 'Přípravy na výuku s využitím AI', ours: 'Na workshopu si učitelé připraví vlastní hodiny z ověřených materiálů a zkontrolují je.' },
+  { code: 'Aktivita 4', title: 'AI a zpětná vazba při sledování pokroku žáka', ours: 'Pololetní workshop o hodnocení s AI nad výsledky z vlastních hodin.' },
+  { code: 'Aktivita 6', title: 'Řízení školy ve spojitosti s pedagogickou praxí', ours: 'Rozšíření AI expert: agentní systémy pro vedení, které ubírají papírování.' },
+  { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Vyškolíme učitele, který pak vede navazující setkání ve škole.' },
 ];
 
 /** Ukázky z aplikace (obrázky z public/). */
@@ -118,37 +119,36 @@ const showcase = [
   },
 ];
 
-/** Ceník licencí (za školu a rok, vč. DPH). Ceny drž jen tady. */
-const plans = [
-  {
-    name: 'AI pro učitele',
-    price: 15000,
-    tagline: 'Pro celou sborovnu',
-    points: [
-      'Vividbooks AI pro všechny učitele školy',
-      'Knihovna materiálů, vividboard a testy',
-      'Veškeré náklady na AI (tokeny) jsou v ceně licence',
-    ],
-    covers: 'Aktivity 3 a 4',
-  },
+/** Ceník (za školu a rok, vč. DPH). Ceny drž jen tady. */
+const PROGRAM_PRICE = 110000;
+
+/** Vzdělávací program: pokrývá povinné vzdělávání z výzvy (16 × 45 min společně + 10 × 45 min individuálně). */
+const programBlocks = [
+  { title: 'Úvodní workshop pro sborovnu', meta: '8 × 45 min · prezenčně', body: 'Bezpečná AI ve výuce. Každý učitel si s Vividbooks AI připraví vlastní hodinu.' },
+  { title: 'Pololetní workshop', meta: '4 × 45 min · prezenčně', body: 'Hodnocení a zpětná vazba žákům s pomocí AI na výsledcích z vlastních hodin.' },
+  { title: 'Sdílení se spolupracujícími školami', meta: '4 × 45 min · hybridně', body: 'Učitelé si předají, co se jim osvědčilo. Splní to i síťování, o které výzvě jde.' },
+  { title: 'Individuální vzdělávání', meta: '10 × 45 min na učitele', body: 'Konzultace v malých skupinách po předmětech a úkoly v aplikaci, které vedou rovnou k výstupům.' },
+];
+
+const programIncludes = [
+  'Příprava školního AI ambasadora, který vede navazující setkání',
+  'Šablony příprav, reflexí a prezenčních listin k doložení',
+  'Licence Vividbooks s AI pro všechny učitele po celou dobu projektu, tokeny v ceně',
+];
+
+const addons = [
   {
     name: 'AI pro žáky',
     price: 49900,
-    tagline: 'Pro žáky celé školy',
-    points: [
-      'Licence Vividbooks pro žáky',
-      'AI pro žáky v bezpečném prostředí: učitel určuje, s čím pracují',
-      'Veškeré náklady na AI (tokeny) jsou v ceně licence',
-    ],
-    covers: 'Aktivity 3 a 4',
+    period: 'za rok',
+    body: 'Licence Vividbooks pro žáky celé školy. AI v bezpečném prostředí, učitel určuje, s čím žáci pracují. Tokeny v ceně.',
   },
-];
-
-/** Placené vzdělávání k licencím (vč. DPH). */
-const trainings = [
-  { name: 'Workshop pro sborovnu', price: '25 000 Kč', period: 'jednorázově', body: 'Prezenčně ve škole, 8 × 45 minut, tedy polovina povinného společného vzdělávání. Učitelé si s Vividbooks AI připraví vlastní hodinu.' },
-  { name: 'AI expert pro vedení školy', price: '149 000 Kč', period: 'za rok', body: 'Náš AI expert s vedením navrhne a nastaví agentní systémy, které ubírají papírování: dokumenty, komunikaci, plánování i ŠVP. Obsahuje tři workshopy a individuální školení pro vedení školy i správce IT.' },
-  { name: 'Individuální konzultace', price: 'podle rozsahu', period: '', body: 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.' },
+  {
+    name: 'AI expert pro vedení školy',
+    price: 149000,
+    period: 'za rok',
+    body: 'Agentní systémy, které ubírají papírování: dokumenty, komunikace, plánování i ŠVP. Tři workshopy a individuální školení vedení i správce IT (Aktivita 6).',
+  },
 ];
 
 const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
@@ -394,7 +394,7 @@ export function PoradimSeSAiLandingPage() {
                 <span className="text-[#6E3BF0]">pro vaši školu</span>
               </h1>
               <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed md:text-[19px] lg:mx-0 text-[#0F1B6B]/75">
-                <T>Výzva MŠMT podpoří školy, které chtějí AI ve výuce používat bezpečně a zodpovědně, tak aby žákům opravdu pomáhala. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
+                <T>Výzva MŠMT podpoří školy, které chtějí AI ve výuce používat bezpečně a zodpovědně, tak aby žákům opravdu pomáhala. Nabízíme vzdělávací program, který pokryje povinné vzdělávání učitelů, a k němu aplikaci s Vividbooks AI. S přípravou projektu vám rádi pomůžeme.</T>
               </p>
               <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
                 <PrimaryCta className="px-6 py-3.5" />
@@ -503,9 +503,9 @@ export function PoradimSeSAiLandingPage() {
               align="center"
               eyebrow="Co dodáme"
               title="Aktivity výzvy a co k nim máme"
-              body={<T>Aktivity vede vaše škola, my je podpoříme.</T>}
+              body={<T>Aktivity vede vaše škola. My dodáme vzdělávání a nástroj, se kterým je zvládne.</T>}
             />
-            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {activities.map((a) => (
                 <article key={a.code} className="rounded-[22px] bg-[#E0E5F8] p-5">
                   <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#6E3BF0]">{a.code}</p>
@@ -523,88 +523,92 @@ export function PoradimSeSAiLandingPage() {
           <div className="mx-auto max-w-[1100px]">
             <SectionTitle
               align="center"
-              eyebrow="Ceník"
-              title="Jednoduše: licence na rok, AI v ceně"
-              body={<T>Neplatíte za každý dotaz ani za tokeny. Vše, co AI v aplikaci spotřebuje, je zahrnuté v roční licenci. Ceny jsou včetně DPH.</T>}
+              eyebrow="Co nabízíme"
+              title="Vzdělávací program, aplikace v ceně"
+              body={<T>Program pokryje celé povinné vzdělávání učitelů z výzvy. Aplikaci s Vividbooks AI k němu dostanete jako pracovní nástroj. Ceny jsou včetně DPH.</T>}
             />
-            <div className="mt-10 grid gap-5 md:grid-cols-2">
-              {plans.map((plan, i) => (
-                <article
-                  key={plan.name}
-                  className={`flex flex-col rounded-[28px] p-7 md:p-8 ${i === 1 ? 'bg-[#001161] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]' : 'border border-[#001161]/8 bg-white text-[#001161]'}`}
-                >
-                  <div className="flex items-baseline justify-between gap-4">
-                    <h3 className="text-[30px] leading-tight" style={{ fontFamily: COOPER }}>
-                      {plan.name}
-                    </h3>
-                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#6E3BF0]' : 'text-[#6E3BF0]'}`}>{plan.tagline}</span>
-                  </div>
-                  <p className="mt-5 text-[40px] font-bold leading-none">
-                    {czk(plan.price)}
-                    <span className={`ml-2 text-[15px] font-bold ${i === 1 ? 'text-white/50' : 'text-[#001161]/45'}`}>/ rok</span>
+
+            <article className="mt-10 overflow-hidden rounded-[30px] bg-[#0F1B6B] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]">
+              <div className="grid gap-8 p-7 md:p-10 lg:grid-cols-[0.9fr_1.1fr]">
+                <div>
+                  <p className="text-[12px] font-bold uppercase tracking-[0.14em] text-[#FFDD00]">Hlavní nabídka</p>
+                  <h3 className="mt-2 text-[34px] leading-tight md:text-[40px]" style={{ fontFamily: COOPER }}>
+                    Program AI ve škole
+                  </h3>
+                  <p className="mt-5 text-[44px] font-bold leading-none">
+                    {czk(PROGRAM_PRICE)}
+                    <span className="ml-2 text-[15px] font-bold text-white/55">za školu a rok</span>
                   </p>
-                  <ul className="mt-6 grid flex-1 gap-3">
-                    {plan.points.map((pt) => (
-                      <li key={pt} className={`flex gap-3 text-[15px] leading-relaxed ${i === 1 ? 'text-white/75' : 'text-[#001161]/70'}`}>
-                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#6E3BF0]" />
+                  <ul className="mt-7 grid gap-3">
+                    {programIncludes.map((pt) => (
+                      <li key={pt} className="flex gap-3 text-[15px] leading-relaxed text-white/80">
+                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#FFDD00]" />
                         <T>{pt}</T>
                       </li>
                     ))}
                   </ul>
-                  <p className={`mt-6 border-t pt-4 text-[13px] font-bold ${i === 1 ? 'border-white/10 text-white/60' : 'border-[#001161]/8 text-[#001161]/55'}`}>
-                    Do projektu jako: {plan.covers}
+                </div>
+                <div className="grid gap-3">
+                  {programBlocks.map((b) => (
+                    <div key={b.title} className="rounded-[20px] bg-white/10 p-5">
+                      <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <p className="text-[16px] font-bold">{b.title}</p>
+                        <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#FFDD00]">{b.meta}</p>
+                      </div>
+                      <p className="mt-1 text-[14px] leading-relaxed text-white/70">
+                        <T>{b.body}</T>
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+
+            <div className="mt-6 grid gap-5 md:grid-cols-2">
+              {addons.map((a) => (
+                <article key={a.name} className="rounded-[26px] bg-white p-6 md:p-7">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.13em] text-[#6E3BF0]">Rozšíření</p>
+                  <h3 className="mt-1 text-[24px] leading-tight text-[#0F1B6B]" style={{ fontFamily: COOPER }}>
+                    {a.name}
+                  </h3>
+                  <p className="mt-3 text-[28px] font-bold leading-none text-[#0F1B6B]">
+                    {czk(a.price)}
+                    <span className="ml-2 text-[13px] font-bold text-[#0F1B6B]/45">{a.period}</span>
+                  </p>
+                  <p className="mt-3 text-[14px] leading-relaxed text-[#0F1B6B]/62">
+                    <T>{a.body}</T>
                   </p>
                 </article>
               ))}
             </div>
 
-            <div className="mt-6 rounded-[28px] border border-[#001161]/8 bg-white p-6 md:p-8">
-              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
-                Vzdělávání k licencím
-              </h3>
-              <div className="mt-5 grid gap-5 md:grid-cols-3">
-                {trainings.map((t) => (
-                  <div key={t.name} className="rounded-2xl bg-[#f5f7fd] p-5">
-                    <p className="text-[15px] font-bold text-[#001161]">{t.name}</p>
-                    <p className="mt-2 text-[24px] font-bold leading-none text-[#001161]">
-                      {t.price}
-                      {t.period ? <span className="ml-2 text-[13px] font-bold text-[#001161]/45">{t.period}</span> : null}
-                    </p>
-                    <p className="mt-3 text-[14px] leading-relaxed text-[#001161]/60">
-                      <T>{t.body}</T>
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div className="mt-6 rounded-[28px] bg-white p-6 md:p-8">
-              <h3 className="text-[22px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
+              <h3 className="text-[22px] leading-tight text-[#0F1B6B]" style={{ fontFamily: COOPER }}>
                 Kolik z toho zaplatí škola ze svého
               </h3>
-              <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/55">
-                <T>Orientačně 5 % z ceny licence, pokud je žadatelem škola. Zapojené školy nehradí nic.</T>
+              <p className="mt-2 text-[14px] leading-relaxed text-[#0F1B6B]/55">
+                <T>Orientačně 5 % z ceny, pokud je žadatelem škola. Zapojené školy nehradí nic.</T>
               </p>
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full min-w-[460px] text-left text-[15px]">
-                  <thead className="text-[12px] uppercase tracking-[0.1em] text-[#001161]/45">
+                  <thead className="text-[12px] uppercase tracking-[0.1em] text-[#0F1B6B]/45">
                     <tr>
                       <th className="py-2 pr-4 font-bold">Délka projektu</th>
-                      <th className="py-2 pr-4 font-bold">AI pro učitele</th>
-                      <th className="py-2 font-bold">Učitelé i žáci</th>
+                      <th className="py-2 pr-4 font-bold">Program</th>
+                      <th className="py-2 font-bold">Program + AI pro žáky</th>
                     </tr>
                   </thead>
                   <tbody>
                     {[1, 2, 3].map((years) => {
-                      const teachers = plans[0].price * years;
-                      const both = (plans[0].price + plans[1].price) * years;
+                      const program = PROGRAM_PRICE * years;
+                      const both = (PROGRAM_PRICE + addons[0].price) * years;
                       return (
-                        <tr key={years} className="border-t border-[#001161]/8">
-                          <td className="py-3 pr-4 font-bold text-[#001161]">{years === 1 ? '1 rok' : `${years} roky`}</td>
-                          <td className="py-3 pr-4 text-[#001161]/70">
-                            {czk(teachers)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(teachers * 0.05))}</span>
+                        <tr key={years} className="border-t border-[#0F1B6B]/8">
+                          <td className="py-3 pr-4 font-bold text-[#0F1B6B]">{years === 1 ? '1 rok' : `${years} roky`}</td>
+                          <td className="py-3 pr-4 text-[#0F1B6B]/70">
+                            {czk(program)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(program * 0.05))}</span>
                           </td>
-                          <td className="py-3 text-[#001161]/70">
+                          <td className="py-3 text-[#0F1B6B]/70">
                             {czk(both)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(both * 0.05))}</span>
                           </td>
                         </tr>
