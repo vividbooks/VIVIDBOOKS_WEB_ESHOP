@@ -4285,8 +4285,8 @@ app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
 
 /**
  * Zájem školy o projekt z výzvy OP JAK „Poradím se s AI“ (landing /poradim-se-s-ai).
- * Uloží do KV seznamu `poradim_ai_leads_v1`, kontakt do subscribers (tag `poradim-se-s-ai`)
- * a pošle upozornění obchodu. Mail a subscribers neblokují.
+ * Uloží do KV seznamu `poradim_ai_leads_v1` a pošle upozornění obchodu (mail neblokuje).
+ * Do subscribers se nezapisuje: souhlas je jen ke konzultaci, ne k marketingu.
  */
 const PORADIM_AI_LEADS_KEY = 'poradim_ai_leads_v1';
 const PORADIM_AI_NOTIFY = ['vitek@vividbooks.com'];
@@ -4294,6 +4294,8 @@ const PORADIM_AI_NOTIFY = ['vitek@vividbooks.com'];
 app.post('/make-server-93a20b6f/poradim-se-s-ai/zajem', async (c) => {
   try {
     const body = await c.req.json();
+    // Honeypot: skryté pole vyplní jen robot — tváříme se, že prošlo.
+    if (String(body.website ?? '').trim()) return c.json({ success: true });
     const str = (v: unknown, max = 300) => String(v ?? '').trim().slice(0, max);
     const name = str(body.name, 120);
     const email = str(body.email, 200).toLowerCase();
@@ -4324,29 +4326,6 @@ app.post('/make-server-93a20b6f/poradim-se-s-ai/zajem', async (c) => {
     await kv.set(PORADIM_AI_LEADS_KEY, [...existing, entry]);
     console.log(`[PoradimAI] zajem: ${email} skola=${school}`);
 
-    try {
-      const srEnv = getServiceRoleEnv();
-      if (srEnv) {
-        const sb = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
-        const parts = name.split(' ');
-        await upsertSubscriber(sb, {
-          email,
-          firstName: parts[0] || null,
-          lastName: parts.slice(1).join(' ') || null,
-          phone: phone || null,
-          schoolName: school || null,
-          ico: ico || null,
-          positionLabel: role || null,
-          source: 'other',
-          contactType: role && /ředitel|zástup|vedení/i.test(role) ? 'school_admin' : 'teacher',
-          status: 'subscribed',
-          tags: ['poradim-se-s-ai'],
-        });
-      }
-    } catch (e) {
-      console.warn('[PoradimAI] subscriber upsert (neblokuje):', e instanceof Error ? e.message : e);
-    }
-
     const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!));
     const rows: Array<[string, string]> = [
       ['Škola', school], ['IČO', ico], ['Jméno', name], ['Role', role], ['E-mail', email],
@@ -4363,7 +4342,7 @@ app.post('/make-server-93a20b6f/poradim-se-s-ai/zajem', async (c) => {
     return c.json({ success: true });
   } catch (err: any) {
     console.log(`[PoradimAI] zajem: ${err?.message}`);
-    return c.json({ error: err?.message || 'Chyba' }, 500);
+    return c.json({ error: 'Odeslání se nepovedlo, napište nám prosím na hello@vividbooks.com.' }, 500);
   }
 });
 
