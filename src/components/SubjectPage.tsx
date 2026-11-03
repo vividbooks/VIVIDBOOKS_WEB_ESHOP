@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { SeriesCards, SERIES_BY_GROUP } from './SeriesCards';
+import { SeriesCards, SERIES_BY_GROUP, isTestCatalogVisible, seriesBookBlocks, seriesBookFilter } from './SeriesCards';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -468,7 +468,8 @@ export function SubjectPage({
   const showAuthorIntro = hasRealHeroBody;
 
   const subjectProducts = products.filter(p => {
-    if (p.hideFromCatalog || p.handedness === 'left') return false;
+    // Testovací varianta ukazuje i neveřejné (připravené) sešity.
+    if (isTestVariant ? !isTestCatalogVisible(p) : p.hideFromCatalog || p.handedness === 'left') return false;
     const cat = (p.category || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     const baseKey = baseSubject.toLowerCase().split(' ')[0];
@@ -500,6 +501,8 @@ export function SubjectPage({
 
   const rocnikParam = searchParams.get('rocnik');
   const typParam = searchParams.get('typ');
+  /** Testovací varianta: `?typ=` podle karet řad (všechny předměty s kartami, ne jen Matematika 2. st.). */
+  const testSeriesFilter = isTestVariant ? seriesBookFilter(subject, typParam) : null;
 
   const subjectRocnikOptions = useMemo(() => {
     const s = new Set<string>();
@@ -517,12 +520,12 @@ export function SubjectPage({
   }, [rocnikParam, subjectRocnikOptions]);
 
   const activeSeries: SeriesFilterId = useMemo(() => {
-    if (!showSeriesPanels) return 'all';
+    if (!showSeriesPanels || isTestVariant) return 'all';
     if (typParam && SERIES_TYP_PARAMS.has(typParam)) {
       return typParam as Exclude<SeriesFilterId, 'all'>;
     }
     return 'all';
-  }, [typParam, showSeriesPanels]);
+  }, [typParam, showSeriesPanels, isTestVariant]);
 
   const prevSubjectRef = useRef<string | null>(null);
   useEffect(() => {
@@ -545,13 +548,13 @@ export function SubjectPage({
   }, [subjectRocnikOptions, searchParams, setSearchParams]);
 
   useEffect(() => {
-    if (showSeriesPanels || !searchParams.get('typ')) return;
+    if (showSeriesPanels || isTestVariant || !searchParams.get('typ')) return;
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.delete('typ');
       return next;
     }, { replace: true });
-  }, [showSeriesPanels, searchParams, setSearchParams]);
+  }, [showSeriesPanels, isTestVariant, searchParams, setSearchParams]);
 
   const toggleRocnik = (r: string) => {
     setSearchParams((prev) => {
@@ -625,12 +628,13 @@ export function SubjectPage({
   const afterRocnikPool = subjectProducts.filter(matchesSubjectRocnik);
 
   const filteredBooks = afterRocnikPool
-    .filter(p => showSeriesPanels ? matchesSeries(p) : true)
+    .filter(p => testSeriesFilter ? testSeriesFilter(p) : showSeriesPanels ? matchesSeries(p) : true)
     .sort(subjectPageSortByRocnik);
 
   /** Matematika 2. st.: při „Vše“ zobrazit řady jako samostatné bloky (nadpis + mřížka), ne jednu smíšenou mřížku. */
-  const mathSeriesBlocks =
-    showSeriesPanels && activeSeries === 'all'
+  const mathSeriesBlocks = isTestVariant
+    ? (testSeriesFilter ? null : seriesBookBlocks(subject, afterRocnikPool)?.map((b) => ({ ...b, books: b.books.sort(subjectPageSortByRocnik) })) ?? null)
+    : showSeriesPanels && activeSeries === 'all'
       ? (() => {
           const pool = afterRocnikPool;
           const digital = pool.filter((p: any) => p.type === 'online').sort(subjectPageSortByRocnik);
@@ -652,7 +656,7 @@ export function SubjectPage({
 
   const isMultiGrade = cfg.grades.length > 1 && !subjectGradeNum;
   const gradeOrder = ['2. stupe\u0148', '1. stupe\u0148'];
-  const booksByGrade = isMultiGrade && activeSeries === 'all'
+  const booksByGrade = isMultiGrade && activeSeries === 'all' && !testSeriesFilter && !(isTestVariant && mathSeriesBlocks)
     ? gradeOrder.map(g => ({
         grade: g,
         books: afterRocnikPool.filter(p => matchesGrade(p, g)).sort(subjectPageSortByRocnik),

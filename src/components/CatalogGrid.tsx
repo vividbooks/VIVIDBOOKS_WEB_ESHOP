@@ -5,7 +5,7 @@ import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
-import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS } from './SeriesCards';
+import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS, isTestCatalogVisible } from './SeriesCards';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
@@ -1254,9 +1254,11 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
   }, [groupingMode, products]);
 
   /* â”€â”€ grouping â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+  /** Testovací homepage (podle předmětů) ukazuje i neveřejné (připravené) sešity. */
+  const showUnpublished = isTestVariant && groupingMode === 'subject';
   const workbooks = useMemo(
-    () => products.filter(p => p.type === 'workbook' && !p.hideFromCatalog && p.handedness !== 'left'),
-    [products],
+    () => products.filter(p => p.type === 'workbook' && (showUnpublished ? isTestCatalogVisible(p) : !p.hideFromCatalog && p.handedness !== 'left')),
+    [products, showUnpublished],
   );
 
   const getDigitalLicenseForGroup = (mainGroup: string) => {
@@ -1306,7 +1308,8 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         mainGroup = (cat.includes('2. stupe\u0148') || secondGradeSubjects.includes(cat)) ? '2. stupe\u0148' : '1. stupe\u0148';
         subGroup  = rocnik;
       } else {
-        mainGroup = cat;
+        // Dějepis, zeměpis a 4. ročník nemají stránku předmětu — sešity do společného řádku testovací homepage.
+        mainGroup = (showUnpublished && APP_ONLY_GROUPS.find(g => g.categories.includes(cat))?.group) || cat;
         if (mainGroup === 'Matematika 2. stupe\u0148') {
           if (lowerName.includes('pro v\u0161echny')) subGroup = 'Pracovn\u00ed se\u0161ity pro v\u0161echny';
           else if (lowerName.includes('krok za krokem')) subGroup = 'Krok za krokem';
@@ -1333,7 +1336,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       ),
     );
     return groups;
-  }, [workbooks, groupingMode]);
+  }, [workbooks, groupingMode, showUnpublished]);
 
   const sortedGroups = useMemo(() => {
     const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka', 'Ostatn\u00ed'];
@@ -1348,9 +1351,10 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
     /* Test homepage: předměty jen z aplikace (Dějepis) jako řádek s kartami řad. */
     if (isTestVariant && groupingMode === 'subject' && sorted.length > 0) {
       APP_ONLY_GROUPS.forEach(({ group, after }) => {
-        if (sorted.some(([g]) => g === group)) return;
+        const own = sorted.findIndex(([g]) => g === group);
+        const entry = own === -1 ? [group, {}] as (typeof sorted)[number] : sorted.splice(own, 1)[0];
         const at = sorted.findIndex(([g]) => g === after);
-        sorted.splice(at === -1 ? sorted.length : at + 1, 0, [group, {}]);
+        sorted.splice(at === -1 ? sorted.length : at + 1, 0, entry);
       });
     }
     return sorted;

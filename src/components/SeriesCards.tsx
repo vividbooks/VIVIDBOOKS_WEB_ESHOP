@@ -1,16 +1,16 @@
 import React from 'react';
 import { useLocation } from 'react-router';
-import { subjectToSlug } from '../utils/slugify';
+import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
+import { useProducts } from '../contexts/ProductsContext';
 
 /**
  * Homepage (zatím jen testovací kopie, TEST_HOMEPAGE_PATH): místo pásu sešitů předmětu tři velké karty řad.
- * Obálky bere z reálných produktů dané řady, nebo ze `staticCovers` (řady, které zatím jsou jen
- * v aplikaci nove.vividbooks.com, ne v katalogu webu). Řada bez obálek se nezobrazí, pokud nemá
- * `placeholder` (pak místo obálek dva modré sešity s názvem řady).
+ * Obálky bere z reálných produktů dané řady — na testovací verzi včetně neveřejných (`unpublished`).
+ * Řada bez obálek se nezobrazí, pokud nemá `placeholder` (pak místo obálek modré sešity s názvem řady).
  */
 
-type Cover = { name: string; image: string };
+type Cover = { name: string; image: string; product?: any };
 
 type SeriesDef = {
   key: string;
@@ -31,18 +31,15 @@ type SeriesDef = {
   placeholderText?: string;
   /** Vlastní proklik (např. do knihovny aplikace, když web obsah nemá). */
   href?: string;
-  /** Ve spojeném řádku (APP_ONLY_GROUPS): předmět, jehož nadpis stojí nad kartou. */
+  /** Ve spojeném řádku (APP_ONLY_GROUPS): předmět, jehož nadpis stojí nad kartou. Web pro něj nemá stránku
+   * předmětu, takže karta vede na detail prvního sešitu řady (bez sešitu na `href`). */
   subject?: string;
   match?: (lowerName: string) => boolean;
   /** Karta digitální učebnice — obrázek online produktu předmětu (prop `digitalProduct`). */
   digital?: boolean;
   /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady; první je vpředu), aby karty nebyly stejné. */
   coverGrades?: number[];
-  /** Obálky z aplikace (storage platform-admin) pro řady, které v katalogu webu ještě nejsou; první je vpředu. */
-  staticCovers?: Cover[];
 };
-
-const APP_COVERS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/obalky';
 
 const MATH_SERIES: SeriesDef[] = [
   {
@@ -70,6 +67,7 @@ const MATH_SERIES: SeriesDef[] = [
     title: 'Moje Matematika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
+    typ: 'moje-matematika',
     bg: '#f8f9fc',
     placeholder: true,
     match: (n) => n.includes('moje matematik'),
@@ -91,38 +89,35 @@ const PHYSICS_SERIES: SeriesDef[] = [
     title: 'Krok za krokem',
     label: 'Pracovní sešity',
     description: 'Žáci objevují fyzikální jevy',
+    typ: 'krok',
     bg: '#f8f9fc',
-    staticCovers: [
-      { name: 'Fyzika 6 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-6-19456.png` },
-      { name: 'Fyzika 7 · Krok za krokem', image: `${APP_COVERS}/fyzika-kzk-7-19456.png` },
-    ],
+    match: (n) => n.includes('krok za krokem'),
   },
   {
     key: 'pro-vsechny',
     title: 'Pro všechny',
     label: 'Pracovní sešity',
     description: 'Spousta úloh v různých úrovních',
+    typ: 'pro-vsechny',
     bg: '#f8f9fc',
     coverGrades: [0, 1, 2],
-    match: (n) => n.includes('pracovní sešit'),
+    match: (n) => n.includes('pracovní sešit') && !n.includes('krok za krokem'),
   },
   {
     key: 'moje-fyzika',
     title: 'Moje Fyzika',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
+    typ: 'moje-fyzika',
     bg: '#f8f9fc',
-    staticCovers: [
-      { name: 'Fyzika 6 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-6-19456.png` },
-      { name: 'Fyzika 7 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-7-20261028b.png` },
-      { name: 'Fyzika 8 · Učebnice / portfolio', image: `${APP_COVERS}/fyzika-portfolio-8-19456.png` },
-    ],
+    match: (n) => n.includes('moje fyzika'),
   },
   {
     key: 'digital',
     title: 'Digitální učebnice',
     label: 'Digitální přístup',
     description: 'Celá učebnice online, na tabuli i u žáků',
+    typ: 'digital',
     bg: '#f8f9fc',
     digital: true,
   },
@@ -134,6 +129,7 @@ const BIOLOGY_SERIES: SeriesDef[] = [
     title: 'Pracovní sešity',
     label: '6.–9. ročník',
     description: 'Sešit ke každému ročníku',
+    typ: 'sesity',
     bg: '#f8f9fc',
     coverGrades: [0, 1, 2],
     match: (n) => n.includes('pracovní sešit'),
@@ -143,18 +139,16 @@ const BIOLOGY_SERIES: SeriesDef[] = [
     title: 'Můj Přírodopis',
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
+    typ: 'muj-prirodopis',
     bg: '#f8f9fc',
-    staticCovers: [
-      { name: 'Přírodopis 6 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-6-91865.png` },
-      { name: 'Přírodopis 7 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-7-91865.png` },
-      { name: 'Přírodopis 8 · Učebnice / portfolio', image: `${APP_COVERS}/prirodopis-portfolio-8-91865.png` },
-    ],
+    match: (n) => n.includes('můj přírodopis'),
   },
   {
     key: 'digital',
     title: 'Digitální učebnice',
     label: 'Digitální přístup',
     description: 'Celá učebnice online, na tabuli i u žáků',
+    typ: 'digital',
     bg: '#f8f9fc',
     digital: true,
   },
@@ -166,6 +160,7 @@ const CHEMISTRY_SERIES: SeriesDef[] = [
     title: 'Pracovní sešity',
     label: '8.–9. ročník',
     description: 'Sešit ke každému ročníku',
+    typ: 'sesity',
     bg: '#f8f9fc',
     coverGrades: [0, 1],
     match: (n) => n.includes('pracovní sešit'),
@@ -175,27 +170,24 @@ const CHEMISTRY_SERIES: SeriesDef[] = [
     title: 'Chemie podle RVP 2025',
     label: 'Učebnice',
     description: 'Nová učebnice pro 8. a 9. ročník',
+    typ: 'rvp-2025',
     bg: '#f8f9fc',
-    staticCovers: [
-      { name: 'Chemie podle RVP 2025 · 8. ročník', image: 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/chemie-rvp/obalka-8-mukycssf.png' },
-      { name: 'Chemie podle RVP 2025 · 9. ročník', image: 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/illustrations/chemie-rvp/obalka-9-mukycv6j.png' },
-    ],
+    match: (n) => n.includes('rvp 2025'),
   },
   {
     key: 'digital',
     title: 'Digitální učebnice',
     label: 'Digitální přístup',
     description: 'Celá učebnice online, na tabuli i u žáků',
+    typ: 'digital',
     bg: '#f8f9fc',
     digital: true,
   },
 ];
 
-const HISTORY_COVERS = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/covers';
-
 const HISTORY_HREF = 'https://nove.vividbooks.com/knihovna/stupen-2/dejepis';
 
-/** Dějepis a zeměpis v jednom řádku (oba zatím jen v aplikaci). */
+/** Dějepis a zeměpis v jednom řádku (na webu zatím jen neveřejné sešity, bez stránky předmětu). */
 const HISTORY_GEO_SERIES: SeriesDef[] = [
   {
     key: 'dejepis-krok',
@@ -205,11 +197,7 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     description: 'Sešit pro 7., 8. a 9. ročník',
     bg: '#f8f9fc',
     href: HISTORY_HREF,
-    staticCovers: [
-      { name: 'Dějepis 7 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-7-20261027.jpg` },
-      { name: 'Dějepis 8 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-8-20261027.jpg` },
-      { name: 'Dějepis 9 · Krok za krokem', image: `${HISTORY_COVERS}/dejepis-krok-za-krokem-9-20261027.jpg` },
-    ],
+    match: (n) => n.includes('dějepis') && n.includes('krok za krokem'),
   },
   {
     key: 'muj-dejepis',
@@ -218,9 +206,9 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
     bg: '#f8f9fc',
-    // V aplikaci jsou zatím jen jednobarevné plochy bez názvu — proto zástupné obálky.
     placeholder: true,
     href: HISTORY_HREF,
+    match: (n) => n.includes('můj dějepis'),
   },
   {
     key: 'zemepis-sesity',
@@ -229,10 +217,10 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     label: 'Pracovní sešity',
     description: 'Dva typy sešitů podle zaměření výuky',
     bg: '#f8f9fc',
-    // Zatím bez obálek (v aplikaci tematické sešity pro 6. ročník).
     placeholder: true,
     placeholderText: 'Zeměpis',
     href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
+    match: (n) => n.includes('zeměpis obecný') || n.includes('zeměpis regionální'),
   },
   {
     key: 'muj-zemepis',
@@ -241,9 +229,9 @@ const HISTORY_GEO_SERIES: SeriesDef[] = [
     label: 'Učebnice / portfolio',
     description: 'Učební text s vlastním prostorem',
     bg: '#f8f9fc',
-    // V aplikaci zatím tematické sešity pro 6. ročník, bez obálek.
     placeholder: true,
     href: 'https://nove.vividbooks.com/knihovna/stupen-2/zemepis',
+    match: (n) => n.includes('můj zeměpis'),
   },
 ];
 
@@ -264,15 +252,15 @@ const DIGITAL_CARD: SeriesDef = {
   title: 'Digitální učebnice',
   label: 'Digitální přístup',
   description: 'Celá učebnice online, na tabuli i u žáků',
+  typ: 'digital',
   bg: '#f8f9fc',
   digital: true,
 };
 
-// Matematika 1. st.: v aplikaci je i 3. ročník, ale zatím bez obálek — karta až budou.
 const APP_LIBRARY = 'https://nove.vividbooks.com/knihovna';
 
-/** Sešit, který je zatím jen v aplikaci a nemá obálku: zástupné obálky, proklik do knihovny aplikace. */
-const appOnlyCard = (key: string, title: string, label: string, description: string, href: string, placeholderText = title): SeriesDef => ({
+/** Sešit předmětu bez stránky na webu: obálka a proklik ze sešitu, bez něj zástupná obálka a knihovna aplikace. */
+const appOnlyCard = (key: string, title: string, label: string, description: string, href: string, placeholderText: string, match: (n: string) => boolean): SeriesDef => ({
   key,
   title,
   label,
@@ -281,22 +269,22 @@ const appOnlyCard = (key: string, title: string, label: string, description: str
   placeholder: true,
   placeholderText,
   href,
+  match,
 });
 
 const MATH1_SERIES: SeriesDef[] = [
   gradeCard(1, 'Tři díly a Početníček'),
   gradeCard(2, 'Tři díly a Početníček'),
-  // 3. ročník je zatím jen v aplikaci, bez obálek.
-  appOnlyCard('rocnik-3', '3. ročník', 'Pracovní sešity', 'Tři díly, zatím v aplikaci', `${APP_LIBRARY}/stupen-1/matematika`, 'Matematika 3'),
+  gradeCard(3, 'Tři díly'),
   DIGITAL_CARD,
 ];
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 /** Vlastivěda, přírodověda a informatika v jednom řádku; zatím jen 4. ročník (5. je v aplikaci taky). */
 const CJS_INFO_SERIES: SeriesDef[] = [
-  { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Pracovní sešit', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4'), subject: 'Vlastivěda' },
-  { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Pracovní sešit', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4'), subject: 'Přírodověda' },
-  { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4'), subject: 'Informatika' },
+  { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Pracovní sešit', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')), subject: 'Vlastivěda' },
+  { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Pracovní sešit', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')), subject: 'Přírodověda' },
+  { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), subject: 'Informatika' },
 ];
 
 const PRVOUKA_SERIES: SeriesDef[] = [
@@ -312,6 +300,7 @@ const CZECH_SERIES: SeriesDef[] = [
     title: 'Písanky',
     label: 'Vázané i nevázané písmo',
     description: 'Písanky ve třech dílech a čáranky',
+    typ: 'pisanky',
     bg: '#f8f9fc',
     coverParts: true,
     match: (n) => n.includes('pro vázané písmo') || n.includes('pro nevázané písmo'),
@@ -321,34 +310,62 @@ const CZECH_SERIES: SeriesDef[] = [
     title: 'Slabikáře',
     label: 'Čtení',
     description: 'Slabikář ve třech dílech',
+    typ: 'slabikare',
     bg: '#f8f9fc',
-    staticCovers: [
-      { name: 'Slabikář 1', image: `${APP_COVERS}/slabikar-1-20261028c.png` },
-      { name: 'Slabikář 2', image: `${APP_COVERS}/slabikar-2-20261028c.png` },
-      { name: 'Slabikář 3', image: `${APP_COVERS}/slabikar-3-20261028c.png` },
-    ],
+    coverParts: true,
+    match: (n) => n.includes('slabikář'),
   },
   {
     key: 'ctenarska-gramotnost',
     title: 'Čtenářská gramotnost',
     label: 'Sešity',
     description: 'První čtení, Čteme o vlastivědě, o přírodovědě a o informatice',
+    typ: 'ctenarska-gramotnost',
     bg: '#f8f9fc',
-    // Sešity zatím bez obálek.
     placeholder: true,
     placeholderText: 'První čtení',
+    match: (n) => n.includes('první čtení') || n.includes('čteme o'),
   },
   DIGITAL_CARD,
 ];
 
 /**
- * Řádky z předmětů, které v katalogu webu zatím nejsou (jen v aplikaci): na testovací homepage se přidají
- * za `after`; každá karta vede do svého předmětu v aplikaci (`href`), tlačítko celého předmětu chybí.
+ * Řádky z předmětů, které na webu nemají stránku předmětu: na testovací homepage se přidají za `after`
+ * a sešity kategorií `categories` (zatím neveřejné) se do nich sloučí; tlačítko celého předmětu chybí.
  */
-export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2 }[] = [
-  { group: 'Dějepis a zeměpis', after: 'Chemie', stupen: 2 },
-  { group: 'Vlastivěda, přírodověda a informatika', after: 'Prvouka', stupen: 1 },
+export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2; categories: string[] }[] = [
+  { group: 'Dějepis a zeměpis', after: 'Chemie', stupen: 2, categories: ['Dějepis', 'Zeměpis'] },
+  { group: 'Vlastivěda, přírodověda a informatika', after: 'Prvouka', stupen: 1, categories: ['Vlastivěda', 'Přírodověda', 'Informatika'] },
 ];
+
+/** Produkt v testovací variantě: ukázat i neveřejné (připravené) sešity; levácké a jinak skryté ne. */
+export const isTestCatalogVisible = (p: any) =>
+  (!p.hideFromCatalog || p.unpublished === true) && p.handedness !== 'left';
+
+const seriesOfBook = (group: string, p: any): SeriesDef | undefined => {
+  const name = String(p.name || '').toLowerCase();
+  return (SERIES_BY_GROUP[group] ?? []).find((s) =>
+    s.typ && (s.digital ? p.type === 'online' : p.type !== 'online' && !!s.match?.(name)));
+};
+
+/** Filtr `?typ=` testovací stránky předmětu podle karty řady; bez platné řady `null`. */
+export function seriesBookFilter(group: string, typ: string | null): ((p: any) => boolean) | null {
+  if (!typ || !(SERIES_BY_GROUP[group] ?? []).some((s) => s.typ === typ)) return null;
+  return (p) => seriesOfBook(group, p)?.typ === typ;
+}
+
+/** Bez filtru řady: sešity v blocích podle řad (pořadí karet), nezařazené na konec; `null` u předmětů po ročnících. */
+export function seriesBookBlocks(group: string, books: any[]): { key: string; title: string; books: any[] }[] | null {
+  const series = (SERIES_BY_GROUP[group] ?? []).filter((s) => s.typ);
+  if (series.filter((s) => !s.digital).length < 2) return null;
+  const blocks = series.map((s) => ({
+    key: s.key,
+    title: s.digital ? 'Digitální přístup' : s.title,
+    books: books.filter((p) => seriesOfBook(group, p) === s),
+  }));
+  const rest = books.filter((p) => !seriesOfBook(group, p));
+  return [...blocks, { key: 'dalsi', title: 'Další tituly', books: rest }].filter((b) => b.books.length > 0);
+}
 
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
 export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
@@ -508,7 +525,7 @@ function pickParts(books: any[]): Cover[] {
   return [...books]
     .sort((a, b) => partOf(String(a.name || '')) - partOf(String(b.name || '')) || byOrder(a, b))
     .slice(0, 3)
-    .map((b) => ({ name: b.name, image: b.image }));
+    .map((b) => ({ name: b.name, image: b.image, product: b }));
 }
 
 /** Obálky různých ročníků (až tři): z každého ročníku první díl, pak vybrané podle `coverGrades`. */
@@ -521,7 +538,7 @@ function pickCovers(books: any[], order: number[] = [0, 1, 2]): Cover[] {
   const list = [...perGrade.values()];
   if (list.length === 0) return [];
   const picked = [...new Set(order.map((i) => list[i % list.length]))];
-  return picked.map((b) => ({ name: b.name, image: b.image }));
+  return picked.map((b) => ({ name: b.name, image: b.image, product: b }));
 }
 
 export function SeriesCards({
@@ -542,6 +559,7 @@ export function SeriesCards({
   /** Karty jsou jen na testovací verzi — vedou na testovací stránku předmětu (s dlaždicemi řad nahoře). */
   const subjectPath = `${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(mainGroup)}`;
   const location = useLocation();
+  const { products } = useProducts();
   /** Návrh náhledu digitální učebnice: `?dig=1`–`5` (jen pro srovnání variant). */
   const digVariant = Number(new URLSearchParams(location.search).get('dig')) || 0;
   /** Na stránce předmětu je karta aktivní, když její filtr odpovídá adrese. */
@@ -556,7 +574,7 @@ export function SeriesCards({
     ...s,
     covers: s.digital
       ? (digitalProduct?.image ? [{ name: digitalProduct.name || s.title, image: digitalProduct.image }] : [])
-      : s.staticCovers ?? (() => {
+      : (() => {
         const own = books.filter((b) => b.image && s.match?.(String(b.name || '').toLowerCase()));
         return s.coverParts ? pickParts(own) : pickCovers(own, s.coverGrades);
       })(),
@@ -567,7 +585,9 @@ export function SeriesCards({
 
   const renderCard = (s: (typeof cards)[number]) => {
           const [front] = s.covers;
-          const filterHref = s.href
+          const filterHref = s.subject && front?.product
+            ? productDetailPath(front.product, products)
+            : s.href
             ? s.href
             : s.typ
             ? `${subjectPath}?typ=${s.typ}`
