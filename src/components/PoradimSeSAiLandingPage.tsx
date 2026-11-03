@@ -129,6 +129,51 @@ const activities = [
   },
 ];
 
+/**
+ * Balíčky a orientační ceny (vč. DPH). Ceny k potvrzení obchodem — drž je jen tady.
+ */
+const packages = [
+  {
+    eyebrow: 'Začátek ve sborovně',
+    name: 'Workshop AI ve výuce',
+    price: '25 000 Kč',
+    period: 'jednorázově',
+    body: 'Prezenční workshop pro celou sborovnu (8 × 45 minut). Učitelé si s Vividbooks AI připraví vlastní hodinu ze svého předmětu a odejdou s hotovým materiálem.',
+    covers: 'Aktivita 3 a společné vzdělávání pedagogů',
+  },
+  {
+    eyebrow: 'Celý rok v aplikaci',
+    name: 'Licence s Vividbooks AI',
+    price: '15 000 Kč',
+    period: 'za rok',
+    body: 'Aplikace Vividbooks pro všechny zapojené učitele: Vividbooks AI, knihovna materiálů, vividboard a testy, které se na 2. stupni opravují samy.',
+    covers: 'Aktivity 3, 4 a 7',
+  },
+  {
+    eyebrow: 'Člověk pro AI ve škole',
+    name: 'Program AI ambasador',
+    price: '30 000 Kč',
+    period: 'za rok',
+    body: 'Příprava učitele, který bude AI ve škole rozvíjet: úvodní školení, pravidelné konzultace s naším týmem a podklady, se kterými pomůže kolegům.',
+    covers: 'Aktivita 8',
+  },
+  {
+    eyebrow: 'Doporučujeme',
+    name: 'Kompletní balíček',
+    price: '52 000 Kč',
+    period: 'první rok',
+    body: 'Workshop pro sborovnu, roční licence s Vividbooks AI pro celý tým a individuální konzultace pro učitele během roku.',
+    covers: 'Aktivity 3, 4, 7 a individuální vzdělávání',
+    featured: true,
+  },
+];
+
+const coPay = [
+  ['1 rok', '40 000 Kč', '2 000 Kč'],
+  ['2 roky', '70 000 Kč', '3 500 Kč'],
+  ['3 roky', '85 000 Kč', '4 250 Kč'],
+];
+
 const steps = [
   {
     title: 'Ozvete se nám',
@@ -349,6 +394,7 @@ export function PoradimSeSAiLandingPage() {
             {[
               ['#vyzva', 'Výzva v kostce'],
               ['#aktivity', 'Co dodáme'],
+              ['#cenik', 'Ceník'],
               ['#postup', 'Jak to proběhne'],
               ['#otazky', 'Otázky'],
             ].map(([href, text]) => (
@@ -517,6 +563,76 @@ export function PoradimSeSAiLandingPage() {
                   <T>Hledáte partnerské školy? Poradíme, jak je najít. Každou školu přitom doporučíme jen do jednoho projektu, protože dvojí zařazení žádost zastaví.</T>
                 </p>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="cenik" className="scroll-mt-24 bg-[#eefbf6] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+          <div className="mx-auto max-w-[1200px]">
+            <SectionTitle
+              align="center"
+              eyebrow="Ceník"
+              title="Co nabízíme a za kolik"
+              body={<T>Vyberte jednotlivou část, nebo kompletní balíček. Ceny jsou orientační a včetně DPH. Pro rozpočet žádosti vám pošleme nabídku i bez DPH.</T>}
+            />
+            <div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+              {packages.map((pkg) => (
+                <article
+                  key={pkg.name}
+                  className={`flex flex-col rounded-[26px] border p-6 ${pkg.featured ? 'border-[#03CA90]/40 bg-[#001161] text-white shadow-[0_24px_70px_rgba(0,17,97,0.18)]' : 'border-[#001161]/8 bg-white text-[#001161]'}`}
+                >
+                  <p className={`text-[12px] font-bold uppercase tracking-[0.13em] ${pkg.featured ? 'text-[#03CA90]' : 'text-[#03a978]'}`}>{pkg.eyebrow}</p>
+                  <h3 className="mt-2 text-[24px] leading-tight" style={{ fontFamily: COOPER }}>
+                    {pkg.name}
+                  </h3>
+                  <p className="mt-4 text-[32px] font-bold leading-none">{pkg.featured ? `cca ${pkg.price}` : pkg.price}</p>
+                  <p className={`mt-1 text-[13px] font-bold ${pkg.featured ? 'text-white/50' : 'text-[#001161]/45'}`}>{pkg.period}</p>
+                  <p className={`mt-4 flex-1 text-[14px] leading-relaxed ${pkg.featured ? 'text-white/70' : 'text-[#001161]/62'}`}>
+                    <T>{pkg.body}</T>
+                  </p>
+                  <p className={`mt-5 border-t pt-4 text-[13px] font-bold ${pkg.featured ? 'border-white/10 text-white/70' : 'border-[#001161]/8 text-[#001161]/60'}`}>
+                    Pokrývá: {pkg.covers}
+                  </p>
+                </article>
+              ))}
+            </div>
+
+            <div className="mt-8 grid items-center gap-8 rounded-[30px] bg-white p-6 md:p-9 lg:grid-cols-[0.9fr_1.1fr]">
+              <div>
+                <Badge>Spoluúčast školy</Badge>
+                <h3 className="mt-4 text-[30px] leading-tight text-[#001161] md:text-[36px]" style={{ fontFamily: COOPER }}>
+                  Kolik zaplatí škola ze svého?
+                </h3>
+                <p className="mt-4 text-[15px] leading-relaxed text-[#001161]/62">
+                  <T>Je-li žadatelem škola, hradí nejméně 5 % způsobilých výdajů projektu. Při víceletém projektu tak za podporu na celou dobu zaplatí ze svého zhruba tolik jako za jedno běžné školení.</T>
+                </p>
+                <p className="mt-4 text-[13px] leading-relaxed text-[#001161]/45">
+                  <T>Výpočet je orientační a platí pro školu jako žadatele. Licence jsou způsobilé jen po dobu projektu.</T>
+                </p>
+              </div>
+              <div className="overflow-hidden rounded-2xl border border-[#001161]/10">
+                <table className="w-full text-left text-[15px]">
+                  <thead className="bg-[#f5f7fd] text-[12px] uppercase tracking-[0.1em] text-[#001161]/50">
+                    <tr>
+                      <th className="px-4 py-3 font-bold">Délka</th>
+                      <th className="px-4 py-3 font-bold">Hodnota programu</th>
+                      <th className="px-4 py-3 font-bold">Škola hradí 5 %</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {coPay.map(([len, total, own]) => (
+                      <tr key={len} className="border-t border-[#001161]/8">
+                        <td className="px-4 py-3 font-bold text-[#001161]">{len}</td>
+                        <td className="px-4 py-3 text-[#001161]/70">{total}</td>
+                        <td className="px-4 py-3 font-bold text-[#03a978]">{own}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="mt-8 text-center">
+              <PrimaryCta className="px-6 py-3.5" label="Chci nabídku pro naši školu" />
             </div>
           </div>
         </section>
