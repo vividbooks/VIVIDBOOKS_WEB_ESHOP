@@ -328,10 +328,18 @@ function HeroVisual() {
   return (
     <div className="relative mx-auto w-full max-w-[560px] pb-28">
       <div className={`ml-auto w-[88%] overflow-hidden rounded-[26px] border-[6px] border-white bg-white ${SHADOW}`}>
-        <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks" className="block aspect-[5/4] w-full object-cover object-top" />
+        <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks" className="block aspect-[5/4] w-full rounded-[20px] object-cover object-top" />
       </div>
-      <div className="absolute -left-2 bottom-0 w-[44%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-8">
-        <img src="/vividboard/tool-ai.webp" alt="AI vytváří otázku z obsahu výuky" className="block w-full" />
+      <div className="absolute -left-2 bottom-0 w-[44%] overflow-hidden rounded-[20px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-8">
+        {/* Výřez jen bílé karty ze screenshotu (bez šedého pozadí nahoře a vlevo). */}
+        <div className="relative aspect-[748/618] overflow-hidden rounded-[16px]">
+          <img
+            src="/vividboard/tool-ai.webp"
+            alt="AI vytváří otázku z obsahu výuky"
+            className="absolute max-w-none"
+            style={{ width: '106.95%', left: '-6.95%', top: '-29.45%' }}
+          />
+        </div>
       </div>
       <Chip className="-left-2 top-6 md:-left-8">Doložka MŠMT</Chip>
       <Chip className="-left-2 top-20 md:-left-8">AI z ověřených dat</Chip>
