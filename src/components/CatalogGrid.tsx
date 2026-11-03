@@ -308,7 +308,24 @@ function HeroBubblesOverlay({
   );
 }
 
-function CheckBadge({ label, light, accentHex }: { label: string; light?: boolean; accentHex?: string }) {
+function CheckBadge({ label, light, accentHex, filled }: { label: string; light?: boolean; accentHex?: string; filled?: boolean }) {
+  /** Plný štítek (CMS `heroBadgeFilled`): barevné pozadí, bílý text a fajfka. */
+  if (filled) {
+    const bg = light ? '#ffffff' : accentHex || '#001161';
+    const fg = light ? accentHex || '#001161' : '#ffffff';
+    return (
+      <div className="flex min-h-[37px] items-center gap-2 rounded-[7px] px-3 py-1.5 shadow-sm" style={{ backgroundColor: bg }}>
+        <div className="size-[17px]">
+          <svg className="block size-full" fill="none" preserveAspectRatio="none" viewBox="0 0 17 17">
+            <path d={svgPaths.p298d1300} fill={fg} />
+          </svg>
+        </div>
+        <span className="min-w-0 max-w-full font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold leading-tight @[380px]:text-[15px]" style={{ color: fg }}>
+          {label}
+        </span>
+      </div>
+    );
+  }
   const fill = light ? 'white' : accentHex || '#001161';
   return (
     <div
@@ -477,7 +494,7 @@ function CmsHeroOrderedBlocks({
             <HeroFullImageTextCard slide={slide}>
               <div className={wrap}>
                 {slide.badges.map((b: string) => (
-                  <CheckBadge key={b} label={b} light={isLight} accentHex={accentForUi} />
+                  <CheckBadge key={b} label={b} light={isLight} accentHex={accentForUi} filled={!!(slide as any).heroBadgeFilled} />
                 ))}
               </div>
             </HeroFullImageTextCard>
@@ -492,7 +509,7 @@ function CmsHeroOrderedBlocks({
         return (
           <div className={wrap}>
             {slide.badges.map((b: string) => (
-              <CheckBadge key={b} label={b} light={isLight} accentHex={accentForUi} />
+              <CheckBadge key={b} label={b} light={isLight} accentHex={accentForUi} filled={!!(slide as any).heroBadgeFilled} />
             ))}
           </div>
         );
@@ -1050,6 +1067,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         layout: simpleLayout,
         image: s.image || '',
         heroLottie: typeof s.heroLottie === 'string' ? s.heroLottie.trim() : '',
+        heroBadgeFilled: s.heroBadgeFilled === true || s.heroBadgeFilled === 'true',
         imageEdgeToEdge: Boolean(s.imageEdgeToEdge),
         imageColumnPercent: clampHeroImageColumnPercent(s.imageColumnPercent),
         heroImageColumnAlign: s.heroImageColumnAlign === 'center' ? ('center' as const) : ('start' as const),
