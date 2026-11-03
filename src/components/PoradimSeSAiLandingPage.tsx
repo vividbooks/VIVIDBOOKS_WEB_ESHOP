@@ -41,9 +41,9 @@ function VividLogo() {
   );
 }
 
-function Badge({ children, tone = 'mint' }: { children: React.ReactNode; tone?: 'violet' | 'mint' | 'orange' }) {
+function Badge({ children, tone = 'violet' }: { children: React.ReactNode; tone?: 'violet' | 'mint' | 'orange' }) {
   const tones = {
-    violet: 'bg-[#7C3AED]/10 text-[#7C3AED]',
+    violet: 'bg-[#5B4FD8]/10 text-[#5B4FD8]',
     mint: 'bg-[#03CA90]/12 text-[#017d5b]',
     orange: 'bg-[#E8942A]/12 text-[#a85b00]',
   };
@@ -78,7 +78,7 @@ function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci' }: {
   return (
     <a
       href="#konzultace"
-      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-[#03CA90] px-5 py-3 text-[15px] font-bold text-white shadow-sm transition hover:scale-[1.03] hover:bg-[#02a374] active:scale-[0.98] ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-[#5B4FD8] px-5 py-3 text-[15px] font-bold text-white shadow-sm transition hover:scale-[1.03] hover:bg-[#4a3fc4] active:scale-[0.98] ${className}`}
       style={{ fontFamily: FF }}
     >
       {label}
@@ -94,6 +94,13 @@ const activities = [
   { code: 'Aktivita 4', title: 'AI a zpětná vazba žákům', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
   { code: 'Aktivita 7', title: 'Vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace.' },
   { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
+];
+
+/** Ukázky z aplikace (obrázky z public/). */
+const showcase = [
+  { src: '/vividboard/tool-ai.webp', title: 'AI připraví otázky', body: 'Z tématu, fotky učebnice nebo PDF vytvoří interaktivní aktivitu. Učitel ji jen upraví.' },
+  { src: '/vividboard/hero-slider-1.webp', title: 'Hodina ve vividboardu', body: 'Hotová lekce na tabuli i v zařízení žáků, s aktivitami a soutěžemi.' },
+  { src: '/vividboard/ai-grading.webp', title: 'Výsledky na jednom místě', body: 'Přehled úspěšnosti třídy i nejtěžších otázek. Na 2. stupni se testy opravují samy.' },
 ];
 
 /** Ceník licencí (za školu a rok, vč. DPH). Ceny drž jen tady. */
@@ -206,7 +213,7 @@ function LeadForm() {
   if (state === 'done') {
     return (
       <div className="rounded-[26px] bg-white p-8 text-center text-[#001161]">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#03CA90]/15 text-[#03a978]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#5B4FD8]/15 text-[#5B4FD8]">
           <Check className="h-7 w-7" />
         </div>
         <h3 className="mt-5 text-[28px] leading-tight" style={{ fontFamily: COOPER }}>
@@ -220,7 +227,7 @@ function LeadForm() {
   }
 
   const input =
-    'w-full rounded-xl border border-[#001161]/12 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none transition focus:border-[#03CA90] focus:ring-2 focus:ring-[#03CA90]/20';
+    'w-full rounded-xl border border-[#001161]/12 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none transition focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/20';
   const label = 'mb-1.5 block text-[13px] font-bold text-[#001161]/70';
 
   return (
@@ -263,14 +270,14 @@ function LeadForm() {
       </div>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" value={form.website} onChange={set('website')} className="hidden" aria-hidden />
       <label className="mt-4 flex items-start gap-3 text-[13px] leading-relaxed text-[#001161]/60">
-        <input type="checkbox" required checked={form.gdpr} onChange={set('gdpr')} className="mt-1 h-4 w-4 accent-[#03CA90]" />
+        <input type="checkbox" required checked={form.gdpr} onChange={set('gdpr')} className="mt-1 h-4 w-4 accent-[#5B4FD8]" />
         <span>Souhlasím, aby mě Vividbooks kontaktoval kvůli konzultaci k výzvě. Údaje použijeme jen k tomu.</span>
       </label>
       {error ? <p className="mt-3 text-[14px] font-bold text-[#c0392b]">{error}</p> : null}
       <button
         type="submit"
         disabled={state === 'sending'}
-        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#03CA90] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#02a374] disabled:opacity-60"
+        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#5B4FD8] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#4a3fc4] disabled:opacity-60"
       >
         {state === 'sending' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
         Domluvit konzultaci zdarma
@@ -311,6 +318,7 @@ export function PoradimSeSAiLandingPage() {
           <VividLogo />
           <nav className="hidden items-center gap-5 md:flex" aria-label="Navigace stránky">
             {[
+              ['#ukazky', 'Ukázky'],
               ['#vyzva', 'Výzva v kostce'],
               ['#aktivity', 'Co dodáme'],
               ['#cenik', 'Ceník'],
@@ -327,34 +335,76 @@ export function PoradimSeSAiLandingPage() {
       </header>
 
       <main>
-        <section className="relative overflow-hidden bg-[#eefbf6] px-4 pb-16 pt-10 sm:px-6 md:px-10 md:pb-20 md:pt-14">
-          <div className="absolute -right-28 -top-28 h-[420px] w-[420px] rounded-full bg-[#03CA90]/14 blur-3xl" />
-          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-[#7C3AED]/10 blur-3xl" />
-          <div className="relative mx-auto max-w-[1000px] text-center">
-            <Badge>Výzva OP JAK č. 02_26_048</Badge>
-            <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#001161] sm:text-[54px] md:text-[66px]" style={{ fontFamily: COOPER }}>
-              AI ve výuce nad materiály, které vaši učitelé znají
-            </h1>
-            <p className="mx-auto mt-5 max-w-[640px] text-[17px] leading-relaxed text-[#001161]/68 md:text-[19px]">
-              <T>Výzva Poradím se s AI podpoří školy, které chtějí AI používat smysluplně a bezpečně. Projekt vede vaše škola. My vám pomůžeme zorientovat se v podmínkách a do projektu dodáme licence aplikace s Vividbooks AI, workshopy pro sborovnu a podporu AI ambasadora.</T>
-            </p>
-            <div className="mt-7 flex flex-wrap justify-center gap-3">
-              <PrimaryCta className="px-6 py-3.5" />
-              <a href="#aktivity" className="inline-flex items-center justify-center rounded-xl border border-[#001161]/12 bg-white/65 px-5 py-3 text-[15px] font-bold text-[#001161] transition hover:bg-white">
-                Co od nás dostanete
-              </a>
+        <section className="relative overflow-hidden bg-[#eef1fb] px-4 pb-16 pt-10 sm:px-6 md:px-10 md:pb-20 md:pt-14">
+          <div className="absolute -right-28 -top-28 h-[460px] w-[460px] rounded-full bg-[#5B4FD8]/14 blur-3xl" />
+          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-[#E8942A]/10 blur-3xl" />
+          <div className="relative mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
+            <div className="text-center lg:text-left">
+              <Badge>Výzva OP JAK č. 02_26_048</Badge>
+              <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#001161] sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
+                Poradím se s AI.
+                <br />
+                <span className="text-[#5B4FD8]">S Vividbooks.</span>
+              </h1>
+              <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed text-[#001161]/68 md:text-[19px] lg:mx-0">
+                <T>Výzva MŠMT podpoří školy, které chtějí AI používat smysluplně a bezpečně. Pomůžeme vám s přípravou projektu a dodáme aplikaci s Vividbooks AI i vzdělávání pro sborovnu.</T>
+              </p>
+              <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
+                <PrimaryCta className="px-6 py-3.5" />
+                <a href="#ukazky" className="inline-flex items-center justify-center rounded-xl bg-[#001161] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#0a1f80]">
+                  Ukázky z aplikace
+                </a>
+              </div>
+              <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-[#001161]/10 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
+                {[
+                  ['300 mil. Kč', 'celková alokace výzvy'],
+                  ['2–15 mil. Kč', 'rozpočet projektu pro 6 a více škol'],
+                  ['12–36 měsíců', 'délka projektu'],
+                  ['30. 12. 2026', 'podání žádosti do 14:00'],
+                ].map(([value, text]) => (
+                  <div key={value}>
+                    <p className="text-[20px] font-bold leading-none text-[#001161] md:text-[22px]">{value}</p>
+                    <p className="mt-1 text-[12px] leading-snug text-[#001161]/50">{text}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="mx-auto mt-10 grid max-w-[820px] grid-cols-2 gap-4 border-t border-[#001161]/10 pt-6 text-left md:grid-cols-4">
-              {[
-                ['300 mil. Kč', 'celková alokace výzvy'],
-                ['2–15 mil. Kč', 'rozpočet projektu pro 6 a více škol'],
-                ['12–36 měsíců', 'délka projektu'],
-                ['30. 12. 2026', 'podání žádosti do 14:00'],
-              ].map(([value, text]) => (
-                <div key={value}>
-                  <p className="text-[22px] font-bold leading-none text-[#001161] md:text-[26px]">{value}</p>
-                  <p className="mt-1 text-[12px] leading-snug text-[#001161]/50">{text}</p>
-                </div>
+            <div className="relative mx-auto w-full max-w-[600px]">
+              <div className="overflow-hidden rounded-[22px] border border-white bg-white shadow-[0_30px_80px_rgba(0,17,97,0.18)]">
+                <img src="/app-screenshots/nova-4.png" alt="Knihovna Vividbooks v aplikaci" className="block w-full" />
+              </div>
+              <div className="absolute -bottom-10 -left-4 w-[48%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-10">
+                <img src="/vividboard/tool-ai.webp" alt="Vividbooks AI vytváří otázku z obsahu" className="block w-full" />
+              </div>
+              <div className="absolute -right-3 -top-6 rounded-2xl bg-[#5B4FD8] px-4 py-3 text-[13px] font-bold text-white shadow-lg md:-right-6">
+                Vividbooks AI
+                <span className="block text-[11px] font-medium text-white/70">tokeny v ceně licence</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="ukazky" className="scroll-mt-24 bg-white px-4 pb-16 pt-20 sm:px-6 md:px-10 md:pb-20">
+          <div className="mx-auto max-w-[1200px]">
+            <SectionTitle
+              align="center"
+              eyebrow="Ukázky z aplikace"
+              title="Takhle s AI pracují učitelé ve Vividbooks"
+              body={<T>Vividbooks používá přes 600 základních škol. AI pracuje nad knihovnou materiálů, kterou učitelé znají.</T>}
+            />
+            <div className="mt-10 grid gap-6 md:grid-cols-3">
+              {showcase.map((item) => (
+                <figure key={item.title} className="overflow-hidden rounded-[26px] border border-[#001161]/8 bg-[#eef1fb]">
+                  <div className="aspect-[4/3] overflow-hidden bg-[#dfe4f7]">
+                    <img src={item.src} alt={item.title} loading="lazy" className="h-full w-full object-cover object-top" />
+                  </div>
+                  <figcaption className="p-5">
+                    <p className="text-[18px] font-bold text-[#001161]">{item.title}</p>
+                    <p className="mt-1 text-[14px] leading-relaxed text-[#001161]/60">
+                      <T>{item.body}</T>
+                    </p>
+                  </figcaption>
+                </figure>
               ))}
             </div>
           </div>
@@ -371,7 +421,7 @@ export function PoradimSeSAiLandingPage() {
                 'Škola jako žadatel hradí nejméně 5 % nákladů.',
               ].map((item) => (
                 <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#03CA90]" />
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
                   <T>{item}</T>
                 </div>
               ))}
@@ -390,7 +440,7 @@ export function PoradimSeSAiLandingPage() {
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {activities.map((a) => (
                 <article key={a.code} className="rounded-[22px] border border-[#001161]/8 bg-white p-5">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#03a978]">{a.code}</p>
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#5B4FD8]">{a.code}</p>
                   <h3 className="mt-1 text-[17px] font-bold leading-snug text-[#001161]">{a.title}</h3>
                   <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/62">
                     <T>{a.ours}</T>
@@ -401,7 +451,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="cenik" className="scroll-mt-24 bg-[#eefbf6] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="cenik" className="scroll-mt-24 bg-[#f1effe] px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[1100px]">
             <SectionTitle
               align="center"
@@ -419,7 +469,7 @@ export function PoradimSeSAiLandingPage() {
                     <h3 className="text-[30px] leading-tight" style={{ fontFamily: COOPER }}>
                       {plan.name}
                     </h3>
-                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#03CA90]' : 'text-[#03a978]'}`}>{plan.tagline}</span>
+                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#5B4FD8]' : 'text-[#5B4FD8]'}`}>{plan.tagline}</span>
                   </div>
                   <p className="mt-5 text-[40px] font-bold leading-none">
                     {czk(plan.price)}
@@ -428,7 +478,7 @@ export function PoradimSeSAiLandingPage() {
                   <ul className="mt-6 grid flex-1 gap-3">
                     {plan.points.map((pt) => (
                       <li key={pt} className={`flex gap-3 text-[15px] leading-relaxed ${i === 1 ? 'text-white/75' : 'text-[#001161]/70'}`}>
-                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#03CA90]" />
+                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
                         <T>{pt}</T>
                       </li>
                     ))}
@@ -484,10 +534,10 @@ export function PoradimSeSAiLandingPage() {
                         <tr key={years} className="border-t border-[#001161]/8">
                           <td className="py-3 pr-4 font-bold text-[#001161]">{years === 1 ? '1 rok' : `${years} roky`}</td>
                           <td className="py-3 pr-4 text-[#001161]/70">
-                            {czk(teachers)} · <span className="font-bold text-[#03a978]">škola {czk(Math.round(teachers * 0.05))}</span>
+                            {czk(teachers)} · <span className="font-bold text-[#5B4FD8]">škola {czk(Math.round(teachers * 0.05))}</span>
                           </td>
                           <td className="py-3 text-[#001161]/70">
-                            {czk(both)} · <span className="font-bold text-[#03a978]">škola {czk(Math.round(both * 0.05))}</span>
+                            {czk(both)} · <span className="font-bold text-[#5B4FD8]">škola {czk(Math.round(both * 0.05))}</span>
                           </td>
                         </tr>
                       );
@@ -513,14 +563,14 @@ export function PoradimSeSAiLandingPage() {
             <div className="mt-10 grid gap-5 md:grid-cols-3">
               {steps.map((step, index) => (
                 <article key={step.title} className="relative rounded-[26px] border border-[#001161]/8 bg-white p-6 shadow-sm">
-                  <p className="text-[48px] font-bold leading-none text-[#03CA90]/20">{String(index + 1).padStart(2, '0')}</p>
+                  <p className="text-[48px] font-bold leading-none text-[#5B4FD8]/20">{String(index + 1).padStart(2, '0')}</p>
                   <h3 className="mt-5 text-[24px] leading-tight text-[#001161]" style={{ fontFamily: COOPER }}>
                     {step.title}
                   </h3>
                   <p className="mt-3 text-[15px] leading-relaxed text-[#001161]/62">
                     <T>{step.body}</T>
                   </p>
-                  {index < steps.length - 1 ? <ArrowRight className="absolute -right-3 top-1/2 hidden h-6 w-6 -translate-y-1/2 text-[#03CA90] md:block" /> : null}
+                  {index < steps.length - 1 ? <ArrowRight className="absolute -right-3 top-1/2 hidden h-6 w-6 -translate-y-1/2 text-[#5B4FD8] md:block" /> : null}
                 </article>
               ))}
             </div>
@@ -541,7 +591,7 @@ export function PoradimSeSAiLandingPage() {
         <section id="konzultace" className="scroll-mt-24 bg-[#001161] px-4 py-20 sm:px-6 md:px-10 md:py-24">
           <div className="mx-auto grid max-w-[1100px] items-start gap-10 lg:grid-cols-[0.85fr_1.15fr]">
             <div className="text-white">
-              <Badge>Konzultace zdarma</Badge>
+              <span className="inline-flex rounded-full bg-white/10 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-white/80">Konzultace zdarma</span>
               <h2 className="mt-5 text-[38px] leading-[1.02] tracking-[-0.02em] md:text-[52px]" style={{ fontFamily: COOPER }}>
                 Zjistěte, co z výzvy může mít vaše škola
               </h2>
