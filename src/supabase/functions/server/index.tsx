@@ -4284,6 +4284,90 @@ app.post('/make-server-93a20b6f/webinar-survey-light-lead', async (c) => {
 });
 
 /**
+ * Zájem školy o projekt z výzvy OP JAK „Poradím se s AI“ (landing /poradim-se-s-ai).
+ * Uloží do KV seznamu `poradim_ai_leads_v1`, kontakt do subscribers (tag `poradim-se-s-ai`)
+ * a pošle upozornění obchodu. Mail a subscribers neblokují.
+ */
+const PORADIM_AI_LEADS_KEY = 'poradim_ai_leads_v1';
+const PORADIM_AI_NOTIFY = ['vitek@vividbooks.com'];
+
+app.post('/make-server-93a20b6f/poradim-se-s-ai/zajem', async (c) => {
+  try {
+    const body = await c.req.json();
+    const str = (v: unknown, max = 300) => String(v ?? '').trim().slice(0, max);
+    const name = str(body.name, 120);
+    const email = str(body.email, 200).toLowerCase();
+    const phone = str(body.phone, 40);
+    const school = str(body.school, 200);
+    const ico = str(body.ico, 20);
+    const role = str(body.role, 80);
+    const teachers = str(body.teachers, 20);
+    const consortium = str(body.consortium, 80);
+    const message = str(body.message, 2000);
+    if (!name || !email || !school) {
+      return c.json({ error: 'Vyplňte jméno, e-mail a školu.' }, 400);
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return c.json({ error: 'Neplatný e-mail.' }, 400);
+    }
+    if (!body.gdpr) {
+      return c.json({ error: 'Souhlas se zpracováním osobních údajů je povinný.' }, 400);
+    }
+
+    const entry = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name, email, phone, school, ico, role, teachers, consortium, message,
+      source: str(body.source, 120) || null,
+      createdAt: new Date().toISOString(),
+    };
+    const existing = ((await kv.get(PORADIM_AI_LEADS_KEY)) as any[] | null) ?? [];
+    await kv.set(PORADIM_AI_LEADS_KEY, [...existing, entry]);
+    console.log(`[PoradimAI] zajem: ${email} skola=${school}`);
+
+    try {
+      const srEnv = getServiceRoleEnv();
+      if (srEnv) {
+        const sb = createClient(srEnv.url, srEnv.serviceKey, { auth: { persistSession: false } });
+        const parts = name.split(' ');
+        await upsertSubscriber(sb, {
+          email,
+          firstName: parts[0] || null,
+          lastName: parts.slice(1).join(' ') || null,
+          phone: phone || null,
+          schoolName: school || null,
+          ico: ico || null,
+          positionLabel: role || null,
+          source: 'other',
+          contactType: role && /ředitel|zástup|vedení/i.test(role) ? 'school_admin' : 'teacher',
+          status: 'subscribed',
+          tags: ['poradim-se-s-ai'],
+        });
+      }
+    } catch (e) {
+      console.warn('[PoradimAI] subscriber upsert (neblokuje):', e instanceof Error ? e.message : e);
+    }
+
+    const esc = (s: string) => s.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]!));
+    const rows: Array<[string, string]> = [
+      ['Škola', school], ['IČO', ico], ['Jméno', name], ['Role', role], ['E-mail', email],
+      ['Telefon', phone], ['Pedagogů', teachers], ['Konsorcium', consortium], ['Zpráva', message],
+    ];
+    const html = `<h2 style="font-family:sans-serif">Poradím se s AI – nový zájem školy</h2><table style="font-family:sans-serif;font-size:14px">${
+      rows.filter(([, v]) => v).map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#666">${k}</td><td style="padding:4px 0">${esc(v).replace(/\n/g, '<br>')}</td></tr>`).join('')
+    }</table>`;
+    for (const to of PORADIM_AI_NOTIFY) {
+      const r = await sendMandrillHtmlResult({ toEmail: to, toName: 'Vividbooks', subject: `Poradím se s AI: ${school}`, html });
+      if (!r.ok) console.warn('[PoradimAI] notify mail:', r.detail);
+    }
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.log(`[PoradimAI] zajem: ${err?.message}`);
+    return c.json({ error: err?.message || 'Chyba' }, 500);
+  }
+});
+
+/**
  * Údaje pro certifikát DVPP (jméno + datum narození). **Nezávislé na registraci na webinář** — uloží do KV
  * pod `webinar_reg_{webinarId}_{email}` (sloučení s existujícím záznamem nebo nový minimální z formuláře).
  * Mailchimp: pokus o PATCH jen pokud kontakt v audience už existuje.

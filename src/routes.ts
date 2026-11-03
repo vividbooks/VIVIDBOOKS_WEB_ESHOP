@@ -129,6 +129,10 @@ export const router = createBrowserRouter(
           path,
           Component: () => React.createElement(Navigate, { to: '/', replace: true }),
         })),
+        ...['poradim-se-s-ai', 'kampane/poradim-se-s-ai'].map((path) => ({
+          path,
+          lazy: lazyNamed(() => import('./components/PoradimSeSAiLandingPage'), 'PoradimSeSAiLandingPage'),
+        })),
         {
           path: 'kampane/editor-sesitu',
           lazy: lazyNamed(() => import('./components/WorkbookEditorLandingPage'), 'WorkbookEditorLandingPage'),
