@@ -43,7 +43,7 @@ function VividLogo() {
 
 function Badge({ children, tone = 'violet' }: { children: React.ReactNode; tone?: 'violet' | 'mint' | 'orange' }) {
   const tones = {
-    violet: 'bg-[#5B4FD8]/10 text-[#5B4FD8]',
+    violet: 'bg-[#6E3BF0]/10 text-[#6E3BF0]',
     mint: 'bg-[#03CA90]/12 text-[#017d5b]',
     orange: 'bg-[#E8942A]/12 text-[#a85b00]',
   };
@@ -74,11 +74,11 @@ function SectionTitle({ eyebrow, title, body, align = 'left' }: { eyebrow?: stri
   );
 }
 
-function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci' }: { className?: string; label?: string }) {
+function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci', onColor = false }: { className?: string; label?: string; onColor?: boolean }) {
   return (
     <a
       href="#konzultace"
-      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-[#5B4FD8] px-5 py-3 text-[15px] font-bold text-white shadow-sm transition hover:scale-[1.03] hover:bg-[#4a3fc4] active:scale-[0.98] ${className}`}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-[15px] font-bold shadow-sm transition hover:scale-[1.03] active:scale-[0.98] ${onColor ? 'bg-[#FFDD00] text-[#0F1B6B] hover:bg-[#ffe633]' : 'bg-[#6E3BF0] text-white hover:bg-[#5a2fd6]'} ${className}`}
       style={{ fontFamily: FF }}
     >
       {label}
@@ -223,7 +223,7 @@ function LeadForm() {
   if (state === 'done') {
     return (
       <div className="rounded-[26px] bg-white p-8 text-center text-[#001161]">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#5B4FD8]/15 text-[#5B4FD8]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[#6E3BF0]/15 text-[#6E3BF0]">
           <Check className="h-7 w-7" />
         </div>
         <h3 className="mt-5 text-[28px] leading-tight" style={{ fontFamily: COOPER }}>
@@ -237,7 +237,7 @@ function LeadForm() {
   }
 
   const input =
-    'w-full rounded-xl border border-[#001161]/12 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none transition focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/20';
+    'w-full rounded-xl border border-[#001161]/12 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none transition focus:border-[#6E3BF0] focus:ring-2 focus:ring-[#6E3BF0]/20';
   const label = 'mb-1.5 block text-[13px] font-bold text-[#001161]/70';
 
   return (
@@ -280,14 +280,14 @@ function LeadForm() {
       </div>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" value={form.website} onChange={set('website')} className="hidden" aria-hidden />
       <label className="mt-4 flex items-start gap-3 text-[13px] leading-relaxed text-[#001161]/60">
-        <input type="checkbox" required checked={form.gdpr} onChange={set('gdpr')} className="mt-1 h-4 w-4 accent-[#5B4FD8]" />
+        <input type="checkbox" required checked={form.gdpr} onChange={set('gdpr')} className="mt-1 h-4 w-4 accent-[#6E3BF0]" />
         <span>Souhlasím, aby mě Vividbooks kontaktoval kvůli konzultaci k výzvě. Údaje použijeme jen k tomu.</span>
       </label>
       {error ? <p className="mt-3 text-[14px] font-bold text-[#c0392b]">{error}</p> : null}
       <button
         type="submit"
         disabled={state === 'sending'}
-        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#5B4FD8] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#4a3fc4] disabled:opacity-60"
+        className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#6E3BF0] px-6 py-4 text-[16px] font-bold text-white transition hover:bg-[#5a2fd6] disabled:opacity-60"
       >
         {state === 'sending' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
         Domluvit konzultaci zdarma
@@ -344,27 +344,27 @@ export function PoradimSeSAiLandingPage() {
       </header>
 
       <main>
-        <section className="relative overflow-hidden bg-[#eef1fb] px-4 pb-16 pt-10 sm:px-6 md:px-10 md:pb-20 md:pt-14">
-          <div className="absolute -right-28 -top-28 h-[460px] w-[460px] rounded-full bg-[#5B4FD8]/14 blur-3xl" />
-          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-[#E8942A]/10 blur-3xl" />
+        <section className="relative mx-3 mt-3 overflow-hidden rounded-[36px] bg-[#6E3BF0] px-5 pb-16 pt-10 text-white sm:px-8 md:mx-6 md:px-12 md:pb-20 md:pt-14">
+          <div className="absolute -right-28 -top-28 h-[460px] w-[460px] rounded-full bg-white/10 blur-3xl" />
+          <div className="absolute -bottom-24 left-0 h-[360px] w-[360px] rounded-full bg-[#FFDD00]/15 blur-3xl" />
           <div className="relative mx-auto grid max-w-[1200px] items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
             <div className="text-center lg:text-left">
-              <Badge>Výzva OP JAK č. 02_26_048</Badge>
-              <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-[#001161] sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
+              <span className="inline-flex rounded-full bg-white/15 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-white">Výzva OP JAK č. 02_26_048</span>
+              <h1 className="mt-5 text-[40px] leading-[1.0] tracking-[-0.035em] text-white sm:text-[52px] md:text-[60px]" style={{ fontFamily: COOPER }}>
                 Výzva Poradím se s AI
                 <br />
-                <span className="text-[#5B4FD8]">pro vaši školu</span>
+                <span className="text-[#FFDD00]">pro vaši školu</span>
               </h1>
-              <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed text-[#001161]/68 md:text-[19px] lg:mx-0">
+              <p className="mx-auto mt-5 max-w-[560px] text-[17px] leading-relaxed md:text-[19px] lg:mx-0 text-white/85">
                 <T>Nová výzva MŠMT podpoří školy, které chtějí AI ve výuce používat smysluplně a bezpečně. Z projektu lze zaplatit vzdělávání učitelů i licence aplikací s AI. S přípravou vám rádi pomůžeme.</T>
               </p>
               <div className="mt-7 flex flex-wrap justify-center gap-3 lg:justify-start">
-                <PrimaryCta className="px-6 py-3.5" />
-                <a href="#vyzva" className="inline-flex items-center justify-center rounded-xl bg-[#001161] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#0a1f80]">
+                <PrimaryCta className="px-6 py-3.5" onColor />
+                <a href="#vyzva" className="inline-flex items-center justify-center rounded-xl bg-[#0F1B6B] px-5 py-3 text-[15px] font-bold text-white transition hover:bg-[#1a2a8a]">
                   Co výzva vyžaduje
                 </a>
               </div>
-              <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-[#001161]/10 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
+              <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-white/20 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
                 {[
                   ['300 mil. Kč', 'celková alokace výzvy'],
                   ['2–15 mil. Kč', 'rozpočet projektu pro 6 a více škol'],
@@ -372,8 +372,8 @@ export function PoradimSeSAiLandingPage() {
                   ['30. 12. 2026', 'podání žádosti do 14:00'],
                 ].map(([value, text]) => (
                   <div key={value}>
-                    <p className="text-[20px] font-bold leading-none text-[#001161] md:text-[22px]">{value}</p>
-                    <p className="mt-1 text-[12px] leading-snug text-[#001161]/50">{text}</p>
+                    <p className="text-[20px] font-bold leading-none text-white md:text-[22px]">{value}</p>
+                    <p className="mt-1 text-[12px] leading-snug text-white/65">{text}</p>
                   </div>
                 ))}
               </div>
@@ -389,7 +389,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="vyzva" className="scroll-mt-24 px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="vyzva" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-[#F8F3E2] px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[820px]">
             <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
             <div className="mt-8 grid gap-3">
@@ -400,7 +400,7 @@ export function PoradimSeSAiLandingPage() {
                 'Škola jako žadatel hradí nejméně 5 % nákladů.',
               ].map((item) => (
                 <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
-                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
+                  <Check className="mt-1 h-4 w-4 shrink-0 text-[#6E3BF0]" />
                   <T>{item}</T>
                 </div>
               ))}
@@ -408,7 +408,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="ukazky" className="scroll-mt-24 bg-white px-4 pb-16 pt-20 sm:px-6 md:px-10 md:pb-20">
+        <section id="ukazky" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-[#E0E5F8] px-4 py-16 sm:px-6 md:px-10 md:pb-20">
           <div className="mx-auto max-w-[1200px]">
             <SectionTitle
               align="center"
@@ -418,7 +418,7 @@ export function PoradimSeSAiLandingPage() {
             />
             <div className="mt-10 grid gap-6 md:grid-cols-3">
               {showcase.map((item) => (
-                <figure key={item.title} className="overflow-hidden rounded-[26px] border border-[#001161]/8 bg-[#eef1fb]">
+                <figure key={item.title} className="overflow-hidden rounded-[26px] bg-white shadow-sm">
                   <div className="relative aspect-[4/3] overflow-hidden bg-[#dfe4f7]">
                     <img src={item.src} alt={item.title} loading="lazy" className={`h-full w-full object-cover ${item.pos ?? 'object-top'}`} />
                     {item.overlay ? (
@@ -437,7 +437,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="aktivity" className="scroll-mt-24 bg-[#f5f7fd] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="aktivity" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[1200px]">
             <SectionTitle
               align="center"
@@ -447,8 +447,8 @@ export function PoradimSeSAiLandingPage() {
             />
             <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               {activities.map((a) => (
-                <article key={a.code} className="rounded-[22px] border border-[#001161]/8 bg-white p-5">
-                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#5B4FD8]">{a.code}</p>
+                <article key={a.code} className="rounded-[22px] bg-[#E0E5F8] p-5">
+                  <p className="text-[12px] font-bold uppercase tracking-[0.12em] text-[#6E3BF0]">{a.code}</p>
                   <h3 className="mt-1 text-[17px] font-bold leading-snug text-[#001161]">{a.title}</h3>
                   <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/62">
                     <T>{a.ours}</T>
@@ -459,7 +459,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="cenik" className="scroll-mt-24 bg-[#f1effe] px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="cenik" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-[#F6E2AB] px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[1100px]">
             <SectionTitle
               align="center"
@@ -477,7 +477,7 @@ export function PoradimSeSAiLandingPage() {
                     <h3 className="text-[30px] leading-tight" style={{ fontFamily: COOPER }}>
                       {plan.name}
                     </h3>
-                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#5B4FD8]' : 'text-[#5B4FD8]'}`}>{plan.tagline}</span>
+                    <span className={`text-[12px] font-bold uppercase tracking-[0.12em] ${i === 1 ? 'text-[#6E3BF0]' : 'text-[#6E3BF0]'}`}>{plan.tagline}</span>
                   </div>
                   <p className="mt-5 text-[40px] font-bold leading-none">
                     {czk(plan.price)}
@@ -486,7 +486,7 @@ export function PoradimSeSAiLandingPage() {
                   <ul className="mt-6 grid flex-1 gap-3">
                     {plan.points.map((pt) => (
                       <li key={pt} className={`flex gap-3 text-[15px] leading-relaxed ${i === 1 ? 'text-white/75' : 'text-[#001161]/70'}`}>
-                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#5B4FD8]" />
+                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#6E3BF0]" />
                         <T>{pt}</T>
                       </li>
                     ))}
@@ -542,10 +542,10 @@ export function PoradimSeSAiLandingPage() {
                         <tr key={years} className="border-t border-[#001161]/8">
                           <td className="py-3 pr-4 font-bold text-[#001161]">{years === 1 ? '1 rok' : `${years} roky`}</td>
                           <td className="py-3 pr-4 text-[#001161]/70">
-                            {czk(teachers)} · <span className="font-bold text-[#5B4FD8]">škola {czk(Math.round(teachers * 0.05))}</span>
+                            {czk(teachers)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(teachers * 0.05))}</span>
                           </td>
                           <td className="py-3 text-[#001161]/70">
-                            {czk(both)} · <span className="font-bold text-[#5B4FD8]">škola {czk(Math.round(both * 0.05))}</span>
+                            {czk(both)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(both * 0.05))}</span>
                           </td>
                         </tr>
                       );
@@ -560,7 +560,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="otazky" className="scroll-mt-24 px-4 py-16 sm:px-6 md:px-10 md:py-20">
+        <section id="otazky" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 bg-white px-4 py-16 sm:px-6 md:px-10 md:py-20">
           <div className="mx-auto max-w-[820px]">
             <SectionTitle align="center" eyebrow="Otázky" title="Na co se školy ptají" />
             <div className="mt-8 border-t border-[#001161]/10">
@@ -571,7 +571,7 @@ export function PoradimSeSAiLandingPage() {
           </div>
         </section>
 
-        <section id="konzultace" className="scroll-mt-24 bg-[#001161] px-4 py-20 sm:px-6 md:px-10 md:py-24">
+        <section id="konzultace" className="scroll-mt-24 mx-3 mt-3 rounded-[36px] md:mx-6 mb-3 bg-[#0F1B6B] px-4 py-20 sm:px-6 md:px-10 md:py-24">
           <div className="mx-auto grid max-w-[1100px] items-start gap-10 lg:grid-cols-[0.85fr_1.15fr]">
             <div className="text-white">
               <span className="inline-flex rounded-full bg-white/10 px-3 py-1 text-[12px] font-bold uppercase tracking-[0.14em] text-white/80">Konzultace zdarma</span>
