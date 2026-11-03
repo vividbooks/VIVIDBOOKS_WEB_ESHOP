@@ -120,7 +120,13 @@ const showcase = [
 ];
 
 /** Ceník (za školu a rok, vč. DPH). Ceny drž jen tady. */
-const PROGRAM_PRICE = 110000;
+/** Cena programu podle velikosti sborovny. */
+const programTiers = [
+  { label: 'do 15 učitelů', price: 79000 },
+  { label: '15–30 učitelů', price: 110000 },
+  { label: 'nad 30 učitelů', price: 149000 },
+];
+const SHARE = 0.05;
 
 /** Vzdělávací program: pokrývá povinné vzdělávání z výzvy (16 × 45 min společně + 10 × 45 min individuálně). */
 const programBlocks = [
@@ -535,9 +541,23 @@ export function PoradimSeSAiLandingPage() {
                   <h3 className="mt-2 text-[34px] leading-tight md:text-[40px]" style={{ fontFamily: COOPER }}>
                     Program AI ve škole
                   </h3>
-                  <p className="mt-5 text-[44px] font-bold leading-none">
-                    {czk(PROGRAM_PRICE)}
-                    <span className="ml-2 text-[15px] font-bold text-white/55">za školu a rok</span>
+                  <p className="mt-5 text-[15px] font-bold text-white/60">Škola zaplatí ze svého</p>
+                  <p className="mt-1 text-[44px] font-bold leading-none text-[#FFDD00]">
+                    od {czk(Math.round(programTiers[0].price * SHARE))}
+                    <span className="ml-2 text-[15px] font-bold text-white/55">ročně</span>
+                  </p>
+                  <div className="mt-5 grid gap-1.5 text-[14px] text-white/70">
+                    {programTiers.map((t) => (
+                      <div key={t.label} className="flex justify-between gap-4 border-b border-white/10 pb-1.5">
+                        <span>{t.label}</span>
+                        <span>
+                          {czk(t.price)} / rok · <span className="font-bold text-white">škola {czk(Math.round(t.price * SHARE))}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-[13px] text-white/50">
+                    <T>Cena zahrnuje vzdělávání i licenci pro všechny učitele školy.</T>
                   </p>
                   <ul className="mt-7 grid gap-3">
                     {programIncludes.map((pt) => (
@@ -587,33 +607,30 @@ export function PoradimSeSAiLandingPage() {
                 Kolik z toho zaplatí škola ze svého
               </h3>
               <p className="mt-2 text-[14px] leading-relaxed text-[#0F1B6B]/55">
-                <T>Orientačně 5 % z ceny, pokud je žadatelem škola. Zapojené školy nehradí nic.</T>
+                <T>Program AI ve škole, orientačně 5 % z ceny, pokud je žadatelem škola. Zapojené školy nehradí nic.</T>
               </p>
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full min-w-[460px] text-left text-[15px]">
                   <thead className="text-[12px] uppercase tracking-[0.1em] text-[#0F1B6B]/45">
                     <tr>
-                      <th className="py-2 pr-4 font-bold">Délka projektu</th>
-                      <th className="py-2 pr-4 font-bold">Program</th>
-                      <th className="py-2 font-bold">Program + AI pro žáky</th>
+                      <th className="py-2 pr-4 font-bold">Velikost školy</th>
+                      <th className="py-2 pr-4 font-bold">1 rok</th>
+                      <th className="py-2 pr-4 font-bold">2 roky</th>
+                      <th className="py-2 font-bold">3 roky</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {[1, 2, 3].map((years) => {
-                      const program = PROGRAM_PRICE * years;
-                      const both = (PROGRAM_PRICE + addons[0].price) * years;
-                      return (
-                        <tr key={years} className="border-t border-[#0F1B6B]/8">
-                          <td className="py-3 pr-4 font-bold text-[#0F1B6B]">{years === 1 ? '1 rok' : `${years} roky`}</td>
-                          <td className="py-3 pr-4 text-[#0F1B6B]/70">
-                            {czk(program)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(program * 0.05))}</span>
+                    {programTiers.map((t) => (
+                      <tr key={t.label} className="border-t border-[#0F1B6B]/8">
+                        <td className="py-3 pr-4 font-bold text-[#0F1B6B]">{t.label}</td>
+                        {[1, 2, 3].map((years) => (
+                          <td key={years} className="py-3 pr-4 text-[#0F1B6B]/70">
+                            <span className="font-bold text-[#6E3BF0]">{czk(Math.round(t.price * years * SHARE))}</span>
+                            <span className="block text-[12px] text-[#0F1B6B]/45">z {czk(t.price * years)}</span>
                           </td>
-                          <td className="py-3 text-[#0F1B6B]/70">
-                            {czk(both)} · <span className="font-bold text-[#6E3BF0]">škola {czk(Math.round(both * 0.05))}</span>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                        ))}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
