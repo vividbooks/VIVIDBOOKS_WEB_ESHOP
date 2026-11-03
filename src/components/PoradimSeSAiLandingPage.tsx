@@ -89,10 +89,10 @@ function PrimaryCta({ className = '', label = 'Chci nezávaznou konzultaci', onC
 
 /** Aktivity výzvy (PpŽP – specifická část) a co k nim dodá Vividbooks. */
 const activities = [
-  { code: 'Aktivita 2', title: 'Pravidla bezpečného využívání AI', ours: 'Vzor školních pravidel: co se s AI smí, jak chránit data žáků a kdo za co odpovídá.' },
-  { code: 'Aktivita 3', title: 'Přípravy na výuku s AI', ours: 'AI připraví aktivity z ověřených materiálů. Odpovídají učivu a ročníku, učitel je zkontroluje a upraví.' },
-  { code: 'Aktivita 4', title: 'AI a zpětná vazba žákům', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
-  { code: 'Aktivita 7', title: 'Vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace.' },
+  { code: 'Aktivita 2 · povinná', title: 'Vnitřní pravidla pro bezpečné využívání AI ve škole', ours: 'Vzor školních pravidel: co se s AI smí, jak chránit data žáků a kdo za co odpovídá.' },
+  { code: 'Aktivita 3', title: 'Přípravy na výuku s využitím AI', ours: 'AI připraví aktivity z ověřených materiálů. Odpovídají učivu a ročníku, učitel je zkontroluje a upraví.' },
+  { code: 'Aktivita 4', title: 'AI a zpětná vazba při sledování pokroku žáka', ours: 'Testy, které se na 2. stupni opravují samy, a přehled nejtěžších otázek.' },
+  { code: 'Aktivity 2–9', title: 'Povinné vzdělávání pedagogů', ours: 'Workshopy pro sborovnu a individuální konzultace do povinných 16 + 10 hodin.' },
   { code: 'Aktivita 8', title: 'AI ambasador', ours: 'Příprava a konzultace pro učitele, který AI ve škole povede.' },
 ];
 
@@ -130,7 +130,7 @@ const plans = [
       'Knihovna materiálů, vividboard a testy',
       'Veškeré náklady na AI (tokeny) jsou v ceně licence',
     ],
-    covers: 'Aktivity 3, 4 a 7',
+    covers: 'Aktivity 3 a 4',
   },
   {
     name: 'AI pro žáky',
@@ -147,7 +147,7 @@ const plans = [
 
 /** Placené vzdělávání k licencím (vč. DPH). */
 const trainings = [
-  { name: 'Workshop pro sborovnu', price: '25 000 Kč', period: 'jednorázově', body: 'Prezenčně ve škole, 8 × 45 minut. Učitelé si s Vividbooks AI připraví vlastní hodinu.' },
+  { name: 'Workshop pro sborovnu', price: '25 000 Kč', period: 'jednorázově', body: 'Prezenčně ve škole, 8 × 45 minut, tedy polovina povinného společného vzdělávání. Učitelé si s Vividbooks AI připraví vlastní hodinu.' },
   { name: 'AI ambasador', price: '30 000 Kč', period: 'za rok', body: 'Příprava učitele, který bude AI ve škole rozvíjet, a pravidelné konzultace s naším týmem.' },
   { name: 'Individuální konzultace', price: 'podle rozsahu', period: '', body: 'Pro jednotlivé učitele během projektu, do povinného individuálního vzdělávání.' },
 ];
@@ -157,19 +157,19 @@ const czk = (n: number) => `${n.toLocaleString('cs-CZ')} Kč`;
 const faq = [
   {
     question: 'Jak doložíme, že jsme se AI věnovali už v roce 2025?',
-    answer: 'Pozvánkami, sylaby, prezenčními listinami nebo smlouvami. Čestné prohlášení nestačí. Pokud to vaše škola nesplní, může být žadatelem jiná ze spolupracujících škol.',
+    answer: 'Pozvánkami, sylaby, prezenčními listinami, doklady o spolupráci se školami nebo životopisem učitele, který kolegy školil. Musí jít o pravidelnou činnost, kterou jste sami vedli. Účast na cizím školení ani čestné prohlášení nestačí. Pokud to vaše škola nesplní, může být žadatelem jiná ze spolupracujících škol.',
   },
   {
-    question: 'Musíme si sami najít partnerské školy?',
-    answer: 'Ano, aspoň pět škol aspoň dvou druhů. Každá smí být jen v jednom projektu. Pokud je hledáte, poradíme.',
+    question: 'Musíme si sami najít spolupracující školy?',
+    answer: 'Ano, aspoň pět škol nejméně dvou druhů (MŠ, ZŠ, SŠ). Každá smí být jen v jednom projektu. Pokud je hledáte, poradíme.',
   },
   {
     question: 'Kolik nás to bude stát?',
-    answer: 'Škola jako žadatel hradí nejméně 5 % a dostane zálohu (až 50 % u projektu do 5 mil. Kč). Licence jsou z projektu placené jen po dobu jeho trvání.',
+    answer: 'Škola jako žadatel hradí nejméně 5 % nákladů projektu, zapojené školy nic. Záloha je až 50 % u projektu do 5 mil. Kč, nad tuto částku nejvýš 30 %. Licence jsou z projektu placené jen po dobu jeho trvání.',
   },
   {
     question: 'Musíme dodavatele vybírat ve výběrovém řízení?',
-    answer: 'Nad 50 000 Kč je povinný průzkum trhu, nad 750 000 Kč bez DPH výběrové řízení. Naše nabídka slouží jako podklad do průzkumu trhu.',
+    answer: 'Cenu nad 50 000 Kč vč. DPH doložíte v rozpočtu průzkumem trhu. Nad 750 000 Kč bez DPH je povinné výběrové řízení a počítá se součet za všechny roky a školy. Naše nabídka slouží jako podklad do průzkumu trhu.',
   },
   {
     question: 'Kdy se dozvíme výsledek?',
@@ -327,12 +327,11 @@ function Chip({ children, className = '' }: { children: React.ReactNode; classNa
 /** Obrázek v úvodu: knihovna, sešity a AI, která tvoří otázku z obsahu. */
 function HeroVisual() {
   return (
-    <div className="relative mx-auto w-full max-w-[560px] pb-16">
+    <div className="relative mx-auto w-full max-w-[560px] pb-28">
       <div className={`ml-auto w-[88%] overflow-hidden rounded-[26px] border-[6px] border-white bg-white ${SHADOW}`}>
         <img src="/aplikace/news-01-knihovna.png" alt="Knihovna Vividbooks" className="block aspect-[5/4] w-full object-cover object-top" />
       </div>
-      <img src="/app-uvod/workbooks.png" alt="Tištěné pracovní sešity Vividbooks" className="absolute -right-4 bottom-10 w-[36%] drop-shadow-[0_18px_30px_rgba(0,17,97,0.28)] md:-right-10" />
-      <div className="absolute -left-2 bottom-0 w-[52%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-8">
+      <div className="absolute -left-2 bottom-0 w-[44%] overflow-hidden rounded-[18px] border-4 border-white bg-white shadow-[0_24px_60px_rgba(0,17,97,0.22)] md:-left-8">
         <img src="/vividboard/tool-ai.webp" alt="AI vytváří otázku z obsahu výuky" className="block w-full" />
       </div>
       <Chip className="-left-2 top-6 md:-left-8">Doložka MŠMT</Chip>
@@ -395,7 +394,7 @@ export function PoradimSeSAiLandingPage() {
               <div className="mt-10 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-[#0F1B6B]/12 pt-6 text-left md:grid-cols-4 lg:grid-cols-2">
                 {[
                   ['300 mil. Kč', 'celková alokace výzvy'],
-                  ['2–15 mil. Kč', 'rozpočet projektu pro 6 a více škol'],
+                  ['2–15 mil. Kč', 'rozpočet projektu, aspoň 5 spolupracujících škol'],
                   ['12–36 měsíců', 'délka projektu'],
                   ['30. 12. 2026', 'podání žádosti do 14:00'],
                 ].map(([value, text]) => (
@@ -415,10 +414,11 @@ export function PoradimSeSAiLandingPage() {
             <SectionTitle eyebrow="Výzva v kostce" title="Co je potřeba splnit" />
             <div className="mt-8 grid gap-3">
               {[
-                'Žadatel se AI ve vzdělávání pravidelně věnoval už v roce 2025 a umí to doložit.',
-                'Projekt má aspoň pět dalších škol aspoň dvou druhů (třeba ZŠ a MŠ) a souhlas zřizovatele.',
-                'V každé škole se zapojí vedení a aspoň polovina pedagogů.',
-                'Škola jako žadatel hradí nejméně 5 % nákladů.',
+                'Žadatel existuje aspoň 2 roky a v roce 2025 sám pravidelně vzdělával žáky nebo pedagogy v práci s AI. Žadatelem nemusí být škola.',
+                'Projekt má aspoň 5 spolupracujících škol nejméně dvou druhů (MŠ, ZŠ, SŠ). Každá škola smí být jen v jednom projektu.',
+                'V každé škole se zapojí vedení a aspoň polovina pedagogů. Každý absolvuje 16 × 45 minut společného (ne jen online) a 10 × 45 minut individuálního vzdělávání.',
+                'Hlavní část aktivit vede žadatel sám, dodavatel může jen pomáhat. V týmu je povinně bezpečnostní expert.',
+                'Škola jako žadatel hradí nejméně 5 % nákladů projektu, zapojené školy nic. Je-li žadatel zřízený obcí nebo krajem, potřebuje souhlas zřizovatele.',
               ].map((item) => (
                 <div key={item} className="flex gap-3 text-[16px] leading-relaxed text-[#001161]/75">
                   <Check className="mt-1 h-4 w-4 shrink-0 text-[#6E3BF0]" />
@@ -564,7 +564,7 @@ export function PoradimSeSAiLandingPage() {
                 Kolik z toho zaplatí škola ze svého
               </h3>
               <p className="mt-2 text-[14px] leading-relaxed text-[#001161]/55">
-                <T>Při 5% spoluúčasti, pokud je žadatelem škola.</T>
+                <T>Orientačně 5 % z ceny licence, pokud je žadatelem škola. Zapojené školy nehradí nic.</T>
               </p>
               <div className="mt-5 overflow-x-auto">
                 <table className="w-full min-w-[460px] text-left text-[15px]">
