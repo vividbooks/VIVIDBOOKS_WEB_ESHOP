@@ -129,16 +129,11 @@ const programTiers = [
 const SHARE = 0.05;
 
 /** Vzdělávací program: pokrývá povinné vzdělávání z výzvy (16 × 45 min společně + 10 × 45 min individuálně). */
-const programBlocks = [
-  { title: 'Úvodní workshop pro sborovnu', meta: '8 × 45 min · prezenčně', body: 'Bezpečná AI ve výuce. Každý učitel si s Vividbooks AI připraví vlastní hodinu.' },
-  { title: 'Pololetní workshop', meta: '4 × 45 min · prezenčně', body: 'Hodnocení a zpětná vazba žákům s pomocí AI na výsledcích z vlastních hodin.' },
-  { title: 'Sdílení se spolupracujícími školami', meta: '4 × 45 min · hybridně', body: 'Učitelé si předají, co se jim osvědčilo. Splní to i síťování, o které výzvě jde.' },
-  { title: 'Individuální vzdělávání', meta: '10 × 45 min na učitele', body: 'Konzultace v malých skupinách po předmětech a úkoly v aplikaci, které vedou rovnou k výstupům.' },
-];
-
-const programIncludes = [
-  'Příprava školního AI ambasadora, který vede navazující setkání',
-  'Šablony příprav, reflexí a prezenčních listin k doložení',
+const programEducation = [
+  'Dva workshopy ve škole: úvodní 8 hodin a pololetní 4 hodiny',
+  'Sdílení se spolupracujícími školami, 4 hodiny',
+  'Individuální konzultace, 10 hodin na učitele',
+  'Příprava školního AI ambasadora a šablony k doložení výstupů',
 ];
 
 const addons = [
@@ -558,14 +553,6 @@ export function PoradimSeSAiLandingPage() {
                   <p className="mt-3 text-[13px] text-white/50">
                     <T>Cena zahrnuje vzdělávání i licenci pro všechny učitele školy.</T>
                   </p>
-                  <ul className="mt-7 grid gap-3">
-                    {programIncludes.map((pt) => (
-                      <li key={pt} className="flex gap-3 text-[15px] leading-relaxed text-white/80">
-                        <Check className="mt-1 h-4 w-4 shrink-0 text-[#FFDD00]" />
-                        <T>{pt}</T>
-                      </li>
-                    ))}
-                  </ul>
                 </div>
                 <div className="grid gap-3">
                   <div className="rounded-[20px] bg-[#FFDD00] p-5 text-[#0F1B6B]">
@@ -577,17 +564,20 @@ export function PoradimSeSAiLandingPage() {
                       <T>Licence pro všechny učitele po celou dobu projektu: knihovna materiálů s doložkou MŠMT, vividboard a Vividbooks AI. Tokeny jsou v ceně.</T>
                     </p>
                   </div>
-                  {programBlocks.map((b) => (
-                    <div key={b.title} className="rounded-[20px] bg-white/10 p-5">
-                      <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <p className="text-[16px] font-bold">{b.title}</p>
-                        <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#FFDD00]">{b.meta}</p>
-                      </div>
-                      <p className="mt-1 text-[14px] leading-relaxed text-white/70">
-                        <T>{b.body}</T>
-                      </p>
+                  <div className="rounded-[20px] bg-white/10 p-5">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-[18px] font-bold">Vzdělávání pro celou sborovnu</p>
+                      <p className="text-[12px] font-bold uppercase tracking-[0.08em] text-[#FFDD00]">16 + 10 hodin podle výzvy</p>
                     </div>
-                  ))}
+                    <ul className="mt-3 grid gap-2">
+                      {programEducation.map((pt) => (
+                        <li key={pt} className="flex gap-3 text-[15px] leading-relaxed text-white/80">
+                          <Check className="mt-1 h-4 w-4 shrink-0 text-[#FFDD00]" />
+                          <T>{pt}</T>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
             </article>
@@ -610,8 +600,12 @@ export function PoradimSeSAiLandingPage() {
               ))}
             </div>
 
-            <div className="mt-8 text-center">
-              <PrimaryCta className="px-6 py-3.5" label="Chci nabídku pro naši školu" />
+            <div className="mt-10 text-center">
+              <p className="text-[24px] leading-snug text-[#0F1B6B] md:text-[30px]" style={{ fontFamily: COOPER }}>
+                S žádostí vám pomůžeme.
+              </p>
+              <p className="mt-1 text-[16px] text-[#0F1B6B]/70">Poradíme, ozvěte se nám.</p>
+              <PrimaryCta className="mt-5 px-6 py-3.5" label="Chci konzultaci zdarma" />
             </div>
           </div>
         </section>
