@@ -142,14 +142,14 @@ function formatVideoTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function openVideoFullscreen(el: HTMLVideoElement | null) {
+export function openVideoFullscreen(el: HTMLVideoElement | null) {
   if (!el) return;
   const v = el as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
   if (el.requestFullscreen) void el.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
   else v.webkitEnterFullscreen?.(); // iPhone Safari
 }
 
-function VideoControlBar({
+export function VideoControlBar({
   playing,
   time,
   duration,

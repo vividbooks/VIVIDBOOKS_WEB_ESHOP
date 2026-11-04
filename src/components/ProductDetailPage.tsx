@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, BookOpen, ShoppingCart, Download, ExternalLi
 import { Link, useNavigate } from 'react-router';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { UnifiedBookCard } from './UnifiedBookCard';
+import { ProductInlineVideo } from './ProductInlineVideo';
 import { SUBJECT_CONFIGS } from './subjectConfigs';
 import { SEOHead, productJsonLd, breadcrumbJsonLd } from './SEOHead';
 import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
@@ -2367,23 +2368,11 @@ export function ProductDetailPage({
 
       {/* ── Video pod listováním (např. písanky: nové písmo Vividbooks Script) ── */}
       {String(product.belowPreviewVideoUrl || '').trim() && (
-        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 mt-10">
-          {String(product.belowPreviewVideoTitle || '').trim() && (
-            <h2 className="font-['Cooper_Light',serif] text-[#001161] text-[26px] md:text-[32px] leading-tight mb-4">
-              {product.belowPreviewVideoTitle}
-            </h2>
-          )}
-          <div className="rounded-[24px] md:rounded-[32px] overflow-hidden bg-[#eef2fb] aspect-video">
-            <video
-              src={String(product.belowPreviewVideoUrl).trim()}
-              poster={String(product.belowPreviewVideoPoster || '').trim() || undefined}
-              controls
-              playsInline
-              preload="none"
-              className="w-full h-full object-cover bg-black"
-            />
-          </div>
-        </div>
+        <ProductInlineVideo
+          src={String(product.belowPreviewVideoUrl).trim()}
+          poster={String(product.belowPreviewVideoPoster || '').trim() || undefined}
+          title={String(product.belowPreviewVideoTitle || '').trim() || undefined}
+        />
       )}
 
       {/* ── Co v aplikaci najdete, videa z hodiny a další aplikace (jako pilotáž) — pod listováním ── */}
