@@ -285,8 +285,8 @@ const MATH1_SERIES: SeriesDef[] = [
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 /** 4. ročník Člověka a jeho světa (vlastivěda, přírodověda) a informatika; zatím jen 4. ročník (5. je v aplikaci taky). */
-const VLASTIVEDA_4_CARD: SeriesDef = { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Vlastivěda', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')) };
-const PRIRODOVEDA_4_CARD: SeriesDef = { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Přírodověda', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')) };
+const VLASTIVEDA_4_CARD: SeriesDef = { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Vlastivěda', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')), href: undefined, rocnik: '4' };
+const PRIRODOVEDA_4_CARD: SeriesDef = { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Přírodověda', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')), href: undefined, rocnik: '4' };
 const INFORMATIKA_SERIES: SeriesDef[] = [
   { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), subject: 'Informatika' },
 ];

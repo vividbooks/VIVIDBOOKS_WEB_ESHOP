@@ -13,6 +13,7 @@ import { buildOgImageAlt, resolveShareImageUrl } from '../utils/ogImage';
 import { marketingUrl } from '../config/marketingSite';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { subjectToSlug } from '../utils/slugify';
+import { CLOVEK_A_JEHO_SVET, catalogGroupMembers, catalogGroupOf, catalogSubjectRank } from '../utils/catalogGroups';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { DigitalAccessComparison, COMPARISON_SUBJECTS } from './DigitalAccessComparison';
 import {
@@ -99,7 +100,7 @@ function subjectPageProductSortRank(p: { name?: string; type?: string }): number
   return 1;
 }
 
-function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number; type?: string }, b: { name?: string; rocnik?: string | number; type?: string }): number {
+function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number; type?: string; category?: string }, b: { name?: string; rocnik?: string | number; type?: string; category?: string }): number {
   const ra = subjectPageProductSortRank(a);
   const rb = subjectPageProductSortRank(b);
   if (ra !== rb) return ra - rb;
@@ -109,6 +110,9 @@ function subjectPageSortByRocnik(a: { name?: string; rocnik?: string | number; t
   const pa = subjectPageExtractPart(a);
   const pb = subjectPageExtractPart(b);
   if (pa !== pb) return pa - pb;
+  // Člověk a jeho svět: Prvouka → Vlastivěda → Přírodověda.
+  const sa = catalogSubjectRank(String(a.category || '')), sb = catalogSubjectRank(String(b.category || ''));
+  if (sa !== sb) return sa - sb;
   return String(a.name || '').localeCompare(String(b.name || ''), 'cs');
 }
 
@@ -449,6 +453,11 @@ export function SubjectPage({
    * dlaždice, ročníky a sešity; odznaky, úvod a sekce pod sešity nemají z čeho vzniknout.
    */
   const bareSubject = isTestVariant && !SUBJECT_CONFIGS[baseSubject];
+  /** Testovací varianta: stránka Prvouky je „Člověk a jeho svět“ (Prvouka, Vlastivěda, Přírodověda). */
+  const cjsGroup = isTestVariant && catalogGroupOf(baseSubject) === CLOVEK_A_JEHO_SVET;
+  const cjsMembers = cjsGroup ? catalogGroupMembers(CLOVEK_A_JEHO_SVET) : null;
+  /** Klíč karet řad (SERIES_BY_GROUP) a filtru `?typ=`. */
+  const seriesKey = cjsGroup ? CLOVEK_A_JEHO_SVET : subject;
   const cfg: SubjectConfig = bareSubject
     ? {
         ...SUBJECT_CONFIGS['Matematika'],
@@ -462,6 +471,14 @@ export function SubjectPage({
         heroText: '',
         authorIntroHeading: '',
         authorIntroBody: '',
+      }
+    : cjsGroup
+    ? {
+        ...SUBJECT_CONFIGS[baseSubject],
+        displayName: CLOVEK_A_JEHO_SVET,
+        displayNameGenitive: 'Člověka a jeho světa',
+        heroTeaserOurWord: 'náš',
+        heroRocnikLine: 'pro 1.–4. ročník, další ve výrobě',
       }
     : SUBJECT_CONFIGS[baseSubject] || SUBJECT_CONFIGS['Matematika'];
 
@@ -490,6 +507,7 @@ export function SubjectPage({
   const subjectProducts = products.filter(p => {
     // Testovací varianta ukazuje i neveřejné (připravené) sešity.
     if (isTestVariant ? !isTestCatalogVisible(p) : p.hideFromCatalog || p.handedness === 'left') return false;
+    if (cjsMembers) return cjsMembers.includes(String(p.category || '').trim());
     const cat = (p.category || '').toLowerCase();
     const name = (p.name || '').toLowerCase();
     const baseKey = baseSubject.toLowerCase().split(' ')[0];
@@ -522,7 +540,7 @@ export function SubjectPage({
   const rocnikParam = searchParams.get('rocnik');
   const typParam = searchParams.get('typ');
   /** Testovací varianta: `?typ=` podle karet řad (všechny předměty s kartami, ne jen Matematika 2. st.). */
-  const testSeriesFilter = isTestVariant ? seriesBookFilter(subject, typParam) : null;
+  const testSeriesFilter = isTestVariant ? seriesBookFilter(seriesKey, typParam) : null;
 
   const subjectRocnikOptions = useMemo(() => {
     const s = new Set<string>();
@@ -672,7 +690,7 @@ export function SubjectPage({
 
   /** Matematika 2. st.: při „Vše“ zobrazit řady jako samostatné bloky (nadpis + mřížka), ne jednu smíšenou mřížku. */
   const mathSeriesBlocks = isTestVariant
-    ? (testSeriesFilter ? null : seriesBookBlocks(subject, afterRocnikPool)?.map((b) => ({ ...b, books: b.books.sort(subjectPageSortByRocnik) })) ?? null)
+    ? (testSeriesFilter ? null : seriesBookBlocks(seriesKey, afterRocnikPool)?.map((b) => ({ ...b, books: b.books.sort(subjectPageSortByRocnik) })) ?? null)
     : showSeriesPanels && activeSeries === 'all'
       ? (() => {
           const pool = afterRocnikPool;
@@ -910,13 +928,13 @@ export function SubjectPage({
       </div>
 
       {/* Testovací verze: dlaždice řad jako v e-shopu hned pod hlavičkou (klik = filtr řady). */}
-      {isTestVariant && SERIES_BY_GROUP[subject] ? (
+      {isTestVariant && SERIES_BY_GROUP[seriesKey] ? (
         <div className="max-w-[1200px] mx-auto px-6 md:px-12 pt-4">
           {/* Matematika 1. st.: dlaždice ročníků by opakovaly řádek ročníků pod nimi. */}
           {subject !== 'Matematika 1. stupe\u0148' && <SeriesCards
-            mainGroup={subject}
+            mainGroup={seriesKey}
             books={subjectProducts.filter((p) => p.type !== 'online')}
-            digitalProduct={subjectProducts.find((p) => p.type === 'online')}
+            digitalProduct={subjectProducts.find((p) => p.type === 'online' && (!cjsMembers || p.category === cjsMembers[0])) ?? subjectProducts.find((p) => p.type === 'online')}
             navigate={navigate}
             compact
           />}
