@@ -37,6 +37,12 @@ export interface Product {
   previewLink?: string;
   /** YouTube / Vimeo / přímý odkaz na video (.mp4) — tlačítko „Ukázka videa“ v detailu. */
   previewVideoLink?: string;
+  /** Video přímo pod listováním ukázky (přímý .mp4, přehrávač na stránce). */
+  belowPreviewVideoUrl?: string;
+  /** Náhledový obrázek k videu pod ukázkou. */
+  belowPreviewVideoPoster?: string;
+  /** Nadpis nad videem pod ukázkou. */
+  belowPreviewVideoTitle?: string;
   appLink?: string;
   backgroundColor?: string;
   buttonType?: 'cart' | 'subscribe';
