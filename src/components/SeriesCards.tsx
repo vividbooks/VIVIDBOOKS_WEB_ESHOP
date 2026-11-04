@@ -303,9 +303,10 @@ const CLOVEK_SERIES: SeriesDef[] = [
   { ...gradeCard(1, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
   { ...gradeCard(2, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
   { ...gradeCard(3, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
+  DIGITAL_CARD,
+  // Vlastivěda a přírodověda (4. ročník) vedle sebe na samostatném řádku.
   VLASTIVEDA_4_CARD,
   PRIRODOVEDA_4_CARD,
-  DIGITAL_CARD,
 ];
 
 const CZECH_SERIES: SeriesDef[] = [
@@ -697,7 +698,7 @@ export function SeriesCards({
     const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-3', 4: 'md:grid-cols-4' };
     const SPAN: Record<number, string> = { 1: 'md:col-span-1', 2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4' };
     return (
-      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${COLS[Math.min(cards.length, 4)]}`}>
+      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${cards.length === 1 ? 'md:grid-cols-2 xl:grid-cols-4' : COLS[Math.min(cards.length, 4)]}`}>
         {blocks.map((b) => (
           <div key={b.subject} className={`min-w-0 flex flex-col ${SPAN[b.items.length] ?? ''}`}>
             <h2 className="mb-3 text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight whitespace-nowrap">

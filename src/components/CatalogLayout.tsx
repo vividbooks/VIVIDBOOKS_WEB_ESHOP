@@ -206,6 +206,8 @@ function SidebarAccordion() {
 
 /* ── Subject lists ─────────────────────────────────────────────── */
 const stripStupen = (text: string) => text.replace(/\s+\d+\.\s*stupe.*$/i, '');
+/** Položka menu: Prvouka se ukazuje jako „Člověk a jeho svět“ (s vlastivědou a přírodovědou). */
+const menuLabel = (item: string) => stripStupen(catalogGroupOf(item));
 
 const secondGradeSubjects = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie'];
 const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka'];
@@ -223,8 +225,6 @@ const testExtraSubjects: Record<1 | 2, { label: string; href?: string; subject?:
     { label: 'Zem\u011bpis', subject: 'Zem\u011bpis' },
   ],
   1: [
-    { label: 'Vlastiv\u011bda', href: `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet` },
-    { label: 'P\u0159\u00edrodov\u011bda', href: `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet` },
     { label: 'Informatika', href: `${APP_LIBRARY}/stupen-1/informatika` },
   ],
 };
@@ -519,7 +519,7 @@ export default function CatalogLayout() {
                   {showStupen(2) && <div className={`flex flex-col gap-[calc(0.125rem*0.85)] ${isTestHome ? 'pl-3' : ''}`}>
                     {secondGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
-                      const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
+                      const label = menuLabel(item);
                       return (
                         <button key={item} onClick={() => { navigate(`${subjectBase}/${slug}`); setMobileSidebarOpen(false); }}
                           className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
@@ -533,7 +533,7 @@ export default function CatalogLayout() {
                   {showStupen(1) && <div className={`flex flex-col gap-[calc(0.125rem*0.85)] ${isTestHome ? 'pl-3' : ''}`}>
                     {firstGradeSubjects.map(item => {
                       const slug = subjectToSlug(item);
-                      const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
+                      const label = menuLabel(item);
                       return (
                         <button key={item} onClick={() => { navigate(`${subjectBase}/${slug}`); setMobileSidebarOpen(false); }}
                           className="w-full text-left px-3 py-[calc(0.5rem*0.85)] rounded-lg font-['Fenomen_Sans',sans-serif] text-[16px] text-[#001161] hover:bg-white border border-transparent hover:border-gray-200 transition-all">
@@ -792,7 +792,7 @@ export default function CatalogLayout() {
                       {showStupen(2) && <div className={`flex flex-col ${isTestHome ? 'pl-3' : ''}`}>
                         {(groupingMode === 'subject' ? secondGradeSubjects : secondGradeLevels).map(item => {
                           const id    = item.replace(/\s+/g, '-').toLowerCase();
-                          const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
+                          const label = menuLabel(item);
                           const slug  = subjectToSlug(item);
                           const isActive = location.pathname === `${subjectBase}/${slug}` || (activeSection === id && isHomeView);
                           return (
@@ -818,7 +818,7 @@ export default function CatalogLayout() {
                         {(groupingMode === 'subject' ? firstGradeSubjects : firstGradeLevels).map(item => {
                           // Prvouka je v katalogu v sekci „Člověk a jeho svět“.
                           const id    = catalogGroupOf(item).replace(/\s+/g, '-').toLowerCase();
-                          const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
+                          const label = menuLabel(item);
                           const slug  = subjectToSlug(item);
                           const isActive = location.pathname === `${subjectBase}/${slug}` || (activeSection === id && isHomeView);
                           return (
@@ -921,7 +921,7 @@ export default function CatalogLayout() {
                             activeSection === id ? 'bg-[#c8d7f7] text-[#001161] font-bold shadow-sm' : 'bg-gray-50 text-[#001161]'
                           }`}
                         >
-                          {stripStupen(item)}
+                          {menuLabel(item)}
                         </button>
                       );
                     })}
