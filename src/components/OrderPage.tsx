@@ -1,4 +1,5 @@
 import React, { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { CLOVEK_A_JEHO_SVET, catalogGroupMembers, catalogGroupOf, catalogSubjectRank } from '../utils/catalogGroups';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
@@ -854,7 +855,8 @@ export function OrderPage() {
   const productsByCategory = useMemo(
     () =>
       workbooks.reduce<Record<string, Product[]>>((acc, p) => {
-        const cat = p.category || 'Ostatn\u00ed';
+        // Prvouka, Vlastivěda a Přírodověda jako jedna skupina „Člověk a jeho svět“ (jen zobrazení).
+        const cat = catalogGroupOf(p.category || 'Ostatn\u00ed');
         if (!acc[cat]) acc[cat] = [];
         acc[cat].push(p);
         return acc;
@@ -865,7 +867,7 @@ export function OrderPage() {
   const CAT_ORDER = useMemo(
     () => [
       'Matematika 2. stupe\u0148', 'Matematika 1. stupe\u0148',
-      'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', '\u010cesk\u00fd jazyk', 'Prvouka',
+      'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', '\u010cesk\u00fd jazyk', CLOVEK_A_JEHO_SVET,
     ],
     [],
   );
@@ -874,7 +876,7 @@ export function OrderPage() {
       [
         ...CAT_ORDER.filter(c => productsByCategory[c]),
         ...Object.keys(productsByCategory).filter(c => !CAT_ORDER.includes(c)),
-      ].filter(c => selSubjects.length === 0 || selSubjects.includes(c)),
+      ].filter(c => selSubjects.length === 0 || catalogGroupMembers(c).some(m => selSubjects.includes(m))),
     [CAT_ORDER, productsByCategory, selSubjects],
   );
 
@@ -1030,6 +1032,8 @@ export function OrderPage() {
       return 2;
     };
     return [...prods].sort((a, b) => {
+      const sr = catalogSubjectRank(a.category) - catalogSubjectRank(b.category);
+      if (sr !== 0) return sr;
       const sd = getSeries(a.name) - getSeries(b.name);
       if (sd !== 0) return sd;
       return getGrade(b.name) - getGrade(a.name);

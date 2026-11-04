@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CLOVEK_A_JEHO_SVET, catalogGroupMembers, catalogGroupOf, catalogSubjectRank } from '../utils/catalogGroups';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -156,7 +157,7 @@ export function SchoolOrderView({
 
   // Group dynamically by actual category values from the database
   const productsByCategory = workbookProducts.reduce<Record<string, Product[]>>((acc, p) => {
-    const cat = p.category || 'Ostatn\u00ed';
+    const cat = catalogGroupOf(p.category || 'Ostatn\u00ed');
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(p);
     return acc;
@@ -165,7 +166,7 @@ export function SchoolOrderView({
   // Preferred display order
   const CATEGORY_ORDER = [
     'Matematika 2. stupe\u0148', 'Matematika 1. stupe\u0148',
-    'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', '\u010cesk\u00fd jazyk', 'Prvouka',
+    'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', '\u010cesk\u00fd jazyk', CLOVEK_A_JEHO_SVET,
   ];
   const sortedCategories = [
     ...CATEGORY_ORDER.filter(c => productsByCategory[c]),
@@ -173,11 +174,13 @@ export function SchoolOrderView({
   ];
 
   const allEntries = sortedCategories
-    .map(cat => [cat, productsByCategory[cat]] as [string, Product[]])
+    .map(cat => [cat, [...productsByCategory[cat]].sort((a, b) => catalogSubjectRank(a.category) - catalogSubjectRank(b.category))] as [string, Product[]])
     .filter(([, p]) => p.length > 0);
 
   // Flexible match: preselectedCategory from slugToSubject (e.g. "Fyzika", "Matematika 1. stupeň")
-  const matchesCat = (cat: string, sel: string) => {
+  const matchesCat = (cat: string, sel: string): boolean => {
+    const members = catalogGroupMembers(cat);
+    if (members.length > 1 || members[0] !== cat) return members.some(m => matchesCat(m, sel));
     const c = cat.toLowerCase().normalize('NFC');
     const s = sel.toLowerCase().normalize('NFC');
     // Also try decoded URI component in case URL-encoded chars

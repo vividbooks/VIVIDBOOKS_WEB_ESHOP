@@ -11,6 +11,7 @@ import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
+import { CLOVEK_A_JEHO_SVET, catalogGroupOf, catalogGroupPrimarySubject, catalogSubjectRank } from '../utils/catalogGroups';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchJsonWithRetry } from '../utils/fetchWithRetry';
 import { parseHeroPhoneDiff } from '../utils/heroPhoneOverrides';
@@ -599,13 +600,13 @@ function CmsHeroOrderedBlocks({
 
 const stripStupen = (text: string) => text.replace(/\s+\d+\.\s*stupe.*$/i, '');
 const secondGradeSubjects = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie'];
-const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka'];
+const firstGradeSubjects  = ['Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka', CLOVEK_A_JEHO_SVET];
 
 /* â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 const getCategoryLink = (category: string) => {
   const cat = (category || '').toLowerCase();
   if (cat.includes('matematika 1') || cat.includes('matematika 1. stupe')) return marketingUrl('/predmet/matematika-1-stupen');
-  if (cat.includes('prvouka')) return marketingUrl('/predmet/prvouka');
+  if (cat.includes('prvouka') || cat === CLOVEK_A_JEHO_SVET.toLowerCase()) return marketingUrl('/predmet/prvouka');
   if (cat.includes('matematika')) return marketingUrl('/predmet/matematika-2-stupen');
   if (cat.includes('fyzika')) return marketingUrl('/predmet/fyzika');
   if (cat.includes('chemie')) return marketingUrl('/predmet/chemie');
@@ -1262,12 +1263,14 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
   );
 
   const getDigitalLicenseForGroup = (mainGroup: string) => {
+    /** Člověk a jeho svět → online produkt Prvouky (hlavní předmět skupiny). */
+    const licenseSubject = catalogGroupPrimarySubject(mainGroup);
     const isSpecial = ['Matematika', 'Prvouka', '\u010cesk\u00fd jazyk']
-      .some(s => mainGroup.includes(s)) || mainGroup.includes('1. stupe\u0148');
+      .some(s => licenseSubject.includes(s)) || licenseSubject.includes('1. stupe\u0148');
     const onlineProduct = products.find(p => {
       if (p.type !== 'online') return false;
       const cat  = (p.category || '').toLowerCase();
-      const main = mainGroup.toLowerCase();
+      const main = licenseSubject.toLowerCase();
       if (cat === main || main.includes(cat) || cat.includes(main)) return true;
       if (main.includes('matematika') && cat.includes('matematika')) {
         if (main.includes('1') && (cat.includes('1') || !cat.includes('2'))) return true;
@@ -1279,11 +1282,11 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       id: onlineProduct?.id || `license-${mainGroup}`,
       name: onlineProduct?.name || 'Digit\u00e1ln\u00ed u\u010debnice',
       type: 'license',
-      category: mainGroup,
+      category: licenseSubject,
       price: onlineProduct?.price || 'Cena podle po\u010dtu \u017e\u00e1k\u016f',
       specialText: onlineProduct?.note || onlineProduct?.poznamka || (isSpecial ? 'ZDARMA OD 15 KS SE\u0160IT\u016e' : null),
       image: onlineProduct?.image || 'https://images.unsplash.com/photo-1649929640997-cce847b8d098?auto=format&fit=crop&q=80&w=400',
-      description: getDefaultDescription(onlineProduct || { category: mainGroup, type: 'online' }),
+      description: getDefaultDescription(onlineProduct || { category: licenseSubject, type: 'online' }),
       flipbookLink: onlineProduct?.flipbookLink || '',
     };
   };
@@ -1309,7 +1312,9 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         subGroup  = rocnik;
       } else {
         // Dějepis, zeměpis a 4. ročník nemají stránku předmětu — sešity do společného řádku testovací homepage.
-        mainGroup = (showUnpublished && APP_ONLY_GROUPS.find(g => g.categories.includes(cat))?.group) || cat;
+        // Veřejný katalog: Prvouka, Vlastivěda a Přírodověda pod jedním nadpisem „Člověk a jeho svět“ (jen zobrazení).
+        mainGroup = (showUnpublished && APP_ONLY_GROUPS.find(g => g.categories.includes(cat))?.group)
+          || (isTestVariant ? cat : catalogGroupOf(cat));
         if (mainGroup === 'Matematika 2. stupe\u0148') {
           if (lowerName.includes('pro v\u0161echny')) subGroup = 'Pracovn\u00ed se\u0161ity pro v\u0161echny';
           else if (lowerName.includes('krok za krokem')) subGroup = 'Krok za krokem';
@@ -1327,6 +1332,8 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
             const pa = a.poradi ?? 999, pb = b.poradi ?? 999;
             if (pa !== pb) return pa - pb;
           }
+          const sr = catalogSubjectRank(a.category) - catalogSubjectRank(b.category);
+          if (sr !== 0) return sr;
           const getGrade = (n: string) => { const m = n.match(/(\d+)\.?\s*(ro\u010dn\u00edk|t\u0159\u00edda)/i); return m ? parseInt(m[1]) : 0; };
           const getPart  = (n: string) => { const m = n.match(/(\d+)\.?\s*d\u00edl/i); return m ? parseInt(m[1]) : 0; };
           const gA = getGrade(a.name), gB = getGrade(b.name);
@@ -1336,10 +1343,10 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       ),
     );
     return groups;
-  }, [workbooks, groupingMode, showUnpublished]);
+  }, [workbooks, groupingMode, showUnpublished, isTestVariant]);
 
   const sortedGroups = useMemo(() => {
-    const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', 'Prvouka', 'Ostatn\u00ed'];
+    const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', CLOVEK_A_JEHO_SVET, 'Prvouka', 'Ostatn\u00ed'];
     const sorted = Object.entries(groupedWorkbooks).sort(([a], [b]) => {
       if (groupingMode === 'grade') return a.localeCompare(b);
       const ia = order.indexOf(a), ib = order.indexOf(b);
@@ -2214,7 +2221,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
           const nextEntry   = sortedGroups[idx + 1];
           const isLastSecond = isSecondGrd && nextEntry && !isSecondGrdGroup(nextEntry[0]);
           const openSubject = () => {
-            if (!appOnly) navigate(`${isTestVariant ? TEST_HOMEPAGE_PATH : ''}/predmet/${subjectToSlug(mainGroup)}`);
+            if (!appOnly) navigate(`${isTestVariant ? TEST_HOMEPAGE_PATH : ''}/predmet/${subjectToSlug(catalogGroupPrimarySubject(mainGroup))}`);
           };
           const isFirstGrd  = firstGradeSubjects.includes(mainGroup) || mainGroup === '1. stupe\u0148';
           const isLastFirst  = isFirstGrd && (!nextEntry || (!firstGradeSubjects.includes(nextEntry[0]) && nextEntry[0] !== '1. stupe\u0148'));

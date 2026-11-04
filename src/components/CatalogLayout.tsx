@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { catalogGroupOf } from '../utils/catalogGroups';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { Download, ChevronRight, ChevronDown, Menu, X, Phone, ShoppingCart } from 'lucide-react';
@@ -815,7 +816,8 @@ export default function CatalogLayout() {
                       {stupenHeading(1, "text-[#001161]/50 font-['Fenomen_Sans',sans-serif] text-[14px] font-bold uppercase tracking-wider px-2 mb-[calc(0.125rem*0.85)]")}
                       {showStupen(1) && <div className={`flex flex-col ${isTestHome ? 'pl-3' : ''}`}>
                         {(groupingMode === 'subject' ? firstGradeSubjects : firstGradeLevels).map(item => {
-                          const id    = item.replace(/\s+/g, '-').toLowerCase();
+                          // Prvouka je v katalogu v sekci „Člověk a jeho svět“.
+                          const id    = catalogGroupOf(item).replace(/\s+/g, '-').toLowerCase();
                           const label = item.replace(/\s+\d+\.\s*stupe\S*/g, '');
                           const slug  = subjectToSlug(item);
                           const isActive = location.pathname === `${subjectBase}/${slug}` || (activeSection === id && isHomeView);
@@ -909,7 +911,7 @@ export default function CatalogLayout() {
                       ? [...secondGradeSubjects, ...firstGradeSubjects]
                       : [...secondGradeLevels, ...firstGradeLevels]
                     ).map((item) => {
-                      const id = item.replace(/\s+/g, '-').toLowerCase();
+                      const id = catalogGroupOf(item).replace(/\s+/g, '-').toLowerCase();
                       return (
                         <button
                           key={item}
