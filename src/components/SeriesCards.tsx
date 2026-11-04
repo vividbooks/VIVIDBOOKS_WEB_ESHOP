@@ -3,6 +3,7 @@ import { useLocation } from 'react-router';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { useProducts } from '../contexts/ProductsContext';
+import { CLOVEK_A_JEHO_SVET, catalogGroupMembers } from '../utils/catalogGroups';
 
 /**
  * Homepage (zatím jen testovací kopie, TEST_HOMEPAGE_PATH): místo pásu sešitů předmětu tři velké karty řad.
@@ -283,10 +284,10 @@ const MATH1_SERIES: SeriesDef[] = [
 ];
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
-/** Vlastivěda, přírodověda a informatika v jednom řádku; zatím jen 4. ročník (5. je v aplikaci taky). */
-const CJS_INFO_SERIES: SeriesDef[] = [
-  { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Pracovní sešit', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')), subject: 'Vlastivěda' },
-  { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Pracovní sešit', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')), subject: 'Přírodověda' },
+/** 4. ročník Člověka a jeho světa (vlastivěda, přírodověda) a informatika; zatím jen 4. ročník (5. je v aplikaci taky). */
+const VLASTIVEDA_4_CARD: SeriesDef = { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Vlastivěda', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')) };
+const PRIRODOVEDA_4_CARD: SeriesDef = { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Přírodověda', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')) };
+const INFORMATIKA_SERIES: SeriesDef[] = [
   { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), subject: 'Informatika' },
 ];
 
@@ -294,6 +295,16 @@ const PRVOUKA_SERIES: SeriesDef[] = [
   gradeCard(1, 'Pracovní sešit ve dvou dílech'),
   gradeCard(2, 'Pracovní sešit ve dvou dílech'),
   gradeCard(3, 'Pracovní sešit, 1. díl'),
+  DIGITAL_CARD,
+];
+
+/** Člověk a jeho svět: Prvouka 1.–3. ročník, Vlastivěda a Přírodověda 4. ročník, digitální učebnice Prvouky. */
+const CLOVEK_SERIES: SeriesDef[] = [
+  { ...gradeCard(1, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
+  { ...gradeCard(2, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
+  { ...gradeCard(3, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
+  VLASTIVEDA_4_CARD,
+  PRIRODOVEDA_4_CARD,
   DIGITAL_CARD,
 ];
 
@@ -338,7 +349,7 @@ const CZECH_SERIES: SeriesDef[] = [
  */
 export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2; categories: string[] }[] = [
   { group: 'Dějepis a zeměpis', after: 'Chemie', stupen: 2, categories: ['Dějepis', 'Zeměpis'] },
-  { group: 'Vlastivěda, přírodověda a informatika', after: 'Prvouka', stupen: 1, categories: ['Vlastivěda', 'Přírodověda', 'Informatika'] },
+  { group: 'Informatika', after: CLOVEK_A_JEHO_SVET, stupen: 1, categories: ['Informatika'] },
 ];
 
 /** Produkt v testovací variantě: ukázat i neveřejné (připravené) sešity; levácké a jinak skryté ne. */
@@ -382,7 +393,8 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   'Matematika 1. stupeň': MATH1_SERIES,
   Prvouka: PRVOUKA_SERIES,
   'Český jazyk': CZECH_SERIES,
-  'Vlastivěda, přírodověda a informatika': CJS_INFO_SERIES,
+  [CLOVEK_A_JEHO_SVET]: CLOVEK_SERIES,
+  Informatika: INFORMATIKA_SERIES,
 };
 
 /** Obálky témat digitální učebnice z aplikace (knihovna nove.vividbooks.com) — pro návrhy náhledu digitální učebnice. */
@@ -562,7 +574,7 @@ export function SeriesCards({
   compact?: boolean;
 }) {
   /** Karty jsou jen na testovací verzi — vedou na testovací stránku předmětu (s dlaždicemi řad nahoře). */
-  const subjectPath = `${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(mainGroup)}`;
+  const subjectPath = `${TEST_HOMEPAGE_PATH}/predmet/${subjectToSlug(catalogGroupMembers(mainGroup)[0])}`;
   const location = useLocation();
   const { products } = useProducts();
   /** Návrh náhledu digitální učebnice: `?dig=1`–`5` (jen pro srovnání variant). */

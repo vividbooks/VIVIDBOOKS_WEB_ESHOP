@@ -1314,7 +1314,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         // Dějepis, zeměpis a 4. ročník nemají stránku předmětu — sešity do společného řádku testovací homepage.
         // Veřejný katalog: Prvouka, Vlastivěda a Přírodověda pod jedním nadpisem „Člověk a jeho svět“ (jen zobrazení).
         mainGroup = (showUnpublished && APP_ONLY_GROUPS.find(g => g.categories.includes(cat))?.group)
-          || (isTestVariant ? cat : catalogGroupOf(cat));
+          || catalogGroupOf(cat);
         if (mainGroup === 'Matematika 2. stupe\u0148') {
           if (lowerName.includes('pro v\u0161echny')) subGroup = 'Pracovn\u00ed se\u0161ity pro v\u0161echny';
           else if (lowerName.includes('krok za krokem')) subGroup = 'Krok za krokem';
