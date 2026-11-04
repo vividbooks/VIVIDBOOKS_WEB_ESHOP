@@ -225,7 +225,7 @@ const testExtraSubjects: Record<1 | 2, { label: string; href?: string; subject?:
     { label: 'Zem\u011bpis', subject: 'Zem\u011bpis' },
   ],
   1: [
-    { label: 'Informatika', href: `${APP_LIBRARY}/stupen-1/informatika` },
+    { label: 'Informatika', subject: 'Informatika' },
   ],
 };
 

@@ -11,6 +11,7 @@ const AUTH_HEADERS = { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type':
 const TEST_ONLY_SUBJECTS: Record<string, string> = {
   dejepis: 'D\u011bjepis',
   zemepis: 'Zem\u011bpis',
+  informatika: 'Informatika',
 };
 
 /** `test` = testovací stránka předmětu pod testovací homepage (dlaždice řad nahoře, noindex). */

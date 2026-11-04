@@ -2215,7 +2215,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
       <div className="px-4 md:px-8 mt-8">
         {sortedGroups.map(([mainGroup, subGroups], idx) => {
           const isExpanded  = expandedGroups.has(mainGroup);
-          const appOnly = APP_ONLY_GROUPS.find((g) => g.group === mainGroup);
+          const appOnly = APP_ONLY_GROUPS.find((g) => g.group === mainGroup && !g.ownPage);
           const isSecondGrdGroup = (g: string) => secondGradeSubjects.includes(g) || g === '2. stupe\u0148' || APP_ONLY_GROUPS.some((a) => a.group === g && a.stupen === 2);
           const isSecondGrd = isSecondGrdGroup(mainGroup);
           const nextEntry   = sortedGroups[idx + 1];

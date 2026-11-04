@@ -288,7 +288,7 @@ const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 const VLASTIVEDA_4_CARD: SeriesDef = { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Vlastivěda', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')), href: undefined, rocnik: '4' };
 const PRIRODOVEDA_4_CARD: SeriesDef = { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Přírodověda', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')), href: undefined, rocnik: '4' };
 const INFORMATIKA_SERIES: SeriesDef[] = [
-  { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), subject: 'Informatika' },
+  { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), href: undefined, rocnik: '4' },
 ];
 
 const PRVOUKA_SERIES: SeriesDef[] = [
@@ -348,9 +348,9 @@ const CZECH_SERIES: SeriesDef[] = [
  * Řádky z předmětů, které na webu nemají stránku předmětu: na testovací homepage se přidají za `after`
  * a sešity kategorií `categories` (zatím neveřejné) se do nich sloučí; tlačítko celého předmětu chybí.
  */
-export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2; categories: string[] }[] = [
+export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2; categories: string[]; /** Řádek má vlastní nadpis a stránku předmětu (ne nadpisy v kartách). */ ownPage?: boolean }[] = [
   { group: 'Dějepis a zeměpis', after: 'Přírodopis', stupen: 2, categories: ['Dějepis', 'Zeměpis'] },
-  { group: 'Informatika', after: CLOVEK_A_JEHO_SVET, stupen: 1, categories: ['Informatika'] },
+  { group: 'Informatika', after: CLOVEK_A_JEHO_SVET, stupen: 1, categories: ['Informatika'], ownPage: true },
 ];
 
 /** Produkt v testovací variantě: ukázat i neveřejné (připravené) sešity; levácké a jinak skryté ne. */
