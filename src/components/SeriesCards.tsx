@@ -349,7 +349,7 @@ const CZECH_SERIES: SeriesDef[] = [
  * a sešity kategorií `categories` (zatím neveřejné) se do nich sloučí; tlačítko celého předmětu chybí.
  */
 export const APP_ONLY_GROUPS: { group: string; after: string; stupen: 1 | 2; categories: string[] }[] = [
-  { group: 'Dějepis a zeměpis', after: 'Chemie', stupen: 2, categories: ['Dějepis', 'Zeměpis'] },
+  { group: 'Dějepis a zeměpis', after: 'Přírodopis', stupen: 2, categories: ['Dějepis', 'Zeměpis'] },
   { group: 'Informatika', after: CLOVEK_A_JEHO_SVET, stupen: 1, categories: ['Informatika'] },
 ];
 
