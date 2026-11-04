@@ -840,7 +840,7 @@ export function SubjectPage({
             style={{ background: cfg.heroColor }}
           >
             {/* Testovací verze: úspornější hlavička (méně výšky, víc místa pro produkty). */}
-            <div className={isTestVariant ? 'px-5 sm:px-6 md:px-8 py-4' : 'px-5 sm:px-8 md:px-12 pt-6 pb-8'}>
+            <div className={isTestVariant ? 'px-5 sm:px-6 md:px-8 py-[30px]' : 'px-5 sm:px-8 md:px-12 pt-6 pb-8'}>
               {/* Horní řádek: Zpět + RVP + doložka (+ „Pro …“ jen kde dává smysl) */}
               <div className={`flex items-center gap-3 flex-wrap ${isTestVariant ? 'mb-1.5' : 'mb-5'}`}>
                 <button
