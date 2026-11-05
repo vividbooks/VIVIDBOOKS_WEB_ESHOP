@@ -458,6 +458,12 @@ export function SubjectPage({
   const cjsMembers = cjsGroup ? catalogGroupMembers(CLOVEK_A_JEHO_SVET) : null;
   /** Klíč karet řad (SERIES_BY_GROUP) a filtru `?typ=`. */
   const seriesKey = cjsGroup ? CLOVEK_A_JEHO_SVET : subject;
+  /** Karty řad jsou samy po ročnících (Člověk a jeho svět, Informatika) — řádek ročníků by je zdvojoval. */
+  const seriesCardsAreGrades = (() => {
+    const cards = (SERIES_BY_GROUP[seriesKey] ?? []).filter((c) => !c.digital);
+    // Matematika 1. st. karty neukazuje (viz níže), ročníky tam vybírají tlačítka.
+    return subject !== 'Matematika 1. stupe\u0148' && cards.length > 0 && cards.every((c) => !!c.rocnik);
+  })();
   const cfg: SubjectConfig = bareSubject
     ? {
         ...SUBJECT_CONFIGS['Matematika'],
@@ -939,7 +945,7 @@ export function SubjectPage({
             compact
           />}
           {/* Druhá úroveň výběru: ročníky ve stejném jazyce jako dlaždice řad. */}
-          {subjectRocnikOptions.length > 1 && (
+          {subjectRocnikOptions.length > 1 && !seriesCardsAreGrades && (
             <div className="mt-1 flex flex-wrap items-center gap-2.5" role="group" aria-label="Ročník">
               {[null, ...[...subjectRocnikOptions, ...otherStageRocnikOptions].sort((a, b) => Number(a) - Number(b))].map((r) => {
                 const on = r === null ? subjectRocnikFilter == null : subjectRocnikFilter === r;
@@ -967,6 +973,26 @@ export function SubjectPage({
 
       {/* ── BOOKS ── */}
       <div className={`${isTestVariant ? 'pt-4 pb-12' : 'py-12'} px-6 md:px-12 max-w-[1200px] mx-auto`}>
+
+        {/* Testovací verze: předěl mezi dlaždicemi (výběr) a tiskovinami — nadpis podle výběru, počet, linka. */}
+        {isTestVariant && (() => {
+          const activeCard = testSeriesFilter ? (SERIES_BY_GROUP[seriesKey] ?? []).find((c) => c.typ === typParam) : null;
+          const base = activeCard ? activeCard.title : 'V\u0161echny tituly';
+          const label = subjectRocnikFilter ? `${base} \u00b7 ${subjectRocnikFilter}. ro\u010dn\u00edk` : base;
+          const n = mathSeriesBlocks ? mathSeriesBlocks.reduce((a, b) => a + b.books.length, 0) : filteredBooks.length;
+          const unit = n === 1 ? 'titul' : n >= 2 && n <= 4 ? 'tituly' : 'titul\u016f';
+          return (
+            <div className="mt-8 mb-3 flex items-baseline gap-4">
+              <h2 className="text-[#001161] text-[26px] md:text-[32px] leading-[1.08] shrink-0" style={{ fontFamily: "'Cooper Light', serif" }}>
+                {label}
+              </h2>
+              <span className="shrink-0 text-[13px] text-[#001161]/40" style={{ fontFamily: "'Fenomen Sans', sans-serif" }}>
+                {n} {unit}
+              </span>
+              <div className="h-px flex-1 bg-[#001161]/10 self-center min-w-0" />
+            </div>
+          );
+        })()}
 
         {!isTestVariant && (
         <div className="flex items-center gap-4 mb-0">
@@ -1192,6 +1218,7 @@ export function SubjectPage({
           light={true}
           ecosystemHeading={true}
           tabOverrides={getMatematika2TabOverrides(subject)}
+          sectionHeading={cjsGroup ? `Co v\u0161e obsahuje n\u00e1\u0161 ${cfg.displayName}?` : undefined}
         />
       )}
 
