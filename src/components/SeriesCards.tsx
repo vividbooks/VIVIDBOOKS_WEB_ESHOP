@@ -192,7 +192,7 @@ const HISTORY_SERIES: SeriesDef[] = [
     key: 'dejepis-krok',
     title: 'Krok za krokem',
     label: 'Pracovní sešity',
-    description: 'Sešit pro 7., 8. a 9. ročník',
+    description: 'Sešit pro 6., 7., 8. a 9. ročník',
     typ: 'krok',
     bg: '#f8f9fc',
     match: (n) => n.includes('dějepis') && n.includes('krok za krokem'),
