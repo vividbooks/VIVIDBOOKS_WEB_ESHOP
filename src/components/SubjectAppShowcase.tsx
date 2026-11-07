@@ -15,7 +15,14 @@ const FF = "'Fenomen Sans', sans-serif";
 const APP_ORIGIN = 'https://nove.vividbooks.com';
 const APP_ICON_STORAGE = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/covers';
 
-type ShowcaseApp = { name: string; body: string; icon: string; stage: '1. stupeň' | '2. stupeň' | '9. ročník' };
+type ShowcaseApp = {
+  name: string;
+  body: string;
+  icon: string;
+  stage: '1. stupeň' | '2. stupeň' | '9. ročník';
+  /** Ikona knihovny (ne dlaždice aplikace): celá, na bílém podkladu. */
+  iconContain?: boolean;
+};
 
 /** Aplikace k matematice v knihovně (stejný výčet jako pilotáž, stav k 16. 10. 2026). */
 const MATH_APPS: ShowcaseApp[] = [
@@ -53,9 +60,18 @@ const FYZIKA_VIDEOS: VoicedVideo[] = [
   { file: 'kosmonosy', youtube: 'e59AnUsORr0', title: 'Vzorová hodina – ZŠ Kosmonosy', note: 'Marcela Červová a třída, která s Vividbooks prošla celou fyziku 2. stupně.', len: '8:31' },
 ];
 
-/** Aplikace k fyzice v knihovně (kategorie Fyzika, stav k 7. 11. 2026). Simulace mají své video výše. */
+/**
+ * Aplikace k fyzice (podle Vítka 7. 11. 2026): z knihovny kategorie Fyzika (Simulace, Elektrický obvod),
+ * Funkce a grafy (knihovna Matematika), Vividboard a editor pracovních listů (skill vividbooks + záložka
+ * „Tvorba vlastních interaktivních materiálů“ v KV) a testy a písemky (záložka fyziky v KV).
+ */
 const FYZIKA_APPS: ShowcaseApp[] = [
+  { name: 'Fyzikální simulace', body: 'Siloměr, páka, tlak, vztlaková síla, čočky a další pokusy na tabuli. Ke každé simulaci úkoly.', icon: `${APP_ICON_STORAGE}/application-icon-new-1781271223614.png`, stage: '2. stupeň' },
   { name: 'Elektrický obvod', body: 'Žáci sestaví obvod z baterie, žárovek, vypínačů, rezistorů a LED a měří ampérmetrem a voltmetrem.', icon: `${APP_ICON_STORAGE}/application-icon-new-1781271178864.svg`, stage: '2. stupeň' },
+  { name: 'Funkce a grafy', body: 'Grafy funkcí, které se mění podle toho, jak žák posouvá parametry. Ideální na tabuli.', icon: `${APP_ORIGIN}/assets/applications/graf-icon.svg`, stage: '2. stupeň' },
+  { name: 'Vividboard', body: 'Tvorba vlastních materiálů a prezentací s interaktivními aktivitami. Můžete začít z hotových materiálů a šablon Vividbooks, pomůže i umělá inteligence.', icon: `${APP_ORIGIN}/icons/library/prezentace.svg`, iconContain: true, stage: '2. stupeň' },
+  { name: 'Pracovní listy', body: 'Vlastní pracovní listy v editoru: hotový list z knihovny zkopírujete a upravíte, nebo začnete od nuly. Tisk do PDF.', icon: `${APP_ORIGIN}/icons/library/worksheet.svg`, iconContain: true, stage: '2. stupeň' },
+  { name: 'Testy a písemky', body: 'Vyplňování společně se žáky nebo každý svým tempem, s detailním vyhodnocením ve Vividboardu. Lze je i tisknout a upravit.', icon: `${APP_ORIGIN}/icons/library/test.svg`, iconContain: true, stage: '2. stupeň' },
 ];
 
 export type ShowcaseSubject = 'matematika-1' | 'matematika-2' | 'fyzika';
@@ -119,7 +135,12 @@ export function SubjectAppShowcase({
             <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {apps.map((app) => (
                 <li key={app.name} className="flex gap-4 rounded-[20px] bg-[#f8f9fc] p-4 ring-1 ring-[#001161]/6">
-                  <img src={app.icon} alt="" loading="lazy" className="h-14 w-14 shrink-0 rounded-[14px] object-cover shadow-sm" />
+                  <img
+                    src={app.icon}
+                    alt=""
+                    loading="lazy"
+                    className={`h-14 w-14 shrink-0 rounded-[14px] shadow-sm ${app.iconContain ? 'bg-white object-contain p-2.5' : 'object-cover'}`}
+                  />
                   <div className="min-w-0" style={{ fontFamily: FF }}>
                     <p className="flex flex-wrap items-baseline gap-x-2">
                       <span className="text-[16px] font-bold text-[#001161]">{app.name}</span>
