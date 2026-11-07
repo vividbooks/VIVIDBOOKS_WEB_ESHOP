@@ -1,24 +1,24 @@
 import React from 'react';
 import { SubjectTabsSection } from './SubjectTabsSection';
-import { MathVoicedVideos } from './MathInteractiveIncluded';
+import { MathVoicedVideos, type VoicedVideo } from './MathInteractiveIncluded';
 import { MATH2_ECOSYSTEM_EXCLUDED_TABS } from './MathCampaignLandingPage';
 import { MATEMATIKA_2_TAB_OVERRIDES } from '../data/matematika2SubjectTabOverrides';
 import imgPracovniListy from '../assets/campaign/pracovni-listy-ukazka.webp';
 import { formatTypography } from '../utils/formatTypography';
 
 /**
- * Pod listováním sešitu matematiky: stejná sekce jako na pilotáži (/matematika-pilotovani) —
- * co v aplikaci najdete (záložky), jak to vypadá v hodině (namluvená videa) a další aplikace.
+ * Sekce na stránce předmětu (matematika 1./2. stupeň, fyzika): stejná jako na pilotáži (/matematika-pilotovani) —
+ * co v aplikaci najdete (záložky), jak to vypadá v hodině (videa) a další aplikace k předmětu.
  */
 
 const FF = "'Fenomen Sans', sans-serif";
 const APP_ORIGIN = 'https://nove.vividbooks.com';
 const APP_ICON_STORAGE = 'https://qypiuvqglsmxdsnyazih.supabase.co/storage/v1/object/public/platform-admin/covers';
 
-type MathApp = { name: string; body: string; icon: string; stage: '1. stupeň' | '2. stupeň' | '9. ročník' };
+type ShowcaseApp = { name: string; body: string; icon: string; stage: '1. stupeň' | '2. stupeň' | '9. ročník' };
 
 /** Aplikace k matematice v knihovně (stejný výčet jako pilotáž, stav k 16. 10. 2026). */
-const MATH_APPS: MathApp[] = [
+const MATH_APPS: ShowcaseApp[] = [
   { name: 'Početník', body: 'Generuje příklady k procvičení počítání. Nastavíte téma a obtížnost, žáci počítají na tabletu nebo z tisku.', icon: `${APP_ORIGIN}/assets/applications/pocetnik-icon-stupen-2.png`, stage: '2. stupeň' },
   { name: 'Slovní úlohy', body: 'Slovní úlohy po krocích: žák si úlohu rozebere, zapíše a vyřeší.', icon: `${APP_ORIGIN}/assets/applications/slovni-ulohy-icon.svg`, stage: '2. stupeň' },
   { name: 'Přijímací zkoušky', body: 'Úlohy z přijímaček CERMAT po tématech i celé testy nanečisto.', icon: `${APP_ORIGIN}/assets/applications/prijimacky-icon.svg`, stage: '9. ročník' },
@@ -41,19 +41,42 @@ const TAB_OVERRIDES_2ND = {
 };
 const EXCLUDED_TABS_2ND = [...MATH2_ECOSYSTEM_EXCLUDED_TABS, 'Aplikace Rýsování'];
 
+/**
+ * Fyzika — videa do hodiny. Zdroje: lekce = blog „6 nástrojů…“ (YouTube), simulace = namluvená upoutávka
+ * z aplikace (public/fyzika-videa), řešení = video „Řešení na nástěnce“ (ukazuje i fyziku),
+ * vzorová hodina = blog „Příběh třídy, která vyrůstala s Vividbooks“ (YouTube).
+ */
+const FYZIKA_VIDEOS: VoicedVideo[] = [
+  { file: 'lekce', youtube: 'pnW3WQyfQ_E', title: 'Interaktivní lekce', note: 'Animace, vizualizace a otevřené otázky, nad kterými třída diskutuje.', len: '0:53' },
+  { file: 'simulace', dir: 'fyzika-videa', title: 'Fyzikální simulace', note: 'Pokus na tabuli, i když na něj ve třídě nemáte pomůcky. Ke každé simulaci úkoly.', len: '0:43' },
+  { file: 'reseni-nastenka', title: 'Řešení na nástěnce', note: 'Úloha po úloze, řešení odkrýváte po krocích přímo na tabuli.', len: '1:02' },
+  { file: 'kosmonosy', youtube: 'e59AnUsORr0', title: 'Vzorová hodina – ZŠ Kosmonosy', note: 'Marcela Červová a třída, která s Vividbooks prošla celou fyziku 2. stupně.', len: '8:31' },
+];
+
+/** Aplikace k fyzice v knihovně (kategorie Fyzika, stav k 7. 11. 2026). Simulace mají své video výše. */
+const FYZIKA_APPS: ShowcaseApp[] = [
+  { name: 'Elektrický obvod', body: 'Žáci sestaví obvod z baterie, žárovek, vypínačů, rezistorů a LED a měří ampérmetrem a voltmetrem.', icon: `${APP_ICON_STORAGE}/application-icon-new-1781271178864.svg`, stage: '2. stupeň' },
+];
+
+export type ShowcaseSubject = 'matematika-1' | 'matematika-2' | 'fyzika';
+
 /** Výchozí texty platí pro detail sešitu; stránka předmětu posílá vlastní (bez řeči o sešitu). */
-export function MathAppShowcase({
-  secondStage,
+export function SubjectAppShowcase({
+  subject,
   intro = 'Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí. Ke třídní objednávce od 15 sešitů je v ceně.',
   videosBody = 'Krátká videa se zvukem: co k sešitu dostanete a jak s tím pracujete v hodině.',
 }: {
-  secondStage: boolean;
+  subject: ShowcaseSubject;
   intro?: string;
   videosBody?: string;
 }) {
-  const apps = MATH_APPS.filter((a) => (secondStage ? a.stage !== '1. stupeň' : a.stage === '1. stupeň')).filter(
-    (a) => !(secondStage && APPS_IN_VIDEOS.has(a.name)),
-  );
+  const secondStage = subject !== 'matematika-1';
+  const fyzika = subject === 'fyzika';
+  const apps = fyzika
+    ? FYZIKA_APPS
+    : MATH_APPS.filter((a) => (secondStage ? a.stage !== '1. stupeň' : a.stage === '1. stupeň')).filter(
+        (a) => !(secondStage && APPS_IN_VIDEOS.has(a.name)),
+      );
   return (
     <section id="co-v-aplikaci" className="scroll-mt-24 px-4 pt-16 pb-16 sm:px-6 md:pb-24">
       <div className="mx-auto max-w-[1200px]">
@@ -64,18 +87,23 @@ export function MathAppShowcase({
           {formatTypography(intro)}
         </p>
         <div className="overflow-hidden rounded-[28px]">
-          <SubjectTabsSection
-            subject={secondStage ? 'Matematika 2. stupeň' : 'Matematika 1. stupeň'}
-            displayName="Matematika"
-            light
-            hideSectionHeading
-            excludeTabTexts={secondStage ? EXCLUDED_TABS_2ND : MATH2_ECOSYSTEM_EXCLUDED_TABS}
-            tabOverrides={secondStage ? TAB_OVERRIDES_2ND : undefined}
-          />
+          {fyzika ? (
+            <SubjectTabsSection subject="Fyzika" displayName="Fyzika" light hideSectionHeading />
+          ) : (
+            <SubjectTabsSection
+              subject={secondStage ? 'Matematika 2. stupeň' : 'Matematika 1. stupeň'}
+              displayName="Matematika"
+              light
+              hideSectionHeading
+              excludeTabTexts={secondStage ? EXCLUDED_TABS_2ND : MATH2_ECOSYSTEM_EXCLUDED_TABS}
+              tabOverrides={secondStage ? TAB_OVERRIDES_2ND : undefined}
+            />
+          )}
         </div>
 
         <MathVoicedVideos
           secondStage={secondStage}
+          videos={fyzika ? FYZIKA_VIDEOS : undefined}
           sansTitle
           controls
           className="mt-14 !px-0"
@@ -86,7 +114,7 @@ export function MathAppShowcase({
         {apps.length > 0 && (
           <>
             <p className="mt-8 text-[14px] font-bold text-[#001161]/45" style={{ fontFamily: FF }}>
-              {formatTypography('A k tomu další aplikace k matematice')}
+              {formatTypography(fyzika ? 'A k tomu další aplikace k fyzice' : 'A k tomu další aplikace k matematice')}
             </p>
             <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {apps.map((app) => (

@@ -24,7 +24,7 @@ import {
   COOPER_ACCESS_INTRO_MUTED_STYLE,
 } from './FyzikaAccessJourney';
 import { SubjectTabsSection } from './SubjectTabsSection';
-import { MathAppShowcase } from './MathAppShowcase';
+import { SubjectAppShowcase } from './SubjectAppShowcase';
 import { getMatematika2TabOverrides } from '../data/matematika2SubjectTabOverrides';
 import { ProductComplianceBadge, subjectShowsMsmtDolozkaBadge } from './ProductComplianceBadge';
 import { SubjectWebinarsSlider } from './SubjectWebinarsSlider';
@@ -731,8 +731,10 @@ export function SubjectPage({
   const digitalBooks = subjectProducts.filter(p => p.type === 'online' && p.image).slice(0, 3);
 
   const showComparison = ['Fyzika', 'Chemie', 'P\u0159\u00edrodopis'].includes(subject);
-  /** Matematika místo obecných záložek ukáže záložky, videa a aplikace (MathAppShowcase). */
+  /** Matematika místo obecných záložek ukáže záložky, videa a aplikace (SubjectAppShowcase). */
   const showMathShowcase = baseSubject === 'Matematika' && (subjectGradeNum === '1' || subjectGradeNum === '2');
+  /** Fyzika totéž: záložky, videa do hodiny a další aplikace místo obecných záložek nad srovnáním přístupů. */
+  const showFyzikaShowcase = baseSubject === 'Fyzika';
   /** ČJ — metodické principy zatím nezobrazujeme (požadavek obsahu). */
   const showMethodPrinciples = baseSubject !== '\u010cesk\u00fd jazyk';
   const showMsmtSubjectBadge = subjectShowsMsmtDolozkaBadge(baseSubject);
@@ -1203,8 +1205,8 @@ export function SubjectPage({
       {!bareSubject && (<>
       {/* ── Matematika: záložky, videa a další aplikace jako na detailu sešitu (dřív pilotáž) ── */}
       {showMathShowcase && (
-        <MathAppShowcase
-          secondStage={subjectGradeNum === '2'}
+        <SubjectAppShowcase
+          subject={subjectGradeNum === '2' ? 'matematika-2' : 'matematika-1'}
           intro="Učebnice, pracovní listy, procvičování a aplikace v jednom prostředí. Pro všechny učitele i žáky školy."
           videosBody="Krátká videa se zvukem: co v aplikaci najdete a jak s tím pracujete v hodině."
         />
@@ -1225,14 +1227,22 @@ export function SubjectPage({
       {/* ── COMPARISON (for science subjects) ── */}
       {showComparison && (
         <>
-          {/* Slider — full width, light bg */}
-          <SubjectTabsSection
-            subject={subject}
-            displayName={cfg.displayName}
-            light={true}
-            ecosystemHeading={true}
-            tabOverrides={getMatematika2TabOverrides(subject)}
-          />
+          {showFyzikaShowcase ? (
+            <SubjectAppShowcase
+              subject="fyzika"
+              intro="Interaktivní lekce, učební text, pracovní listy, testy a aplikace v jednom prostředí. Pro všechny učitele i žáky školy."
+              videosBody="Krátká videa: interaktivní lekce, simulace a řešení v hodině. A vzorová hodina fyziky ze ZŠ Kosmonosy."
+            />
+          ) : (
+            /* Slider — full width, light bg */
+            <SubjectTabsSection
+              subject={subject}
+              displayName={cfg.displayName}
+              light={true}
+              ecosystemHeading={true}
+              tabOverrides={getMatematika2TabOverrides(subject)}
+            />
+          )}
 
           {/* Základní vs. rozšířený — stejný úvodní text jako u bloku na PDP (FyzikaAccessJourney) */}
           <div className="px-6 md:px-12 max-w-[1200px] mx-auto py-14">

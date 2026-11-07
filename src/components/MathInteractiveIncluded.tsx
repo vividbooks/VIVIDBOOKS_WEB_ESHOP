@@ -119,7 +119,11 @@ export function MathInteractiveMeter({ count, className = '' }: { count: number;
   );
 }
 
-type VoicedVideo = { file: string; title: string; note: string; len: string };
+/**
+ * Video v přehrávači „Jak to vypadá v hodině“. Buď vlastní MP4 z `public/` (`file` v `dir`, vedle něj `.jpg`
+ * jako náhled), nebo video z YouTube (`youtube` = ID) — to se pustí v iframu až po kliknutí.
+ */
+export type VoicedVideo = { file: string; title: string; note: string; len: string; dir?: string; youtube?: string };
 
 /** Namluvená videa z Remotionu (16:9, se zvukem). Soubory: public/matematika-videa/<file>.mp4 + .jpg */
 const VOICED_1ST: VoicedVideo[] = [
@@ -133,7 +137,10 @@ const VOICED_2ND: VoicedVideo[] = [
   { file: 'rysovani', title: 'Rýsování', note: 'Pravítko, kružítko a zápis konstrukce přesně na tabuli.', len: '0:49' },
 ];
 
-const voicedUrl = (file: string, ext: 'mp4' | 'jpg') => publicAssetUrl(`matematika-videa/${file}.${ext}`);
+const voicedUrl = (v: VoicedVideo, ext: 'mp4' | 'jpg') =>
+  v.youtube && ext === 'jpg'
+    ? `https://i.ytimg.com/vi/${v.youtube}/hqdefault.jpg`
+    : publicAssetUrl(`${v.dir ?? 'matematika-videa'}/${v.file}.${ext}`);
 const FF_SANS = { fontFamily: "'Fenomen Sans', sans-serif" } as const;
 
 /** Sekce pod listováním: jeden přehrávač a vedle seznam namluvených videí; klik v seznamu přepne a pustí video. */
@@ -194,6 +201,7 @@ export function VideoControlBar({
 
 export function MathVoicedVideos({
   secondStage,
+  videos: videosProp,
   title = 'Jak to vypadá v aplikaci',
   body = 'Krátká videa se zvukem: co k sešitu dostanete v interaktivní matematice. Ke třídní objednávce od 15 sešitů je v ceně.',
   className = 'mt-16',
@@ -201,6 +209,8 @@ export function MathVoicedVideos({
   controls = false,
 }: {
   secondStage: boolean;
+  /** Vlastní seznam videí (např. fyzika); bez něj videa matematiky podle stupně. */
+  videos?: VoicedVideo[];
   title?: string;
   body?: string;
   className?: string;
@@ -209,21 +219,29 @@ export function MathVoicedVideos({
   /** Ovládací lišta pod videem: přehrát/pauza, časová osa, celá obrazovka. */
   controls?: boolean;
 }) {
-  const videos = secondStage ? VOICED_2ND : VOICED_1ST;
+  const videos = videosProp ?? (secondStage ? VOICED_2ND : VOICED_1ST);
   const [idx, setIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const ref = useRef<HTMLVideoElement>(null);
   const current = videos[idx] ?? videos[0];
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  /** YouTube se načte až po kliknutí (iframe s autoplay); do té doby jen náhled. */
+  const [ytStarted, setYtStarted] = useState(false);
 
-  const play = () => { const el = ref.current; if (el) void el.play().catch(() => {}); };
+  const play = () => {
+    if (current.youtube) { setYtStarted(true); setPlaying(true); return; }
+    const el = ref.current; if (el) void el.play().catch(() => {});
+  };
   const toggle = () => { const el = ref.current; if (!el) return; if (el.paused) play(); else el.pause(); };
   const pick = (i: number) => {
-    if (i === idx) { toggle(); return; }
+    if (i === idx) { if (!videos[i].youtube) toggle(); return; }
     setIdx(i);
+    if (videos[i].youtube) { setYtStarted(true); setPlaying(true); return; }
+    setYtStarted(false);
+    setPlaying(false);
     // nový zdroj se načte po renderu; pustit hned, jak je video připravené
-    requestAnimationFrame(() => play());
+    requestAnimationFrame(() => { const el = ref.current; if (el) void el.play().catch(() => {}); });
   };
 
   return (
@@ -241,11 +259,25 @@ export function MathVoicedVideos({
       <div className={videos.length > 1 ? 'grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)] lg:items-start' : 'max-w-[860px]'}>
         <div className="relative overflow-hidden rounded-[20px] bg-[#eef0f6]">
           <div className="relative">
+          {current.youtube ? (
+            ytStarted ? (
+              <iframe
+                key={current.youtube}
+                src={`https://www.youtube.com/embed/${current.youtube}?rel=0&modestbranding=1&autoplay=1`}
+                title={current.title}
+                className="block aspect-video w-full"
+                allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                allowFullScreen
+              />
+            ) : (
+              <img src={voicedUrl(current, 'jpg')} alt="" className="block aspect-video w-full object-cover" />
+            )
+          ) : (
           <video
             key={current.file}
             ref={ref}
-            src={voicedUrl(current.file, 'mp4')}
-            poster={voicedUrl(current.file, 'jpg')}
+            src={voicedUrl(current, 'mp4')}
+            poster={voicedUrl(current, 'jpg')}
             className="block aspect-video w-full cursor-pointer"
             playsInline
             preload="metadata"
@@ -256,7 +288,8 @@ export function MathVoicedVideos({
             onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration || 0); setTime(0); }}
             onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
           />
-          {!playing && (
+          )}
+          {!playing && !(current.youtube && ytStarted) && (
             <button
               type="button"
               onClick={play}
@@ -269,7 +302,7 @@ export function MathVoicedVideos({
             </button>
           )}
           </div>
-          {controls && (
+          {controls && !current.youtube && (
             <VideoControlBar
               playing={playing}
               time={time}
@@ -286,7 +319,7 @@ export function MathVoicedVideos({
             {videos.map((v, i) => {
               const active = i === idx;
               return (
-                <li key={v.file}>
+                <li key={v.youtube ?? v.file}>
                   <button
                     type="button"
                     onClick={() => pick(i)}
@@ -294,7 +327,7 @@ export function MathVoicedVideos({
                     className={`flex w-full items-center gap-3.5 rounded-[14px] p-2 text-left transition-colors cursor-pointer ${active ? 'bg-[#f0eeff]' : 'hover:bg-[#f6f6fb]'}`}
                   >
                     <span className="relative block w-[112px] shrink-0 overflow-hidden rounded-[10px] bg-[#eef0f6]">
-                      <img src={voicedUrl(v.file, 'jpg')} alt="" className="block aspect-video w-full object-cover" loading="lazy" />
+                      <img src={voicedUrl(v, 'jpg')} alt="" className="block aspect-video w-full object-cover" loading="lazy" />
                       <span className="absolute bottom-1 right-1 rounded-md bg-[#001161]/75 px-1.5 py-px text-[10.5px] font-semibold text-white tabular-nums">{v.len}</span>
                     </span>
                     <span className="min-w-0">
