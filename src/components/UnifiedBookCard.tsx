@@ -23,15 +23,6 @@ const formatPrice = (book: any): string => {
   return `${p.replace(/[,\s\.].*$/, '').trim()}\u00a0K\u010d`;
 };
 
-/** Cena pro rodiče na dlaždici digitální licence (preferuje `priceMonthly` z CMS). */
-const formatDigitalTileParentMonthly = (book: any): string => {
-  const raw = book.priceMonthly != null ? String(book.priceMonthly).trim() : '';
-  const m = raw.match(/(\d[\d\u00a0\s]*)/);
-  const num = m ? m[1].replace(/[\s\u00a0]/g, '') : '';
-  const amount = num || '290';
-  return `od\u00a0${amount}\u00a0K\u010d/m\u011bs\u00ed\u010dn\u011b`;
-};
-
 const getNote = (book: any): string =>
   book.note || book.poznamka || book.metadata?.poznamka || book.metadata?.note || '';
 
@@ -247,17 +238,15 @@ export function UnifiedBookCard({
           </>
         ) : (
           <div className="flex items-center gap-2 flex-wrap mt-0">
-            <p
-              className="font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal"
-              style={{ color: catColor }}
-            >
-              {isDigitalTile
-                ? formatDigitalTileParentMonthly(book)
-                : price &&
-                  (price.includes('K\u010d') || price.includes('Cena')
-                    ? price
-                    : `${price}\u00a0K\u010d`)}
-            </p>
+            {/* Licence se samostatně neprodávají (cena pro školu podle počtu žáků) → na dlaždici licence žádná cena. */}
+            {!isDigitalTile && price && (
+              <p
+                className="font-['Fenomen_Sans',sans-serif] text-[15px] sm:text-[14px] font-normal"
+                style={{ color: catColor }}
+              >
+                {price.includes('K\u010d') || price.includes('Cena') ? price : `${price}\u00a0K\u010d`}
+              </p>
+            )}
             {availNote && (
               <span className="inline-flex items-center px-2.5 py-[3px] rounded-xl bg-[#FFF3E0] text-[#E06800] font-['Fenomen_Sans',sans-serif] text-[11px] sm:text-[10px] font-normal uppercase tracking-wide whitespace-nowrap border border-[#FF9900]/25">
                 {availNote}

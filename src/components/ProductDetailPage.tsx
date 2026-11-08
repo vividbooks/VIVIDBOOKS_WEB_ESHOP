@@ -648,7 +648,7 @@ export function ProductDetailPage({
   const [relatedRocnikFilter, setRelatedRocnikFilter] = useState<string | null>(null);
   const [relatedRadaFilter, setRelatedRadaFilter] = useState<RelatedRadaKey | null>(null);
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
-  const [digitalSubscriptionBuyer, setDigitalSubscriptionBuyer] = useState<'school' | 'parent'>('parent');
+  const [digitalSubscriptionBuyer, setDigitalSubscriptionBuyer] = useState<'school' | 'parent'>('school');
   const [digitalSubscriptionScope, setDigitalSubscriptionScope] = useState<'subject' | 'all'>('subject');
   const [internalBundleAdding, setInternalBundleAdding] = useState(false);
   const [internalBundleAdded, setInternalBundleAdded] = useState(false);
@@ -862,7 +862,8 @@ export function ProductDetailPage({
     if (!isSecondStageDigitalCta) return;
     if (canDigitalParentSubscribe && !canDigitalSchoolOrder) setDigitalSubscriptionBuyer('parent');
     else if (!canDigitalParentSubscribe && canDigitalSchoolOrder) setDigitalSubscriptionBuyer('school');
-    else setDigitalSubscriptionBuyer('parent');
+    // Licence se prodávají hlavně školám – výchozí je škola, rodič je druhá volba.
+    else setDigitalSubscriptionBuyer('school');
   }, [isSecondStageDigitalCta, product.id, canDigitalParentSubscribe, canDigitalSchoolOrder]);
 
   /** Identifikátor řádku košíku: SKU produktu, u merchu SKU vybrané varianty. */
