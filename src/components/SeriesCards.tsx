@@ -161,25 +161,48 @@ const BIOLOGY_SERIES: SeriesDef[] = [
   },
 ];
 
+/** Chemie: díl 1 = 8. ročník, díl 2 = 9. ročník (Vítkův seznam řad). */
 const CHEMISTRY_SERIES: SeriesDef[] = [
   {
-    key: 'sesity',
-    title: 'Pracovní sešity',
-    label: '8.–9. ročník',
+    key: 'pro-vsechny',
+    title: 'Pro všechny',
+    label: 'Pracovní sešity',
     description: 'Sešit ke každému ročníku',
-    typ: 'sesity',
+    typ: 'pro-vsechny',
     bg: '#f8f9fc',
-    coverGrades: [0, 1],
-    match: (n) => n.includes('pracovní sešit'),
+    coverParts: true,
+    // Dosavadní pracovní sešity chemie; „pracovní sešit“ je i v názvu řady Krok za krokem.
+    match: (n) => n.includes('pracovní sešit') && !n.includes('krok za krokem'),
   },
   {
-    key: 'rvp-2025',
-    title: 'Chemie podle RVP 2025',
-    label: 'Učebnice',
-    description: 'Nová učebnice pro 8. a 9. ročník',
-    typ: 'rvp-2025',
+    key: 'krok',
+    title: 'Krok za krokem',
+    label: 'Pracovní sešity',
+    description: 'Sešit pro 8. a 9. ročník',
+    typ: 'krok',
     bg: '#f8f9fc',
-    match: (n) => n.includes('rvp 2025'),
+    coverParts: true,
+    match: (n) => n.includes('krok za krokem'),
+  },
+  {
+    key: 'moje-chemie',
+    title: 'Moje Chemie',
+    label: 'Učebnice / portfolio',
+    description: 'Učební text s vlastním prostorem',
+    typ: 'moje-chemie',
+    bg: '#f8f9fc',
+    coverParts: true,
+    match: (n) => n.includes('moje chemie'),
+  },
+  {
+    key: 'badatelsky-denik',
+    title: 'Badatelský deník',
+    label: '8.–9. ročník',
+    description: 'Deník pro 8. a 9. ročník',
+    typ: 'badatelsky-denik',
+    bg: '#f8f9fc',
+    coverParts: true,
+    match: (n) => n.includes('badatelský deník'),
   },
   {
     key: 'digital',
@@ -219,15 +242,24 @@ const HISTORY_SERIES: SeriesDef[] = [
 
 const GEO_SERIES: SeriesDef[] = [
   {
-    key: 'zemepis-sesity',
-    title: 'Zeměpis obecný nebo regionální',
+    key: 'zemepis-obecny',
+    title: 'Zeměpis obecný',
     label: 'Pracovní sešity',
-    description: 'Dva typy sešitů podle zaměření výuky',
-    typ: 'sesity',
+    description: 'Sešit pro 6. a 7. ročník',
+    typ: 'obecny',
     bg: '#f8f9fc',
-    placeholder: true,
-    placeholderText: 'Zeměpis',
-    match: (n) => n.includes('zeměpis obecný') || n.includes('zeměpis regionální'),
+    match: (n) => n.includes('zeměpis obecný'),
+  },
+  {
+    key: 'zemepis-regionalni',
+    title: 'Zeměpis regionální',
+    label: 'Pracovní sešity',
+    description: 'Sešit pro 6.–9. ročník',
+    typ: 'regionalni',
+    bg: '#f8f9fc',
+    // Vpředu 6. a 7. ročník (skutečné obálky), pak 8.
+    coverGrades: [0, 1, 2],
+    match: (n) => n.includes('zeměpis regionální'),
   },
   {
     key: 'muj-zemepis',
@@ -729,10 +761,13 @@ export function SeriesCards({
     });
     const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-3', 4: 'md:grid-cols-4' };
     const SPAN: Record<number, string> = { 1: 'md:col-span-1', 2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4' };
+    /* Pět karet (Dějepis 2 + Zeměpis 3): vedle sebe až na xl, užší šířky předměty pod sebou. */
+    const wide = cards.length > 4;
+    const SPAN_XL: Record<number, string> = { 1: 'xl:col-span-1', 2: 'xl:col-span-2', 3: 'xl:col-span-3', 4: 'xl:col-span-4' };
     return (
-      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${cards.length === 1 ? 'md:grid-cols-2 xl:grid-cols-4' : COLS[Math.min(cards.length, 4)]}`}>
+      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${wide ? 'xl:grid-cols-5' : cards.length === 1 ? 'md:grid-cols-2 xl:grid-cols-4' : COLS[Math.min(cards.length, 4)]}`}>
         {blocks.map((b) => (
-          <div key={b.subject} className={`min-w-0 flex flex-col ${SPAN[b.items.length] ?? ''}`}>
+          <div key={b.subject} className={`min-w-0 flex flex-col ${(wide ? SPAN_XL : SPAN)[b.items.length] ?? ''}`}>
             <h2 className="mb-3 text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight whitespace-nowrap">
               {b.subject}
             </h2>
@@ -750,7 +785,7 @@ export function SeriesCards({
   return (
     <div className={`${compact ? 'mb-2' : 'mt-3 mb-5'} -mx-4 md:mx-0 px-4 md:px-0`}>
       <div
-        className={stripClass(four || compact ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
+        className={stripClass(cards.length >= 5 ? (compact ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5') : four || compact ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map(renderCard)}
