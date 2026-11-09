@@ -250,6 +250,7 @@ export const router = createBrowserRouter(
             },
             { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
+            { path: 'odhlaseni-z-newsletteru', lazy: lazyNamed(() => import('./components/NewsletterUnsubscribePage'), 'NewsletterUnsubscribePage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
           ],
         },

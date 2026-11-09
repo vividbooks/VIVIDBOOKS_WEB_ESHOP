@@ -158,6 +158,28 @@ export async function ecomailSubscribeNewsletter(opts: {
   }
 }
 
+/**
+ * Odhlásí adresu ze seznamu newsletteru v Ecomailu (stav „odhlášen“, kontakt zůstává).
+ * Nikdy nevyhazuje — výpadek Ecomailu nesmí shodit odhlášení u nás.
+ */
+export async function ecomailUnsubscribeNewsletter(email: string): Promise<{ ok: boolean; skipped?: boolean; detail?: string }> {
+  if (!getEcomailKey()) return { ok: false, skipped: true, detail: 'ECOMAIL_KEY není nastaven' };
+  try {
+    const listId = await resolveNewsletterListId();
+    const r = await ecomailFetch(`/lists/${listId}/unsubscribe`, { method: 'DELETE', body: { email } });
+    /* 404 = adresa v seznamu není → není co odhlašovat. */
+    if (!r.ok && r.status !== 404) {
+      console.log(`[Ecomail] unsubscribe ${email}: ${errorDetail(r)}`);
+      return { ok: false, detail: errorDetail(r) };
+    }
+    return { ok: true };
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    console.log(`[Ecomail] unsubscribe ${email}: ${detail}`);
+    return { ok: false, detail };
+  }
+}
+
 export type EcomailBulkSubscriber = {
   email: string;
   status: 1 | 2 | 4;

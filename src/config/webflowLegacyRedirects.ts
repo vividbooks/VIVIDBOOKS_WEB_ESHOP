@@ -86,7 +86,7 @@ const LEGACY_EXACT_INTERNAL: ExactRule[] = [
   { ruleId: 'exact.mobile-menu.cs', path: '/cs/mobile-menu', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
   { ruleId: 'exact.mobile-menu.en', path: '/en/mobile-menu', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
   { ruleId: 'exact.mobile-menu.es', path: '/es/mobile-menu-es', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
-  { ruleId: 'exact.odhlaseni-newsletter', path: '/cs/odhlaseni-z-newsletteru', target: WEBFLOW_LEGACY_FALLBACK_INTERNAL },
+  { ruleId: 'exact.odhlaseni-newsletter', path: '/cs/odhlaseni-z-newsletteru', target: '/odhlaseni-z-newsletteru' },
   { ruleId: 'exact.studenti', path: '/cs/studenti', target: '/studenti' },
   { ruleId: 'exact.webinar-ty', path: '/cs/webinar-ty', target: '/webinare' },
 ];

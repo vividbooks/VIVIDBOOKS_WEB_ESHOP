@@ -14,6 +14,7 @@ import {
   ecomailSubscribeBulk,
   ecomailSendCampaignTest,
   ecomailSubscribeNewsletter,
+  ecomailUnsubscribeNewsletter,
   ecomailUpsertCampaignDraft,
   getMailchimpApiKey,
   getEcomailSender,
@@ -11079,55 +11080,62 @@ async function performUnsubscribe(email: string): Promise<{ ok: boolean; error?:
   return { ok: true };
 }
 
-function unsubscribePageHtml(opts: { title: string; message: string; confirmToken?: string }): string {
+/**
+ * Supabase Edge vrací HTML jako `text/plain` v sandboxu (CSP), takže stránku s tlačítkem
+ * nejde zobrazit přímo odsud. GET proto přesměruje na stránku webu `/odhlaseni-z-newsletteru`,
+ * která token ověří a odhlásí přes `POST /newsletter/unsubscribe`. Platí i pro už odeslané e-maily.
+ */
+app.get('/make-server-93a20b6f/unsubscribe', (c) => {
   const site = normalizePublicSiteOrigin(getPublicSiteOrigin());
-  const form = opts.confirmToken
-    ? `<form method="post" action="?token=${encodeURIComponent(opts.confirmToken)}" style="margin:0 0 16px;">
-<button type="submit" style="padding:12px 28px;background:#dc2626;color:#fff;border:0;font-weight:bold;font-size:14px;border-radius:10px;cursor:pointer;">Odhlásit se z odběru</button>
-</form>`
-    : '';
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${opts.title}</title></head>
-<body style="margin:0;font-family:Arial,Helvetica,sans-serif;background:#f4f6fb;display:flex;align-items:center;justify-content:center;min-height:100vh;">
-<div style="max-width:440px;background:#fff;border-radius:16px;padding:40px 32px;text-align:center;box-shadow:0 4px 24px rgba(0,17,97,0.08);margin:16px;">
-<h1 style="color:#001161;font-size:22px;margin:0 0 12px;">${opts.title}</h1>
-<p style="color:#4a5568;font-size:15px;line-height:1.6;margin:0 0 24px;">${opts.message}</p>
-${form}
-<a href="${site}" style="display:inline-block;padding:12px 28px;background:#001161;color:#fff;text-decoration:none;font-weight:bold;font-size:14px;border-radius:10px;">Přejít na Vividbooks</a>
-</div></body></html>`;
-}
-
-/** GET: potvrzovací stránka s tlačítkem. */
-app.get('/make-server-93a20b6f/unsubscribe', async (c) => {
   const token = c.req.query('token') || '';
-  const verified = token ? await verifyMailingToken('unsub', token) : { ok: false as const, error: 'Chybí token.' };
-  if (!verified.ok) {
-    return c.html(unsubscribePageHtml({
-      title: 'Odkaz není platný',
-      message: 'Odkaz pro odhlášení je neúplný nebo poškozený. Napište nám na hello@vividbooks.com a odhlásíme vás ručně.',
-    }), 400);
-  }
-  return c.html(unsubscribePageHtml({
-    title: 'Odhlásit odběr novinek?',
-    message: `Kliknutím níže odhlásíte adresu ${verified.email} z marketingových e-mailů Vividbooks. Transakční e-maily (objednávky, webináře) chodí dál.`,
-    confirmToken: token,
-  }));
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  return c.redirect(`${site}/odhlaseni-z-newsletteru${qs}`, 302);
 });
 
-/** POST: samotné odhlášení (tlačítko na stránce i One-Click z hlavičky List-Unsubscribe-Post). */
+/** POST: One-Click odhlášení z hlavičky List-Unsubscribe-Post (posílá poštovní klient, ne člověk). */
 app.post('/make-server-93a20b6f/unsubscribe', async (c) => {
   const token = c.req.query('token') || '';
   const verified = token ? await verifyMailingToken('unsub', token) : { ok: false as const, error: 'Chybí token.' };
-  if (!verified.ok) {
-    return c.html(unsubscribePageHtml({ title: 'Odkaz není platný', message: 'Odhlášení se nepodařilo ověřit.' }), 400);
-  }
+  if (!verified.ok) return c.text('Odkaz pro odhlášení není platný.', 400);
   const result = await performUnsubscribe(verified.email);
-  if (!result.ok) {
-    return c.html(unsubscribePageHtml({ title: 'Chyba', message: 'Odhlášení se nepodařilo uložit. Zkuste to prosím později.' }), 500);
+  if (!result.ok) return c.text('Odhlášení se nepodařilo uložit.', 500);
+  void ecomailUnsubscribeNewsletter(verified.email);
+  return c.text('Odhlášeno.');
+});
+
+/**
+ * Odhlášení ze stránky webu `/odhlaseni-z-newsletteru`:
+ * - `{ token }` z odkazu v e-mailu → odhlásí adresu z tokenu,
+ * - `{ email }` z formuláře (náhrada původní stránky z Webflow) → odhlásí zadanou adresu.
+ * Odpověď neprozrazuje, jestli adresa v databázi byla.
+ */
+app.post('/make-server-93a20b6f/newsletter/unsubscribe', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const token = String(body?.token || '').trim();
+    let email = '';
+    if (token) {
+      const verified = await verifyMailingToken('unsub', token);
+      if (!verified.ok) return c.json({ error: 'Odkaz pro odhlášení není platný. Zadejte prosím e-mail ručně.' }, 400);
+      email = verified.email;
+    } else {
+      email = String(body?.email || '').trim().toLowerCase();
+      if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return c.json({ error: 'Zadejte prosím platný e-mail.' }, 400);
+      }
+    }
+    const result = await performUnsubscribe(email);
+    if (!result.ok) {
+      console.log('[unsubscribe] error:', result.error);
+      return c.json({ error: 'Odhlášení se nepodařilo uložit. Zkuste to prosím později.' }, 500);
+    }
+    await ecomailUnsubscribeNewsletter(email);
+    console.log(`[unsubscribe] ${token ? 'token' : 'form'}: ${email}`);
+    return c.json({ ok: true, email: token ? email : undefined });
+  } catch (e) {
+    console.log('[unsubscribe] error:', e instanceof Error ? e.message : e);
+    return c.json({ error: 'Něco se pokazilo. Zkuste to prosím později.' }, 500);
   }
-  return c.html(unsubscribePageHtml({
-    title: 'Jste odhlášeni',
-    message: `Adresa ${verified.email} už nebude dostávat marketingové e-maily Vividbooks.`,
-  }));
 });
 
 /* ── Resend webhook (svix podpis) — delivered / bounced / complained / opened / clicked ── */
