@@ -641,8 +641,7 @@ export function SeriesCards({
         return s.coverParts ? pickParts(own) : pickCovers(own, s.coverGrades);
       })(),
   })).filter((s) => s.covers.length > 0 || s.placeholder);
-  /** Na xl karty vedle sebe a na výšku (obálka nahoře, text pod ní); 4 karty níž v mřížce 2×2. */
-  const four = cards.length >= 4;
+  /** Na xl karty na výšku (obálka nahoře, text pod ní). */
   const stacked = !compact && cards.length >= 1;
 
   const renderCard = (s: (typeof cards)[number]) => {
@@ -748,10 +747,12 @@ export function SeriesCards({
           );
   };
 
+  /** Testovací homepage: karty řad nejvýš ve 3 sloupcích (Vítek), na užších šířkách 2, na mobilu vodorovný pás. */
+  const HOME_COLS = 'md:grid-cols-2 xl:grid-cols-3';
   const stripClass = (cols: string) =>
     `flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${cols}`;
 
-  /* Spojený řádek: nad kartami nadpisy předmětů (Dějepis | Zeměpis), šířka sloupců podle počtu karet. */
+  /* Spojený řádek: nad kartami nadpisy předmětů (Dějepis | Zeměpis). */
   if (cards.some((c) => c.subject)) {
     const blocks: { subject: string; items: typeof cards }[] = [];
     cards.forEach((c) => {
@@ -759,20 +760,16 @@ export function SeriesCards({
       if (last && last.subject === c.subject) last.items.push(c);
       else blocks.push({ subject: c.subject ?? '', items: [c] });
     });
-    const COLS: Record<number, string> = { 1: 'md:grid-cols-1', 2: 'md:grid-cols-2', 3: 'md:grid-cols-3', 4: 'md:grid-cols-4' };
-    const SPAN: Record<number, string> = { 1: 'md:col-span-1', 2: 'md:col-span-2', 3: 'md:col-span-3', 4: 'md:col-span-4' };
-    /* Pět karet (Dějepis 2 + Zeměpis 3): vedle sebe až na xl, užší šířky předměty pod sebou. */
-    const wide = cards.length > 4;
-    const SPAN_XL: Record<number, string> = { 1: 'xl:col-span-1', 2: 'xl:col-span-2', 3: 'xl:col-span-3', 4: 'xl:col-span-4' };
     return (
-      <div className={`mb-5 grid gap-y-4 md:gap-x-5 ${wide ? 'xl:grid-cols-5' : cards.length === 1 ? 'md:grid-cols-2 xl:grid-cols-4' : COLS[Math.min(cards.length, 4)]}`}>
+      /* Homepage: předměty pod sebou, karty ve stejné mřížce jako ostatní řádky (3 sloupce). */
+      <div className="mb-5 grid gap-y-4">
         {blocks.map((b) => (
-          <div key={b.subject} className={`min-w-0 flex flex-col ${(wide ? SPAN_XL : SPAN)[b.items.length] ?? ''}`}>
+          <div key={b.subject} className="min-w-0 flex flex-col">
             <h2 className="mb-3 text-[#001161] font-['Cooper_Light',serif] text-[24px] md:text-[34px] xl:text-[41px] leading-tight whitespace-nowrap">
               {b.subject}
             </h2>
             <div className="flex-1 -mx-4 md:mx-0 px-4 md:px-0">
-              <div className={`${stripClass(COLS[b.items.length] ?? '')} md:h-full`} style={{ scrollbarWidth: 'none' }}>
+              <div className={stripClass(HOME_COLS)} style={{ scrollbarWidth: 'none' }}>
                 {b.items.map(renderCard)}
               </div>
             </div>
@@ -785,7 +782,7 @@ export function SeriesCards({
   return (
     <div className={`${compact ? 'mb-2' : 'mt-3 mb-5'} -mx-4 md:mx-0 px-4 md:px-0`}>
       <div
-        className={stripClass(cards.length >= 5 ? (compact ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5') : four || compact ? 'md:grid-cols-2 xl:grid-cols-4' : cards.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
+        className={stripClass(!compact ? HOME_COLS : cards.length >= 5 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map(renderCard)}
