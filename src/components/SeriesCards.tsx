@@ -747,8 +747,8 @@ export function SeriesCards({
           );
   };
 
-  /** Testovací homepage: karty řad nejvýš ve 3 sloupcích (Vítek), na užších šířkách 2, na mobilu vodorovný pás. */
-  const HOME_COLS = 'md:grid-cols-2 xl:grid-cols-3';
+  /** Testovací homepage: karty řad nejvýš ve 4 sloupcích (Vítek), na užších šířkách 2, na mobilu vodorovný pás. */
+  const HOME_COLS = 'md:grid-cols-2 xl:grid-cols-4';
   const stripClass = (cols: string) =>
     `flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${cols}`;
 
@@ -761,7 +761,7 @@ export function SeriesCards({
       else blocks.push({ subject: c.subject ?? '', items: [c] });
     });
     return (
-      /* Homepage: předměty pod sebou, karty ve stejné mřížce jako ostatní řádky (3 sloupce). */
+      /* Homepage: předměty pod sebou, karty ve stejné mřížce jako ostatní řádky (4 sloupce). */
       <div className="mb-5 grid gap-y-4">
         {blocks.map((b) => (
           <div key={b.subject} className="min-w-0 flex flex-col">
