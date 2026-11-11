@@ -1027,6 +1027,9 @@ export function ProductDetailPage({
   const isMath = (product.category || '').toLowerCase().includes('matematik')
     || (product.name || '').toLowerCase().includes('matematik')
     || (product.name || '').toLowerCase().includes('krok za krokem');
+  // Jen kategorie Matematika – „krok za krokem“ mají i chemie, fyzika a dějepis, a těm box
+  // s interaktivní matematikou (zdarma od 15 ks, Početník…) ani ukázka matematické aplikace nepatří.
+  const isMathCategory = (product.category || '').toLowerCase().includes('matematik');
 
   // ── Detekce série (X. díl) ──────────────────────────────────────────────
   const dilMatch = (product.name || '').match(/[–\-\/]\s*(\d+)\.\s*d[ií]l\s*$/i);
@@ -1816,7 +1819,7 @@ export function ProductDetailPage({
             )}
 
             {/* Interaktivní matematika v ceně sešitů — pod tlačítky nákupu */}
-            {isMath && product.type === 'workbook' && !isDistributorMode && (
+            {isMathCategory && product.type === 'workbook' && !isDistributorMode && (
               <div className="-mt-4 mb-10">
                 <MathInteractiveIncluded
                   secondStage={isMatematika2StupenCategory(product.category)}
@@ -2377,7 +2380,7 @@ export function ProductDetailPage({
       )}
 
       {/* ── Co v aplikaci najdete, videa z hodiny a další aplikace (jako pilotáž) — pod listováním ── */}
-      {isMath && product.type === 'workbook' && !isDistributorMode && (
+      {isMathCategory && product.type === 'workbook' && !isDistributorMode && (
         <SubjectAppShowcase subject={isMatematika2StupenCategory(product.category) ? 'matematika-2' : 'matematika-1'} />
       )}
 
