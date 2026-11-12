@@ -210,7 +210,18 @@ function buildDistributorItemsTable(items: OrderItemRow[]) {
   `;
 }
 
-function buildDistributorOrderReceivedHtml(order: OrderRow, items: OrderItemRow[]) {
+/** Věta pod nadpisem shrnutí — bez slibu obchodního zástupce, když objednávku vyřizuje automat v CRM. */
+export function distributorOrderReceivedLead(salesRepFollowUp: boolean): string {
+  return salesRepFollowUp
+    ? 'Ozve se vám obchodní zástupce Vividbooks a dořeší ceny, dopravu i další detaily.'
+    : 'Objednávku zpracujeme, fakturu vám pošleme e-mailem a zásilku odešleme na uvedenou doručovací adresu.';
+}
+
+function buildDistributorOrderReceivedHtml(
+  order: OrderRow,
+  items: OrderItemRow[],
+  opts: { salesRepFollowUp?: boolean } = {},
+) {
   const company = String(order.school_name || order.customer_name || '').trim();
   const ico = String(order.ico || '').trim();
   const phone = String(order.customer_phone || '').trim();
@@ -227,13 +238,14 @@ function buildDistributorOrderReceivedHtml(order: OrderRow, items: OrderItemRow[
       <p style="${P}">
         Evidujeme vaši distributorskou objednávku
         <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong>.
-        Ozve se vám obchodní zástupce Vividbooks a dořeší ceny, dopravu i další detaily.
+        ${escapeHtml(distributorOrderReceivedLead(opts.salesRepFollowUp !== false))}
       </p>
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
         ${company ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;width:140px;">Společnost:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><strong>${escapeHtml(company)}</strong></td></tr>` : ''}
         ${ico ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">IČO:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(ico)}</td></tr>` : ''}
         <tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">E-mail:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(order.customer_email)}</td></tr>
         ${phone ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">Telefon:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(phone)}</td></tr>` : ''}
+        ${String(order.delivery_street || '').trim() ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;vertical-align:top;">Doručit na:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(formatDeliveryAddress(order))}</td></tr>` : ''}
       </table>
       ${buildDistributorItemsTable(items)}
       <p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:${VB_EMAIL_NAVY};">
@@ -669,7 +681,10 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
   return { order, items };
 }
 
-export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: string; emailType: OrderEmailType }) {
+export async function sendOrderEmail(
+  sql: postgres.Sql,
+  params: { orderId: string; emailType: OrderEmailType; salesRepFollowUp?: boolean },
+) {
   const mandrillKey = transactionalMailKey();
   if (!mandrillKey) {
     throw new Error('Missing RESEND_API_KEY (transakční e-maily).');
@@ -716,7 +731,7 @@ export async function sendOrderEmail(sql: postgres.Sql, params: { orderId: strin
     html = buildOrderAutoCancelledUnpaidHtml(order);
   } else if (params.emailType === 'distributor_order_received') {
     subject = `Shrnutí objednávky ${order.order_number} — VividBooks`;
-    html = buildDistributorOrderReceivedHtml(order, items);
+    html = buildDistributorOrderReceivedHtml(order, items, { salesRepFollowUp: params.salesRepFollowUp !== false });
   } else {
     throw new Error(`Unsupported emailType: ${params.emailType}`);
   }
