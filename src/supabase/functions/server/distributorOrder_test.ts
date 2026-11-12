@@ -206,6 +206,8 @@ Deno.test('stránka: odeslání zastaví chybějící adresa, posílá delivery 
   const src = await Deno.readTextFile(new URL('../../../components/distributor/DistributorOrderPage.tsx', here));
   const submit = src.slice(src.indexOf('const handleSubmit'), src.indexOf('const startNewOrder'));
   const check = submit.indexOf('checkDistributorDelivery(');
+  const guard = submit.indexOf('prefilledIcoRef.current !== icoValue');
+  assert(guard > 0 && guard < check, 'adresa předchozího IČO se nesmí odeslat nové firmě');
   const post = submit.indexOf('/distributor/orders');
   assert(check > 0 && post > 0 && check < post, 'kontrola adresy před odesláním');
   assert(/delivery:\s*deliveryCheck\.delivery/.test(submit), 'adresa jde v těle požadavku');

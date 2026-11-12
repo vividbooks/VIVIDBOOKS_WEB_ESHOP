@@ -331,6 +331,11 @@ export function DistributorOrderPage() {
       setError(phoneCheck.error);
       return;
     }
+    /** Adresa ještě patří předchozímu IČO (vyhledání nové firmy běží) — neposílat ji nové firmě. */
+    if (prefilledIcoRef.current && prefilledIcoRef.current !== icoValue) {
+      setError('Načítáme údaje firmy k novému IČO — zkontrolujte doručovací adresu a odešlete znovu.');
+      return;
+    }
     /** Doručovací adresa je povinná — bez ní nejde vytisknout štítek zásilky. */
     const deliveryCheck = checkDistributorDelivery(delivery);
     if (!deliveryCheck.ok) {
