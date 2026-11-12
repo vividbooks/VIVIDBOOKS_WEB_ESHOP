@@ -21738,10 +21738,18 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
           .eq('idempotency_key', idempotencyKey)
           .maybeSingle();
         if (existing) {
+          /** Potvrzení podle rozhodnutí u původní objednávky, ne podle aktuálního přepínače. */
+          const { data: skipped } = await sb
+            .from('order_events')
+            .select('id')
+            .eq('order_id', (existing as any).id)
+            .eq('event_type', 'pipedrive_skipped')
+            .limit(1);
           return c.json({
             success: true,
             orderId: (existing as any).id,
             orderNumber: (existing as any).order_number,
+            salesRepFollowUp: !(Array.isArray(skipped) && skipped.length > 0),
             deduplicated: true,
           });
         }

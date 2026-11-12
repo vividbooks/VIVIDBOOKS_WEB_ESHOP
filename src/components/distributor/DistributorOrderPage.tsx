@@ -125,6 +125,8 @@ export function DistributorOrderPage() {
   const [phone, setPhone] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [companyAddress, setCompanyAddress] = useState('');
+  /** IČO, ke kterému patří `companyName`/`companyAddress` (vyhledání je asynchronní). */
+  const [companyIco, setCompanyIco] = useState('');
   const [companyLoading, setCompanyLoading] = useState(false);
   const [delivery, setDelivery] = useState<DistributorDelivery>(() => emptyDistributorDelivery());
   const [deliveryErrorField, setDeliveryErrorField] = useState<DistributorDeliveryField | null>(null);
@@ -180,19 +182,24 @@ export function DistributorOrderPage() {
     if (!ICO_PATTERN.test(value)) {
       setCompanyName('');
       setCompanyAddress('');
+      setCompanyIco('');
       setCompanyLoading(false);
       return;
     }
     const controller = new AbortController();
     setCompanyLoading(true);
+    setCompanyIco('');
     const timer = window.setTimeout(async () => {
       try {
         const results = await fetchSchoolSearchResults({ ico: value }, { signal: controller.signal });
         setCompanyName(results[0]?.name || '');
         setCompanyAddress(results[0]?.address || '');
+        setCompanyIco(value);
       } catch {
+        if (controller.signal.aborted) return;
         setCompanyName('');
         setCompanyAddress('');
+        setCompanyIco(value);
       } finally {
         setCompanyLoading(false);
       }
@@ -219,11 +226,17 @@ export function DistributorOrderPage() {
       setDeliveryErrorField(null);
       return;
     }
-    if (companyName) {
-      prefilledIcoRef.current = value;
-      setDelivery((prev) => (prev.company ? prev : { ...prev, company: companyName }));
-    }
-  }, [ico, companyName]);
+    /** Počkej na vyhledání firmy právě pro toto IČO (ne na výsledek předchozího). */
+    if (companyIco !== value) return;
+    const previousIco = prefilledIcoRef.current;
+    prefilledIcoRef.current = value;
+    setDelivery((prev) =>
+      previousIco
+        /** Přechod z jiné firmy — její adresu nepřenášíme, jméno příjemce necháme. */
+        ? { ...emptyDistributorDelivery(companyName), recipientName: prev.recipientName }
+        : (prev.company ? prev : { ...prev, company: companyName }),
+    );
+  }, [ico, companyIco, companyName]);
 
   const updateDelivery = useCallback((field: DistributorDeliveryField, value: string) => {
     setDelivery((prev) => ({ ...prev, [field]: value }));

@@ -197,6 +197,9 @@ Deno.test('handler POST /distributor/orders: adresa se ověří před uložením
   const outside = handler.slice(0, hs) + handler.slice(he);
   assert(!outside.includes('syncEshopOrderToPipedriveFromDb('), 'Pipedrive se nesmí volat mimo přepínač');
   assert(!outside.includes('importDistributorDealToKabinet('), 'Kabinet se nesmí volat mimo přepínač');
+  /** Opakovaný POST (stejné submissionId) vrací potvrzení podle původní objednávky. */
+  const dedup = handler.slice(handler.indexOf('deduplicated: true') - 900, handler.indexOf('deduplicated: true'));
+  assert(dedup.includes("'pipedrive_skipped'") && dedup.includes('salesRepFollowUp'), 'deduplikovaná odpověď nese salesRepFollowUp');
 });
 
 Deno.test('stránka: odeslání zastaví chybějící adresa, posílá delivery a čte poslední adresu', async () => {
@@ -209,6 +212,9 @@ Deno.test('stránka: odeslání zastaví chybějící adresa, posílá delivery 
   assert(src.includes('readLastDistributorDelivery('), 'předvyplnění z localStorage');
   assert(src.includes('rememberDistributorDelivery('), 'uložení po odeslání');
   assert(src.includes('Použít adresu sídla'), 'tlačítko adresy sídla');
+  /** Předvyplnění čeká na vyhledání firmy pro aktuální IČO a adresu jiné firmy nepřenáší. */
+  assert(/companyIco !== value/.test(src), 'předvyplnění jen pro výsledek aktuálního IČO');
+  assert(/previousIco\s*\n?\s*(\/\*\*[^*]*\*\/\s*)?\?\s*\{\s*\.\.\.emptyDistributorDelivery\(companyName\)/.test(src), 'přechod na jiné IČO adresu vyprázdní');
 });
 
 Deno.test('e-mail shrnutí: slib obchodního zástupce jen když jde objednávka přes Pipedrive', async () => {
