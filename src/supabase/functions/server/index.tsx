@@ -97,6 +97,8 @@ import {
 import { parsePriceTextToKc, syncProductPriceAmount } from '../../../utils/productPrice.ts';
 import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
+import { DISTRIBUTOR_PIPEDRIVE_SYNC_KV_KEY } from '../../../utils/distributorDelivery.ts';
+import { distributorCrmHandoff, distributorDeliveryFromBody } from './distributorOrder.ts';
 import {
   applyAllDigitalBundleStripe,
 } from '../../../utils/digitalSubscription.ts';
@@ -21468,7 +21470,10 @@ function readDistributorRequestToken(c: Context): string {
 }
 
 /** Shrnutí objednávky na kontaktní e‑mail z formuláře — přes Edge `send-order-email` (Mandrill). */
-async function invokeDistributorOrderSummaryEmail(orderId: string): Promise<void> {
+async function invokeDistributorOrderSummaryEmail(
+  orderId: string,
+  opts: { salesRepFollowUp?: boolean } = {},
+): Promise<void> {
   const base = (Deno.env.get('SUPABASE_URL') || '').replace(/\/$/, '');
   if (!base) throw new Error('Missing SUPABASE_URL for send-order-email.');
   const key = (
@@ -21482,7 +21487,11 @@ async function invokeDistributorOrderSummaryEmail(orderId: string): Promise<void
       'Content-Type': 'application/json',
       ...(key ? { Authorization: `Bearer ${key}`, apikey: key } : {}),
     },
-    body: JSON.stringify({ orderId, emailType: 'distributor_order_received' }),
+    body: JSON.stringify({
+      orderId,
+      emailType: 'distributor_order_received',
+      salesRepFollowUp: opts.salesRepFollowUp !== false,
+    }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
@@ -21598,6 +21607,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
     note?: unknown;
     submissionId?: unknown;
     items?: unknown;
+    delivery?: unknown;
   };
   try {
     body = (await c.req.json()) as typeof body;
@@ -21629,6 +21639,12 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       return c.json({ error: phoneCheck.error }, 400);
     }
     const phone = phoneCheck.phone;
+
+    /** Povinná doručovací adresa (krit. 13) — z ní se tiskne štítek zásilky, nic se neodhaduje ze sídla. */
+    const delivery = distributorDeliveryFromBody(body);
+    if (!delivery.ok) {
+      return c.json({ error: delivery.error }, delivery.status);
+    }
 
     const rawItems = Array.isArray(body.items) ? body.items : [];
     const requested: Array<{ productId: string; quantity: number }> = [];
@@ -21693,7 +21709,9 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       city: addressParts.city || null,
       zip: addressParts.zip || null,
       country: 'CZ',
-      /** Dopravu distributor neřeší — objednávku i expedici dojednává obchod v Pipedrive. */
+      /** Doručovací adresa z formuláře (firma příjemce je v `order_events` → `order_created.details.delivery`). */
+      ...delivery.columns,
+      /** Dopravu (cenu, dopravce) distributor neřeší — dojedná ji obchod / automat v CRM. */
       shipping_method: 'none',
       shipping_price: 0,
       payment_method: 'invoice',
@@ -21720,10 +21738,18 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
           .eq('idempotency_key', idempotencyKey)
           .maybeSingle();
         if (existing) {
+          /** Potvrzení podle rozhodnutí u původní objednávky, ne podle aktuálního přepínače. */
+          const { data: skipped } = await sb
+            .from('order_events')
+            .select('id')
+            .eq('order_id', (existing as any).id)
+            .eq('event_type', 'pipedrive_skipped')
+            .limit(1);
           return c.json({
             success: true,
             orderId: (existing as any).id,
             orderNumber: (existing as any).order_number,
+            salesRepFollowUp: !(Array.isArray(skipped) && skipped.length > 0),
             deduplicated: true,
           });
         }
@@ -21753,22 +21779,34 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       order_id: orderRow.id,
       event_type: 'order_created',
       to_status: 'pending_payment',
-      details: { source: 'distributor', ico, items: lines.length },
+      details: {
+        source: 'distributor',
+        ico,
+        items: lines.length,
+        delivery: { company: delivery.delivery.company, country: delivery.delivery.country },
+      },
       actor: 'distributor',
     });
 
-    let pipedrive: Record<string, unknown> | null = null;
-    try {
-      pipedrive = await syncEshopOrderToPipedriveFromDb(orderRow.id, 'distributor_open');
-    } catch (syncErr: any) {
-      /** Selhání CRM nesmí shodit odeslanou objednávku — stav je v `orders.pipedrive_sync_status`. */
-      console.log(`[distributor] pipedrive sync: ${syncErr?.message || syncErr}`);
-    }
-    importDistributorDealToKabinet(Number(pipedrive?.dealId ?? 0), orderRow.order_number);
+    /**
+     * Deal v Pipedrive + Kabinet/CRM jen když je zapnutý přepínač `distributor_pipedrive_sync`
+     * (chybí = zapnuto). Vypnuto = objednávku převezme automat v novém CRM.
+     */
+    const { pipedrive, pipedriveSync } = await distributorCrmHandoff({
+      orderId: orderRow.id,
+      orderNumber: orderRow.order_number,
+      readSyncFlag: () => kv.get(DISTRIBUTOR_PIPEDRIVE_SYNC_KV_KEY),
+      syncPipedrive: (id) => syncEshopOrderToPipedriveFromDb(id, 'distributor_open'),
+      importToKabinet: (dealId, number) => importDistributorDealToKabinet(dealId, number),
+      insertEvent: async (event) => {
+        const { error } = await sb.from('order_events').insert(event);
+        if (error) throw new Error(error.message);
+      },
+    });
 
     let emailSent = false;
     try {
-      await invokeDistributorOrderSummaryEmail(orderRow.id);
+      await invokeDistributorOrderSummaryEmail(orderRow.id, { salesRepFollowUp: pipedriveSync });
       emailSent = true;
       console.log(`[distributor] shrnutí odesláno na ${email} (objednávka ${orderRow.order_number})`);
     } catch (mailErr: any) {
@@ -21790,7 +21828,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
     }
 
     console.log(
-      `[distributor] objednávka ${orderRow.order_number} ico=${ico} položek=${lines.length} deal=${pipedrive?.dealId ?? '—'} email=${emailSent ? 'ok' : 'fail'}`,
+      `[distributor] objednávka ${orderRow.order_number} ico=${ico} položek=${lines.length} deal=${pipedriveSync ? (pipedrive?.dealId ?? '—') : 'crm'} email=${emailSent ? 'ok' : 'fail'}`,
     );
 
     return c.json({
@@ -21799,6 +21837,8 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       orderNumber: orderRow.order_number,
       companyName,
       pipedrive,
+      /** `false` = potvrzení bez věty „Ozve se vám obchodní zástupce“ (objednávku vyřídí automat). */
+      salesRepFollowUp: pipedriveSync,
       emailSent,
     });
   } catch (err: any) {

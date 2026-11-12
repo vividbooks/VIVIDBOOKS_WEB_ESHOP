@@ -11,6 +11,7 @@ import {
   Plus,
   Search,
   StickyNote,
+  Truck,
   X,
 } from 'lucide-react';
 import { useProducts } from '../../contexts/ProductsContext';
@@ -21,6 +22,15 @@ import { isDistributorOrderableProduct } from '../../utils/distributorCatalog';
 import { EMAIL_FORMAT_HINT_CS, isValidEmailFormat, normalizeEmail } from '../../utils/emailValidation';
 import { checkoutTextInputClass } from '../../utils/formFieldClasses';
 import { checkCzechPhone, PHONE_CZ_COURIER_NOTE_SCHOOL } from '../../utils/phoneCZ';
+import {
+  checkDistributorDelivery,
+  deliveryFromSeatAddress,
+  emptyDistributorDelivery,
+  readLastDistributorDelivery,
+  rememberDistributorDelivery,
+  type DistributorDelivery,
+  type DistributorDeliveryField,
+} from '../../utils/distributorDelivery';
 import { RouteHydrateFallback } from '../RouteHydrateFallback';
 import { SEOHead } from '../SEOHead';
 
@@ -45,6 +55,14 @@ function writeStoredKey(key: string) {
     else window.localStorage.removeItem(STORED_KEY_NAME);
   } catch {
     /* Soukromý režim / zablokované úložiště — odkaz s `?k=` funguje dál. */
+  }
+}
+
+function browserStorage(): Storage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
   }
 }
 
@@ -80,6 +98,13 @@ function confirmationSentence({ orderNumber, companyName }: { orderNumber: strin
   return sentence.endsWith('.') ? sentence : `${sentence}.`;
 }
 
+/** Druhá věta potvrzení — slib obchodního zástupce jen když objednávku převezme obchod v Pipedrive. */
+function confirmationFollowUp(salesRepFollowUp: boolean): string {
+  return salesRepFollowUp
+    ? 'Ozve se vám váš obchodní zástupce.'
+    : 'Fakturu vám pošleme e-mailem a zásilku odešleme na uvedenou doručovací adresu.';
+}
+
 /**
  * Neveřejná objednávka pro distributory (`/distributor?k=<klíč>`).
  *
@@ -99,14 +124,25 @@ export function DistributorOrderPage() {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [companyName, setCompanyName] = useState('');
+  const [companyAddress, setCompanyAddress] = useState('');
+  /** IČO, ke kterému patří `companyName`/`companyAddress` (vyhledání je asynchronní). */
+  const [companyIco, setCompanyIco] = useState('');
   const [companyLoading, setCompanyLoading] = useState(false);
+  const [delivery, setDelivery] = useState<DistributorDelivery>(() => emptyDistributorDelivery());
+  const [deliveryErrorField, setDeliveryErrorField] = useState<DistributorDeliveryField | null>(null);
+  /** IČO, pro které už proběhlo předvyplnění — ruční úpravy se pak nepřepisují. */
+  const prefilledIcoRef = useRef('');
   const [note, setNote] = useState('');
   const [search, setSearch] = useState('');
   const [quantities, setQuantities] = useState<Record<string, number>>({});
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [submitted, setSubmitted] = useState<{ orderNumber: string; companyName: string } | null>(null);
+  const [submitted, setSubmitted] = useState<{
+    orderNumber: string;
+    companyName: string;
+    salesRepFollowUp: boolean;
+  } | null>(null);
   const submissionIdRef = useRef(newSubmissionId());
 
   useEffect(() => {
@@ -145,17 +181,25 @@ export function DistributorOrderPage() {
     const value = ico.replace(/\s/g, '');
     if (!ICO_PATTERN.test(value)) {
       setCompanyName('');
+      setCompanyAddress('');
+      setCompanyIco('');
       setCompanyLoading(false);
       return;
     }
     const controller = new AbortController();
     setCompanyLoading(true);
+    setCompanyIco('');
     const timer = window.setTimeout(async () => {
       try {
         const results = await fetchSchoolSearchResults({ ico: value }, { signal: controller.signal });
         setCompanyName(results[0]?.name || '');
+        setCompanyAddress(results[0]?.address || '');
+        setCompanyIco(value);
       } catch {
+        if (controller.signal.aborted) return;
         setCompanyName('');
+        setCompanyAddress('');
+        setCompanyIco(value);
       } finally {
         setCompanyLoading(false);
       }
@@ -166,6 +210,43 @@ export function DistributorOrderPage() {
       setCompanyLoading(false);
     };
   }, [ico]);
+
+  /**
+   * Předvyplnění doručovací adresy: poslední adresa použitá pro toto IČO v tomto prohlížeči
+   * (jen localStorage — odkaz sdílí všichni partneři, server adresy podle IČO nevrací).
+   * Bez uložené adresy se doplní aspoň firma z rejstříku; zbytek přes „Použít adresu sídla“.
+   */
+  useEffect(() => {
+    const value = ico.replace(/\s/g, '');
+    if (!ICO_PATTERN.test(value) || prefilledIcoRef.current === value) return;
+    const last = readLastDistributorDelivery(browserStorage(), value);
+    if (last) {
+      prefilledIcoRef.current = value;
+      setDelivery(last);
+      setDeliveryErrorField(null);
+      return;
+    }
+    /** Počkej na vyhledání firmy právě pro toto IČO (ne na výsledek předchozího). */
+    if (companyIco !== value) return;
+    const previousIco = prefilledIcoRef.current;
+    prefilledIcoRef.current = value;
+    setDelivery((prev) =>
+      previousIco
+        /** Přechod z jiné firmy — její adresu nepřenášíme, jméno příjemce necháme. */
+        ? { ...emptyDistributorDelivery(companyName), recipientName: prev.recipientName }
+        : (prev.company ? prev : { ...prev, company: companyName }),
+    );
+  }, [ico, companyIco, companyName]);
+
+  const updateDelivery = useCallback((field: DistributorDeliveryField, value: string) => {
+    setDelivery((prev) => ({ ...prev, [field]: value }));
+    setDeliveryErrorField((prev) => (prev === field ? null : prev));
+  }, []);
+
+  const applySeatAddress = useCallback(() => {
+    setDelivery((prev) => deliveryFromSeatAddress(prev, { name: companyName, address: companyAddress }));
+    setDeliveryErrorField(null);
+  }, [companyAddress, companyName]);
 
   const catalog = useMemo(() => {
     const orderable = products.filter(isDistributorOrderableProduct);
@@ -250,6 +331,18 @@ export function DistributorOrderPage() {
       setError(phoneCheck.error);
       return;
     }
+    /** Adresa ještě patří předchozímu IČO (vyhledání nové firmy běží) — neposílat ji nové firmě. */
+    if (prefilledIcoRef.current && prefilledIcoRef.current !== icoValue) {
+      setError('Načítáme údaje firmy k novému IČO — zkontrolujte doručovací adresu a odešlete znovu.');
+      return;
+    }
+    /** Doručovací adresa je povinná — bez ní nejde vytisknout štítek zásilky. */
+    const deliveryCheck = checkDistributorDelivery(delivery);
+    if (!deliveryCheck.ok) {
+      setError(deliveryCheck.error);
+      setDeliveryErrorField(deliveryCheck.field);
+      return;
+    }
     if (selectedLines.length === 0) {
       setError('Vyberte alespoň jeden produkt.');
       return;
@@ -272,6 +365,7 @@ export function DistributorOrderPage() {
           email: emailValue,
           phone,
           note,
+          delivery: deliveryCheck.delivery,
           submissionId: submissionIdRef.current,
           items: selectedLines.map(([productId, quantity]) => ({ productId, quantity })),
         }),
@@ -279,15 +373,18 @@ export function DistributorOrderPage() {
       const data = (await res.json().catch(() => ({}))) as {
         orderNumber?: string;
         companyName?: string;
+        salesRepFollowUp?: boolean;
         error?: string;
       };
       if (!res.ok) {
         setError(data.error || 'Objednávku se nepodařilo odeslat. Zkuste to prosím znovu.');
         return;
       }
+      rememberDistributorDelivery(browserStorage(), icoValue, deliveryCheck.delivery);
       setSubmitted({
         orderNumber: data.orderNumber || '',
         companyName: data.companyName || companyName,
+        salesRepFollowUp: data.salesRepFollowUp !== false,
       });
       submissionIdRef.current = newSubmissionId();
     } catch {
@@ -295,7 +392,7 @@ export function DistributorOrderPage() {
     } finally {
       setSubmitting(false);
     }
-  }, [companyName, email, ico, note, phone, selectedLines, token]);
+  }, [companyName, delivery, email, ico, note, phone, selectedLines, token]);
 
   const startNewOrder = useCallback(() => {
     setSubmitted(null);
@@ -336,7 +433,7 @@ export function DistributorOrderPage() {
         </div>
         <h1 className="text-[22px] font-bold text-[#001161]">Objednávka odeslána</h1>
         <p className="max-w-md text-center text-[14px] text-[#001161]/70">
-          {`${confirmationSentence(submitted)} Ozve se vám váš obchodní zástupce.`}
+          {`${confirmationSentence(submitted)} ${confirmationFollowUp(submitted.salesRepFollowUp)}`}
         </p>
         <button
           type="button"
@@ -357,8 +454,7 @@ export function DistributorOrderPage() {
           <p className="text-[12px] font-bold uppercase tracking-wide text-[#5b4fd8]">Vividbooks</p>
           <h1 className="mt-1 text-[28px] font-bold text-[#001161]">Objednávka pro distributory</h1>
           <p className="mt-2 text-[14px] text-[#001161]/70">
-            Vyplňte IČO, kontaktní e‑mail a telefon, zvolte počty kusů a objednávku odešlete. Ceny a
-            dopravu s vámi dořeší obchodní zástupce.
+            Vyplňte IČO, kontaktní e‑mail a telefon, doručovací adresu a počty kusů a objednávku odešlete.
           </p>
         </header>
 
@@ -417,6 +513,83 @@ export function DistributorOrderPage() {
               <p className="mt-1 text-[12px] leading-snug text-[#001161]/60">
                 {PHONE_CZ_COURIER_NOTE_SCHOOL}
               </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="mb-4 rounded-[20px] bg-white p-5 shadow-sm">
+          <div className="mb-1 flex flex-wrap items-center gap-2 text-[14px] font-bold text-[#001161]">
+            <Truck className="size-4" />
+            Doručovací adresa
+            {companyAddress && (
+              <button
+                type="button"
+                onClick={applySeatAddress}
+                className="ml-auto rounded-full border border-[#001161]/15 px-3 py-1 text-[12px] font-bold text-[#001161] hover:bg-[#001161]/5"
+              >
+                Použít adresu sídla
+              </button>
+            )}
+          </div>
+          <p className="mb-3 text-[12px] leading-snug text-[#001161]/60">
+            Kam zásilku doručit. Údaje se vytisknou na štítek pro dopravce. Doručujeme jen v České republice.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <DeliveryInput
+              id="distributor-delivery-name"
+              label="Jméno a příjmení příjemce"
+              value={delivery.recipientName}
+              onChange={(v) => updateDelivery('recipientName', v)}
+              placeholder="Jana Nováková"
+              autoComplete="shipping name"
+              invalid={deliveryErrorField === 'recipientName'}
+            />
+            <DeliveryInput
+              id="distributor-delivery-company"
+              label="Firma"
+              value={delivery.company}
+              onChange={(v) => updateDelivery('company', v)}
+              placeholder="Název firmy"
+              autoComplete="shipping organization"
+              invalid={deliveryErrorField === 'company'}
+            />
+            <div className="sm:col-span-2">
+              <DeliveryInput
+                id="distributor-delivery-street"
+                label="Ulice a číslo popisné"
+                value={delivery.street}
+                onChange={(v) => updateDelivery('street', v)}
+                placeholder="Komunardů 1584/42"
+                autoComplete="shipping street-address"
+                invalid={deliveryErrorField === 'street'}
+              />
+            </div>
+            <DeliveryInput
+              id="distributor-delivery-city"
+              label="Město"
+              value={delivery.city}
+              onChange={(v) => updateDelivery('city', v)}
+              placeholder="Praha 7"
+              autoComplete="shipping address-level2"
+              invalid={deliveryErrorField === 'city'}
+            />
+            <div className="grid grid-cols-[1fr_auto] gap-4">
+              <DeliveryInput
+                id="distributor-delivery-zip"
+                label="PSČ"
+                value={delivery.zip}
+                onChange={(v) => updateDelivery('zip', v.replace(/[^\d\s]/g, '').slice(0, 6))}
+                placeholder="170 00"
+                autoComplete="shipping postal-code"
+                inputMode="numeric"
+                invalid={deliveryErrorField === 'zip'}
+              />
+              <div>
+                <span className="mb-1 block text-[13px] font-medium text-[#001161]/70">Země</span>
+                <div className="flex h-[46px] items-center rounded-[14px] bg-[#001161]/5 px-4 text-[14px] text-[#001161]/70">
+                  Česko
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -592,6 +765,45 @@ export function DistributorOrderPage() {
           {submitting ? 'Odesíláme…' : 'Odeslat objednávku'}
         </button>
       </div>
+    </div>
+  );
+}
+
+function DeliveryInput({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+  autoComplete,
+  inputMode,
+  invalid,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  autoComplete?: string;
+  inputMode?: 'numeric' | 'text';
+  invalid?: boolean;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-[13px] font-medium text-[#001161]/70" htmlFor={id}>
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete}
+        inputMode={inputMode}
+        required
+        aria-invalid={invalid || undefined}
+        className={checkoutTextInputClass(Boolean(invalid))}
+      />
     </div>
   );
 }

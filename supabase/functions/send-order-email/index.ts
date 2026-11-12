@@ -41,7 +41,7 @@ Deno.serve(async (req) => {
     return jsonResponse(req, { error: 'Missing DATABASE_URL.' }, 500);
   }
 
-  let payload: { orderId?: string; emailType?: OrderEmailType };
+  let payload: { orderId?: string; emailType?: OrderEmailType; salesRepFollowUp?: boolean };
   try {
     payload = await req.json();
   } catch {
@@ -64,6 +64,8 @@ Deno.serve(async (req) => {
     const result = await sendOrderEmail(sql, {
       orderId: payload.orderId,
       emailType: payload.emailType,
+      /** Jen `distributor_order_received`: `false` = bez věty „Ozve se vám obchodní zástupce“. */
+      salesRepFollowUp: payload.salesRepFollowUp !== false,
     });
 
     await sql`
