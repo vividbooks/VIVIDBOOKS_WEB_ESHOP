@@ -68,7 +68,24 @@ export function isAdminEmailAllowed(email: string): boolean {
   return parseAdminAllowlist().has(email.trim().toLowerCase());
 }
 
-export async function requireAdminJwt(req: Request): Promise<{ email: string } | Response> {
+/** Tým Vividbooks: admin ze seznamu, nebo kdokoli s účtem @vividbooks.com. */
+export function isStaffEmail(email: string): boolean {
+  const em = email.trim().toLowerCase();
+  return isAdminEmailAllowed(em) || em.endsWith('@vividbooks.com');
+}
+
+/**
+ * Jako requireAdminJwt, ale pustí celý tým (@vividbooks.com) — pro nástroje obchodníků,
+ * které nepotřebují zbytek administrace (např. certifikáty ze školení).
+ */
+export async function requireStaffJwt(req: Request): Promise<{ email: string } | Response> {
+  return requireAdminJwt(req, isStaffEmail);
+}
+
+export async function requireAdminJwt(
+  req: Request,
+  allow: (email: string) => boolean = isAdminEmailAllowed,
+): Promise<{ email: string } | Response> {
   if (Deno.env.get('ADMIN_ALLOWLIST_OFF') === 'true' || Deno.env.get('ADMIN_ALLOWLIST_OFF') === '1') {
     return { email: 'dev@local' };
   }
@@ -108,7 +125,7 @@ export async function requireAdminJwt(req: Request): Promise<{ email: string } |
     );
   }
   const em = user.email.trim().toLowerCase();
-  if (!isAdminEmailAllowed(em)) {
+  if (!allow(em)) {
     return json({ error: 'Forbidden.' }, 403, req);
   }
   return { email: user.email };

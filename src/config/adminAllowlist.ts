@@ -38,3 +38,17 @@ export function isAdminEmailAllowed(email: string | null | undefined): boolean {
   if (!email?.trim()) return false;
   return getAdminAllowedEmails().has(email.trim().toLowerCase());
 }
+
+/** Stránky, kam smí celý tým (@vividbooks.com), ne jen admini ze seznamu. */
+export const STAFF_ADMIN_PATHS = ['/marketing/skoleni-certifikaty'];
+
+export function isStaffEmail(email: string | null | undefined): boolean {
+  if (isAdminEmailAllowed(email)) return true;
+  return !!email && email.trim().toLowerCase().endsWith('@vividbooks.com');
+}
+
+/** Smí tenhle účet na tuhle stránku administrace? */
+export function canOpenAdminPath(email: string | null | undefined, pathname: string): boolean {
+  if (isAdminEmailAllowed(email)) return true;
+  return isStaffEmail(email) && STAFF_ADMIN_PATHS.some((p) => pathname.startsWith(p));
+}

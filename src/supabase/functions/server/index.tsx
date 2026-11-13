@@ -57,7 +57,7 @@ import { runWebinarAudienceRecompute } from './webinarAudienceRecompute.ts';
 import { runMailchimpEngagementRatingsSync } from './mailchimpEngagementSync.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
-import { requireAdminJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
+import { requireAdminJwt, requireStaffJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
 import { matchDvppVideoForWebinar } from '../../../../supabase/functions/_shared/dvpp-video-match.ts';
@@ -28143,7 +28143,7 @@ registerDvppRoutes(app, {
 
 /* ── Pilotáž matematiky: škola podle e-mailu a pozvání kolegů z /matematika-pilotovani ─────── */
 registerPilotInviteRoutes(app, { publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, '') });
-registerSkoleniCertRoutes(app, { requireAdmin: requireAdminJwt, store: kv });
+registerSkoleniCertRoutes(app, { requireAdmin: requireStaffJwt, store: kv });
 
 /* ── Google Ads: denní hledanost, návrhy reklam a schvalovaný zápis (vše pozastavené) ─────── */
 registerGoogleAdsGrowthRoutes({

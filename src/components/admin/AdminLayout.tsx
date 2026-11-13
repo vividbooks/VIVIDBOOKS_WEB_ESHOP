@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '@/app/contexts/AppContext';
 import { AssistantLoginScreen } from '@/app/components/AssistantLoginScreen';
-import { isAdminEmailAllowed } from '@/config/adminAllowlist';
+import { canOpenAdminPath, isAdminEmailAllowed } from '@/config/adminAllowlist';
 import { fetchAdminAlertSummary, fetchAdminOrders, type AdminAlertSummary } from '../../utils/adminApi';
 import { AdminSidebarChatHistory } from './AdminSidebarChatHistory';
 
@@ -226,13 +226,13 @@ export default function AdminLayout() {
       setAccessDeniedMessage(null);
       return;
     }
-    if (isAdminEmailAllowed(user.email)) {
+    if (canOpenAdminPath(user.email, location.pathname)) {
       setAccessDeniedMessage(null);
       return;
     }
     setAccessDeniedMessage(ADMIN_ACCESS_DENIED_MSG);
     void signOut();
-  }, [authReady, user, signOut]);
+  }, [authReady, user, signOut, location.pathname]);
 
   const mode: AdminModeId = MAILING_PATHS.some((path) => location.pathname.startsWith(path))
     ? 'mailing'
@@ -378,6 +378,26 @@ export default function AdminLayout() {
 
   if (!user) {
     return <AssistantLoginScreen accessDeniedMessage={accessDeniedMessage} subtitle="Administrace" />;
+  }
+
+  if (!isAdminEmailAllowed(user.email) && canOpenAdminPath(user.email, location.pathname)) {
+    /* Tým bez plného adminu: jen tahle stránka, bez menu zbytku administrace. */
+    return (
+      <div className="min-h-dvh bg-[#f7f8fc]">
+        <Toaster position="top-right" richColors />
+        <div className="flex items-center justify-between border-b border-gray-200 bg-white px-6 py-3">
+          <span className="text-[14px] font-bold text-[#001161]">Vividbooks · Certifikáty ze školení</span>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className="text-[13px] font-semibold text-[#001161]/60 hover:text-[#001161]"
+          >
+            Odhlásit {user.email}
+          </button>
+        </div>
+        <Outlet />
+      </div>
+    );
   }
 
   if (!isAdminEmailAllowed(user.email)) {
