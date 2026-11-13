@@ -362,13 +362,14 @@ const CZECH_SERIES: SeriesDef[] = [
   },
   {
     key: 'slabikare',
-    title: 'Slabikáře',
-    label: 'Čtení',
-    description: 'Slabikář ve třech dílech',
+    title: 'Český jazyk',
+    label: '1. ročník',
+    description: 'Pracovní sešit pro 1. ročník ve třech dílech',
     typ: 'slabikare',
     bg: '#f8f9fc',
     coverParts: true,
-    match: (n) => n.includes('slabikář'),
+    // Dřív „Slabikář 1.–3. díl“; od 13. 11. 2026 „Český jazyk 1. ročník / N. díl“.
+    match: (n) => n.includes('slabikář') || n.includes('český jazyk 1. ročník'),
   },
   {
     key: 'ctenarska-gramotnost',
