@@ -19,7 +19,7 @@ const CERTIFICATE_PAGE_WIDTH_PX = 1122.52;
 const CERTIFICATE_PAGE_HEIGHT_PX = 793.7;
 
 /** Náhled certifikátu v přesné tiskové velikosti, zmenšený na šířku kontejneru. */
-function CertificatePreview({
+export function CertificatePreview({
   srcDoc,
   className = '',
 }: {

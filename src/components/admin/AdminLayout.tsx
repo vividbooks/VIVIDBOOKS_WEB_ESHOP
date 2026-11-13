@@ -94,6 +94,7 @@ const MARKETING_SIDEBAR = [
       { label: 'Kalendář', icon: Calendar, path: '/marketing/kalendar' },
       { label: 'Webináře', icon: Radio, path: '/marketing/webinare' },
       { label: 'Popup Manager', icon: Megaphone, path: '/marketing/popupy' },
+      { label: 'Certifikáty ze školení', icon: Award, path: '/marketing/skoleni-certifikaty' },
     ],
   },
   {

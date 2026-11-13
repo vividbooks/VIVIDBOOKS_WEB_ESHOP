@@ -212,6 +212,11 @@ export const router = createBrowserRouter(
               lazy: lazyNamed(() => import('./components/WebinarCertificateReissueRoute'), 'WebinarCertificateReissueRoute'),
             },
             {
+              // Certifikát ze školení pro školu — odkaz posílá obchodník z adminu.
+              path: 'skoleni/certifikat/:token',
+              lazy: lazyNamed(() => import('./components/skoleni/SkoleniCertifikatPage'), 'SkoleniCertifikatPage'),
+            },
+            {
               path: 'webinar-dotaznik-vysledky/:token',
               lazy: lazyNamed(() => import('./components/WebinarSurveyPublicResultsPage'), 'WebinarSurveyPublicResultsPage'),
             },
@@ -308,6 +313,10 @@ export const router = createBrowserRouter(
           lazy: lazyDefault(() => import('./components/admin/MarketingDashboard')),
         },
         { path: 'dvpp', lazy: lazyDefault(() => import('./components/admin/DvppDashboardPage')) },
+        {
+          path: 'skoleni-certifikaty',
+          lazy: lazyDefault(() => import('./components/admin/SkoleniCertifikatyAdminPage')),
+        },
         { path: 'webinare', lazy: lazyDefault(() => import('./components/admin/AdminWebinarPanel')) },
         { path: 'emaily', lazy: lazyDefault(() => import('./components/admin/EmailBuilder')) },
         { path: 'kalendar', lazy: lazyDefault(() => import('./components/admin/MarketingCalendar')) },

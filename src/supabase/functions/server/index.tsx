@@ -43,6 +43,7 @@ import {
 import { enrollInFlows, runAutomationSteps } from './automationEngine.ts';
 import { registerDvppRoutes } from './dvpp/routes.ts';
 import { registerPilotInviteRoutes } from './pilotInvites.ts';
+import { registerSkoleniCertRoutes } from './skoleniCertifikaty.ts';
 import { DVPP_AUTOMATION_FLOWS } from './dvpp/automations.ts';
 import type { RegistryRecord as DvppRegistryRecord } from './dvpp/schools.ts';
 import { afterRegistration as dvppAfterRegistration } from './dvpp/hooks.ts';
@@ -28142,6 +28143,7 @@ registerDvppRoutes(app, {
 
 /* ── Pilotáž matematiky: škola podle e-mailu a pozvání kolegů z /matematika-pilotovani ─────── */
 registerPilotInviteRoutes(app, { publicOrigin: () => getPublicSiteOrigin().replace(/\/$/, '') });
+registerSkoleniCertRoutes(app, { requireAdmin: requireAdminJwt, store: kv });
 
 /* ── Google Ads: denní hledanost, návrhy reklam a schvalovaný zápis (vše pozastavené) ─────── */
 registerGoogleAdsGrowthRoutes({

@@ -78,7 +78,9 @@ function buildLogoSvg(): string {
 
 /** Např. „1. 9. 2026 od 18.00“. */
 function formatEventLineCs(w: Webinar): string {
-  return `${w.day}. ${w.monthNum}. ${w.year} od ${(w.time || '—').replace(':', '.')}`;
+  const date = `${w.day}. ${w.monthNum}. ${w.year}`;
+  const time = (w.time || '').trim();
+  return time ? `${date} od ${time.replace(':', '.')}` : date;
 }
 
 /** Délka akce slovy (90 min → „1,5 hodiny“). */
@@ -328,20 +330,25 @@ export interface CertificateDocumentInput {
   kind: CertificateKind;
   /** Datum vydání — kvůli testovatelnosti lze předat. */
   issuedAt?: Date;
+  /** Jiné texty než u webináře (certifikát ze školení pro školu). */
+  copy?: CertificateCopy;
+  /** Forma akce v řádku s datem; výchozí „distanční formou“. */
+  formLabel?: string;
+  /** Titulek dokumentu (název souboru při uložení PDF). */
+  documentTitle?: string;
 }
 
-const COPY: Record<
-  CertificateKind,
-  {
-    pill: string;
-    title: string;
-    titleSub: string;
-    lead: string;
-    body: string;
-    note: string;
-    seal: [string, string, string];
-  }
-> = {
+export interface CertificateCopy {
+  pill: string;
+  title: string;
+  titleSub: string;
+  lead: string;
+  body: string;
+  note: string;
+  seal: [string, string, string];
+}
+
+const COPY: Record<CertificateKind, CertificateCopy> = {
   dvpp: {
     pill: 'Osvědčení DVPP',
     title: 'Certifikát',
@@ -365,7 +372,8 @@ const COPY: Record<
 /** Kompletní HTML dokument certifikátu — pro náhled v iframe i pro tisk do PDF. */
 export function buildCertificateDocument(input: CertificateDocumentInput): string {
   const { webinar, email, kind } = input;
-  const copy = COPY[kind];
+  const copy = input.copy ?? COPY[kind];
+  const formLabel = escapeHtml(input.formLabel || 'distanční formou');
 
   const title = escapeHtml(webinar.title || '');
   const lecturer = escapeHtml((webinar.lecturer || '').trim());
@@ -391,7 +399,7 @@ export function buildCertificateDocument(input: CertificateDocumentInput): strin
 <head>
 <meta charset="utf-8" />
 <meta name="color-scheme" content="only light" />
-<title>${kind === 'dvpp' ? 'Certifikát DVPP' : 'Potvrzení o účasti'} — ${title}</title>
+<title>${escapeHtml(input.documentTitle || (kind === 'dvpp' ? 'Certifikát DVPP' : 'Potvrzení o účasti'))} — ${title}</title>
 <link rel="preconnect" href="https://iekkundgizzdbmkzatdl.supabase.co" crossorigin />
 <style>${FONT_FACE_BLOCK}${CERT_CSS}</style>
 </head>
@@ -420,7 +428,7 @@ export function buildCertificateDocument(input: CertificateDocumentInput): strin
       <p class="cert-body">${escapeHtml(copy.body)}</p>
       <p class="cert-program">${title}</p>
       <p class="cert-meta">
-        ${eventLine} &#183; distanční formou &#183; v rozsahu <strong>${durationPhrase}</strong>${
+        ${eventLine} &#183; ${formLabel} &#183; v rozsahu <strong>${durationPhrase}</strong>${
           lecturer ? `<br />lektor <strong>${lecturer}</strong>` : ''
         }
       </p>
