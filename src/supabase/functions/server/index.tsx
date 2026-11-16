@@ -100,6 +100,7 @@ import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
 import { DISTRIBUTOR_PIPEDRIVE_SYNC_KV_KEY } from '../../../utils/distributorDelivery.ts';
 import { distributorCrmHandoff, distributorDeliveryFromBody } from './distributorOrder.ts';
+import { ensureDistributorSummaryEmail, sendDistributorSummaryEmail } from './distributorSummaryEmail.ts';
 import {
   applyAllDigitalBundleStripe,
 } from '../../../utils/digitalSubscription.ts';
@@ -21470,7 +21471,11 @@ function readDistributorRequestToken(c: Context): string {
   return fromHeader || (c.req.query('k') || '').trim();
 }
 
-/** Shrnutí objednávky na kontaktní e‑mail z formuláře — přes Edge `send-order-email` (Mandrill). */
+/**
+ * Shrnutí objednávky na kontaktní e‑mail z formuláře — přes Edge `send-order-email`.
+ * Každý pokus má časový limit a po vypršení jde jeden další (`sendDistributorSummaryEmail`);
+ * bez limitu se 9. a 11. 11. volání zaseklo a shrnutí neodešlo vůbec.
+ */
 async function invokeDistributorOrderSummaryEmail(
   orderId: string,
   opts: { salesRepFollowUp?: boolean } = {},
@@ -21482,22 +21487,21 @@ async function invokeDistributorOrderSummaryEmail(
     || Deno.env.get('SUPABASE_ANON_KEY')
     || ''
   ).trim();
-  const res = await fetch(`${base}/functions/v1/send-order-email`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(key ? { Authorization: `Bearer ${key}`, apikey: key } : {}),
-    },
-    body: JSON.stringify({
-      orderId,
-      emailType: 'distributor_order_received',
-      salesRepFollowUp: opts.salesRepFollowUp !== false,
+  await sendDistributorSummaryEmail({
+    send: (signal) => fetch(`${base}/functions/v1/send-order-email`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { Authorization: `Bearer ${key}`, apikey: key } : {}),
+      },
+      body: JSON.stringify({
+        orderId,
+        emailType: 'distributor_order_received',
+        salesRepFollowUp: opts.salesRepFollowUp !== false,
+      }),
+      signal,
     }),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error((data as any)?.error || `send-order-email HTTP ${res.status}`);
-  }
 }
 
 /**
@@ -21735,7 +21739,7 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
       if (insertError.code === '23505' && idempotencyKey) {
         const { data: existing } = await sb
           .from('orders')
-          .select('id, order_number')
+          .select('id, order_number, created_at')
           .eq('idempotency_key', idempotencyKey)
           .maybeSingle();
         if (existing) {
@@ -21746,11 +21750,35 @@ app.post('/make-server-93a20b6f/distributor/orders', async (c) => {
             .eq('order_id', (existing as any).id)
             .eq('event_type', 'pipedrive_skipped')
             .limit(1);
+          const existingFollowUp = !(Array.isArray(skipped) && skipped.length > 0);
+          /** Původní požadavek mohl skončit dřív, než shrnutí odešlo (504 brány) → doplnit. */
+          const summary = await ensureDistributorSummaryEmail({
+            orderAgeMs: Date.now() - Date.parse(String((existing as any).created_at || '')),
+            loadEmailEvents: async () => {
+              const { data, error } = await sb
+                .from('order_events')
+                .select('details')
+                .eq('order_id', (existing as any).id)
+                .eq('event_type', 'email');
+              if (error) throw new Error(error.message);
+              return (data as Array<{ details?: unknown }>) || [];
+            },
+            send: () => invokeDistributorOrderSummaryEmail((existing as any).id, { salesRepFollowUp: existingFollowUp }),
+            recordError: async (message) => {
+              await sb.from('order_events').insert({
+                order_id: (existing as any).id,
+                event_type: 'email',
+                details: { emailType: 'distributor_order_received', error: message },
+                actor: 'system',
+              });
+            },
+          });
+          console.log(`[distributor] opakované odeslání ${(existing as any).order_number}: shrnutí ${summary}`);
           return c.json({
             success: true,
             orderId: (existing as any).id,
             orderNumber: (existing as any).order_number,
-            salesRepFollowUp: !(Array.isArray(skipped) && skipped.length > 0),
+            salesRepFollowUp: existingFollowUp,
             deduplicated: true,
           });
         }
