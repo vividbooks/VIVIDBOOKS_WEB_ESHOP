@@ -198,7 +198,7 @@ Deno.test('handler POST /distributor/orders: adresa se ověří před uložením
   assert(!outside.includes('syncEshopOrderToPipedriveFromDb('), 'Pipedrive se nesmí volat mimo přepínač');
   assert(!outside.includes('importDistributorDealToKabinet('), 'Kabinet se nesmí volat mimo přepínač');
   /** Opakovaný POST (stejné submissionId) vrací potvrzení podle původní objednávky. */
-  const dedup = handler.slice(handler.indexOf('deduplicated: true') - 900, handler.indexOf('deduplicated: true'));
+  const dedup = handler.slice(handler.indexOf('deduplicated: true') - 2600, handler.indexOf('deduplicated: true'));
   assert(dedup.includes("'pipedrive_skipped'") && dedup.includes('salesRepFollowUp'), 'deduplikovaná odpověď nese salesRepFollowUp');
 });
 

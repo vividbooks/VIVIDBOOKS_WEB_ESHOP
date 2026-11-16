@@ -7,6 +7,14 @@ import {
   buildVividbooksBrandCta,
   buildVividbooksBrandShell,
 } from './email-brand-shell.ts';
+import {
+  type DistributorOrderEmailVariant,
+  distributorOrderEmailHasShip24h,
+  distributorOrderEmailLeadSentences,
+  distributorOrderEmailSubject,
+  distributorOrderEmailVariant,
+  distributorShip24hEligible,
+} from './distributor-order-email.ts';
 
 export type OrderEmailType =
   | 'order_confirmed'
@@ -46,6 +54,11 @@ type OrderRow = {
   stripe_receipt_url: string | null;
   /** NULL = běžná objednávka; pending|done = objednávka jen z plakátů (tisk na zakázku). */
   poster_fulfillment_status: string | null;
+  /** Pro distributorské potvrzení (slib odeslání do 24 h). */
+  source?: string | null;
+  country?: string | null;
+  subtotal?: number | null;
+  created_at?: string | null;
 };
 
 type OrderItemRow = {
@@ -212,16 +225,31 @@ function buildDistributorItemsTable(items: OrderItemRow[]) {
 
 /** Věta pod nadpisem shrnutí — bez slibu obchodního zástupce, když objednávku vyřizuje automat v CRM. */
 export function distributorOrderReceivedLead(salesRepFollowUp: boolean): string {
-  return salesRepFollowUp
-    ? 'Ozve se vám obchodní zástupce Vividbooks a dořeší ceny, dopravu i další detaily.'
-    : 'Objednávku zpracujeme, fakturu vám pošleme e-mailem a zásilku odešleme na uvedenou doručovací adresu.';
+  return distributorOrderEmailLeadSentences(salesRepFollowUp ? 'sales_rep' : 'no_promise').join(' ');
 }
 
-function buildDistributorOrderReceivedHtml(
+export function buildDistributorOrderReceivedHtml(
   order: OrderRow,
   items: OrderItemRow[],
-  opts: { salesRepFollowUp?: boolean } = {},
+  opts: { salesRepFollowUp?: boolean; variant?: DistributorOrderEmailVariant } = {},
 ) {
+  const variant = opts.variant
+    ?? distributorOrderEmailVariant({ salesRepFollowUp: opts.salesRepFollowUp !== false, ship24h: false });
+  const leadText = distributorOrderEmailLeadSentences(variant).join(' ');
+  /** Se slibem 24 h začíná text větou „Děkujeme, objednávku jsme přijali…“, číslo objednávky jde pod ni;
+   *  bez slibu zůstává původní znění „Evidujeme vaši distributorskou objednávku …“. */
+  const introHtml = distributorOrderEmailHasShip24h(variant)
+    ? `
+      <p style="${P}">${escapeHtml(leadText)}</p>
+      <p style="${P}">
+        Číslo objednávky: <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong>
+      </p>`
+    : `
+      <p style="${P}">
+        Evidujeme vaši distributorskou objednávku
+        <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong>.
+        ${escapeHtml(leadText)}
+      </p>`;
   const company = String(order.school_name || order.customer_name || '').trim();
   const ico = String(order.ico || '').trim();
   const phone = String(order.customer_phone || '').trim();
@@ -232,14 +260,10 @@ function buildDistributorOrderReceivedHtml(
     : '';
 
   return buildShell(
-    `Shrnutí objednávky ${order.order_number} — Vividbooks`,
+    distributorOrderEmailSubject(order.order_number),
     `
       <h1 style="${H1}">Děkujeme za objednávku</h1>
-      <p style="${P}">
-        Evidujeme vaši distributorskou objednávku
-        <strong style="color:${VB_EMAIL_NAVY};">${escapeHtml(order.order_number)}</strong>.
-        ${escapeHtml(distributorOrderReceivedLead(opts.salesRepFollowUp !== false))}
-      </p>
+      ${introHtml}
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 8px;">
         ${company ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;width:140px;">Společnost:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};"><strong>${escapeHtml(company)}</strong></td></tr>` : ''}
         ${ico ? `<tr><td style="padding:6px 0;font-size:15px;color:#4a5568;">IČO:</td><td style="padding:6px 0;font-size:15px;color:${VB_EMAIL_NAVY};">${escapeHtml(ico)}</td></tr>` : ''}
@@ -454,6 +478,8 @@ async function sendMandrillMessage(params: {
   subject: string;
   html: string;
   replyTo: string;
+  /** Stejný klíč = poskytovatel (Resend) e-mail podruhé nepošle (24 h). */
+  idempotencyKey?: string;
 }) {
   const response = await sendTransactionalMail({
     method: 'POST',
@@ -469,6 +495,7 @@ async function sendMandrillMessage(params: {
         headers: { 'Reply-To': params.replyTo },
         track_opens: true,
         track_clicks: false,
+        ...(params.idempotencyKey ? { idempotency_key: params.idempotencyKey } : {}),
       },
     }),
   });
@@ -656,7 +683,11 @@ export async function loadOrderEmailData(sql: postgres.Sql, orderId: string) {
       cancelled_reason,
       payment_resume_token,
       stripe_receipt_url,
-      poster_fulfillment_status
+      poster_fulfillment_status,
+      source,
+      country,
+      subtotal,
+      created_at
     from public.orders
     where id = ${orderId}::uuid
     limit 1
@@ -703,6 +734,7 @@ export async function sendOrderEmail(
 
   let subject = '';
   let html = '';
+  let variant: DistributorOrderEmailVariant | null = null;
 
   if (params.emailType === 'order_confirmed' && isPosterOrder(order)) {
     subject = `Potvrzení objednávky ${order.order_number} — plakáty jdou do výroby — VividBooks`;
@@ -730,8 +762,17 @@ export async function sendOrderEmail(
     subject = `Objednávka ${order.order_number} zrušena — VividBooks`;
     html = buildOrderAutoCancelledUnpaidHtml(order);
   } else if (params.emailType === 'distributor_order_received') {
-    subject = `Shrnutí objednávky ${order.order_number} — VividBooks`;
-    html = buildDistributorOrderReceivedHtml(order, items, { salesRepFollowUp: params.salesRepFollowUp !== false });
+    const knownDistributor = await isKnownDistributor(sql, order);
+    variant = distributorOrderEmailVariant({
+      salesRepFollowUp: params.salesRepFollowUp !== false,
+      ship24h: distributorShip24hEligible({
+        knownDistributor,
+        country: order.country,
+        subtotalHaler: order.subtotal ?? order.total,
+      }),
+    });
+    subject = distributorOrderEmailSubject(order.order_number);
+    html = buildDistributorOrderReceivedHtml(order, items, { variant });
   } else {
     throw new Error(`Unsupported emailType: ${params.emailType}`);
   }
@@ -743,7 +784,29 @@ export async function sendOrderEmail(
     subject,
     html,
     replyTo: getReplyToAddress(),
+    /** Distributorské potvrzení jde jednou na objednávku i při opakovaném volání (timeout, doplnění). */
+    ...(params.emailType === 'distributor_order_received'
+      ? { idempotencyKey: `distributor_order_received/${order.id}` }
+      : {}),
   });
 
-  return { order, subject, html };
+  return { order, subject, html, variant };
+}
+
+/** Známý distributor = stejné IČO už má dřívější nezrušenou distributorskou objednávku. */
+async function isKnownDistributor(sql: postgres.Sql, order: OrderRow): Promise<boolean> {
+  const ico = String(order.ico || '').trim();
+  if (!ico) return false;
+  const rows = await sql<{ known: boolean }[]>`
+    select exists (
+      select 1
+      from public.orders o
+      where o.source = 'distributor'
+        and o.ico = ${ico}
+        and o.id <> ${order.id}::uuid
+        and o.status <> 'cancelled'
+        and o.created_at < coalesce(${order.created_at ?? null}::timestamptz, now())
+    ) as known
+  `;
+  return rows[0]?.known === true;
 }

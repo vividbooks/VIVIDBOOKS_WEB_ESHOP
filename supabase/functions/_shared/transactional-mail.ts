@@ -29,6 +29,8 @@ type MandrillMessage = {
   attachments?: MandrillAttachment[];
   tags?: string[];
   bcc_address?: string;
+  /** Jen Resend: hlavička `Idempotency-Key` (24 h) – opakované volání se stejným klíčem e-mail znovu nepošle. */
+  idempotency_key?: string;
 };
 
 export function getTransactionalProvider(): 'resend' | 'mandrill' {
@@ -87,10 +89,15 @@ async function sendViaResend(message: MandrillMessage): Promise<Response> {
   if (tags.length) payload.tags = tags;
 
   const toList = recipients.map((r) => r.email);
+  const idempotencyKey = String(message.idempotency_key || '').trim().slice(0, 256);
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(RESEND_SEND_URL, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
@@ -117,6 +124,7 @@ async function sendViaResend(message: MandrillMessage): Promise<Response> {
 export async function sendTransactionalMail(init: { method?: string; headers?: HeadersInit; body: string }): Promise<Response> {
   if (getTransactionalProvider() === 'mandrill') {
     const parsed = JSON.parse(init.body);
+    if (parsed?.message) delete parsed.message.idempotency_key;
     const key = parsed?.key || Deno.env.get('MANDRILL_API_KEY');
     return fetch(MANDRILL_SEND_URL, {
       method: 'POST',

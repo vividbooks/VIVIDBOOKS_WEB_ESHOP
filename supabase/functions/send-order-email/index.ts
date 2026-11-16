@@ -84,6 +84,7 @@ Deno.serve(async (req) => {
         ${JSON.stringify({
           emailType: payload.emailType,
           subject: result.subject,
+          ...(result.variant ? { variant: result.variant } : {}),
         })}::jsonb,
         'system'
       )
