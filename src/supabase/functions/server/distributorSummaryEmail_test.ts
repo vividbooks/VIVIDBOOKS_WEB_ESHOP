@@ -55,6 +55,17 @@ Deno.test('HTTP chyba z send-order-email se neopakuje (e-mail mohl být odmítnu
   assertEquals(calls, 1);
 });
 
+Deno.test('chybová odpověď, jejíž tělo se nedočte, nečeká neomezeně', async () => {
+  let calls = 0;
+  const stuckBody = () => new Response(new ReadableStream({ start() {/* nikdy nic nepošle */} }), { status: 500 });
+  await assertRejects(
+    () => sendDistributorSummaryEmail({ timeoutMs: 30, log: quiet, send: () => (calls++, Promise.resolve(stuckBody())) }),
+    Error,
+    'neodpověděl',
+  );
+  assertEquals(calls, 2);
+});
+
 Deno.test('opakované odeslání formuláře: chybějící shrnutí se doplní, odeslané se neposílá znovu', async () => {
   const old = DISTRIBUTOR_SUMMARY_RESEND_MIN_AGE_MS + 60_000;
   let sends = 0;

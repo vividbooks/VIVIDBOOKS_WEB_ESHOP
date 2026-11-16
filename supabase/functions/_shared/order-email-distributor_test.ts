@@ -79,7 +79,10 @@ async function runSend(s: Scenario, salesRepFollowUp: boolean) {
     if (!url.startsWith('https://api.resend.com/')) {
       return Promise.reject(new Error(`test nesmí volat ven: ${url}`));
     }
-    sent.push(JSON.parse(String(init?.body || '{}')));
+    sent.push({
+      ...JSON.parse(String(init?.body || '{}')),
+      _idempotencyKey: (init?.headers as Record<string, string>)?.['Idempotency-Key'],
+    });
     return Promise.resolve(new Response(JSON.stringify({ id: 'test-id' }), { status: 200 }));
   }) as typeof fetch;
   try {
@@ -98,6 +101,8 @@ Deno.test('send-order-email: známý distributor, Pipedrive vypnutý → slib 24
   assertEquals(sent.length, 1);
   assertEquals(sent[0].subject, result.subject);
   assertEquals(sent[0].to, ['Knihy Test s.r.o. <objednavky@distributor.example>']);
+  /** Opakované volání (timeout, doplnění) e-mail podruhé nepošle – Resend dostane stejný klíč. */
+  assertEquals(sent[0]._idempotencyKey, `distributor_order_received/${ORDER_ID}`);
   const html = String(sent[0].html);
   assert(html.includes('Zásilku odešleme zpravidla do 24 hodin (v pracovní dny), fakturu vám pošleme e-mailem.'));
   assert(html.includes('Děkujeme za objednávku'));

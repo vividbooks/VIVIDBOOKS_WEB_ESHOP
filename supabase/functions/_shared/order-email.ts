@@ -478,6 +478,8 @@ async function sendMandrillMessage(params: {
   subject: string;
   html: string;
   replyTo: string;
+  /** Stejný klíč = poskytovatel (Resend) e-mail podruhé nepošle (24 h). */
+  idempotencyKey?: string;
 }) {
   const response = await sendTransactionalMail({
     method: 'POST',
@@ -493,6 +495,7 @@ async function sendMandrillMessage(params: {
         headers: { 'Reply-To': params.replyTo },
         track_opens: true,
         track_clicks: false,
+        ...(params.idempotencyKey ? { idempotency_key: params.idempotencyKey } : {}),
       },
     }),
   });
@@ -781,6 +784,10 @@ export async function sendOrderEmail(
     subject,
     html,
     replyTo: getReplyToAddress(),
+    /** Distributorské potvrzení jde jednou na objednávku i při opakovaném volání (timeout, doplnění). */
+    ...(params.emailType === 'distributor_order_received'
+      ? { idempotencyKey: `distributor_order_received/${order.id}` }
+      : {}),
   });
 
   return { order, subject, html, variant };

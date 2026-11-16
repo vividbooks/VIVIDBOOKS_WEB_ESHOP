@@ -7,7 +7,8 @@
  * ani chyba. Formulář pak objednávku odeslal znovu (stejné `submissionId`), deduplikace vrátila
  * původní objednávku – ale shrnutí už nikdo neposlal.
  *
- * Teď: každý pokus má limit (výchozí 20 s), po vypršení / chybě sítě jeden další pokus;
+ * Teď: každý pokus má limit (výchozí 20 s), po vypršení / chybě sítě jeden další pokus
+ * (dvojí odeslání brání `Idempotency-Key` u Resendu, klíč `distributor_order_received/<orderId>`);
  * deduplikovaný POST shrnutí doplní, když k objednávce žádné úspěšně odeslané není.
  *
  * Testy: `deno test --no-check --node-modules-dir=none src/supabase/functions/server/distributorSummaryEmail_test.ts`
@@ -45,9 +46,21 @@ export async function sendDistributorSummaryEmail(deps: SummaryEmailSendDeps): P
         controller.abort();
       }, timeoutMs);
     });
-    let res: Response;
+    /** Limit kryje celé volání včetně dočtení chybové odpovědi – nic nesmí čekat neomezeně. */
+    const attemptOnce = async (): Promise<{ ok: true } | { ok: false; message: string }> => {
+      const res = await deps.send(controller.signal);
+      if (res.ok) {
+        await res.body?.cancel().catch(() => {});
+        return { ok: true };
+      }
+      const data = await res.json().catch(() => ({}));
+      return { ok: false, message: (data as { error?: string })?.error || `send-order-email HTTP ${res.status}` };
+    };
+    let outcome: { ok: true } | { ok: false; message: string };
     try {
-      res = await Promise.race([deps.send(controller.signal), timeout]);
+      const pending = attemptOnce();
+      pending.catch(() => {}); // po vypršení limitu se zrušené volání už neřeší
+      outcome = await Promise.race([pending, timeout]);
     } catch (err) {
       lastError = err;
       log(`[distributor] shrnutí e-mail pokus ${attempt}/${attempts}: ${(err as Error)?.message || err}`);
@@ -55,10 +68,7 @@ export async function sendDistributorSummaryEmail(deps: SummaryEmailSendDeps): P
     } finally {
       clearTimeout(timer);
     }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string })?.error || `send-order-email HTTP ${res.status}`);
-    }
+    if (!outcome.ok) throw new Error(outcome.message);
     return;
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError || 'send-order-email selhal'));
