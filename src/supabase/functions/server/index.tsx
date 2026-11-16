@@ -100,7 +100,11 @@ import { sanitizeMerchVariantSkus } from '../../../utils/stockSku.ts';
 import { isDistributorOrderableProduct } from '../../../utils/distributorCatalog.ts';
 import { DISTRIBUTOR_PIPEDRIVE_SYNC_KV_KEY } from '../../../utils/distributorDelivery.ts';
 import { distributorCrmHandoff, distributorDeliveryFromBody } from './distributorOrder.ts';
-import { ensureDistributorSummaryEmail, sendDistributorSummaryEmail } from './distributorSummaryEmail.ts';
+import {
+  distributorSummaryEmailAttempts,
+  ensureDistributorSummaryEmail,
+  sendDistributorSummaryEmail,
+} from './distributorSummaryEmail.ts';
 import {
   applyAllDigitalBundleStripe,
 } from '../../../utils/digitalSubscription.ts';
@@ -21488,6 +21492,8 @@ async function invokeDistributorOrderSummaryEmail(
     || ''
   ).trim();
   await sendDistributorSummaryEmail({
+    /** Opakovat jen u Resendu (Idempotency-Key brání dvojímu e-mailu); nouzový Mandrill klíč nezná. */
+    attempts: distributorSummaryEmailAttempts(Deno.env.get('TRANSACTIONAL_PROVIDER')),
     send: (signal) => fetch(`${base}/functions/v1/send-order-email`, {
       method: 'POST',
       headers: {

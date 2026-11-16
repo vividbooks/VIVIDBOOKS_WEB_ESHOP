@@ -17,6 +17,15 @@ import { distributorSummaryEmailSent } from '../../../../supabase/functions/_sha
 
 export const DISTRIBUTOR_SUMMARY_EMAIL_TIMEOUT_MS = 20_000;
 
+/**
+ * Počet pokusů podle poskytovatele transakční pošty (`TRANSACTIONAL_PROVIDER`, výchozí Resend):
+ * Resend dostane `Idempotency-Key`, takže druhý pokus po nejasném výsledku e-mail nezdvojí;
+ * nouzový Mandrill idempotenci nemá → jen jeden pokus (chybějící e-mail pohlídá hlídač).
+ */
+export function distributorSummaryEmailAttempts(provider: string | null | undefined): number {
+  return String(provider ?? '').trim().toLowerCase() === 'mandrill' ? 1 : 2;
+}
+
 export type SummaryEmailSendDeps = {
   /** Jeden pokus o volání `send-order-email`; musí respektovat `signal`. */
   send: (signal: AbortSignal) => Promise<Response>;

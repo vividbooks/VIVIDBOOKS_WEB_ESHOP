@@ -3,6 +3,7 @@ import { assert, assertEquals, assertRejects } from 'jsr:@std/assert@1';
 
 import {
   DISTRIBUTOR_SUMMARY_RESEND_MIN_AGE_MS,
+  distributorSummaryEmailAttempts,
   ensureDistributorSummaryEmail,
   sendDistributorSummaryEmail,
 } from './distributorSummaryEmail.ts';
@@ -40,6 +41,23 @@ Deno.test('dvakrát zaseklé → chyba (handler ji zapíše do order_events), ž
     'neodpověděl',
   );
   assertEquals(calls, 2);
+});
+
+Deno.test('opakování jen u Resendu (idempotence); nouzový Mandrill = jeden pokus', async () => {
+  assertEquals(distributorSummaryEmailAttempts(undefined), 2);
+  assertEquals(distributorSummaryEmailAttempts('resend'), 2);
+  assertEquals(distributorSummaryEmailAttempts(' Mandrill '), 1);
+  let calls = 0;
+  await assertRejects(
+    () => sendDistributorSummaryEmail({
+      timeoutMs: 20,
+      attempts: distributorSummaryEmailAttempts('mandrill'),
+      log: quiet,
+      send: (s) => (calls++, hangingSend(s)),
+    }),
+    Error,
+  );
+  assertEquals(calls, 1);
 });
 
 Deno.test('HTTP chyba z send-order-email se neopakuje (e-mail mohl být odmítnut)', async () => {
@@ -105,6 +123,7 @@ Deno.test('handler: volání send-order-email jde přes limit a deduplikace shrn
   const fnEnd = src.indexOf('\n}\n', fnStart);
   const fn = src.slice(fnStart, fnEnd);
   assert(fn.includes('sendDistributorSummaryEmail('), 'volání s časovým limitem');
+  assert(fn.includes("distributorSummaryEmailAttempts(Deno.env.get('TRANSACTIONAL_PROVIDER'))"), 'opakování podle poskytovatele');
   assert(/signal,?\s*\n/.test(fn), 'fetch dostává signal');
 
   const start = src.indexOf("app.post('/make-server-93a20b6f/distributor/orders'");
