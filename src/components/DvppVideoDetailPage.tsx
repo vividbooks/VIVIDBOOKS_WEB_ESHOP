@@ -10,6 +10,7 @@ import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { absoluteAppUrl } from '../utils/appBaseUrl';
 import { privacyPolicyUrl } from '../utils/publicSiteUrl';
 import { extractYoutubeId } from '../utils/youtube';
+import { useVividbooksPresence } from '@/lib/vividbooksPresence';
 
 const ff = "'Fenomen Sans', sans-serif";
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -52,6 +53,8 @@ export function DvppVideoDetailPage() {
   const { videos, topics, loading } = useDvppVideos();
 
   const video = videos.find(v => v.id === id);
+  /** Učitel přihlášený v aplikaci učebnic (cookie `vb_id` na .vividbooks.com) — známe ho, formulář nechceme. */
+  const presence = useVividbooksPresence();
 
   const emailFromUrl = (searchParams.get('email') || '').trim();
   const emailLooksValid =
@@ -119,6 +122,16 @@ export function DvppVideoDetailPage() {
   }, [id, emailFromUrl, emailLooksValid, fromEmailLink]);
 
   useEffect(() => {
+    if (!presence) return;
+    setForm((prev) => ({
+      ...prev,
+      name: prev.name || presence.name,
+      email: prev.email || presence.email || '',
+      schoolName: prev.schoolName || presence.school || '',
+    }));
+  }, [presence]);
+
+  useEffect(() => {
     if (emailLooksValid && emailFromUrl) {
       setForm((prev) => (prev.email === emailFromUrl ? prev : { ...prev, email: emailFromUrl }));
     }
@@ -169,8 +182,13 @@ export function DvppVideoDetailPage() {
     setError('');
   };
 
+  const requireFullRegistration = (video as any)?.surveyRequireFullRegistration === true;
+  // Přihlášený učitel z aplikace dostane záznam hned. Plná registrace (certifikát DVPP) ale
+  // potřebuje školu a pozici, takže tam zůstává formulář — jen předvyplněný.
+  const knownFromApp = Boolean(presence?.name && presence?.email) && !requireFullRegistration;
+
   const showVideo =
-    alreadyRegistered || submitted || !!serverAccessSource || fromEmailLink;
+    alreadyRegistered || submitted || !!serverAccessSource || fromEmailLink || knownFromApp;
 
   const YT_PAT = /(?:youtu\.be\/|youtube\.com\/(?:watch\?.*v=|embed\/|shorts\/))([a-zA-Z0-9_-]{11})/;
   let resolvedYtUrl = video?.youtubeUrl || '';
