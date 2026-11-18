@@ -31,6 +31,13 @@ import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
 import { forwardPostaEvent, postaEventFromWebhook, registerKabinetPostaRoutes } from './kabinetPosta.ts';
 import { registerGoogleAdsGrowthRoutes } from './googleAdsGrowth.ts';
+import { registerMarketingSnapshotRoutes } from './marketingSnapshot.ts';
+import { registerGrowthMetricsRoutes } from './growthMetrics.ts';
+import { registerGrowthProposalsRoutes } from './growthProposals.ts';
+import { registerMarketingConversionsRoutes } from './marketingConversions.ts';
+import { registerMarketingOfflineConversionsRoutes } from './marketingOfflineConversions.ts';
+import { registerMetaAdsRoutes } from './metaAds.ts';
+import { registerMarketingAlertsRoutes } from './marketingAlerts.ts';
 import { adminPersonalReplySendHandler, adminWebinarAccessNudgeHandler } from './webinarAccessNudge.ts';
 import { parseNewsletterSubscribeProfile } from './newsletterSubscribeInput.ts';
 import { createMailingToken, verifyMailingToken, verifyTrackingToken } from './mailingTokens.ts';
@@ -28193,6 +28200,104 @@ registerGoogleAdsGrowthRoutes({
   },
   loadFeedItems: async () => buildMarketingFeed(await getAllProducts()).items,
   publicOrigin: () => getPublicSiteOrigin(),
+});
+
+/* ── Marketing snapshot: denní pull agregátů z Ultra (licence, usage, workbook orders, Pipedrive) ─────── */
+registerMarketingSnapshotRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Growth metrics: denní pull metrik z Google Ads (GAQL) ─────── */
+registerGrowthMetricsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Growth proposals: pravidlový engine + approval workflow ─────── */
+registerGrowthProposalsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Marketing conversions: denní sync zaplacených objednávek → GA4 MP ─────── */
+registerMarketingConversionsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Offline konverze (Data Manager API): pull z Ultra + upload ─────── */
+registerMarketingOfflineConversionsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Meta Ads: denní pull metrik ─────── */
+registerMetaAdsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
+});
+
+/* ── Marketing alerts: denní kontrola anomálií + Slack ─────── */
+registerMarketingAlertsRoutes({
+  app,
+  requireAdmin: (req) => requireAdminJwt(req),
+  cronSecretOk: (c) => {
+    const secrets = [Deno.env.get('MAILING_CRON_SECRET')?.trim(), Deno.env.get('WEBINAR_REMINDER_CRON_SECRET')?.trim()]
+      .filter((x): x is string => !!x);
+    if (secrets.length === 0) return false;
+    const auth = c.req.header('Authorization')?.replace(/^Bearer\s+/i, '').trim() || '';
+    const hdr = c.req.header('x-cron-secret')?.trim() || '';
+    return secrets.some((sec) => auth === sec || hdr === sec);
+  },
 });
 
 Deno.serve((incoming) => {

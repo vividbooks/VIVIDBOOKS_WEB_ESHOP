@@ -292,6 +292,7 @@ Deno.serve(async (req) => {
     orderNote?: unknown;
     checkoutPaymentMethod?: unknown;
     checkoutDraftId?: unknown;
+    marketingAnonId?: unknown;
   };
 
   try {
@@ -312,7 +313,10 @@ Deno.serve(async (req) => {
   const draftId = typeof payload.checkoutDraftId === 'string'
     ? payload.checkoutDraftId.trim().slice(0, 64)
     : '';
-
+  /** Anonymní ID z prohlížeče — pojítko objednávky na marketing_touchpoints. */
+  const marketingAnonId = typeof payload.marketingAnonId === 'string'
+    ? payload.marketingAnonId.trim().slice(0, 64) || null
+    : null;
   const orderNote = typeof payload.orderNote === 'string'
     ? payload.orderNote.trim().slice(0, 2000) || null
     : null;
@@ -857,7 +861,8 @@ Deno.serve(async (req) => {
               checkout_session_id,
               payment_resume_token,
               idempotency_key,
-              checkout_draft_id
+              checkout_draft_id,
+              marketing_anon_id
             ) values (
               'incomplete',
               ${customer.email.trim()},
@@ -886,7 +891,8 @@ Deno.serve(async (req) => {
               ${checkoutSessionId}::uuid,
               ${resumeToken},
               ${idempotencyKey},
-              ${draftId || null}
+              ${draftId || null},
+              ${marketingAnonId}
             )
             returning id, payment_resume_token
           `;

@@ -22,6 +22,7 @@ import { useStripePublishableKey } from '../../utils/stripe/useStripePublishable
 import { getCartLineKey, useCart } from '../../contexts/CartContext';
 import { useProducts } from '../../contexts/ProductsContext';
 import { projectId, publicAnonKey } from '../../utils/supabase/info';
+import { getMarketingAnonId } from '../../utils/marketingTouchpoints';
 import { InternalCartUpsellSection } from './InternalCartUpsellSection';
 import { BookCoverThumb } from './BookCoverThumb';
 import { CheckoutSummaryCard } from './CheckoutSummaryCard';
@@ -829,6 +830,7 @@ export function CheckoutPage() {
       checkoutPaymentMethod: paymentMethod,
       orderNote: orderNote.trim() || undefined,
       checkoutDraftId: checkoutDraftIdRef.current,
+      marketingAnonId: getMarketingAnonId(),
     };
 
     /** Klíč pro de-duplikaci fetchů — bez `checkoutPaymentMethod` a `checkoutDraftId`, aby přepnutí
@@ -1001,6 +1003,7 @@ export function CheckoutPage() {
         },
         orderNote: orderNote.trim() || undefined,
         checkoutDraftId: checkoutDraftIdRef.current,
+        marketingAnonId: getMarketingAnonId(),
       };
 
       const response = await fetch(SUBMIT_TRANSFER_ORDER_URL, {

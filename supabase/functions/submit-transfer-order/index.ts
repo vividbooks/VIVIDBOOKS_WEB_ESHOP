@@ -260,6 +260,7 @@ Deno.serve(async (req) => {
     schoolInquiry?: unknown;
     orderNote?: unknown;
     checkoutDraftId?: unknown;
+    marketingAnonId?: unknown;
   };
   try {
     payload = await req.json();
@@ -272,6 +273,10 @@ Deno.serve(async (req) => {
   const draftId = typeof payload.checkoutDraftId === 'string'
     ? payload.checkoutDraftId.trim().slice(0, 64)
     : '';
+  /** Anonymní ID z prohlížeče — pojítko objednávky na marketing_touchpoints. */
+  const marketingAnonId = typeof payload.marketingAnonId === 'string'
+    ? payload.marketingAnonId.trim().slice(0, 64) || null
+    : null;
 
   const orderNote = typeof payload.orderNote === 'string'
     ? payload.orderNote.trim().slice(0, 2000)
@@ -570,7 +575,8 @@ Deno.serve(async (req) => {
               total,
               note,
               idempotency_key,
-              checkout_draft_id
+              checkout_draft_id,
+              marketing_anon_id
             ) values (
               'pending_payment',
               ${customer.email.trim()},
@@ -596,7 +602,8 @@ Deno.serve(async (req) => {
               ${total},
               ${noteText},
               ${idempotencyKey},
-              ${draftId || null}
+              ${draftId || null},
+              ${marketingAnonId}
             )
             returning id, order_number
           `;

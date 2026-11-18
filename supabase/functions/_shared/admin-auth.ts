@@ -60,7 +60,7 @@ export function parseAdminAllowlist(): Set<string> {
   const raw = Deno.env.get('ADMIN_ALLOWED_EMAILS')?.trim();
   const list = raw
     ? raw.split(/[,;\n]+/).map((s) => s.trim().toLowerCase()).filter(Boolean)
-    : ['vitek@vividbooks.com', 'dan@vividbooks.com'];
+    : ['vitek@vividbooks.com', 'dan@vividbooks.com', 'ilia.poliakman@gmail.com'];
   return new Set(list);
 }
 

@@ -16,7 +16,7 @@
  *
  * Stav je v KV (klíče gads:*), stejně jako u Growth Agenta.
  */
-import * as kv from './kv_store.tsx';
+import * as kv from './growthKv.ts';
 
 const KEY_DRAFTS = 'gads:drafts';
 const KEY_KEYWORDS = 'gads:keywords';
@@ -27,7 +27,7 @@ const KEY_HISTORY = 'gads:history';
 /** Tvrdý strop, který nejde přepsat nastavením: celkový denní rozpočet kampaně v Kč. */
 export const GADS_HARD_MAX_DAILY_CZK = 1000;
 const CAMPAIGN_NAME = 'Vividbooks – Vyhledávání – Sešity (automat)';
-const DEFAULT_API_VERSION = 'v25';
+const DEFAULT_API_VERSION = 'v26';
 const LANGUAGE_CZECH = 'languageConstants/1021';
 const GEO_CZECHIA = 'geoTargetConstants/2203';
 const UTM = 'utm_source=google&utm_medium=cpc&utm_campaign=vividbooks-search-sesity';
@@ -80,7 +80,7 @@ type KeywordMetric = {
 type Settings = {
   dailyBudgetCzk: number;
   maxCpcCzk: number;
-  campaign?: { resource: string; budget: string; createdAt: string; enabledAt?: string };
+  campaign?: { resource: string; budget: string; createdAt: string; enabledAt?: string; pausedAt?: string };
 };
 
 type FeedItem = {
@@ -317,7 +317,7 @@ async function accessToken(cfg: GadsConfig): Promise<string> {
   return tokenCache.token;
 }
 
-async function gads(cfg: GadsConfig, path: string, body: unknown): Promise<any> {
+export async function gads(cfg: GadsConfig, path: string, body: unknown): Promise<any> {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${await accessToken(cfg)}`,
     'developer-token': cfg.developerToken,
@@ -333,6 +333,10 @@ async function gads(cfg: GadsConfig, path: string, body: unknown): Promise<any> 
   if (!r.ok) {
     const msg = j?.error?.details?.[0]?.errors?.[0]?.message || j?.error?.message || text.slice(0, 300);
     throw new Error(`Google Ads ${r.status}: ${msg}`);
+  }
+  if (j?.partialFailureError) {
+    const msg = j.partialFailureError?.details?.[0]?.errors?.[0]?.message || j.partialFailureError?.message || 'partial failure';
+    throw new Error(`Google Ads partial failure: ${msg}`);
   }
   return j;
 }
@@ -491,7 +495,7 @@ async function ensureCampaign(cfg: GadsConfig, s: Settings): Promise<Settings> {
       campaignCriterionOperation: { create: { campaign: `customers/${cid}/campaigns/-2`, negative: true, keyword: { text, matchType: 'PHRASE' } } },
     })),
   ];
-  const j = await gads(cfg, '/googleAds:mutate', { mutateOperations: ops });
+  const j = await gads(cfg, '/googleAds:mutate', { mutateOperations: ops, partialFailure: true });
   const budget = j.mutateOperationResponses?.[0]?.campaignBudgetResult?.resourceName;
   const campaign = j.mutateOperationResponses?.[1]?.campaignResult?.resourceName;
   if (!campaign || !budget) throw new Error('Google Ads nevrátil identifikátor nové kampaně.');
@@ -517,7 +521,7 @@ async function pushDraft(cfg: GadsConfig, campaign: string, d: Draft): Promise<{
       },
     } } } },
   ];
-  const j = await gads(cfg, '/googleAds:mutate', { mutateOperations: ops });
+  const j = await gads(cfg, '/googleAds:mutate', { mutateOperations: ops, partialFailure: true });
   const res = j.mutateOperationResponses ?? [];
   return {
     adGroup: res[0]?.adGroupResult?.resourceName ?? '',
@@ -565,7 +569,9 @@ export function registerGoogleAdsGrowthRoutes(deps: GoogleAdsGrowthDeps): void {
     const cur = await loadSettings();
     const daily = Number(body.dailyBudgetCzk);
     const cpc = Number(body.maxCpcCzk);
-    if (cur.campaign && (Number.isFinite(daily) && daily !== cur.dailyBudgetCzk)) {
+    // Změna rozpočtu u už spuštěné kampaně patří do Google Ads — ale jen když je
+    // API opravdu připojené. V ukázkovém režimu žádná kampaň neexistuje.
+    if (cur.campaign && gadsConfig() && (Number.isFinite(daily) && daily !== cur.dailyBudgetCzk)) {
       return c.json({ error: 'Kampaň už existuje – změnu rozpočtu proveďte ve Google Ads (změna peněz vyžaduje vaše potvrzení tam).' }, 409);
     }
     const next: Settings = {
@@ -632,9 +638,31 @@ export function registerGoogleAdsGrowthRoutes(deps: GoogleAdsGrowthDeps): void {
     }
     await gads(cfg, '/campaigns:mutate', {
       operations: [{ updateMask: 'status', update: { resourceName: s.campaign.resource, status: 'ENABLED' } }],
+      partialFailure: true,
     });
     s.campaign.enabledAt = nowIso();
     await kv.set(KEY_SETTINGS, s);
     return c.json({ ok: true, enabledAt: s.campaign.enabledAt, dailyBudgetCzk: s.dailyBudgetCzk });
+  }));
+
+  /** Pozastavení kampaně. Nikdy nemaže — jen přepne stav a jde vrátit. */
+  both('post', '/admin/growth-gads/campaign/pause', admin(async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    if (body.confirm !== true) return c.json({ error: 'Pozastavení kampaně vyžaduje confirm: true.' }, 400);
+    const s = await loadSettings();
+    if (!s.campaign) return c.json({ error: 'Kampaň ještě nebyla založena.' }, 409);
+    const cfg = gadsConfig();
+    if (!cfg) {
+      s.campaign.pausedAt = nowIso();
+      await kv.set(KEY_SETTINGS, s);
+      return c.json({ ok: true, mock: true, note: 'Ukázkový režim — kampaň je jen označená jako pozastavená.' });
+    }
+    await gads(cfg, '/campaigns:mutate', {
+      operations: [{ updateMask: 'status', update: { resourceName: s.campaign.resource, status: 'PAUSED' } }],
+      partialFailure: true,
+    });
+    s.campaign.pausedAt = nowIso();
+    await kv.set(KEY_SETTINGS, s);
+    return c.json({ ok: true, pausedAt: s.campaign.pausedAt });
   }));
 }

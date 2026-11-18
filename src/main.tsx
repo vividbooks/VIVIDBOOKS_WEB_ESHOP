@@ -5,6 +5,7 @@ import './index.css';
 import { syncGoogleConsentFromStorage } from './lib/googleConsentMode';
 import { installChunkLoadRecovery } from './utils/installChunkLoadRecovery';
 import { isVividbooksRemovableCacheKey } from './utils/vividbooksLocalStoragePreserve';
+import { captureMarketingTouchpoint } from './utils/marketingTouchpoints';
 
 syncGoogleConsentFromStorage();
 installChunkLoadRecovery();
@@ -21,6 +22,9 @@ if (typeof window !== 'undefined') {
     /* ignore */
   }
 }
+
+// Zachytit click ID / UTM při prvním načtení (best-effort, nesmí blokovat render).
+void captureMarketingTouchpoint();
 
 createRoot(document.getElementById('root')!).render(
   <HelmetProvider>

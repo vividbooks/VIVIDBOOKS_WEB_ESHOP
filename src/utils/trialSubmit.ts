@@ -1,5 +1,6 @@
 import { apiUrl } from './publicSiteUrl';
 import { projectId, publicAnonKey } from './supabase/info';
+import { readCookieConsent } from '../lib/cookieConsentStorage';
 
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
 export const FREE_TRIAL_AJAX_URL = apiUrl('/web/free-trial-ajax');
@@ -371,6 +372,32 @@ export const KABINET_TRIAL_CHECK_URL = `${KABINET_TRIAL_BASE}/check`;
 /** Tělo pro Kabinet — nová jména polí; aliasy ze starého formuláře umí taky. */
 export function buildKabinetTrialBody(fields: FreeTrialFields): Record<string, unknown> {
   const { firstName, lastName, fullName } = splitFullNameForTrial(fields.name);
+  // Atribuce: přenést click ID / UTM z URL nebo localStorage, aby trial/licence
+  // mohly být přiřazeny ke kampani (offline konverze).
+  let gclid: string | null = null;
+  let gbraid: string | null = null;
+  let wbraid: string | null = null;
+  let utmSource: string | null = null;
+  let utmMedium: string | null = null;
+  let utmCampaign: string | null = null;
+  let utmContent: string | null = null;
+  let utmTerm: string | null = null;
+  let anonId: string | null = null;
+  let consentMarketing: boolean | null = null;
+  try {
+    const p = new URLSearchParams(window.location.search);
+    gclid = p.get('gclid');
+    gbraid = p.get('gbraid');
+    wbraid = p.get('wbraid');
+    utmSource = p.get('utm_source');
+    utmMedium = p.get('utm_medium');
+    utmCampaign = p.get('utm_campaign');
+    utmContent = p.get('utm_content');
+    utmTerm = p.get('utm_term');
+    anonId = localStorage.getItem('vb_id');
+    const consent = readCookieConsent();
+    consentMarketing = consent?.marketing === true;
+  } catch { /* ignore */ }
   return {
     reason: 'web',
     ico: fields.vat,
@@ -385,6 +412,16 @@ export function buildKabinetTrialBody(fields: FreeTrialFields): Record<string, u
     schoolStages: fields.schoolStages,
     newsletter: fields.newsletter,
     country: 'cz',
+    gclid,
+    gbraid,
+    wbraid,
+    utm_source: utmSource,
+    utm_medium: utmMedium,
+    utm_campaign: utmCampaign,
+    utm_content: utmContent,
+    utm_term: utmTerm,
+    anon_id: anonId,
+    consent_marketing: consentMarketing,
   };
 }
 
