@@ -30,6 +30,7 @@ import { handleRegistrExportGet, handleRegistrWebinarsGet } from './registrExpor
 import { FOLLOWUP_TRACK_KV_PREFIX } from './webinarRecordingTrack.ts';
 import { handleUltraWatchdogCron, handleUltraWatchdogStatus } from './ultraWatchdog.ts';
 import { forwardPostaEvent, postaEventFromWebhook, registerKabinetPostaRoutes } from './kabinetPosta.ts';
+import { buildPipedriveContactPatch } from './pipedrivePersonContacts.ts';
 import { registerGoogleAdsGrowthRoutes } from './googleAdsGrowth.ts';
 import { registerMarketingSnapshotRoutes } from './marketingSnapshot.ts';
 import { registerGrowthMetricsRoutes } from './growthMetrics.ts';
@@ -16221,7 +16222,11 @@ async function findOrCreatePipedrivePerson(
       const full = (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data;
       if (full) record = full;
     }
-    const patch: Record<string, any> = { ...extraPatch, ...buildCustomFieldFillPayload(record) };
+    /** Telefon / e-mail z objednávky se k osobě PŘIDÁVÁ (PUT by jinak přepsal stávající čísla). */
+    const contactPatch = await buildPipedriveContactPatch(record, { phone, email }, async () =>
+      (await pipedriveRequest<any>(apiToken, `/persons/${personId}`).catch(() => null))?.data ?? null,
+    );
+    const patch: Record<string, any> = { ...extraPatch, ...contactPatch, ...buildCustomFieldFillPayload(record) };
     const subjectBefore = parsePipedrivePersonOptionIds(record?.[subjectMeta?.key ?? '']);
     const stageBefore = parsePipedrivePersonOptionIds(record?.[stageMeta?.key ?? '']);
     console.log(
@@ -16247,13 +16252,12 @@ async function findOrCreatePipedrivePerson(
     return record;
   };
 
-  /** Sestaví patch pro napojení nalezené osoby (org/jméno/telefon). */
+  /** Sestaví patch pro napojení nalezené osoby (org/jméno); telefon a e-mail doplní `updateExistingPerson`. */
   const computeLinkPatch = (found: any): Record<string, any> => {
     const extraPatch: Record<string, any> = {};
     const existingOrgId = parsePipedriveNumericId(found?.org_id?.id ?? found?.org_id?.value ?? found?.org_id);
     if (orgId && existingOrgId !== orgId) extraPatch.org_id = orgId;
     if (name && String(found?.name || '').trim() !== name) extraPatch.name = name;
-    if (phone) extraPatch.phone = phone;
     return extraPatch;
   };
 
@@ -16284,7 +16288,9 @@ async function findOrCreatePipedrivePerson(
 
   if (existing?.id) {
     const personId = parsePipedriveNumericId(existing.id);
-    if (personId) return await updateExistingPerson(personId, existing, {});
+    /** Osoba dohledaná v organizaci (podle e-mailu nebo jména) – dřív se posílal prázdný patch
+     *  a telefon z objednávky se nezapsal (VB-2026-0634, deal 28666). */
+    if (personId) return await updateExistingPerson(personId, existing, computeLinkPatch(existing));
     return existing;
   }
 
