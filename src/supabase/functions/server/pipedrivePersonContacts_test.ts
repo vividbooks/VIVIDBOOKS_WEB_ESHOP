@@ -119,6 +119,30 @@ Deno.test('search hit s jiným číslem → načte plný záznam a zachová št�
   });
 });
 
+Deno.test('search hit s prázdnými phones (zpožděný index) → načte detail a stávající číslo zachová', async () => {
+  let loaded = 0;
+  const patch = await buildPipedriveContactPatch(
+    { phones: [], emails: ['a@b.cz'] },
+    { phone: '+420728161630', email: 'a@b.cz' },
+    async () => {
+      loaded++;
+      return { phone: [{ value: '+420111222333', primary: true, label: 'mobile' }], email: [{ value: 'a@b.cz', primary: true, label: 'work' }] };
+    },
+  );
+  assertEquals(loaded, 1);
+  assertEquals(patch, {
+    phone: [
+      { value: '+420111222333', primary: true, label: 'mobile' },
+      { value: '+420728161630', primary: false, label: 'work' },
+    ],
+  });
+});
+
+Deno.test('search hit bez phones a detail nejde načíst → nic nepřepisovat', async () => {
+  const patch = await buildPipedriveContactPatch({ emails: ['a@b.cz'] }, { phone: '+420728161630' }, async () => null);
+  assertEquals(patch, {});
+});
+
 Deno.test('search hit a plný záznam nejde načíst → nic nepřepisovat', async () => {
   const patch = await buildPipedriveContactPatch({ phones: ['+420111222333'] }, { phone: '+420728161630' }, async () => null);
   assertEquals(patch, {});

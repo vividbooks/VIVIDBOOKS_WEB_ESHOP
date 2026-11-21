@@ -36,8 +36,10 @@ export function normalizePipedriveContactValue(kind: PipedriveContactKind, value
 /** Přečte stávající hodnoty kontaktu osoby (obě podoby odpovědi Pipedrive). */
 export function readPipedriveContactEntries(record: any, kind: PipedriveContactKind): PipedriveContactRead {
   const entries: PipedriveContactEntry[] = [];
-  let complete = true;
   const raw = record?.[kind];
+  /** Plný tvar = pole `phone`/`email` přímo na záznamu. Bez něj (search vrací jen `phones`/`emails`,
+   *  i prázdné, a index může být zpožděný) nevíme, co osoba má → před přepisem načíst detail. */
+  let complete = Array.isArray(raw) || (raw != null && typeof raw === 'object');
   const pushObj = (entry: any) => {
     const value = String(entry?.value ?? '').trim();
     if (!value) return;
