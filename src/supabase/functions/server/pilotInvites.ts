@@ -5,6 +5,9 @@
  *   POST /pilot/invite         { inviterEmail, inviterName, emails[], message, subjects[], mode }
  *        mode 'invite' — pozvánka do školy pozvávajícího (škola musí být v Kabinetu)
  *        mode 'tip'    — tip na pilotáž pro kolegu nebo vedení (bez kódu školy)
+ *        mode 'atlas'  — tip na Atlas zeměpisu zdarma (/atlas-zdarma?pozvanka=<kód>), kampaň listopad 2026
+ *   POST /pilot/ref            { email, name, campaign } → { code }  kód pro sdílitelný odkaz s pozvánkou
+ *        (KV `atlas_ref:<kód>` → kdo zve; kód přijde v poznámce přihlášky do Kabinetu)
  *
  * Kód školy se nikdy nevrací do prohlížeče. Do pozvánky jde jen tehdy, když má kolega adresu
  * ve stejné školní doméně jako pozvávající; ostatním přijde pozvánka bez kódu („kód vám dá …“).
@@ -200,12 +203,41 @@ export function buildTipEmailHtml(opts: { inviterName: string; message: string; 
   });
 }
 
-function buildInviterCopyHtml(opts: { inviterName: string; mode: 'invite' | 'tip'; sent: string[] }): string {
+export function buildAtlasTipEmailHtml(opts: { inviterName: string; message: string; atlasUrl: string }): string {
+  const who = firstName(opts.inviterName);
+  return buildVividbooksBrandShell({
+    title: `${opts.inviterName} vám posílá Atlas zeměpisu`,
+    headerSubtitle: 'Vivid Atlas zdarma pro učitele zeměpisu',
+    headExtra: EMAIL_FORCE_LIGHT_HEAD,
+    content:
+      `<p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#001161;line-height:1.25;">${esc(opts.inviterName)} vám posílá Atlas zeměpisu</p>` +
+      `<p style="margin:0 0 18px;font-size:16px;color:#4a5568;line-height:1.6;">${esc(who)} myslí, že se vám v hodinách zeměpisu bude hodit Vivid Atlas: glóbus, klima, obyvatelstvo, historické mapy a hotové úkoly pro třídu v jedné aplikaci. Pro učitele zeměpisu je zdarma, k tomu dostanete měsíc celé aplikace Vividbooks.</p>` +
+      quote(opts.message) +
+      `<p style="margin:0 0 20px;">${buildVividbooksBrandCta(opts.atlasUrl, 'Chci Atlas zdarma')}</p>` +
+      `<p style="margin:0;font-size:13px;color:#718096;line-height:1.6;">Přihláška zabere minutu. Tenhle e-mail odešel jednorázově na přání odesílatele. Pokud odesílatele neznáte, e-mail ignorujte.</p>`,
+    footerHtml: `<p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">Odesláno přes vividbooks.com (Vividbooks s.r.o.) na přání odesílatele: ${esc(opts.inviterName)}.</p>`,
+  });
+}
+
+/** Kód pozvánky: stabilní pro e-mail (stejný člověk = stejný kód), z adresy se zpět spočítat nedá. */
+async function referralCode(email: string): Promise<string> {
+  return (await sha256Hex(`atlas-ref:${email}`)).slice(0, 10);
+}
+
+async function rememberReferral(email: string, name: string): Promise<string> {
+  const code = await referralCode(email);
+  const key = `atlas_ref:${code}`;
+  const prev = await kv.get(key);
+  if (!prev) await kv.set(key, { email, name, at: new Date().toISOString() });
+  return code;
+}
+
+function buildInviterCopyHtml(opts: { inviterName: string; mode: 'invite' | 'tip' | 'atlas'; sent: string[] }): string {
   const list = opts.sent.map((e) => `<li style="margin:0 0 4px;">${esc(e)}</li>`).join('');
-  const what = opts.mode === 'tip' ? 'tip na pilotáž matematiky' : 'pozvánku do Vividbooks';
+  const what = opts.mode === 'atlas' ? 'odkaz na Atlas zeměpisu' : opts.mode === 'tip' ? 'tip na pilotáž matematiky' : 'pozvánku do Vividbooks';
   return buildVividbooksBrandShell({
     title: 'Pozvánky odešly',
-    headerSubtitle: 'Pilotáž matematiky 2026/27',
+    headerSubtitle: opts.mode === 'atlas' ? 'Vivid Atlas zdarma' : 'Pilotáž matematiky 2026/27',
     headExtra: EMAIL_FORCE_LIGHT_HEAD,
     content:
       `<p style="margin:0 0 8px;font-size:22px;font-weight:800;color:#001161;line-height:1.25;">Poslali jsme ${what}</p>` +
@@ -220,6 +252,18 @@ function json(c: any, body: unknown, status = 200) {
 }
 
 export function registerPilotInviteRoutes(app: Hono, deps: { publicOrigin: () => string }): void {
+  app.post('/make-server-93a20b6f/pilot/ref', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; name?: string };
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!EMAIL_RE.test(email)) return json(c, { ok: false, message: 'Zadejte platný e-mail.' }, 400);
+    try {
+      return json(c, { ok: true, code: await rememberReferral(email, cleanText(body.name, 80)) });
+    } catch (err) {
+      console.error('[pilot/ref]', err instanceof Error ? err.message : err);
+      return json(c, { ok: false }, 500);
+    }
+  });
+
   app.post('/make-server-93a20b6f/pilot/school-lookup', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { email?: string };
     const email = String(body.email || '').trim().toLowerCase();
@@ -243,7 +287,7 @@ export function registerPilotInviteRoutes(app: Hono, deps: { publicOrigin: () =>
 
   app.post('/make-server-93a20b6f/pilot/invite', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    const mode: 'invite' | 'tip' = body.mode === 'tip' ? 'tip' : 'invite';
+    const mode: 'invite' | 'tip' | 'atlas' = body.mode === 'tip' ? 'tip' : body.mode === 'atlas' ? 'atlas' : 'invite';
     const inviterEmail = String(body.inviterEmail || '').trim().toLowerCase();
     const inviterName = cleanText(body.inviterName, 80) || 'Kolega ze školy';
     const message = cleanText(body.message, 600);
@@ -273,6 +317,8 @@ export function registerPilotInviteRoutes(app: Hono, deps: { publicOrigin: () =>
     const schoolName = inviter?.organizationName || 'vaše škola';
     const orgId = inviter?.primaryOrganizationId || null;
     const pilotUrl = `${deps.publicOrigin()}/matematika-pilotovani#prihlaska`;
+    const atlasUrl =
+      mode === 'atlas' ? `${deps.publicOrigin()}/atlas-zdarma?pozvanka=${await rememberReferral(inviterEmail, inviterName)}#prihlaska` : '';
 
     const results: { email: string; status: 'sent' | 'has_account' | 'already_invited' | 'failed' }[] = [];
     for (const email of emails) {
@@ -290,13 +336,20 @@ export function registerPilotInviteRoutes(app: Hono, deps: { publicOrigin: () =>
         }
       }
       const html =
-        mode === 'tip'
+        mode === 'atlas'
+          ? buildAtlasTipEmailHtml({ inviterName, message, atlasUrl })
+          : mode === 'tip'
           ? buildTipEmailHtml({ inviterName, message, pilotUrl })
           : buildInviteEmailHtml({
               inviterName, schoolName, message, subjects,
               teacherCode: inviter?.teacherCode && mayShareCode(inviterEmail, email) ? inviter.teacherCode : null,
             });
-      const subject = mode === 'tip' ? `${inviterName} vám posílá tip na matematiku Vividbooks` : `${inviterName} vás zve do Vividbooks`;
+      const subject =
+        mode === 'atlas'
+          ? `${inviterName} vám posílá Atlas zeměpisu zdarma`
+          : mode === 'tip'
+          ? `${inviterName} vám posílá tip na matematiku Vividbooks`
+          : `${inviterName} vás zve do Vividbooks`;
       const ok = await sendMail({ to: email, subject, html, fromName: `${inviterName} přes Vividbooks`, replyTo: inviterEmail, tag: `pilot_${mode}` });
       results.push({ email, status: ok ? 'sent' : 'failed' });
       if (ok) await kv.set(dedupeKey, { at: new Date().toISOString(), orgId });
@@ -310,7 +363,7 @@ export function registerPilotInviteRoutes(app: Hono, deps: { publicOrigin: () =>
       });
       await sendMail({
         to: inviterEmail,
-        subject: mode === 'tip' ? 'Tip na pilotáž jsme poslali' : 'Pozvánky do Vividbooks odešly',
+        subject: mode === 'atlas' ? 'Atlas jsme kolegům poslali' : mode === 'tip' ? 'Tip na pilotáž jsme poslali' : 'Pozvánky do Vividbooks odešly',
         html: buildInviterCopyHtml({ inviterName, mode, sent }),
         fromName: 'Vividbooks',
         replyTo: 'hello@vividbooks.com',

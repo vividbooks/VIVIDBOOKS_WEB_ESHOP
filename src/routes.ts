@@ -130,6 +130,10 @@ export const router = createBrowserRouter(
           path,
           Component: () => React.createElement(Navigate, { to: '/', replace: true }),
         })),
+        ...['atlas-zdarma', 'kampane/atlas-zemepisu', 'atlas'].map((path) => ({
+          path,
+          lazy: lazyNamed(() => import('./components/AtlasZdarmaLandingPage'), 'AtlasZdarmaLandingPage'),
+        })),
         ...['poradim-se-s-ai', 'kampane/poradim-se-s-ai'].map((path) => ({
           path,
           lazy: lazyNamed(() => import('./components/PoradimSeSAiLandingPage'), 'PoradimSeSAiLandingPage'),
