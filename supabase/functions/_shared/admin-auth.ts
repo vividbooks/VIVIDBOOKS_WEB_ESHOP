@@ -130,3 +130,32 @@ export async function requireAdminJwt(
   }
   return { email: user.email };
 }
+
+/** Porovnání řetězců v konstantním čase (délka se prozradí, obsah ne). */
+function constantTimeEqual(a: string, b: string): boolean {
+  const ea = new TextEncoder().encode(a);
+  const eb = new TextEncoder().encode(b);
+  if (ea.length !== eb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ea.length; i++) diff |= ea[i] ^ eb[i];
+  return diff === 0;
+}
+
+/**
+ * Strojový přístup botů asistenta (server vb-vpn, ~/asistent/web.mjs): hlavička `X-Asistent-Token`
+ * se musí shodovat s Edge secretem `ASISTENT_WEB_TOKEN`. Bez secretu (nebo s krátkým) se nepustí nikdo.
+ */
+export function hasValidAsistentToken(req: Request): boolean {
+  const expected = Deno.env.get('ASISTENT_WEB_TOKEN')?.trim() ?? '';
+  if (expected.length < 24) return false;
+  const got = req.headers.get('X-Asistent-Token')?.trim() ?? '';
+  return got.length > 0 && constantTimeEqual(got, expected);
+}
+
+/** Zápis obsahu webu: přihlášený admin (allowlist) NEBO bot asistenta s `X-Asistent-Token`. */
+export async function requireAdminOrAsistent(
+  req: Request,
+): Promise<{ email: string } | Response> {
+  if (hasValidAsistentToken(req)) return { email: 'asistent@vb-vpn' };
+  return requireAdminJwt(req);
+}

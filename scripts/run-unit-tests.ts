@@ -20,6 +20,7 @@ import {
   estimateTeachersFromPupils, isDirectorPosition, milestoneTargetForTeachers, normalizeStaffroomCode, recountStaffroom, resolveAccessLevel, schoolDomainFromEmail, schoolStatusFrom, staffroomCodeFromRandom, teacherTypeFromAnswers, domainFromWebOrEmail, directorTrustedByDomain, maskEmail,
 } from '../src/supabase/functions/server/dvpp/milestones.ts';
 import { parseChapters, formatTime, currentChapterIndex, pickNewVideos, digestSubject, dedupeVideosByName } from '../src/supabase/functions/server/dvpp/content.ts';
+import { isProtectedContentWrite } from '../src/supabase/functions/server/contentWriteGuard.ts';
 import { computeOrderTrackingToken, verifyOrderTrackingToken } from '../supabase/functions/_shared/order-tracking-token.ts';
 import { matchDvppVideoForWebinar } from '../supabase/functions/_shared/dvpp-video-match.ts';
 import { BASE_COMPANY_MAX_LENGTH, trimCompanyNameForBase } from '../supabase/functions/_shared/base-company-name.ts';
@@ -241,6 +242,39 @@ registerTest('computeOrderTrackingToken is deterministic', async () => {
 
   assert.equal(first, second);
   assert.match(first, /^[0-9a-f]{32}$/);
+});
+
+registerTest('isProtectedContentWrite guards content writes and leaves reads open', () => {
+  const guarded: [string, string][] = [
+    ['POST', '/make-server-93a20b6f/admin/webinare'],
+    ['PUT', '/make-server-93a20b6f/admin/webinare/123'],
+    ['DELETE', '/admin/blog/abc'],
+    ['POST', '/make-server-93a20b6f/admin/blog/publish-all'],
+    ['PATCH', '/make-server-93a20b6f/admin/hero-slidy/reorder'],
+    ['PUT', '/make-server-93a20b6f/admin/fixed-pages/x'],
+    ['DELETE', '/make-server-93a20b6f/admin/predmety/x'],
+    ['POST', '/make-server-93a20b6f/admin/notifikace'],
+    ['POST', '/make-server-93a20b6f/admin/novinky'],
+    ['POST', '/make-server-93a20b6f/admin/seed/webinare'],
+    ['POST', '/make-server-93a20b6f/products'],
+    ['PUT', '/make-server-93a20b6f/products/p1'],
+    ['DELETE', '/make-server-93a20b6f/images/foo.png'],
+    ['POST', '/make-server-93a20b6f/clear-products'],
+    ['post', '/functions/v1/make-server-93a20b6f/admin/tabs/'],
+    ['DELETE', '/make-server-93a20b6f/admin/product-bundles/b1'],
+  ];
+  for (const [m, p] of guarded) assert.equal(isProtectedContentWrite(m, p), true, `${m} ${p}`);
+  const open: [string, string][] = [
+    ['GET', '/make-server-93a20b6f/admin/webinare'],
+    ['GET', '/make-server-93a20b6f/products'],
+    ['OPTIONS', '/make-server-93a20b6f/admin/blog'],
+    ['POST', '/make-server-93a20b6f/public/products'],
+    ['POST', '/make-server-93a20b6f/admin/webinare-registrace'],
+    ['POST', '/make-server-93a20b6f/products-sync'],
+    ['POST', '/make-server-93a20b6f/upload-image'],
+    ['POST', '/make-server-93a20b6f/admin/sync-product-prices'],
+  ];
+  for (const [m, p] of open) assert.equal(isProtectedContentWrite(m, p), false, `${m} ${p}`);
 });
 
 registerTest('verifyOrderTrackingToken accepts valid token and rejects invalid token', async () => {
