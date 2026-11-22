@@ -45,7 +45,7 @@ export async function fetchCollection(name: CollectionName): Promise<any[]> {
 export async function createItem(collection: CollectionName, item: any): Promise<any> {
   const res = await fetch(`${BASE}/${collection}`, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(item),
   });
   if (!res.ok) {
@@ -58,7 +58,7 @@ export async function createItem(collection: CollectionName, item: any): Promise
 export async function updateItem(collection: CollectionName, id: string, updates: any): Promise<void> {
   const res = await fetch(`${BASE}/${collection}/${id}`, {
     method: 'PUT',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(updates),
   });
   if (!res.ok) {
@@ -70,7 +70,7 @@ export async function updateItem(collection: CollectionName, id: string, updates
 export async function deleteItem(collection: CollectionName, id: string): Promise<void> {
   const res = await fetch(`${BASE}/${collection}/${id}`, {
     method: 'DELETE',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
   });
   if (!res.ok) {
     const err = await res.text();
@@ -116,7 +116,7 @@ export async function reorderHeroSlides(orderedIds: string[]): Promise<void> {
 export async function seedCollection(collection: string, items: any[]): Promise<void> {
   const res = await fetch(`${BASE}/seed/${collection}`, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify({ items }),
   });
   if (!res.ok) {
@@ -143,7 +143,7 @@ export async function fetchProducts(): Promise<any[]> {
 export async function createProduct(product: any): Promise<any> {
   const res = await fetch(`${PRODUCTS_BASE}/products`, {
     method: 'POST',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(product),
   });
   return res.json();
@@ -152,7 +152,7 @@ export async function createProduct(product: any): Promise<any> {
 export async function updateProduct(id: string, updates: any): Promise<void> {
   await fetch(`${PRODUCTS_BASE}/products/${id}`, {
     method: 'PUT',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
     body: JSON.stringify(updates),
   });
 }
@@ -160,7 +160,7 @@ export async function updateProduct(id: string, updates: any): Promise<void> {
 export async function deleteProduct(id: string): Promise<void> {
   await fetch(`${PRODUCTS_BASE}/products/${id}`, {
     method: 'DELETE',
-    headers: HEADERS,
+    headers: await edgeAdminHeaders(),
   });
 }
 

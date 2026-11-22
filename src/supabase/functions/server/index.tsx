@@ -65,7 +65,8 @@ import { runWebinarAudienceRecompute } from './webinarAudienceRecompute.ts';
 import { runMailchimpEngagementRatingsSync } from './mailchimpEngagementSync.ts';
 import { encodeBase64 } from 'jsr:@std/encoding/base64';
 import { upsertSiteIncident } from '../../../../supabase/functions/_shared/site-incidents.ts';
-import { requireAdminJwt, requireStaffJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
+import { isProtectedContentWrite } from './contentWriteGuard.ts';
+import { requireAdminJwt, requireAdminOrAsistent, requireStaffJwt } from '../../../../supabase/functions/_shared/admin-auth.ts';
 import { resolveAllowedOrigin } from '../../../../supabase/functions/_shared/cors.ts';
 import { EMAIL_FORCE_LIGHT_HEAD } from '../../../../supabase/functions/_shared/email-force-light.ts';
 import { matchDvppVideoForWebinar } from '../../../../supabase/functions/_shared/dvpp-video-match.ts';
@@ -1447,6 +1448,26 @@ app.use('/*', async (c, next) => {
       if (gate instanceof Response) return gate;
     } else {
       console.warn('[mailing-auth] legacy client without user JWT — allowing (deploy frontend with X-User-Access-Token)');
+    }
+  }
+  await next();
+});
+/**
+ * Zápis obsahu webu (webináře, blog, novinky, hero, stránky, předměty, záložky, notifikace,
+ * balíčky, produkty, mazání obrázků, seed) — dřív stačil veřejný anon klíč, takže kdokoli mohl
+ * obsah přepsat nebo smazat. Teď jen přihlášený admin (`X-User-Access-Token`, allowlist)
+ * nebo bot asistenta (`X-Asistent-Token` = secret `ASISTENT_WEB_TOKEN`). GET zůstává veřejný.
+ * Odmítá se až se secretem `CONTENT_WRITE_AUTH=enforce`; bez něj jen varování v logu.
+ */
+app.use('/*', async (c, next) => {
+  const pathname = new URL(c.req.url).pathname;
+  if (isProtectedContentWrite(c.req.method, pathname)) {
+    const gate = await requireAdminOrAsistent(c.req.raw);
+    if (gate instanceof Response) {
+      // Přechod: dokud není secret CONTENT_WRITE_AUTH=enforce, jen logujeme (admin frontend
+      // a boti se musí nasadit dřív, než se zápis bez přihlášení začne odmítat).
+      if (Deno.env.get('CONTENT_WRITE_AUTH')?.trim().toLowerCase() === 'enforce') return gate;
+      console.warn(`[content-write-auth] WOULD BLOCK ${c.req.method} ${pathname} (status ${gate.status}) — mode=log`);
     }
   }
   await next();

@@ -4,11 +4,13 @@ import App from './App.tsx';
 import './index.css';
 import { syncGoogleConsentFromStorage } from './lib/googleConsentMode';
 import { installChunkLoadRecovery } from './utils/installChunkLoadRecovery';
+import { installAdminWriteAuth } from './lib/installAdminWriteAuth';
 import { isVividbooksRemovableCacheKey } from './utils/vividbooksLocalStoragePreserve';
 import { captureMarketingTouchpoint } from './utils/marketingTouchpoints';
 
 syncGoogleConsentFromStorage();
 installChunkLoadRecovery();
+installAdminWriteAuth();
 
 // Stará verze ukládala celý katalog do localStorage a vyčerpala kvótu — OAuth pak nemohl zapsat session.
 // Pozor: nemazat košík, cookie consent, checkout adresy, DVPP identity (viz vividbooksLocalStoragePreserve).
