@@ -92,7 +92,7 @@ function buildHeadInjection(page) {
 
   return `
     <!-- SEO prerender (build-time) -->
-    <link rel="canonical" href="${escapeAttr(canonical)}" />
+    <link rel="canonical" href="${escapeAttr(canonical)}" />${page.noIndex ? '\n    <meta name="robots" content="noindex, nofollow" />' : ''}
     <meta property="og:title" content="${escapeAttr(title)}" />
     <meta property="og:description" content="${escapeAttr(description)}" />
     <meta property="og:url" content="${escapeAttr(canonical)}" />
@@ -591,10 +591,45 @@ function loadSitemapPaths() {
   return [...new Set(paths)];
 }
 
+/**
+ * Samostatné stránky pozic (Kariéra) — hlavně kvůli náhledu odkazu při sdílení (název pozice
+ * místo obecného Vividbooks). Texty: src/data/careerPositions.json, adresy a zveřejnění:
+ * src/config/careerPreview.ts. Neveřejné adresy dostanou noindex.
+ */
+function careerPositionPages() {
+  try {
+    const config = readFileSync(path.join(root, 'src/config/careerPreview.ts'), 'utf8');
+    const previewPath = config.match(/CAREER_PREVIEW_PATH\s*=\s*'([^']+)'/)?.[1];
+    const publicPath = config.match(/CAREER_PUBLIC_PATH\s*=\s*'([^']+)'/)?.[1];
+    const isPublic = /CAREER_PUBLIC\s*=\s*true/.test(config);
+    const positions = JSON.parse(readFileSync(path.join(root, 'src/data/careerPositions.json'), 'utf8'));
+    const pages = [];
+    for (const position of positions) {
+      if (!position?.published || !position.id || !position.title) continue;
+      const base = {
+        title: `${position.title} – kariéra`,
+        description: position.intro,
+        h1: position.title,
+        h2: position.place,
+        answer: `Vividbooks hledá do týmu: ${position.title} (${position.place}).`,
+      };
+      if (previewPath) pages.push({ ...base, path: `${previewPath}/${position.id}`, noIndex: true });
+      if (isPublic && publicPath) pages.push({ ...base, path: `${publicPath}/${position.id}` });
+    }
+    return pages;
+  } catch (e) {
+    console.warn('[prerender-seo] Stránky pozic (Kariéra) přeskočeny:', e?.message || e);
+    return [];
+  }
+}
+
 async function collectPages(productsBySlug, homepageHeroOg = null, unpublishedSlugs = new Set()) {
   const byPath = new Map();
   for (const page of SEO_PAGES) {
     byPath.set(page.path, { ...page });
+  }
+  for (const page of careerPositionPages()) {
+    byPath.set(page.path, page);
   }
 
   // Homepage: OG z prvního hero slideru (aktuální kampaň), ne obecný og-image.png.

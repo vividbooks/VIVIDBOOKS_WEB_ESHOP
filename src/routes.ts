@@ -8,7 +8,7 @@ import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
 import { TEST_HOMEPAGE_PATH } from './config/testHomepage';
 import { RELEASE_PLAN_PATH } from './config/releasePlan';
-import { CAREER_PREVIEW_PATH } from './config/careerPreview';
+import { CAREER_PREVIEW_PATH, CAREER_PUBLIC, CAREER_PUBLIC_PATH } from './config/careerPreview';
 
 /** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
 function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
@@ -268,6 +268,20 @@ export const router = createBrowserRouter(
                 return { Component: () => React.createElement(ContactPage, { careerPreview: true }) };
               },
             },
+            // Samostatná stránka jedné pozice (jde poslat jako odkaz). Neveřejná adresa platí vždy,
+            // veřejná až po zveřejnění Kariéry.
+            {
+              path: `${CAREER_PREVIEW_PATH.slice(1)}/:positionId`,
+              lazy: lazyDefault(() => import('./components/CareerPositionPage')),
+            },
+            ...(CAREER_PUBLIC
+              ? [
+                  {
+                    path: `${CAREER_PUBLIC_PATH.slice(1)}/:positionId`,
+                    lazy: lazyDefault(() => import('./components/CareerPositionPage')),
+                  },
+                ]
+              : []),
             { path: 'odhlaseni-z-newsletteru', lazy: lazyNamed(() => import('./components/NewsletterUnsubscribePage'), 'NewsletterUnsubscribePage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
           ],

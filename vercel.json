@@ -15,6 +15,10 @@
     {
       "source": "/kontakt-kariera-k7p3wd",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/kontakt-kariera-k7p3wd/:path*",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
   "rewrites": [
