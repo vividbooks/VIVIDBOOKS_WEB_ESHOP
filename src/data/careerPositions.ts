@@ -18,6 +18,10 @@ export type CareerPosition = {
   published: boolean;
 };
 
+/** Odstavec o firmě nahoře v Kariéře i na stránce každé pozice (zadal Vítek 23. 11.). */
+export const CAREER_ABOUT =
+  'Vividbooks mění české školy. Chceme, aby se děti učily aktivně: samy zkoumají, počítají a řeší úlohy, místo aby jen poslouchaly výklad, a učitel je při tom provází. Dělat to pomáhají naše interaktivní učebnice a pracovní sešity pro základní školy, se kterými dnes učí stovky škol.';
+
 export const CAREER_CONTACT_EMAIL = 'vitek@vividbooks.com';
 
 export const CAREER_POSITIONS: CareerPosition[] = positions;

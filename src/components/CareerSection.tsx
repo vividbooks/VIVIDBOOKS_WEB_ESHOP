@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router';
 import { careerPositionPath } from '../config/careerPreview';
-import { CAREER_CONTACT_EMAIL, CAREER_POSITIONS, type CareerPosition } from '../data/careerPositions';
+import { CAREER_ABOUT, CAREER_CONTACT_EMAIL, CAREER_POSITIONS, type CareerPosition } from '../data/careerPositions';
 import { CareerPositionContent, CopyPositionLinkButton, careerFont as ff, careerMailto } from './CareerPositionContent';
 
 function PositionCard({ position }: { position: CareerPosition }) {
@@ -85,7 +85,13 @@ export default function CareerSection() {
           className="text-[#001161]/70 text-[15px] text-center max-w-[560px] mx-auto leading-relaxed mb-10"
           style={{ fontFamily: ff }}
         >
-          Vividbooks dělá interaktivní učebnice a pracovní sešity pro základní školy. Do týmu teď hledáme tyto kolegy:
+          {CAREER_ABOUT}
+        </p>
+        <p
+          className="text-[#001161]/70 text-[15px] text-center max-w-[560px] mx-auto leading-relaxed mb-10"
+          style={{ fontFamily: ff }}
+        >
+          Do týmu teď hledáme tyto kolegy:
         </p>
         <div className="flex flex-col gap-4">
           {positions.map((position) => (

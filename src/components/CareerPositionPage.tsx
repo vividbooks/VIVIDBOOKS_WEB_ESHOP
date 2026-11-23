@@ -1,7 +1,7 @@
 import { ArrowLeft, ArrowRight, Mail, MapPin } from 'lucide-react';
 import { Link, useParams } from 'react-router';
 import { CAREER_PUBLIC, careerListPath, careerPositionPath } from '../config/careerPreview';
-import { CAREER_CONTACT_EMAIL, CAREER_POSITIONS, findCareerPosition } from '../data/careerPositions';
+import { CAREER_ABOUT, CAREER_CONTACT_EMAIL, CAREER_POSITIONS, findCareerPosition } from '../data/careerPositions';
 import { CareerPositionContent, CopyPositionLinkButton, careerFont, careerMailto } from './CareerPositionContent';
 import { NotFound } from './NotFound';
 import { SEOHead } from './SEOHead';
@@ -41,6 +41,8 @@ export default function CareerPositionPage() {
           <MapPin className="h-4 w-4 shrink-0" aria-hidden />
           {position.place}
         </p>
+
+        <p className="mt-6 text-[#001161]/80 text-[16px] leading-relaxed max-w-[640px]">{CAREER_ABOUT}</p>
 
         <div className="mt-6">
           <CopyPositionLinkButton position={position} />
