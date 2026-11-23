@@ -11,6 +11,10 @@
     {
       "source": "/plan-vydani-q7m4tx",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/kontakt-kariera-k7p3wd",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
   "rewrites": [

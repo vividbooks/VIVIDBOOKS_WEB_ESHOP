@@ -8,6 +8,7 @@ import { RouteHydrateFallback } from './components/RouteHydrateFallback';
 import Root from './components/Root';
 import { TEST_HOMEPAGE_PATH } from './config/testHomepage';
 import { RELEASE_PLAN_PATH } from './config/releasePlan';
+import { CAREER_PREVIEW_PATH } from './config/careerPreview';
 
 /** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
 function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
@@ -259,6 +260,14 @@ export const router = createBrowserRouter(
             },
             { path: 'vividboard', lazy: lazyNamed(() => import('./components/VividboardPage'), 'VividboardPage') },
             { path: 'kontakt', lazy: lazyNamed(() => import('./components/ContactPage'), 'ContactPage') },
+            // Neveřejný náhled stránky Kontakt se sekcí Kariéra (noindex, nikde neodkázaný).
+            {
+              path: CAREER_PREVIEW_PATH.slice(1),
+              lazy: async () => {
+                const { ContactPage } = await import('./components/ContactPage');
+                return { Component: () => React.createElement(ContactPage, { careerPreview: true }) };
+              },
+            },
             { path: 'odhlaseni-z-newsletteru', lazy: lazyNamed(() => import('./components/NewsletterUnsubscribePage'), 'NewsletterUnsubscribePage') },
             { path: '*', lazy: lazyNamed(() => import('./components/NotFound'), 'NotFound') },
           ],

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, lazy, Suspense } from 'react';
 import { SEOHead } from './SEOHead';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { Send, Mail, ShoppingCart, Calendar, FileText, Rss, ExternalLink } from 'lucide-react';
@@ -7,6 +7,10 @@ import imgVitekSkop from '../assets/team/vitek-skop.png';
 import imgFrantisekCab from '../assets/team/frantisek-cab.png';
 import { CONTACT_REPRESENTATIVES } from '../data/contactRepresentatives';
 import { openCookieSettings } from '@/lib/cookieConsentStorage';
+import { CAREER_PREVIEW_PATH, CAREER_PUBLIC } from '../config/careerPreview';
+
+/** Inzeráty se načítají zvlášť, jen když se sekce Kariéra opravdu zobrazuje. */
+const CareerSection = lazy(() => import('./CareerSection'));
 
 /* ─── Obchodní zástupci ─────────────────────────────────────────── */
 const REPRESENTATIVES = CONTACT_REPRESENTATIVES;
@@ -488,12 +492,14 @@ function AiChat() {
 }
 
 /* ─── Hlavní stránka ─────────────────────────────────────────────── */
-export function ContactPage() {
+export function ContactPage({ careerPreview = false }: { careerPreview?: boolean }) {
+  const showCareer = CAREER_PUBLIC || careerPreview;
   return (
     <div className="min-h-screen bg-white">
       <SEOHead
         title="Kontakt"
-        path="/kontakt"
+        path={careerPreview ? CAREER_PREVIEW_PATH : '/kontakt'}
+        noIndex={careerPreview}
         description="Kontaktujte Vividbooks: telefon +420 602 227 674, e-mail hello@vividbooks.com. Obchodní zástupci po krajích, redakce a distribuce."
       />
 
@@ -604,6 +610,13 @@ export function ContactPage() {
           </div>
         </div>
       </section>
+
+      {/* ══ Kariéra (zatím jen na neveřejné adrese — viz config/careerPreview.ts) ══ */}
+      {showCareer ? (
+        <Suspense fallback={null}>
+          <CareerSection />
+        </Suspense>
+      ) : null}
 
       {/* Oddělovač */}
       <div className="border-t border-[#001161]/8 mx-6" />
