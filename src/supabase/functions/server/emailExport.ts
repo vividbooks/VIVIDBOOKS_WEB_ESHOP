@@ -30,6 +30,8 @@ export const EMAIL_BODY_MOBILE_CSS = `
   line-height: 1.4 !important;
 }
 @media only screen and (max-width: 600px) {
+  /* Builder ukládá kořen s width:600px – na telefonu by roztáhl celý mail přes displej. */
+  .vb-email-root { width: 100% !important; max-width: 100% !important; }
   .vb-email-root p,
   .vb-email-root li { font-size: 15px !important; line-height: 1.65 !important; }
   .vb-email-root h1 { font-size: 26px !important; line-height: 1.25 !important; }

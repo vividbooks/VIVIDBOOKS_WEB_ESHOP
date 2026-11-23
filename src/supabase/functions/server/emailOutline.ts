@@ -445,7 +445,7 @@ function compileOne(block: OutlineBlock): string {
 }
 
 const MOBILE_STYLE =
-  '<style type="text/css">@media only screen and (max-width:600px){.vb-email-root p,.vb-email-root li{font-size:15px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color:#7C3AED"]{font-size:15px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt,.vb-web-split-img,.vb-web-split-txt,.vb-inf-col{display:block!important;width:100%!important}}</style>';
+  '<style type="text/css">@media only screen and (max-width:600px){.vb-email-root{width:100%!important;max-width:100%!important}.vb-email-root p,.vb-email-root li{font-size:15px!important;line-height:1.65!important}.vb-email-root h1{font-size:26px!important}.vb-email-root h2{font-size:22px!important}.vb-email-root h3{font-size:19px!important}.vb-email-root a[style*="background-color:#F06632"],.vb-email-root a[style*="background-color:#7C3AED"]{font-size:15px!important;padding:16px 28px!important;display:inline-block!important}.vb-prod-img,.vb-prod-txt,.vb-web-split-img,.vb-web-split-txt,.vb-inf-col{display:block!important;width:100%!important}}</style>';
 
 /** Složí HTML bloky editoru. Loose top-level text zabalí do karty. */
 export function compileOutlineToHtml(blocks: OutlineBlock[], opts?: { fragment?: boolean }): string {
