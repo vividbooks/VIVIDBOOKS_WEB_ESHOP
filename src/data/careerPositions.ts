@@ -99,32 +99,34 @@ export const CAREER_POSITIONS: CareerPosition[] = [
     title: 'Asistent / asistentka obchodu',
     place: 'Na dálku, odkudkoli z Česka',
     intro:
-      'Naši obchodníci tráví čím dál víc času na školách. Hledáme někoho, kdo jim bude krýt záda: připraví nabídky, pohlídá termíny a postará se, aby žádná škola nezůstala bez odpovědi. Pracovat můžete z domova.',
+      'Naši obchodníci jsou na školách a každá hodina ukázky se počítá. Hledáme někoho, kdo jim ukázky domluví, bude s nimi úzce spolupracovat a bude pro ně hledat příležitosti, kde se dá prodat. Pracovat můžete z domova.',
     sections: [
       {
         heading: 'Co budete dělat',
         items: [
-          'Připravovat nabídky, objednávky a podklady k fakturaci.',
+          'Domlouvat obchodníkům prezentace a ukázky na školách: oslovíte školu, najdete termín a pohlídáte, aby se ukázka opravdu konala.',
+          'Úzce spolupracovat s obchodníky: znát jejich regiony, plány a priority a být jim po ruce.',
+          'Hledat příležitosti: školy, které zkoušely naše přístupy, přišly na webinář nebo jim končí licence, a předávat je obchodníkům hotové k oslovení.',
           'Udržovat pořádek v CRM: kontakty škol, obchody a úkoly.',
-          'Odpovídat učitelům a školám na e-maily a telefonáty (přístupy, licence, objednávky sešitů) a složitější věci předávat kolegům.',
-          'Hlídat zkušební přístupy a končící licence a včas je připomínat obchodníkům.',
-          'Domlouvat termíny ukázek a školení na školách.',
-          'Pomáhat s agendou kolem webinářů.',
+          'Po ukázkách navázat, nabídnout další krok a pohlídat, aby žádná škola nezůstala bez odpovědi.',
+          'Pomáhat s podklady, nabídkami a agendou kolem webinářů.',
         ],
       },
       {
         heading: 'Co byste měli umět',
         items: [
-          'Jste spolehliví a pečliví a umíte pracovat samostatně i na dálku.',
-          'Píšete bezchybnou češtinou a po telefonu jednáte příjemně a věcně.',
+          'Umíte oslovit cizího člověka po telefonu i e-mailem a nevadí vám dohánět odpověď.',
+          'Jste spolehliví, pečliví a umíte pracovat samostatně i na dálku.',
+          'Píšete bezchybnou češtinou a jednáte příjemně a věcně.',
           'Nedělají vám potíže tabulky a rádi se naučíte CRM a další nástroje.',
-          'Výhodou je zkušenost z obchodu, ze zákaznické podpory nebo ze školy.',
+          'Výhodou je zkušenost z obchodu, z obchodního zázemí nebo ze školy.',
         ],
       },
       {
         heading: 'Co nabízíme',
         items: [
           'Práci z domova a pružnou pracovní dobu.',
+          'Práci v těsném kontaktu s obchodníky a se zakladateli.',
           'Důkladné zaučení a kolegy, kteří poradí.',
           'Smysluplný obor: pomáháte učitelům učit lépe.',
         ],
