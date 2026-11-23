@@ -4,6 +4,16 @@ Postup, podle kterého vznikají newslettery jako `atlas-zdarma-newsletter-2026-
 Stejná pravidla má v systémovém promptu i webový operátor (`/admin/agent`).
 Všechno se spouští z kořene repa webu.
 
+**Bez terminálu to jde přímo v adminu:**
+
+- **Webový operátor (`/admin/agent`):** obrázek nebo video stačí přiložit do chatu.
+  - Screenshot se sám převede na JPG 1200 px a uloží natrvalo.
+  - Z videa vznikne náhled s tlačítkem play a agent dostane jeho adresu, odkaz na video i délku.
+- **EmailBuilder:** obrázek vložený do mailu se taky převede na JPG.
+- **Kontrola na telefonu:** tlačítko „Náhled na mobilu“ nad testovacím odesláním.
+
+Skript níž dělá totéž z terminálu.
+
 ## 1. Screenshoty
 
 Fotí se skutečná aplikace, ne ilustrace. Na konkrétním obrazovkovém stavu záleží:

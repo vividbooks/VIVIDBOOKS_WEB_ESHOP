@@ -15,7 +15,7 @@ import {
   GripVertical,
   BetweenVerticalStart,
   Bold, Italic, Underline, Strikethrough, Link2, Unlink, List, ListOrdered,
-  SpellCheck,
+  SpellCheck, Smartphone,
 } from 'lucide-react';
 import { toast } from 'sonner@2.0.3';
 import { projectId } from '../../utils/supabase/info';
@@ -125,6 +125,7 @@ import {
   type MailingAudienceFilter,
 } from '../../lib/mailingAudienceFilter';
 import { WEBINAR_AUDIENCE_DEFS } from '../../lib/webinarAudienceClassify';
+import { imageToEmailJpeg } from '../../utils/emailMedia';
 
 /** Přetahování typu bloku z knihovny do iframe náhledu (HTML5 DnD). */
 const VB_EMAIL_LIBRARY_DRAG_TYPE = 'application/x-vb-email-block-type';
@@ -3948,6 +3949,9 @@ export default function EmailBuilder() {
   const [mailingPreparing, setMailingPreparing] = useState(false);
   const [mailingSending, setMailingSending] = useState(false);
   const [sendingResendTest, setSendingResendTest] = useState(false);
+  /** Uložené celé HTML draftu pro náhled v telefonu (390 px); null = zavřeno. */
+  const [mobilePreviewHtml, setMobilePreviewHtml] = useState<string | null>(null);
+  const [mobilePreviewLoading, setMobilePreviewLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [toolPanelMode, setToolPanelMode] = useState<'ai' | 'block' | 'settings'>('ai');
   /** Mailchimp-styl: při otevřeném draftu schovat seznam a nechat workspace editor. */
@@ -4527,7 +4531,9 @@ export default function EmailBuilder() {
       setEmailImageUploading(true);
       try {
         const fd = new FormData();
-        fd.append('file', file);
+        // Do mailu vždy JPG max. 1200 px – Outlook nezobrazí webp a PNG screenshoty bývají těžké.
+        const emailFile = await imageToEmailJpeg(file).catch(() => file);
+        fd.append('file', emailFile);
         const res = await fetch(`${SERVER}/upload-image`, { method: 'POST', headers: await authHeadersNoCt(), body: fd });
         const data = await res.json();
         const newUrl = (data && (data.url as string)) || '';
@@ -7308,6 +7314,24 @@ export default function EmailBuilder() {
     }
   };
 
+  /** Náhled na mobilu: uloží draft a ukáže výsledné HTML (stejné jako jde ven) v telefonu širokém 390 px. */
+  const openMobilePreview = async () => {
+    const snap = selectedRef.current;
+    if (!snap) return;
+    setMobilePreviewLoading(true);
+    try {
+      const saved = await saveDraft(snap, { quiet: true });
+      const html = saved?.fullHtml || '';
+      if (!html) {
+        toast.error('Náhled se nepodařilo připravit – uložte draft a zkuste to znovu.');
+        return;
+      }
+      setMobilePreviewHtml(html);
+    } finally {
+      setMobilePreviewLoading(false);
+    }
+  };
+
   /** Test e-mail přes vlastní mailing (Resend) — stejná šablona jako ostrá kampaň. */
   const sendResendTestMail = async () => {
     const snap = selectedRef.current;
@@ -8761,6 +8785,49 @@ export default function EmailBuilder() {
                 </button>
 
                 <div className="mt-4 rounded-xl border border-gray-200 bg-[#fafbfd] p-4 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => void openMobilePreview()}
+                    disabled={mobilePreviewLoading}
+                    className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-[12px] font-bold text-[#001161] hover:border-[#7C3AED]/35 hover:text-[#7C3AED] disabled:opacity-45 disabled:pointer-events-none transition-all cursor-pointer"
+                    style={F}
+                  >
+                    {mobilePreviewLoading ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden /> : <Smartphone className="w-4 h-4" aria-hidden />}
+                    Náhled na mobilu
+                  </button>
+                  {mobilePreviewHtml !== null &&
+                    createPortal(
+                      <div
+                        className="fixed inset-0 z-[1000] flex items-center justify-center bg-[#001161]/55 p-4"
+                        onClick={() => setMobilePreviewHtml(null)}
+                        role="dialog"
+                        aria-label="Náhled e-mailu na mobilu"
+                      >
+                        <div className="relative flex max-h-full flex-col items-center" onClick={(e) => e.stopPropagation()}>
+                          <div className="mb-2 flex w-[414px] max-w-full items-center justify-between text-white" style={F}>
+                            <span className="text-[12px] font-bold">Mobil · 390 px</span>
+                            <button
+                              type="button"
+                              onClick={() => setMobilePreviewHtml(null)}
+                              className="rounded-full p-1 hover:bg-white/15 cursor-pointer"
+                              aria-label="Zavřít náhled"
+                            >
+                              <X className="w-5 h-5" aria-hidden />
+                            </button>
+                          </div>
+                          <div className="rounded-[36px] bg-[#0b0f1a] p-3 shadow-2xl">
+                            <iframe
+                              title="Náhled e-mailu na mobilu"
+                              srcDoc={mobilePreviewHtml}
+                              sandbox="allow-popups allow-popups-to-escape-sandbox"
+                              className="block rounded-[26px] bg-white"
+                              style={{ width: 390, height: 'min(780px, calc(100vh - 120px))', border: 0 }}
+                            />
+                          </div>
+                        </div>
+                      </div>,
+                      document.body,
+                    )}
                   <label style={F} className="block text-[10px] font-bold uppercase tracking-[0.1em] text-[#7C3AED]/80 mb-0">
                     Testovací odeslání
                   </label>

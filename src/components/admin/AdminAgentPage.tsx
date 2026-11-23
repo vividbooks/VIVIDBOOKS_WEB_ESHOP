@@ -20,6 +20,7 @@ import { useWebOperatorChatsBridge } from '../../contexts/WebOperatorChatsBridge
 import { previewCtaUrl } from '../../utils/publicSiteUrl';
 import CollageModal from './CollageModal';
 import { fetchGenerateEmailWithRetry, getStoredEmailAiTier } from '../../utils/emailAiTier';
+import { formatVideoDuration, imageToEmailJpeg, uploadPublicMedia, videoPosterWithPlay } from '../../utils/emailMedia';
 import ContentCanvas, { isCanvasWorthy, detectCanvasType, CanvasDataSource } from './ContentCanvas';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -65,6 +66,7 @@ function agentMessagesToImportedEmailChatHistory(msgs: Msg[]): Array<{ id: strin
 }
 
 type Role = 'user' | 'assistant';
+interface PendingImage { url: string; name: string; video?: { url: string; durationSec: number } }
 interface Msg { id: string; role: Role; content: string; actions?: Action[]; loading?: boolean; ts: number; images?: string[]; }
 interface BlogDraft {
   title: string; slug: string; author: string; category: string; tags: string;
@@ -1511,7 +1513,7 @@ export function AdminAgentPage({
   const [currentChatId, setCurrentChatId] = useState<string>(genId());
   const [chatLoading, setChatLoading] = useState(false);
   const [indexLoading, setIndexLoading] = useState(true);
-  const [pendingImages, setPendingImages] = useState<{ url: string; name: string }[]>([]);
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
   const [hasComposerText, setHasComposerText] = useState(false);
   const [uploading, setUploading] = useState(false);
   const messagesScrollRef = useRef<HTMLDivElement>(null);
@@ -1854,22 +1856,23 @@ export function AdminAgentPage({
     if (!files.length) return;
     e.target.value = '';
     setUploading(true);
-    const uploaded: { url: string; name: string }[] = [];
+    const uploaded: PendingImage[] = [];
     for (const file of files) {
-      if (!file.type.startsWith('image/')) { toast.error(`${file.name} není obrázek`); continue; }
-      if (file.size > 10 * 1024 * 1024) { toast.error(`${file.name} je příliš velký (max 10 MB)`); continue; }
+      const isVideo = file.type.startsWith('video/');
+      if (!file.type.startsWith('image/') && !isVideo) { toast.error(`${file.name} není obrázek ani video`); continue; }
+      const limit = isVideo ? 50 : 25;
+      if (file.size > limit * 1024 * 1024) { toast.error(`${file.name} je příliš velký (max ${limit} MB)`); continue; }
       try {
-        const fd = new FormData();
-        fd.append('file', file);
-        const res = await fetch(`${SERVER}/admin/upload-image`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${publicAnonKey}` },
-          body: fd,
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        uploaded.push({ url: data.url, name: file.name });
-        console.log(`[Upload] ${file.name} → ${data.url?.slice(0, 80)}`);
+        if (isVideo) {
+          // Video do mailu nejde – agent dostane náhled s play (do <img>) a trvalý odkaz na video.
+          const { poster, durationSec } = await videoPosterWithPlay(file);
+          const [videoUrl, posterUrl] = await Promise.all([uploadPublicMedia(file), uploadPublicMedia(poster)]);
+          uploaded.push({ url: posterUrl, name: file.name, video: { url: videoUrl, durationSec } });
+        } else {
+          // Screenshoty rovnou jako JPG 1200 px do veřejného bucketu – URL v rozeslaném mailu nevyprší.
+          const jpg = await imageToEmailJpeg(file);
+          uploaded.push({ url: await uploadPublicMedia(jpg), name: file.name });
+        }
       } catch (err: any) {
         console.error('[Upload] Error:', err);
         toast.error(`Chyba nahrávání ${file.name}`, { description: err.message });
@@ -1877,7 +1880,7 @@ export function AdminAgentPage({
     }
     if (uploaded.length) {
       setPendingImages(prev => [...prev, ...uploaded]);
-      toast.success(`${uploaded.length} obrázek${uploaded.length > 1 ? 'y' : ''} připraven${uploaded.length > 1 ? 'y' : ''}`);
+      toast.success(`${uploaded.length} ${uploaded.length > 1 ? 'přílohy připraveny' : 'příloha připravena'}`);
     }
     setUploading(false);
   };
@@ -1895,9 +1898,13 @@ export function AdminAgentPage({
     const baseMessages = messagesRef.current;
     if (text == null) clearComposer();
     const imageUrls = pendingImages.map(p => p.url);
+    const videoNotes = pendingImages
+      .filter(p => p.video)
+      .map(p => `[Video „${p.name}“, délka ${formatVideoDuration(p.video!.durationSec)}: ${p.video!.url} – náhled s tlačítkem play pro e-mail: ${p.url}]`);
     setPendingImages([]);
+    const fullContent = [content, ...videoNotes].filter(Boolean).join('\n\n');
 
-    const userMsg: Msg = { id: genId(), role: 'user', content: content || '(obrázky)', ts: Date.now(), images: imageUrls.length ? imageUrls : undefined };
+    const userMsg: Msg = { id: genId(), role: 'user', content: fullContent || '(obrázky)', ts: Date.now(), images: imageUrls.length ? imageUrls : undefined };
     const loadingMsg: Msg = { id: genId(), role: 'assistant', content: '', loading: true, ts: Date.now() };
 
     const nextMsgs = [...baseMessages, userMsg, loadingMsg];
@@ -2277,7 +2284,7 @@ export function AdminAgentPage({
                     style={FF}
                     className={`text-[10px] self-end pb-1 font-bold ${hubMode ? 'text-violet-400' : 'text-[#7C3AED]'}`}
                   >
-                    {pendingImages.length} obrázek{pendingImages.length > 1 ? 'y' : ''} připraven{pendingImages.length > 1 ? 'y' : ''}
+                    {pendingImages.length} {pendingImages.length > 1 ? 'přílohy připraveny' : 'příloha připravena'}
                   </div>
                 </div>
               </motion.div>
@@ -2289,7 +2296,7 @@ export function AdminAgentPage({
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,video/mp4,video/webm,video/quicktime"
               multiple
               className="hidden"
               onChange={handleFileSelect}
@@ -2297,7 +2304,7 @@ export function AdminAgentPage({
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={loading || uploading}
-              title="Nahrát obrázek"
+              title="Nahrát obrázek nebo video"
               className={
                 hubMode
                   ? clsx(
