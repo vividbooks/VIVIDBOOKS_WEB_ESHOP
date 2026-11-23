@@ -8,6 +8,7 @@ import { WebinarThumbnail } from './WebinarThumbnail';
 import { WebinarCard } from './WebinarCard';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { isWebinarDay } from '../utils/webinarLiveDelivery';
+import { lecturerLabel } from '../utils/lecturerLabel';
 import { fetchSchoolSearchResults } from '../utils/schoolSearchApi';
 import { SEOHead, webinarJsonLd } from './SEOHead';
 import { marketingUrl } from '../config/marketingSite';
@@ -1150,7 +1151,7 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
                 </h1>
                 <div className="flex flex-wrap gap-2">
                   <span className="bg-white/80 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[12px] px-3 py-1 rounded-full border border-[#001161]/10">
-                    {'Lekto\u0159i: '}{webinar.lecturer}
+                    {lecturerLabel(webinar.lecturer, webinar.lecturerLabel)}{': '}{webinar.lecturer}
                   </span>
                   {webinar.targetAudience && (
                     <span className="bg-white/80 text-[#001161]/70 font-['Fenomen_Sans',sans-serif] text-[12px] px-3 py-1 rounded-full border border-[#001161]/10">

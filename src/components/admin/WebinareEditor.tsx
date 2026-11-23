@@ -17,6 +17,7 @@ import { DEFAULT_WEBINAR_SURVEY_QUESTIONS } from '../../utils/webinarSurveyDefau
 import { ImagePicker } from './ImagePicker';
 import { compareWebinarsBySchedule, computeWebinarIsPastFromSchedule, DEFAULT_WEBINAR_DURATION_MIN, webinarEventTimestampMs } from '../../utils/webinarEventTimestamp';
 import { publicSiteUrl } from '../../utils/publicSiteUrl';
+import { lecturerLabel } from '../../utils/lecturerLabel';
 
 const SERVER = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
 
@@ -1102,6 +1103,15 @@ export default function WebinareEditor({ onMarkedPast }: WebinareEditorProps = {
                         placeholder="např. učitelé 2. stupně"
                         className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
                     </div>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-500 block mb-1">Štítek před jménem na stránce webináře</label>
+                    <input type="text" value={selected.lecturerLabel || ''} onChange={e => updateField('lecturerLabel', e.target.value)}
+                      placeholder={lecturerLabel(selected.lecturer)}
+                      className="w-full px-3 py-2 text-[13px] border border-gray-200 rounded-xl focus:border-purple-400 outline-none" />
+                    <p className="text-[11px] text-gray-400 mt-1">
+                      Prázdné = odvodí se ze jména (teď „{lecturerLabel(selected.lecturer)}: {selected.lecturer || '…'}“). Vyplňte, jen když odhad nesedí.
+                    </p>
                   </div>
                   <div>
                     <label className="text-[11px] font-bold text-gray-500 block mb-1">Cover obrázek webináře</label>

@@ -214,6 +214,7 @@ const WEBINAR_FIELDS: FieldDef[] = [
   { key: 'year', label: 'Rok', type: 'number' },
   { key: 'time', label: 'Čas', type: 'text', placeholder: '18:00' },
   { key: 'lecturer', label: 'Lektor', type: 'text' },
+  { key: 'lecturerLabel', label: 'Štítek u lektora (prázdné = podle jména)', type: 'text', placeholder: 'Lektorky' },
   { key: 'lecturerAvatar', label: 'Avatar lektora', type: 'image', fullWidth: true },
   { key: 'description', label: 'Popis', type: 'textarea', fullWidth: true },
   { key: 'perks', label: 'Výhody', type: 'textarea', fullWidth: true },

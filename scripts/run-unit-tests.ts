@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
 import { followupTrackKeys, recordingTrackFor } from '../src/supabase/functions/server/webinarRecordingTrack.ts';
 import { attendeesCountLabel, isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
+import { lecturerLabel, lecturerNames } from '../src/utils/lecturerLabel.ts';
 import {
   appEntryTargetUrl,
   forgetAppEntryChoice,
@@ -2657,6 +2658,37 @@ registerTest('recordingTrackFor / followupTrackKeys: záznam po webináři pro e
   assert.deepEqual(recordingTrackFor(state, 'nikdo@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
   assert.deepEqual(recordingTrackFor(null, 'jana@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
   assert.deepEqual(followupTrackKeys(['w1', 'w1', '', 'w2']), ['webinar_post_followup_track_v1_w1', 'webinar_post_followup_track_v1_w2']);
+});
+
+registerTest('lecturerLabel: štítek před jménem lektora podle počtu a rodu (T-132)', () => {
+  assert.equal(lecturerLabel('František Cáb'), 'Lektor');
+  assert.equal(lecturerLabel('František Cáb '), 'Lektor');
+  assert.equal(lecturerLabel('Martina Kullová'), 'Lektorka');
+  assert.equal(lecturerLabel('Jitka Krbcová a Eva Šrailová'), 'Lektorky');
+  assert.equal(lecturerLabel('Eva Šrailová, Jitka Krbcová'), 'Lektorky');
+  assert.equal(lecturerLabel('Petra Dočekalová, Kateřina Machová Ondřejová, Anna Rosová'), 'Lektorky');
+  assert.equal(lecturerLabel('Vítek Škop a František Cáb'), 'Lektoři');
+  assert.equal(lecturerLabel('František Cáb, Dominika Kruchňová'), 'Lektoři');
+  // tituly a popisy kolem jména
+  assert.equal(lecturerLabel('prof. RNDr. Naďa Vondrová, Ph.D. , Mgr. Radka Havlíčková, Ph.D. '), 'Lektorky');
+  assert.equal(lecturerLabel('PhDr. Karel Vojíř, Ph.D.'), 'Lektor');
+  assert.equal(lecturerLabel('Specialistka na financování škol Ing. Petra Schwarzová'), 'Lektorka');
+  assert.equal(lecturerLabel('Psycholog a kouč Petr Šobra'), 'Lektor');
+  assert.equal(lecturerLabel('Jiří Tencar, energetický expert, ČVUT'), 'Lektor');
+  assert.equal(lecturerLabel('Eva Nečasová, AI dětem'), 'Lektorka');
+  assert.equal(lecturerLabel('Autoři učebnic František Cáb a Martina Kullová'), 'Lektoři');
+  assert.deepEqual(lecturerNames('František Cáb – Vividbooks, Tatiana Kárová – H–edu, ExpEdice'), ['František Cáb', 'Tatiana Kárová']);
+  // nejmenovaní další lidé a texty bez jména zůstávají u původního „Lektoři“
+  assert.equal(lecturerLabel('Vítek Škop a hosté'), 'Lektoři');
+  assert.equal(lecturerLabel('Vítek Škop + speciální host'), 'Lektoři');
+  assert.equal(lecturerLabel('Tým Vividbooks'), 'Lektoři');
+  assert.equal(lecturerLabel(''), 'Lektoři');
+  assert.equal(lecturerLabel(undefined), 'Lektoři');
+  // ruční přepsání z adminu má přednost
+  assert.equal(lecturerLabel('Jana Krejčí'), 'Lektor');
+  assert.equal(lecturerLabel('Jana Krejčí', 'Lektorka'), 'Lektorka');
+  assert.equal(lecturerLabel('František Cáb', ' Host: '), 'Host');
+  assert.equal(lecturerLabel('František Cáb', '   '), 'Lektor');
 });
 
 await run();

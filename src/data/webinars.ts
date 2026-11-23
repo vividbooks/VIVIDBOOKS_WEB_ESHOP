@@ -14,6 +14,11 @@ export interface Webinar {
    */
   durationMinutes?: number;
   lecturer: string;
+  /**
+   * Štítek před jménem na stránce webináře („Lektorky“, „Hosté“…). Prázdné = odvodí se
+   * ze jména (`lecturerLabel` v utils/lecturerLabel.ts): Lektor / Lektorka / Lektorky / Lektoři.
+   */
+  lecturerLabel?: string;
   lecturerAvatar: string;
   coverImage?: string;
   /**
