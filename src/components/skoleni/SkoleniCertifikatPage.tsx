@@ -3,6 +3,7 @@ import { useParams } from 'react-router';
 import { Award, Download, Loader2 } from 'lucide-react';
 import { SEOHead } from '../SEOHead';
 import { CertificatePreview } from '../WebinarDvppCertificateSuccess';
+import { BirthDateFields } from '../BirthDateFields';
 import { edgeFunctionBase } from '../../utils/edgeFunctionBase';
 import { publicAnonKey } from '../../utils/supabase/info';
 import {
@@ -158,11 +159,11 @@ export function SkoleniCertifikatPage() {
             ) : null}
           </label>
           {needBirth ? (
-            <label className="block">
+            <div className="block">
               <span className="mb-1 block text-[12px] font-semibold text-[#001161]/80">Datum narození</span>
-              <input className={INPUT} type="date" value={birthDateIso} onChange={(e) => setBirthDateIso(e.target.value)} required />
+              <BirthDateFields value={birthDateIso} onChange={setBirthDateIso} inputClassName={INPUT.replace('w-full ', '')} required />
               <span className="mt-1 block text-[12px] text-[#001161]/55">Uvádí se na osvědčení, aby šlo přiřadit ke konkrétní osobě.</span>
-            </label>
+            </div>
           ) : null}
           {error ? <p className="text-[13px] text-red-600">{error}</p> : null}
           <button

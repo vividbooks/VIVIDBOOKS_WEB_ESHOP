@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { parsePresenceValue, presenceFirstName } from '../src/lib/vividbooksPresence.ts';
+import { birthDateIsoFromParts, birthDatePartsFromIso, birthDatePartsLookInvalid, sanitizeBirthDateParts } from '../src/utils/birthDateParts.ts';
 import { followupTrackKeys, recordingTrackFor } from '../src/supabase/functions/server/webinarRecordingTrack.ts';
 import { attendeesCountLabel, isWebinarDay, liveStreamUrlOf, resolveLiveDelivery } from '../src/utils/webinarLiveDelivery.ts';
 import {
@@ -2657,6 +2658,32 @@ registerTest('recordingTrackFor / followupTrackKeys: záznam po webináři pro e
   assert.deepEqual(recordingTrackFor(state, 'nikdo@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
   assert.deepEqual(recordingTrackFor(null, 'jana@zs.cz'), { recordingSentAt: null, recordingOpenedAt: null });
   assert.deepEqual(followupTrackKeys(['w1', 'w1', '', 'w2']), ['webinar_post_followup_track_v1_w1', 'webinar_post_followup_track_v1_w2']);
+});
+
+registerTest('birthDateParts: tři pole (den, měsíc, rok) dávají stejné YYYY-MM-DD jako kalendář', () => {
+  const now = new Date(2026, 10, 23);
+  assert.equal(birthDateIsoFromParts({ day: '5', month: '3', year: '1980' }, now), '1980-03-05');
+  assert.equal(birthDateIsoFromParts({ day: '05', month: '03', year: '1980' }, now), '1980-03-05');
+  assert.equal(birthDateIsoFromParts({ day: '29', month: '2', year: '2000' }, now), '2000-02-29');
+  assert.equal(birthDateIsoFromParts({ day: '29', month: '2', year: '1999' }, now), '', '29. 2. v nepřestupném roce');
+  assert.equal(birthDateIsoFromParts({ day: '31', month: '4', year: '1980' }, now), '');
+  assert.equal(birthDateIsoFromParts({ day: '1', month: '13', year: '1980' }, now), '');
+  assert.equal(birthDateIsoFromParts({ day: '0', month: '1', year: '1980' }, now), '');
+  assert.equal(birthDateIsoFromParts({ day: '5', month: '3', year: '80' }, now), '', 'rok musí být čtyřmístný');
+  assert.equal(birthDateIsoFromParts({ day: '5', month: '', year: '1980' }, now), '', 'rozepsané datum');
+  assert.equal(birthDateIsoFromParts({ day: '1', month: '1', year: '1899' }, now), '');
+  assert.equal(birthDateIsoFromParts({ day: '23', month: '11', year: '2026' }, now), '2026-11-23', 'dnešek ještě projde');
+  assert.equal(birthDateIsoFromParts({ day: '24', month: '11', year: '2026' }, now), '', 'budoucnost ne');
+  assert.deepEqual(birthDatePartsFromIso('1980-03-05'), { day: '5', month: '3', year: '1980' });
+  assert.deepEqual(birthDatePartsFromIso(''), { day: '', month: '', year: '' });
+  assert.deepEqual(birthDatePartsFromIso('5. 3. 1980'), { day: '', month: '', year: '' });
+  assert.deepEqual(sanitizeBirthDateParts({ day: '5.', month: 'a12x3', year: '19800' }), { day: '5', month: '12', year: '1980' });
+  assert.equal(birthDatePartsLookInvalid({ day: '31', month: '2', year: '1980' }, now), true);
+  assert.equal(birthDatePartsLookInvalid({ day: '31', month: '2', year: '19' }, now), false, 'rozepsané datum není chyba');
+  assert.equal(birthDatePartsLookInvalid({ day: '5', month: '3', year: '1980' }, now), false);
+  for (const iso of ['1957-12-31', '1980-03-05', '2001-01-01']) {
+    assert.equal(birthDateIsoFromParts(birthDatePartsFromIso(iso), now), iso, 'tam a zpět');
+  }
 });
 
 await run();

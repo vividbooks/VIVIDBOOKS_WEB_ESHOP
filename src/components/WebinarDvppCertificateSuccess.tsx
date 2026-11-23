@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { Award, Download } from 'lucide-react';
 import type { Webinar } from '../data/webinars';
 import { buildCertificateDocument } from '../lib/webinarCertificateDocument';
+import { BirthDateFields } from './BirthDateFields';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 const SERVER_EDGE = `https://${projectId}.supabase.co/functions/v1/make-server-93a20b6f`;
@@ -245,18 +246,17 @@ export function WebinarDvppCertificateSuccess({
                 className="w-full cursor-not-allowed rounded-xl border border-[#001161]/10 bg-slate-50 px-4 py-3 text-[15px] text-[#001161]/70"
               />
             </label>
-            <label style={FF} className="block">
+            <div style={FF} className="block">
               <span className="mb-1 block text-[12px] font-semibold text-[#001161]/80">
                 {'Datum narození'} <span className="text-red-600">*</span>
               </span>
-              <input
-                type="date"
+              <BirthDateFields
                 value={birthDateIso}
-                onChange={(e) => setBirthDateIso(e.target.value)}
-                className="w-full rounded-xl border border-[#001161]/15 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none focus:border-[#001161]/40"
+                onChange={setBirthDateIso}
+                inputClassName="rounded-xl border border-[#001161]/15 bg-white px-4 py-3 text-[15px] text-[#001161] outline-none focus:border-[#001161]/40"
                 required
               />
-            </label>
+            </div>
           </div>
         </div>
         <CertificatePreview

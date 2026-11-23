@@ -14,6 +14,7 @@ import { marketingUrl } from '../config/marketingSite';
 import { matchDvppVideoForWebinar } from '../../supabase/functions/_shared/dvpp-video-match';
 import { WebinarPostRegistrationTrial } from './WebinarPostRegistrationTrial';
 import { WebinarPostSurvey } from './WebinarPostSurvey';
+import { BirthDateFields } from './BirthDateFields';
 import { WebinarRegistrationFormFields, type WebinarRegSubjectField } from './WebinarRegistrationFormFields';
 import {
   buildTrialSubjectFields,
@@ -791,11 +792,11 @@ export function WebinarDetailPage({ webinar }: WebinarDetailPageProps) {
               <label className="mb-2 block font-['Fenomen_Sans',sans-serif] text-[13px] font-semibold text-[#001161]">
                 {'Datum narozen\u00ed *'}
               </label>
-              <input
-                type="date"
+              <BirthDateFields
                 value={form.birthDateIso}
-                onChange={(e) => handleChange('birthDateIso', e.target.value)}
-                className="mb-4 w-full rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
+                onChange={(iso) => handleChange('birthDateIso', iso)}
+                className="mb-4"
+                inputClassName="rounded-[12px] border border-[#001161]/10 bg-white px-4 py-3 font-['Fenomen_Sans',sans-serif] text-[15px] text-[#001161] outline-none focus:border-[#5B4FD8] focus:ring-2 focus:ring-[#5B4FD8]/15"
               />
               <p className="mb-2 font-['Fenomen_Sans',sans-serif] text-[11px] font-bold uppercase tracking-wider text-[#001161]/40">
                 {'\u0160kola (vyhled\u00e1v\u00e1n\u00ed) *'}
