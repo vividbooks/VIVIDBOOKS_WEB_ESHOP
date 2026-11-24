@@ -612,6 +612,13 @@ function careerPositionPages() {
         h1: position.title,
         h2: position.place,
         answer: `Vividbooks hledá do týmu: ${position.title} (${position.place}).`,
+        // Vlastní náhled pro sdílení (1200×630, public/og/kariera/<id>.png); bez něj obecný.
+        ...(existsSync(path.join(root, 'public/og/kariera', `${position.id}.png`))
+          ? {
+              image: `${SITE_URL}/og/kariera/${position.id}.png`,
+              imageAlt: `Kariéra ve Vividbooks: ${position.title} (${position.place})`,
+            }
+          : {}),
       };
       if (previewPath) pages.push({ ...base, path: `${previewPath}/${position.id}`, noIndex: true });
       if (isPublic && publicPath) pages.push({ ...base, path: `${publicPath}/${position.id}` });

@@ -10,7 +10,7 @@
  * Zveřejnění = přepnout CAREER_PUBLIC na true (jen na výslovný pokyn). Pozice pak dostanou
  * i veřejné adresy CAREER_PUBLIC_PATH/<id pozice>; neveřejné odkazy fungují dál.
  */
-export const CAREER_PUBLIC = false;
+export const CAREER_PUBLIC = true;
 
 export const CAREER_PREVIEW_PATH = '/kontakt-kariera-k7p3wd';
 
