@@ -327,7 +327,7 @@ const MATH1_SERIES: SeriesDef[] = [
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 /** 4. ročník Člověka a jeho světa (vlastivěda, přírodověda) a informatika; zatím jen 4. ročník (5. je v aplikaci taky). */
-const CLOVEK_4_CARD: SeriesDef = { ...appOnlyCard('clovek-4', '4. ročník', 'Člověk a jeho svět', 'Vlastivěda a přírodověda pro 4. ročník', CJS_HREF, 'Člověk a jeho svět 4', (n) => n.startsWith('vlastivěda') || n.startsWith('přírodověda')), href: undefined, rocnik: '4', fullTitle: 'Člověk a jeho svět 4. ročník' };
+const CLOVEK_4_CARD: SeriesDef = { ...appOnlyCard('clovek-4', '4. ročník', 'Člověk a jeho svět', 'Vlastivěda a přírodověda pro 4. ročník', CJS_HREF, 'Člověk a jeho svět 4', (n) => n.startsWith('vlastivěda') || n.startsWith('přírodověda')), href: undefined, rocnik: '4', fullTitle: 'Člověk a jeho svět 4. ročník', coverParts: true };
 const INFORMATIKA_SERIES: SeriesDef[] = [
   { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), href: undefined, rocnik: '4' },
 ];
