@@ -5,6 +5,8 @@ interface WebinarThumbnailProps {
   subtitle?: string;
   day: number;
   monthName: string;
+  /** Rok webináře — bez něj se bere aktuální rok. */
+  year?: number;
   time: string;
   lecturer: string;
   lecturerAvatar?: string;
@@ -64,6 +66,7 @@ export function WebinarThumbnail({
   subtitle,
   day,
   monthName,
+  year,
   time,
   lecturer,
   lecturerAvatar,
@@ -116,10 +119,10 @@ export function WebinarThumbnail({
         </div>
         <div>
           <p className="font-['Fenomen_Sans',sans-serif] font-bold text-[#001158] text-[10px] leading-tight">
-            {'DVPP Webin\u00e1\u0159 zdarma'}
+            {'Webin\u00e1\u0159 zdarma'}
           </p>
           <p className="font-['Fenomen_Sans',sans-serif] font-bold text-[#001158] text-[10px] leading-tight">
-            {`${day}. ${monthName.slice(0, 3).toLowerCase()}. ${new Date().getFullYear()} od ${time}`}
+            {`${day}. ${monthName.slice(0, 3).toLowerCase()}. ${year ?? new Date().getFullYear()} od ${time}`}
           </p>
           {lecturer && (
             <p className="font-['Fenomen_Sans',sans-serif] font-bold text-[#001158] text-[10px] leading-tight mb-1 truncate max-w-[160px]">

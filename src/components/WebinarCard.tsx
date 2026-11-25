@@ -36,6 +36,7 @@ export function WebinarCard({ webinar, openInNewTab = false }: WebinarCardProps)
           subtitle={webinar.subtitle}
           day={webinar.day}
           monthName={webinar.monthName}
+          year={webinar.year}
           time={webinar.time}
           lecturer={webinar.lecturer}
           lecturerAvatar={webinar.lecturerAvatar}
