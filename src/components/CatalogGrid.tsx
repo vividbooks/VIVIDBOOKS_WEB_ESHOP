@@ -5,13 +5,13 @@ import { motion } from 'motion/react';
 import { Download } from 'lucide-react';
 import svgPaths from '../imports/svg-3hoiegevxq';
 import { VividbooksFeatures } from './VividbooksFeatures';
-import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS, isTestCatalogVisible } from './SeriesCards';
+import { SeriesCards, SERIES_BY_GROUP, APP_ONLY_GROUPS, isTestCatalogVisible, isCzech4Book } from './SeriesCards';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { UnifiedBookCard } from './UnifiedBookCard';
 import { useProducts } from '../contexts/ProductsContext';
 import { useCatalog } from '../contexts/CatalogContext';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
-import { CLOVEK_A_JEHO_SVET, catalogGroupOf, catalogGroupPrimarySubject, catalogSubjectRank } from '../utils/catalogGroups';
+import { CLOVEK_A_JEHO_SVET, CESKY_JAZYK_1, CESKY_JAZYK_4, catalogGroupOf, catalogGroupPrimarySubject, catalogSubjectRank } from '../utils/catalogGroups';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 import { fetchJsonWithRetry } from '../utils/fetchWithRetry';
 import { parseHeroPhoneDiff } from '../utils/heroPhoneOverrides';
@@ -1315,6 +1315,8 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
         // Veřejný katalog: Prvouka, Vlastivěda a Přírodověda pod jedním nadpisem „Člověk a jeho svět“ (jen zobrazení).
         mainGroup = (showUnpublished && APP_ONLY_GROUPS.find(g => g.categories.includes(cat))?.group)
           || catalogGroupOf(cat);
+        // Testovací homepage: Český jazyk ve dvou řádcích — „Český jazyk 1“ a „Český jazyk 4“ (pracovní učebnice A, B).
+        if (showUnpublished && mainGroup === '\u010cesk\u00fd jazyk') mainGroup = isCzech4Book(lowerName) ? CESKY_JAZYK_4 : CESKY_JAZYK_1;
         if (mainGroup === 'Matematika 2. stupe\u0148') {
           if (lowerName.includes('pro v\u0161echny')) subGroup = 'Pracovn\u00ed se\u0161ity pro v\u0161echny';
           else if (lowerName.includes('krok za krokem')) subGroup = 'Krok za krokem';
@@ -1346,7 +1348,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
   }, [workbooks, groupingMode, showUnpublished, isTestVariant]);
 
   const sortedGroups = useMemo(() => {
-    const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', CLOVEK_A_JEHO_SVET, 'Prvouka', 'Ostatn\u00ed'];
+    const order = ['Matematika 2. stupe\u0148', 'Fyzika', 'P\u0159\u00edrodopis', 'Chemie', 'Matematika 1. stupe\u0148', '\u010cesk\u00fd jazyk', CESKY_JAZYK_1, CESKY_JAZYK_4, CLOVEK_A_JEHO_SVET, 'Prvouka', 'Ostatn\u00ed'];
     const sorted = Object.entries(groupedWorkbooks).sort(([a], [b]) => {
       if (groupingMode === 'grade') return a.localeCompare(b);
       const ia = order.indexOf(a), ib = order.indexOf(b);
@@ -2243,7 +2245,7 @@ export default function CatalogGrid({ variant = 'live' }: { variant?: 'live' | '
               key={mainGroup}
               ref={(el) => bindCatalogImgGateEl(mainGroup, el)}
               data-catalog-img-gate={mainGroup}
-              id={groupingMode === 'subject' ? mainGroup.replace(/\s+/g, '-').toLowerCase() : undefined}
+              id={groupingMode === 'subject' ? (mainGroup === CESKY_JAZYK_1 ? '\u010cesk\u00fd jazyk' : mainGroup).replace(/\s+/g, '-').toLowerCase() : undefined}
               className={`mb-4 ${groupingMode === 'subject' ? 'catalog-section scroll-mt-24' : ''}`}
             >
               {/* Spojené řádky (Dějepis | Zeměpis …) mají nadpisy předmětů v SeriesCards. */}

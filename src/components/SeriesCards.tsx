@@ -3,7 +3,7 @@ import { useLocation } from 'react-router';
 import { productDetailPath, subjectToSlug } from '../utils/slugify';
 import { TEST_HOMEPAGE_PATH } from '../config/testHomepage';
 import { useProducts } from '../contexts/ProductsContext';
-import { CLOVEK_A_JEHO_SVET, catalogGroupMembers } from '../utils/catalogGroups';
+import { CLOVEK_A_JEHO_SVET, CESKY_JAZYK_1, CESKY_JAZYK_4, catalogGroupMembers } from '../utils/catalogGroups';
 
 /**
  * Homepage (zatím jen testovací kopie, TEST_HOMEPAGE_PATH): místo pásu sešitů předmětu tři velké karty řad.
@@ -349,6 +349,9 @@ const CLOVEK_SERIES: SeriesDef[] = [
   PRIRODOVEDA_4_CARD,
 ];
 
+/** Sešit 4. ročníku češtiny: „Český jazyk – Pracovní učebnice pro 4. ročník – A/B“ (ne „Čteme o … 4“, ty patří ke čtenářské gramotnosti). */
+export const isCzech4Book = (lowerName: string) => lowerName.includes('český jazyk') && lowerName.includes('4. ročník');
+
 const CZECH_SERIES: SeriesDef[] = [
   {
     key: 'pisanky',
@@ -392,10 +395,19 @@ const CZECH_SERIES: SeriesDef[] = [
     typ: 'cj-4',
     bg: '#f8f9fc',
     coverParts: true,
-    // „Český jazyk – Pracovní učebnice pro 4. ročník – A/B“ (ne „Čteme o … 4“, ty patří ke čtenářské gramotnosti).
-    match: (n) => n.includes('český jazyk') && n.includes('4. ročník'),
+    match: (n) => isCzech4Book(n),
   },
 ];
+
+/** Testovací homepage, řádek „Český jazyk 1“: písanky, 1. ročník, čtenářská gramotnost, digitální učebnice. */
+const CZECH_1_SERIES: SeriesDef[] = CZECH_SERIES.filter((s) => s.key !== 'cj-4');
+
+/** Testovací homepage, řádek „Český jazyk 4“: pracovní učebnice A, B (proklik na stránku předmětu s `?typ=cj-4`). */
+const CZECH_4_SERIES: SeriesDef[] = CZECH_SERIES.filter((s) => s.key === 'cj-4').map((s) => ({
+  ...s,
+  title: 'Pracovní učebnice',
+  description: 'Dva díly (A, B)',
+}));
 
 /**
  * Řádky z předmětů, které na webu nemají stránku předmětu: na testovací homepage se přidají za `after`
@@ -453,6 +465,8 @@ export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
   'Matematika 1. stupeň': MATH1_SERIES,
   Prvouka: PRVOUKA_SERIES,
   'Český jazyk': CZECH_SERIES,
+  [CESKY_JAZYK_1]: CZECH_1_SERIES,
+  [CESKY_JAZYK_4]: CZECH_4_SERIES,
   [CLOVEK_A_JEHO_SVET]: CLOVEK_SERIES,
   Informatika: INFORMATIKA_SERIES,
 };

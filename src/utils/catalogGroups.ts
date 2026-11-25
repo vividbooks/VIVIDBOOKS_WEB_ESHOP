@@ -12,6 +12,10 @@ export const CLOVEK_A_JEHO_SVET_SUBJECTS = ['Prvouka', 'Vlastivěda', 'Přírodo
 
 const norm = (s: string) => String(s || '').trim().normalize('NFC');
 
+/** Testovací homepage: Český jazyk ve dvou řádcích (1. ročník a navazující, 4. ročník). Stránka předmětu zůstává jedna. */
+export const CESKY_JAZYK_1 = 'Český jazyk 1';
+export const CESKY_JAZYK_4 = 'Český jazyk 4';
+
 /** Název skupiny katalogu pro kategorii produktu (ostatní kategorie zůstávají samy sebou). */
 export function catalogGroupOf(category: string): string {
   const c = norm(category);
@@ -21,6 +25,7 @@ export function catalogGroupOf(category: string): string {
 /** Kategorie produktů, které do skupiny patří. */
 export function catalogGroupMembers(group: string): string[] {
   const g = norm(group);
+  if (g === CESKY_JAZYK_1 || g === CESKY_JAZYK_4) return ['Český jazyk'];
   return g === CLOVEK_A_JEHO_SVET ? [...CLOVEK_A_JEHO_SVET_SUBJECTS] : [g];
 }
 
