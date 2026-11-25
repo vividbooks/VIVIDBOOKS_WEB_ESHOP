@@ -327,8 +327,7 @@ const MATH1_SERIES: SeriesDef[] = [
 
 const CJS_HREF = `${APP_LIBRARY}/stupen-1/clovek-a-jeho-svet`;
 /** 4. ročník Člověka a jeho světa (vlastivěda, přírodověda) a informatika; zatím jen 4. ročník (5. je v aplikaci taky). */
-const VLASTIVEDA_4_CARD: SeriesDef = { ...appOnlyCard('vlastiveda-4', '4. ročník', 'Vlastivěda', 'Vlastivěda pro 4. ročník', CJS_HREF, 'Vlastivěda 4', (n) => n.startsWith('vlastivěda')), href: undefined, rocnik: '4' };
-const PRIRODOVEDA_4_CARD: SeriesDef = { ...appOnlyCard('prirodoveda-4', '4. ročník', 'Přírodověda', 'Přírodověda pro 4. ročník', CJS_HREF, 'Přírodověda 4', (n) => n.startsWith('přírodověda')), href: undefined, rocnik: '4' };
+const CLOVEK_4_CARD: SeriesDef = { ...appOnlyCard('clovek-4', '4. ročník', 'Člověk a jeho svět', 'Vlastivěda a přírodověda pro 4. ročník', CJS_HREF, 'Člověk a jeho svět 4', (n) => n.startsWith('vlastivěda') || n.startsWith('přírodověda')), href: undefined, rocnik: '4', fullTitle: 'Člověk a jeho svět 4. ročník' };
 const INFORMATIKA_SERIES: SeriesDef[] = [
   { ...appOnlyCard('informatika-4', '4. ročník', 'Pracovní sešit', 'Informatika pro 4. ročník', `${APP_LIBRARY}/stupen-1/informatika`, 'Informatika 4', (n) => n.startsWith('informatika')), href: undefined, rocnik: '4' },
 ];
@@ -340,15 +339,14 @@ const PRVOUKA_SERIES: SeriesDef[] = [
   DIGITAL_CARD,
 ];
 
-/** Člověk a jeho svět: Prvouka 1.–3. ročník, Vlastivěda a Přírodověda 4. ročník, digitální učebnice Prvouky. */
+/** Člověk a jeho svět: Prvouka 1.–3. ročník, Člověk a jeho svět 4. ročník (vlastivěda + přírodověda), digitální učebnice Prvouky. */
 const CLOVEK_SERIES: SeriesDef[] = [
   { ...gradeCard(1, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
   { ...gradeCard(2, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
   { ...gradeCard(3, 'Prvouka, pracovní sešit ve dvou dílech'), label: 'Prvouka' },
   DIGITAL_CARD,
-  // Vlastivěda a přírodověda (4. ročník) vedle sebe na samostatném řádku.
-  VLASTIVEDA_4_CARD,
-  PRIRODOVEDA_4_CARD,
+  // Vlastivěda a přírodověda (4. ročník) jako jedna karta „Člověk a jeho svět · 4. ročník“.
+  CLOVEK_4_CARD,
 ];
 
 const CZECH_SERIES: SeriesDef[] = [
