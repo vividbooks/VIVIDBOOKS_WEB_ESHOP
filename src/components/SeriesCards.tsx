@@ -40,6 +40,8 @@ type SeriesDef = {
   digital?: boolean;
   /** Z katalogu: obálky kterých ročníků dát přes sebe (pořadí v seznamu ročníků řady; první je vpředu), aby karty nebyly stejné. */
   coverGrades?: number[];
+  /** Celý název řady, když karta ukazuje jen ročník (nadpis bloku na stránce předmětu, „Více o řadě …“). */
+  fullTitle?: string;
   /** Text rozklikávacího „Více o řadě …“ na stránce předmětu; bez něj zástupný [TEXT] (texty nevymýšlet). */
   about?: string;
 };
@@ -360,16 +362,30 @@ const CZECH_SERIES: SeriesDef[] = [
     coverParts: true,
     match: (n) => n.includes('pro vázané písmo') || n.includes('pro nevázané písmo'),
   },
+  // Český jazyk po ročnících jako Prvouka (karty „1. ročník“, „4. ročník“), mezi písankami a čtenářskou gramotností.
   {
     key: 'slabikare',
-    title: 'Český jazyk',
-    label: '1. ročník',
-    description: 'Pracovní sešit pro 1. ročník ve třech dílech',
+    title: '1. ročník',
+    label: 'Český jazyk',
+    fullTitle: 'Český jazyk 1. ročník',
+    description: 'Pracovní sešit ve třech dílech',
     typ: 'slabikare',
     bg: '#f8f9fc',
     coverParts: true,
     // Dřív „Slabikář 1.–3. díl“; od 13. 11. 2026 „Český jazyk 1. ročník / N. díl“.
     match: (n) => n.includes('slabikář') || n.includes('český jazyk 1. ročník'),
+  },
+  {
+    key: 'cj-4',
+    title: '4. ročník',
+    label: 'Český jazyk',
+    fullTitle: 'Český jazyk 4. ročník',
+    description: 'Pracovní učebnice ve dvou dílech (A, B)',
+    typ: 'cj-4',
+    bg: '#f8f9fc',
+    coverParts: true,
+    // „Český jazyk – Pracovní učebnice pro 4. ročník – A/B“ (ne „Čteme o … 4“, ty patří ke čtenářské gramotnosti).
+    match: (n) => n.includes('český jazyk') && n.includes('4. ročník'),
   },
   {
     key: 'ctenarska-gramotnost',
@@ -383,18 +399,6 @@ const CZECH_SERIES: SeriesDef[] = [
     match: (n) => n.includes('první čtení') || n.includes('čteme o'),
   },
   DIGITAL_CARD,
-  // 4. ročník na samostatném řádku (jako vlastivěda a přírodověda u Člověka a jeho světa).
-  {
-    key: 'cj-4',
-    title: 'Český jazyk',
-    label: '4. ročník',
-    description: 'Pracovní učebnice ve dvou dílech (A, B)',
-    typ: 'cj-4',
-    bg: '#f8f9fc',
-    coverParts: true,
-    // „Český jazyk – Pracovní učebnice pro 4. ročník – A/B“ (ne „Čteme o … 4“, ty patří ke čtenářské gramotnosti).
-    match: (n) => n.includes('český jazyk') && n.includes('4. ročník'),
-  },
 ];
 
 /**
@@ -416,8 +420,9 @@ const seriesOfBook = (group: string, p: any): SeriesDef | undefined => {
     s.typ && (s.digital ? p.type === 'online' : p.type !== 'online' && !!s.match?.(name)));
 };
 
-/** Nadpis řady na stránce předmětu; dvě řady stejného názvu (Český jazyk 1. a 4. ročník) rozliší štítek. */
-export function seriesTitle(group: string, s: { title: string; label: string; key: string }): string {
+/** Nadpis řady na stránce předmětu: celý název (karty po ročnících), jinak název; dvě řady stejného názvu rozliší štítek. */
+export function seriesTitle(group: string, s: { title: string; label: string; key: string; fullTitle?: string }): string {
+  if (s.fullTitle) return s.fullTitle;
   const twin = (SERIES_BY_GROUP[group] ?? []).some((o) => o.key !== s.key && o.title === s.title);
   return twin ? `${s.title} · ${s.label}` : s.title;
 }
@@ -440,6 +445,9 @@ export function seriesBookBlocks(group: string, books: any[]): { key: string; ti
   const rest = books.filter((p) => !seriesOfBook(group, p));
   return [...blocks, { key: 'dalsi', title: 'Další tituly', books: rest }].filter((b) => b.books.length > 0);
 }
+
+/** Skupiny, jejichž karty mají na homepage zůstat v jednom řádku i při pěti kartách. */
+const ONE_ROW_GROUPS = new Set(['Český jazyk']);
 
 /** Skupiny homepage (podle předmětu), které místo pásu sešitů ukazují karty řad. */
 export const SERIES_BY_GROUP: Record<string, SeriesDef[]> = {
@@ -662,7 +670,7 @@ export function SeriesCards({
   /** Rozbalený popis řady („Více o řadě …“) na stránce předmětu. */
   const [aboutKey, setAboutKey] = React.useState<string | null>(null);
   const toggleAbout = (key: string) => setAboutKey((k) => (k === key ? null : key));
-  const aboutLabel = (s: SeriesDef) => (s.digital ? 'Více o digitální učebnici' : `Více o řadě ${s.title}`);
+  const aboutLabel = (s: SeriesDef) => (s.digital ? 'Více o digitální učebnici' : `Více o řadě ${s.fullTitle ?? s.title}`);
   const workbookCover = pickCovers(books.filter((b) => b.image), [0])[0];
   const cards = (SERIES_BY_GROUP[mainGroup] ?? []).map((s) => ({
     ...s,
@@ -786,6 +794,8 @@ export function SeriesCards({
 
   /** Testovací homepage: karty řad nejvýš ve 4 sloupcích (Vítek), na užších šířkách 2, na mobilu vodorovný pás. */
   const HOME_COLS = 'md:grid-cols-2 xl:grid-cols-4';
+  /** Český jazyk: pět karet (písanky, 1. a 4. ročník, čtenářská gramotnost, digitální) v jednom řádku. */
+  const homeCols = ONE_ROW_GROUPS.has(mainGroup) ? 'md:grid-cols-2 xl:grid-cols-5' : HOME_COLS;
   const stripClass = (cols: string) =>
     `flex gap-3 md:gap-5 overflow-x-auto snap-x snap-mandatory pb-2 md:pb-0 md:grid md:overflow-visible ${cols}`;
 
@@ -819,7 +829,7 @@ export function SeriesCards({
   return (
     <div className={`${compact ? 'mb-2' : 'mt-3 mb-5'} -mx-4 md:mx-0 px-4 md:px-0`}>
       <div
-        className={stripClass(!compact ? HOME_COLS : cards.length >= 5 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
+        className={stripClass(!compact ? homeCols : cards.length >= 5 ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2 xl:grid-cols-4')}
         style={{ scrollbarWidth: 'none' }}
       >
         {cards.map(renderCard)}
