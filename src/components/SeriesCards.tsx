@@ -383,6 +383,18 @@ const CZECH_SERIES: SeriesDef[] = [
     match: (n) => n.includes('první čtení') || n.includes('čteme o'),
   },
   DIGITAL_CARD,
+  // 4. ročník na samostatném řádku (jako vlastivěda a přírodověda u Člověka a jeho světa).
+  {
+    key: 'cj-4',
+    title: 'Český jazyk',
+    label: '4. ročník',
+    description: 'Pracovní učebnice ve dvou dílech (A, B)',
+    typ: 'cj-4',
+    bg: '#f8f9fc',
+    coverParts: true,
+    // „Český jazyk – Pracovní učebnice pro 4. ročník – A/B“ (ne „Čteme o … 4“, ty patří ke čtenářské gramotnosti).
+    match: (n) => n.includes('český jazyk') && n.includes('4. ročník'),
+  },
 ];
 
 /**
@@ -404,6 +416,12 @@ const seriesOfBook = (group: string, p: any): SeriesDef | undefined => {
     s.typ && (s.digital ? p.type === 'online' : p.type !== 'online' && !!s.match?.(name)));
 };
 
+/** Nadpis řady na stránce předmětu; dvě řady stejného názvu (Český jazyk 1. a 4. ročník) rozliší štítek. */
+export function seriesTitle(group: string, s: { title: string; label: string; key: string }): string {
+  const twin = (SERIES_BY_GROUP[group] ?? []).some((o) => o.key !== s.key && o.title === s.title);
+  return twin ? `${s.title} · ${s.label}` : s.title;
+}
+
 /** Filtr `?typ=` testovací stránky předmětu podle karty řady; bez platné řady `null`. */
 export function seriesBookFilter(group: string, typ: string | null): ((p: any) => boolean) | null {
   if (!typ || !(SERIES_BY_GROUP[group] ?? []).some((s) => s.typ === typ)) return null;
@@ -416,7 +434,7 @@ export function seriesBookBlocks(group: string, books: any[]): { key: string; ti
   if (series.filter((s) => !s.digital).length < 2) return null;
   const blocks = series.map((s) => ({
     key: s.key,
-    title: s.digital ? 'Digitální přístup' : s.title,
+    title: s.digital ? 'Digitální přístup' : seriesTitle(group, s),
     books: books.filter((p) => seriesOfBook(group, p) === s),
   }));
   const rest = books.filter((p) => !seriesOfBook(group, p));
@@ -577,7 +595,20 @@ const gradeOf = (name: string) => name.match(/(\d+)\.\s*ročník/i)?.[1] ?? name
 const byGrade = (a: any, b: any) =>
   (Number(gradeOf(String(a.name || ''))) || 99) - (Number(gradeOf(String(b.name || ''))) || 99) || byOrder(a, b);
 
-const partOf = (name: string) => Number(name.match(/(\d+)\.\s*díl/i)?.[1]) || 99;
+/** Ročník sešitu (pole `rocnik`, jinak „N. ročník“ v názvu) — pro zachování `?rocnik=` při přepnutí řady. */
+const bookGrade = (b: any): string | null => {
+  const raw = parseInt(String(b?.rocnik ?? ''), 10);
+  if (!Number.isNaN(raw)) return String(raw);
+  return String(b?.name || '').match(/(\d+)\.\s*ro[čc]n/i)?.[1] ?? null;
+};
+
+/** Číslo dílu: „2. díl“, nebo díl písmenem na konci názvu („… – A“, „… – B“). */
+const partOf = (name: string) => {
+  const n = Number(name.match(/(\d+)\.\s*díl/i)?.[1]);
+  if (n) return n;
+  const letter = name.match(/[–-]\s*([ABC])\s*$/)?.[1];
+  return letter ? 'ABC'.indexOf(letter) + 1 : 99;
+};
 
 /** Až tři díly jedné řady: podle čísla dílu (bez dílu, např. čáranka, až za nimi), pak podle `poradi`. */
 function pickParts(books: any[]): Cover[] {
@@ -659,8 +690,13 @@ export function SeriesCards({
             : s.rocnik ? `${cardPath}?rocnik=${s.rocnik}` : cardPath;
           const active = isActiveHref(filterHref);
           // Na stránce předmětu: přepnutí řady zachová vybraný ročník; druhý klik na aktivní kartu řadu zruší.
-          const keptRocnik = !s.href && !s.rocnik && location.pathname === subjectPath
+          // Jen když řada v tom ročníku nějaký sešit má — jinak by výběr skončil prázdný (ČJ 1. ročník + 4. ročník).
+          const curRocnik = !s.href && !s.rocnik && location.pathname === subjectPath
             ? new URLSearchParams(location.search).get('rocnik')
+            : null;
+          const ownBooks = s.match ? books.filter((b) => s.match!(String(b.name || '').toLowerCase())) : [];
+          const keptRocnik = curRocnik && (ownBooks.length === 0 || ownBooks.some((b) => bookGrade(b) === curRocnik))
+            ? curRocnik
             : null;
           const withRocnik = (url: string) =>
             keptRocnik ? `${url}${url.includes('?') ? '&' : '?'}rocnik=${keptRocnik}` : url;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { SeriesCards, SERIES_BY_GROUP, isTestCatalogVisible, seriesBookBlocks, seriesBookFilter } from './SeriesCards';
+import { SeriesCards, SERIES_BY_GROUP, isTestCatalogVisible, seriesBookBlocks, seriesBookFilter, seriesTitle } from './SeriesCards';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useSearchParams } from 'react-router';
@@ -979,8 +979,8 @@ export function SubjectPage({
         {/* Testovací verze: předěl mezi dlaždicemi (výběr) a tiskovinami — nadpis podle výběru, počet, linka. */}
         {isTestVariant && (() => {
           const activeCard = testSeriesFilter ? (SERIES_BY_GROUP[seriesKey] ?? []).find((c) => c.typ === typParam) : null;
-          const base = activeCard ? activeCard.title : 'V\u0161echny tituly';
-          const label = subjectRocnikFilter ? `${base} \u00b7 ${subjectRocnikFilter}. ro\u010dn\u00edk` : base;
+          const base = activeCard ? (activeCard.digital ? activeCard.title : seriesTitle(seriesKey, activeCard)) : 'V\u0161echny tituly';
+          const label = subjectRocnikFilter && !(activeCard && base.endsWith(`${subjectRocnikFilter}. ro\u010dn\u00edk`)) ? `${base} \u00b7 ${subjectRocnikFilter}. ro\u010dn\u00edk` : base;
           const n = mathSeriesBlocks ? mathSeriesBlocks.reduce((a, b) => a + b.books.length, 0) : filteredBooks.length;
           const unit = n === 1 ? 'titul' : n >= 2 && n <= 4 ? 'tituly' : 'titul\u016f';
           return (
