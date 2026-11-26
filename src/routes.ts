@@ -9,6 +9,7 @@ import Root from './components/Root';
 import { TEST_HOMEPAGE_PATH } from './config/testHomepage';
 import { RELEASE_PLAN_PATH } from './config/releasePlan';
 import { CAREER_PREVIEW_PATH, CAREER_PUBLIC, CAREER_PUBLIC_PATH } from './config/careerPreview';
+import { DVPPTV_PREVIEW_PATH } from './config/dvppTvPreview';
 
 /** React Router 7: u každé `lazy` routy doplnit hydrateFallbackElement. */
 function withLazyHydrateFallbacks(nodes: RouteObject[]): RouteObject[] {
@@ -99,6 +100,11 @@ export const router = createBrowserRouter(
         {
           path: 'webinar/:id/live',
           lazy: lazyNamed(() => import('./components/WebinarLiveRoute'), 'WebinarLiveRoute'),
+        },
+        {
+          /** DVPP TV — prototyp na neveřejné adrese (src/config/dvppTvPreview.ts). */
+          path: DVPPTV_PREVIEW_PATH.slice(1),
+          lazy: lazyNamed(() => import('./components/dvpp/DvppTvPage'), 'DvppTvPage'),
         },
         {
           path: 'dvpp-webinare',

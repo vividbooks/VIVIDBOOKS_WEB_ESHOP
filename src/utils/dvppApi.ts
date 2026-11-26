@@ -133,7 +133,7 @@ export type DvppCertificate = {
 };
 
 export const dvppApi = {
-  requestMagicLink: (input: { email: string; name?: string; next?: string; newsletter?: boolean; staffroomCode?: string | null }) =>
+  requestMagicLink: (input: { email: string; name?: string; next?: string; newsletter?: boolean; staffroomCode?: string | null; source?: string; medium?: string; campaign?: string }) =>
     call<{ ok: true; created: boolean }>('/dvpp/auth/magic-link', { body: { ...input, ...attributionPayload() } }),
 
   verify: async (token: string) => {
