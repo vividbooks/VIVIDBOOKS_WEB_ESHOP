@@ -19,6 +19,10 @@
     {
       "source": "/kontakt-kariera-k7p3wd/:path*",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
+    },
+    {
+      "source": "/dvpptv-n8w2qe",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     }
   ],
   "rewrites": [
