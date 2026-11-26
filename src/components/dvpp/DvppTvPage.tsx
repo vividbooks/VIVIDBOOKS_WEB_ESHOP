@@ -3,17 +3,19 @@
  *
  * Co je skutečné: záznamy webinářů (DvppVideosContext, stejné jako /knihovna), nadcházející
  * webináře (WebinarsContext), odkazy na přehrávač, přihlášení a sborovnu.
- * Co je atrapa: sekce BOZP a formulář registrace školy (nic se neodesílá ani neukládá).
+ * Registrace jde přes /dvpp/auth/magic-link (jako /knihovna/prihlaseni), atribuce source dvpptv.
+ * Co je atrapa: sekce BOZP (nic se neodesílá ani neukládá).
  */
 import React, { useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { ChevronLeft, ChevronRight, HardHat, Loader2, Play, Radio, ShieldCheck, Sparkles, Users } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, HardHat, Loader2, Play, Radio, ShieldCheck, Sparkles, Users } from 'lucide-react';
 import { SEOHead } from '../SEOHead';
 import { useDvppVideos, type DvppVideo } from '../../contexts/DvppVideosContext';
 import { useWebinars } from '../../contexts/WebinarsContext';
 import { DvppVideoCard } from '../DvppVideoCard';
 import { WebinarCard } from '../WebinarCard';
 import { DVPPTV_TEASER } from '../../config/dvppTvPreview';
+import { dvppApi } from '../../utils/dvppApi';
 
 const ff = "'Fenomen Sans', sans-serif";
 
@@ -105,48 +107,74 @@ function VideoRow({ title, videos }: { title: string; videos: DvppVideo[] }) {
   );
 }
 
-/** Atrapa registrace školy: oddělené souhlasy, nic se neukládá. */
-function SchoolSignupMock() {
-  const [sent, setSent] = useState(false);
+/**
+ * Registrace z DVPP TV: stejný mechanismus jako /knihovna/prihlaseni (POST /dvpp/auth/magic-link).
+ * Kontakt se založí jako pending, přijde e-mail s přihlašovacím odkazem, škola se spáruje
+ * podle domény / IČO nebo kódu sborovny. Atribuce: source dvpptv, campaign = webinář z upoutávky
+ * (pole source/medium/campaign mají na serveru přednost před utm_*). Telefon endpoint neukládá, proto se na něj formulář neptá.
+ */
+function SchoolSignup() {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
   const [newsletter, setNewsletter] = useState(false);
-  const [phoneOk, setPhoneOk] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState('');
   const input = 'w-full rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-[15px] text-white placeholder-white/35 outline-none focus:border-[#ff9b5e]';
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSending(true);
+    try {
+      await dvppApi.requestMagicLink({
+        email: email.trim(),
+        name: name.trim(),
+        next: '/knihovna',
+        newsletter,
+        staffroomCode: code.trim().toUpperCase() || null,
+        source: 'dvpptv',
+        medium: 'web',
+        campaign: DVPPTV_TEASER.webinarSlug,
+      });
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nepodařilo se odeslat.');
+    } finally {
+      setSending(false);
+    }
+  };
+
   if (sent) {
     return (
       <div className="rounded-[24px] border border-[#ff9b5e]/40 bg-[#ff9b5e]/10 p-6 text-white">
-        <p className="text-[18px] font-black">Tohle je zatím jen prototyp, nic se neuložilo.</p>
+        <CheckCircle2 className="mb-3 h-9 w-9 text-[#ff9b5e]" />
+        <p className="text-[18px] font-black">Odkaz je na cestě</p>
         <p className="mt-2 text-[15px] text-white/75">
-          Ve skutečném provozu by učitel dostal přihlašovací odkaz e-mailem a škola by se mu propojila podle e-mailu nebo kódu školy
-          (dnes už to tak funguje v knihovně: <Link to="/knihovna/prihlaseni" className="underline">přihlášení</Link> a{' '}
-          <Link to="/sborovna" className="underline">sborovna</Link>).
+          Do minuty vám přijde e-mail na <strong>{email}</strong>. Kliknutím na tlačítko v něm se přihlásíte do knihovny,
+          odkaz platí 24 hodin. Nepřišel? Zkontrolujte hromadné zprávy nebo spam.
         </p>
-        <button type="button" onClick={() => setSent(false)} className="mt-4 text-[14px] font-bold text-[#ff9b5e] underline">Zkusit znovu</button>
       </div>
     );
   }
   return (
-    <form
-      className="grid gap-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-6"
-      onSubmit={(e) => { e.preventDefault(); setSent(true); }}
-    >
+    <form className="grid gap-3 rounded-[24px] border border-white/10 bg-white/[0.04] p-6" onSubmit={submit}>
       <div className="grid gap-3 md:grid-cols-2">
-        <input className={input} placeholder="Jméno a příjmení" required />
-        <input className={input} type="email" placeholder="Školní e-mail" required />
+        <input className={input} placeholder="Jméno a příjmení" value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />
+        <input className={input} type="email" placeholder="Školní e-mail" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
       </div>
-      <input className={input} placeholder="Škola (název nebo obec)" required />
-      <input className={input} type="tel" placeholder="Telefon (nepovinné)" />
+      <input className={input} placeholder="Kód sborovny od kolegy (nepovinné)" value={code} onChange={(e) => setCode(e.target.value)} maxLength={12} />
       <label className="mt-1 flex items-start gap-3 text-[14px] text-white/80">
-        <input type="checkbox" checked={phoneOk} onChange={(e) => setPhoneOk(e.target.checked)} className="mt-1 h-4 w-4 accent-[#ff9b5e]" />
-        <span>Telefon smíme použít jen k domluvě přístupu pro školu (nepovinné, souhlas můžete kdykoli odvolat).</span>
-      </label>
-      <label className="flex items-start gap-3 text-[14px] text-white/80">
         <input type="checkbox" checked={newsletter} onChange={(e) => setNewsletter(e.target.checked)} className="mt-1 h-4 w-4 accent-[#ff9b5e]" />
         <span>Chci e-mailem dostávat pozvánky na nové webináře a novinky Vividbooks (nepovinné, odhlásit se jde jedním klikem).</span>
       </label>
       <p className="text-[12px] text-white/45">
-        Přístup ke knihovně nevyžaduje žádný z těchto souhlasů. Každý učitel se registruje sám za sebe.
+        Přístup ke knihovně nevyžaduje souhlas s novinkami. Každý učitel se registruje sám za sebe, škola se propojí podle školního e-mailu nebo kódu sborovny.
       </p>
-      <button type="submit" className="mt-2 inline-flex items-center justify-center gap-2 rounded-full bg-[#ff9b5e] px-6 py-3.5 text-[15px] font-black text-[#0b1020] transition hover:bg-[#ffb07e]">
+      {error && <p className="text-[14px] font-semibold text-[#ff8a8a]">{error}</p>}
+      <button type="submit" disabled={sending} className="mt-2 inline-flex items-center justify-center gap-2 rounded-full bg-[#ff9b5e] px-6 py-3.5 text-[15px] font-black text-[#0b1020] transition hover:bg-[#ffb07e] disabled:opacity-60">
+        {sending && <Loader2 className="h-4 w-4 animate-spin" />}
         Chci přístup pro sebe a svou školu
       </button>
     </form>
@@ -173,7 +201,7 @@ export function DvppTvPage() {
       <SEOHead title="DVPP TV · vzdělávání pro celou sborovnu zdarma" path="" description="Prototyp" noIndex />
 
       <div className="bg-[#ff9b5e] px-4 py-2 text-center text-[13px] font-bold text-[#0b1020]">
-        Prototyp na neveřejné adrese · záznamy jsou skutečné, BOZP a registrace jsou zatím jen ukázka
+        Prototyp na neveřejné adrese · záznamy i registrace jsou skutečné, BOZP je zatím jen ukázka
       </div>
 
       <header className="mx-auto flex max-w-[1240px] items-center justify-between px-5 py-5 md:px-8">
@@ -304,7 +332,7 @@ export function DvppTvPage() {
         </div>
       </Section>
 
-      {/* Registrace školy — atrapa */}
+      {/* Registrace — skutečná, přes /dvpp/auth/magic-link */}
       <Section id="skola" title="Zdarma pro učitele i celou školu" kicker="Registrace">
         <div className="grid gap-8 md:grid-cols-[1fr_1.1fr]">
           <div className="text-[15px] leading-relaxed text-white/75">
@@ -318,7 +346,7 @@ export function DvppTvPage() {
               ))}
             </ol>
           </div>
-          <SchoolSignupMock />
+          <SchoolSignup />
         </div>
       </Section>
 
