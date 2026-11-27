@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { jeNahledAsistenta } from '../utils/nahledAsistenta';
 import { catalogGroupOf } from '../utils/catalogGroups';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
@@ -387,7 +388,8 @@ export default function CatalogLayout() {
     isWebinarSurveyFullscreen
     || isZaznamFromEmailFullscreen
     || isTrialPageFullscreen
-    || isResumePaymentView;
+    || isResumePaymentView
+    || jeNahledAsistenta();
 
   const catalogContextValue = {
     groupingMode, setGroupingMode,

@@ -18,6 +18,7 @@ import { GoogleConsentBridge } from './GoogleConsentBridge';
 import { WebflowLegacyRedirect } from './WebflowLegacyRedirect';
 import { EshopHostRedirect } from './EshopHostRedirect';
 import { IdentifiedWebEventTracker } from './IdentifiedWebEventTracker';
+import { jeNahledAsistenta } from '../utils/nahledAsistenta';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -30,6 +31,8 @@ function ScrollToTop() {
 function RootInner() {
   const { fetchProducts } = useProducts();
   const navigate = useNavigate();
+  // Náhled v panelu Asistenta: bez lišty s cookies a vyskakovacích oken, jen obsah stránky.
+  const nahled = jeNahledAsistenta();
   const showAdminAccess = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('admin') === 'true';
 
@@ -58,8 +61,8 @@ function RootInner() {
       )}
       <CartDrawer />
       {/* Popup Manager renderer */}
-      <PopupRenderer />
-      <CookieConsentBar />
+      {!nahled && <PopupRenderer />}
+      {!nahled && <CookieConsentBar />}
       <GoogleConsentBridge />
       <Outlet />
     </>
