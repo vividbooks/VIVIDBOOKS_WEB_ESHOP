@@ -219,6 +219,18 @@ Deno.test('stránka: odeslání zastaví chybějící adresa, posílá delivery 
   assert(/previousIco\s*\n?\s*(\/\*\*[^*]*\*\/\s*)?\?\s*\{\s*\.\.\.emptyDistributorDelivery\(companyName\)/.test(src), 'přechod na jiné IČO adresu vyprázdní');
 });
 
+Deno.test('distributor: nedostupné API se nehlásí jako prázdný katalog a opakování neodesílá objednávku', async () => {
+  const here = new URL('./', import.meta.url);
+  const page = await Deno.readTextFile(new URL('../../../components/distributor/DistributorOrderPage.tsx', here));
+  const context = await Deno.readTextFile(new URL('../../../contexts/ProductsContext.tsx', here));
+  assert(context.includes('setLoadError(true)') && context.includes('controller.abort()'), 'timeout a chyba katalogu');
+  assert(context.includes('Array.isArray(data.products)'), 'neplatná odpověď není prázdný katalog');
+  assert(context.indexOf('const pRes = await fetch(productsUrl') < context.indexOf('fetch(bundlesUrl'), 'balíčky nesmí blokovat katalog');
+  const errorScreen = page.slice(page.indexOf("if (access === 'granted' && productsLoadError)"), page.indexOf('if (submitted)'));
+  assert(errorScreen.includes('Katalog se nepodařilo načíst') && errorScreen.includes('Zkusit znovu'));
+  assert(errorScreen.includes('fetchProducts()') && !errorScreen.includes('/distributor/orders'), 'opakování jen načte katalog');
+});
+
 Deno.test('e-mail shrnutí: slib obchodního zástupce jen když jde objednávka přes Pipedrive', async () => {
   const { distributorOrderReceivedLead } = await import('../../../../supabase/functions/_shared/order-email.ts');
   assert(/obchodní zástupce/.test(distributorOrderReceivedLead(true)));
