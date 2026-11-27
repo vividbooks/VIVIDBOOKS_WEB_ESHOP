@@ -37,6 +37,7 @@ export function WebinarCard({ webinar, openInNewTab = false }: WebinarCardProps)
           day={webinar.day}
           monthName={webinar.monthName}
           year={webinar.year}
+          isDvpp={(webinar.postWebinarQuizQuestions?.length ?? 0) > 0}
           time={webinar.time}
           lecturer={webinar.lecturer}
           lecturerAvatar={webinar.lecturerAvatar}

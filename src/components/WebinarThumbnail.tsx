@@ -7,6 +7,11 @@ interface WebinarThumbnailProps {
   monthName: string;
   /** Rok webináře — bez něj se bere aktuální rok. */
   year?: number;
+  /**
+   * Akreditovaný webinář (vydává certifikát DVPP) — jen pak se v náhradním coveru ukáže „DVPP“.
+   * Stejné pravidlo jako u druhu certifikátu: webinář má kvíz `postWebinarQuizQuestions`.
+   */
+  isDvpp?: boolean;
   time: string;
   lecturer: string;
   lecturerAvatar?: string;
@@ -67,6 +72,7 @@ export function WebinarThumbnail({
   day,
   monthName,
   year,
+  isDvpp = false,
   time,
   lecturer,
   lecturerAvatar,
@@ -119,7 +125,7 @@ export function WebinarThumbnail({
         </div>
         <div>
           <p className="font-['Fenomen_Sans',sans-serif] font-bold text-[#001158] text-[10px] leading-tight">
-            {'Webin\u00e1\u0159 zdarma'}
+            {isDvpp ? 'DVPP Webin\u00e1\u0159 zdarma' : 'Webin\u00e1\u0159 zdarma'}
           </p>
           <p className="font-['Fenomen_Sans',sans-serif] font-bold text-[#001158] text-[10px] leading-tight">
             {`${day}. ${monthName.slice(0, 3).toLowerCase()}. ${year ?? new Date().getFullYear()} od ${time}`}
