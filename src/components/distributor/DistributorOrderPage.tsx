@@ -117,7 +117,7 @@ export function DistributorOrderPage() {
   const [searchParams] = useSearchParams();
   const tokenFromUrl = (searchParams.get('k') || '').trim();
   const token = tokenFromUrl || readStoredKey();
-  const { products, isLoading: productsLoading } = useProducts();
+  const { products, isLoading: productsLoading, loadError: productsLoadError, fetchProducts } = useProducts();
 
   const [access, setAccess] = useState<AccessState>('checking');
   const [ico, setIco] = useState('');
@@ -406,7 +406,7 @@ export function DistributorOrderPage() {
    * ať při otevření neproblikne text („Načítám…“ / „Ověřujeme…“) před animací
    * a ať se formulář neukáže dřív, než je hotové ověření i katalog.
    */
-  if (access === 'checking' || (access === 'granted' && productsLoading && catalog.length === 0)) {
+  if (access === 'checking' || (access === 'granted' && productsLoading)) {
     return <RouteHydrateFallback />;
   }
 
@@ -421,6 +421,22 @@ export function DistributorOrderPage() {
             ? 'Kontaktujte prosím svého obchodního zástupce Vividbooks.'
             : 'Použijte prosím odkaz, který jste dostali od Vividbooks. Bez platného klíče formulář nelze otevřít.'}
         </p>
+      </StatusScreen>
+    );
+  }
+
+  if (access === 'granted' && productsLoadError) {
+    return (
+      <StatusScreen>
+        <h1 className="text-[20px] font-bold text-[#001161]">Katalog se nepodařilo načíst</h1>
+        <p className="max-w-md text-center text-[14px] text-[#001161]/70">
+          Objednávkový formulář je dočasně nedostupný. Neodesílejte prosím stejnou objednávku znovu,
+          pokud jste ji již poslali e-mailem.
+        </p>
+        <button type="button" onClick={() => void fetchProducts()}
+          className="rounded-full bg-[#001161] px-6 py-3 text-[14px] font-bold text-white hover:bg-[#03025a]">
+          Zkusit znovu
+        </button>
       </StatusScreen>
     );
   }
