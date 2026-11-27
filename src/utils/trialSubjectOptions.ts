@@ -31,8 +31,28 @@ export const TEACHER_SUBJECTS_2ND: TrialSelectOption[] = [
   { value: 'Mathematics-2', label: 'Matematika' },
   { value: 'NaturalHistory', label: 'Přírodopis' },
   { value: 'CzechLang-2', label: 'Český jazyk' },
+  { value: 'History', label: 'Dějepis' },
+  { value: 'Geography', label: 'Zeměpis' },
   { value: 'Other-2', label: 'Jiné' },
 ];
+
+/**
+ * Předměty, které zná jen Kabinet a Pipedrive (Dějepis 514, Zeměpis 515), ne starý
+ * systém. Do `free-trial-ajax` jdou jako „Jiné (2. stupeň)", ať ho neznámý kód
+ * nerozbije; Pipedrive, Kabinet a registr (`registr_people.subjects` → `dejepis`,
+ * `zemepis`) dostávají původní hodnotu.
+ */
+export const KABINET_ONLY_TRIAL_SUBJECTS: ReadonlySet<string> = new Set(['History', 'Geography']);
+
+/** Předměty pro starý `free-trial-ajax`: dějepis a zeměpis → `Other-2`, bez duplicit. */
+export function teacherSubjectsForLegacyTrialApi(subjects: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of Array.isArray(subjects) ? subjects : []) {
+    const value = KABINET_ONLY_TRIAL_SUBJECTS.has(raw) ? 'Other-2' : raw;
+    if (value && !out.includes(value)) out.push(value);
+  }
+  return out;
+}
 
 /** Stupeň školy pro nevyučující role (zástupce, ředitel, poradce). */
 export const DEPUTY_SCHOOL_STAGES: TrialSelectOption[] = [

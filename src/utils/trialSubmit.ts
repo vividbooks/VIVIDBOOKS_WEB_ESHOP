@@ -1,6 +1,7 @@
 import { apiUrl } from './publicSiteUrl';
 import { projectId, publicAnonKey } from './supabase/info';
 import { readCookieConsent } from '../lib/cookieConsentStorage';
+import { teacherSubjectsForLegacyTrialApi } from './trialSubjectOptions';
 
 /** AJAX varianta `/web/free-trial` — JsonResponse místo redirect (handleWebhookAjax). */
 export const FREE_TRIAL_AJAX_URL = apiUrl('/web/free-trial-ajax');
@@ -69,7 +70,8 @@ export function buildFreeTrialFormBody(fields: FreeTrialFields): URLSearchParams
   p.append('Dealer', '');
   p.append('Vat', fields.vat);
 
-  fields.teacherSubjects.forEach((v) => p.append('TeacherSubjects', v));
+  // Starý systém dějepis a zeměpis nezná — posílají se mu jako „Jiné (2. stupeň)".
+  teacherSubjectsForLegacyTrialApi(fields.teacherSubjects).forEach((v) => p.append('TeacherSubjects', v));
   fields.schoolStages.forEach((v) => p.append('SchoolStages', v));
 
   return p;

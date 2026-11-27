@@ -19,6 +19,8 @@ export const TRIAL_FORM_SUBJECT_TO_PD_ENUM: Record<string, number> = {
   PrimaryScience: 413, // Prvouka
   'CzechLang-1': 414,  // Český jazyk (1. stupeň)
   'CzechLang-2': 414,  // Český jazyk (2. stupeň)
+  History: 514,        // Dějepis
+  Geography: 515,      // Zeměpis
   'Other-1': 319,      // Jiné (1. stupeň)
   'Other-2': 319,      // Jiné (2. stupeň)
 };
@@ -27,7 +29,7 @@ export const TRIAL_FORM_SUBJECT_TO_PD_ENUM: Record<string, number> = {
 export const PIPEDRIVE_PERSON_SUBJECT_OPTION_OTHER = 319;
 
 /** Všechna známá option ID pole 9095 (Subject) — i pro detekci pole podle voleb. */
-export const PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS = [309, 310, 311, 312, 413, 414, 319];
+export const PIPEDRIVE_PERSON_SUBJECT_OPTION_IDS = [309, 310, 311, 312, 413, 414, 514, 515, 319];
 
 /** Předměty z trial formuláře → unikátní option ID pole 9095 v pořadí výběru. */
 export function mapTrialSubjectsToPipedriveOptionIds(subjects: string[]): number[] {

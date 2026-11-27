@@ -133,6 +133,8 @@ const TRIAL_SUBJECT_LABELS_CS: Record<string, string> = {
   PrimaryScience: 'Prvouka',
   'CzechLang-1': 'Český jazyk (1. stupeň)',
   'CzechLang-2': 'Český jazyk (2. stupeň)',
+  History: 'Dějepis',
+  Geography: 'Zeměpis',
   'Other-1': 'Jiné (1. stupeň)',
   'Other-2': 'Jiné (2. stupeň)',
 };
